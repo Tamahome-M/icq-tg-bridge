@@ -307,6 +307,17 @@ class TelegramSide:
                 continue
         return None
 
+    async def delete_chat(self, peer_id: int, revoke: bool = False) -> bool:
+        """Удаляет чат: для групп и каналов это выход из них, для личной
+        переписки — удаление истории; revoke убирает её и у собеседника."""
+        try:
+            entity = await self.client.get_entity(peer_id)
+            await self.client.delete_dialog(entity, revoke=revoke)
+            return True
+        except Exception:
+            log.exception("не удалось удалить чат %s", peer_id)
+            return False
+
     async def search_chats(self, query: str, limit: int) -> list[dict]:
         """Ищет чаты в Telegram — и среди своих, и в общем каталоге."""
         found: list[dict] = []

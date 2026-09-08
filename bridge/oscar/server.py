@@ -322,7 +322,8 @@ class Session:
             (C.SSI, C.SSI_LIST_REQ_IF_CHANGED): self.on_ssi_list,
             (C.SSI, C.SSI_ADD): self.on_ssi_edit,
             (C.SSI, C.SSI_UPDATE): self.on_ssi_edit,
-            (C.SSI, C.SSI_DELETE): self.on_ssi_edit,
+            (C.SSI, C.SSI_DELETE): self.on_ssi_delete,
+            (C.SSI, C.SSI_REMOVE_ME): self.on_ssi_remove_me,
             (C.ICQ, 0x0002): self.on_icq_meta,
         }.get((s.family, s.subtype))
 
@@ -437,6 +438,26 @@ class Session:
         await self.send_snac(C.SSI, C.SSI_EDIT_ACK,
                              b"".join(struct.pack(">H", 0) for _ in range(count)),
                              request_id=s.request_id)
+
+    async def on_ssi_delete(self, s: Snac) -> None:
+        """«Удалить» в клиенте: чат убирается и в Telegram — у себя."""
+        items = blocks.parse_ssi_items(s.data)
+        for name, _group_id, _item_id, item_type, _extra in items:
+            if item_type != C.SSI_TYPE_BUDDY:
+                continue           # группы контакт-листа ведёт Telegram
+            target = name.decode("latin-1", "replace")
+            if target.isdigit():
+                await self.server.on_remove(int(target), revoke=False)
+        await self.send_snac(C.SSI, C.SSI_EDIT_ACK,
+                             b"".join(struct.pack(">H", 0) for _ in range(max(1, len(items)))),
+                             request_id=s.request_id)
+
+    async def on_ssi_remove_me(self, s: Snac) -> None:
+        """«Удалиться из его КЛ»: чат удаляется у обеих сторон."""
+        r = s.reader()
+        target = r.pstr8().decode("latin-1", "replace") if r.left else ""
+        if target.isdigit():
+            await self.server.on_remove(int(target), revoke=True)
 
     async def on_icq_meta(self, s: Snac) -> None:
         """Запросы семейства 0x15. Обязательно нужен ответ на запрос офлайн-сообщений:
@@ -741,7 +762,8 @@ class OscarServer:
                  status_of: Callable[[int], int] | None = None,
                  chat_info: Callable[[int], Awaitable[dict | None]] | None = None,
                  search: Callable[[str], Awaitable[list[dict]]] | None = None,
-                 verdict_for: Callable[[int], str] | None = None):
+                 verdict_for: Callable[[int], str] | None = None,
+                 on_remove: Callable[[int, bool], Awaitable[None]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -751,6 +773,7 @@ class OscarServer:
         self.search = search or self._no_search
         # Решает судьбу записи очереди по текущему статусу: send, hold или drop.
         self.verdict_for = verdict_for or (lambda uin: "send")
+        self.on_remove = on_remove or self._ignore_remove
         self.uin = str(cfg.oscar_uin)
         self.password = cfg.oscar_password
         self.ssi_encoding = cfg.ssi_encoding
@@ -894,6 +917,10 @@ class OscarServer:
     @staticmethod
     async def _no_search(query: str) -> list[dict]:
         return []
+
+    @staticmethod
+    async def _ignore_remove(uin: int, revoke: bool) -> None:
+        return None
 
     async def notify_typing(self, uin: int, active: bool) -> None:
         """Показывает на телефоне, что собеседник набирает сообщение."""

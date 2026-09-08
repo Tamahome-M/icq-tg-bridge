@@ -51,9 +51,12 @@ class Bridge:
                                      self.on_telegram_typing, self.on_telegram_read)
         self.oscar = OscarServer(cfg, self.storage, self.on_phone_message,
                                  self.roster, self.status_of, self.chat_info,
-                                 self.search_chats, self.verdict_for)
+                                 self.search_chats, self.verdict_for,
+                                 self.on_phone_remove)
         self._roster: list[Contact] = []
-        self._statuses: dict[int, int] = {}
+        self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
+        self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
+        self._by_uin: dict[int, Contact] = {}
         self._unread: dict[int, int] = {}
         self._typing: dict[int, asyncio.Task] = {}
         self.mode = policy.FAVOURITES
@@ -75,7 +78,38 @@ class Bridge:
         return self._roster
 
     def status_of(self, uin: int) -> int:
-        return self._statuses.get(uin, C.STATUS_ONLINE)
+        """Статус контакта для контакт-листа.
+
+        Кроме присутствия он показывает, дойдут ли сообщения при текущем
+        статусе владельца: «не беспокоить» — от этого чата не придёт ничего,
+        «недоступен» — сообщения копятся и приедут после смены статуса.
+        """
+        real = self._statuses.get(uin, C.STATUS_ONLINE)
+        if real == C.STATUS_OFFLINE:
+            return real          # собеседника нет — это важнее любой подмены
+
+        contact = self._by_uin.get(uin)
+        if contact is not None and not policy.allows(self.mode, contact.kind,
+                                                     bool(contact.favourite)):
+            return C.STATUS_NA if policy.holds(self.mode) else C.STATUS_DND
+        return real
+
+    async def refresh_shown_statuses(self) -> None:
+        """Рассылает изменившиеся статусы: после смены режима меняется сразу
+        много контактов, поэтому шлём только то, что действительно поменялось,
+        и небольшими порциями — канал у телефона узкий."""
+        sent = 0
+        for contact in self._roster:
+            shown = self.status_of(contact.uin)
+            if self._shown.get(contact.uin) == shown:
+                continue
+            self._shown[contact.uin] = shown
+            await self.oscar.notify_status(contact.uin, shown)
+            sent += 1
+            if sent % 20 == 0:
+                await asyncio.sleep(0.2)
+        if sent:
+            log.info("обновлено статусов контактов: %d", sent)
 
     async def search_chats(self, query: str) -> list[dict]:
         """Поиск из Jimm: сначала по уже известным чатам, потом по Telegram."""
@@ -87,6 +121,17 @@ class Bridge:
         ][:SEARCH_LIMIT]
         if found:
             return found
+
+        # Поиск возвращает и убранные ранее: нашли — значит снова нужны.
+        for contact in self.storage.contacts_all():
+            if contact.hidden and needle in contact.title.lower():
+                self.storage.set_hidden(contact.uin, False)
+                found.append({"uin": contact.uin, "title": contact.title,
+                              "kind": KIND_TITLES.get(contact.kind, "Чат"),
+                              "username": ""})
+        if found:
+            self._roster = self.storage.contacts(self.cfg.roster_limit)
+            return found[:SEARCH_LIMIT]
 
         for item in await self.telegram.search_chats(query, SEARCH_LIMIT):
             uin = self.storage.uin_for_peer(
@@ -120,6 +165,8 @@ class Bridge:
         self.mode = policy.mode_for(status)
         log.info("статус «%s» — %s", policy.status_name(status),
                  policy.MODE_NAMES[self.mode])
+        if previous != self.mode:
+            await self.refresh_shown_statuses()
         if policy.holds(previous) and not policy.holds(self.mode):
             await self.release_held()
 
@@ -179,6 +226,7 @@ class Bridge:
             await self.oscar.notify_status(contact.uin, C.STATUS_OFFLINE)
 
         self._roster = self.storage.contacts(self.cfg.roster_limit)
+        self._by_uin = {c.uin: c for c in self._roster}
         total = len(self.storage.contacts())
         if self.cfg.roster_limit and total > len(self._roster):
             log.info("в контакт-лист телефона идут %d чатов из %d (roster_limit); "
@@ -207,6 +255,11 @@ class Bridge:
         if not text:
             return
         contact = self.storage.contact_by_peer(peer_id, topic_id)
+        if contact is not None and contact.hidden:
+            log.debug("чат %r убран с телефона — сообщение не доставляю", contact.title)
+            if ts:
+                self.storage.note_delivered(peer_id, ts, topic_id)
+            return
         if contact is None:
             title, kind = await self.telegram.title_for(peer_id)
             if topic_id:
@@ -261,7 +314,13 @@ class Bridge:
             return
         self._statuses[contact.uin] = code
         log.debug("%s теперь %s", contact.title, status)
-        await self.oscar.notify_status(contact.uin, code)
+
+        # На телефон уходит не сам статус, а то, что должно быть видно:
+        # у отфильтрованных чатов он подменён на «не беспокоить».
+        shown = self.status_of(contact.uin)
+        if self._shown.get(contact.uin) != shown:
+            self._shown[contact.uin] = shown
+            await self.oscar.notify_status(contact.uin, shown)
 
     async def on_telegram_typing(self, peer_id: int, active: bool) -> None:
         """Собеседник набирает сообщение — покажем это на телефоне."""
@@ -302,6 +361,54 @@ class Bridge:
         contact = self.storage.contact_by_peer(peer_id)
         if contact is not None:
             await self.oscar.confirm_read(contact.uin, max_id)
+
+    async def on_phone_remove(self, uin: int, revoke: bool) -> None:
+        """Удаление контакта с телефона.
+
+        «Удалить» убирает чат у себя, «Удалиться из его КЛ» — ещё и у
+        собеседника. Обе операции необратимы, поэтому каждая закрывается
+        своей настройкой, а сделанное записывается в журнал.
+        """
+        contact = self.storage.contact_by_uin(uin)
+        if contact is None:
+            log.warning("просьба удалить неизвестный UIN %d", uin)
+            return
+
+        if contact.topic_id:
+            # Удалить тему в Telegram нельзя — такой операции там нет.
+            # Зато можно убрать её с телефона: из контакт-листа она уйдёт,
+            # а сообщения из неё перестанут доходить.
+            await self.reply(contact,
+                             "Удаление тем форума в Telegram не поддерживается. "
+                             "Убрал тему из контакт-листа, сообщения из неё "
+                             "приходить не будут.")
+            self.storage.set_hidden(contact.uin)
+            self._roster = self.storage.contacts(self.cfg.roster_limit)
+            await self.oscar.notify_status(contact.uin, C.STATUS_OFFLINE)
+            log.info("тема %r убрана с телефона (в Telegram осталась)", contact.title)
+            return
+
+        allowed = self.cfg.allow_delete_revoke if revoke else self.cfg.allow_delete
+        if not allowed:
+            setting = "allow_delete_revoke" if revoke else "allow_delete"
+            log.warning("удаление чата %r запрещено настройкой %s",
+                        contact.title, setting)
+            await self.reply(contact, f"Удаление запрещено настройкой {setting}")
+            return
+
+        log.warning("удаляю чат %r%s", contact.title,
+                    " у обеих сторон" if revoke else "")
+        if not await self.telegram.delete_chat(contact.peer_id, revoke):
+            await self.reply(contact, "Не получилось удалить чат в Telegram")
+            return
+
+        # Из контакт-листа чат уходит при следующем входе; запись остаётся,
+        # чтобы за ним сохранился прежний UIN, если он вернётся.
+        self.storage.mark_gone(contact.uin)
+        self._roster = self.storage.contacts(self.cfg.roster_limit)
+        await self.oscar.notify_status(contact.uin, C.STATUS_OFFLINE)
+        log.info("чат %r удалён%s", contact.title,
+                 " у обеих сторон" if revoke else "")
 
     async def on_phone_typing(self, uin: int, active: bool) -> None:
         """Владелец печатает в Jimm — передаём в Telegram."""

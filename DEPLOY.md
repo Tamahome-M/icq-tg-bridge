@@ -158,18 +158,77 @@ sudo -u icqbridge .venv/bin/python tests/test_flow.py
 `config.toml`. Проверялось на Jimm (Motorola V3), но подойти должен любой
 клиент OSCAR, где можно задать свой адрес сервера.
 
-## 9. Обновление
+## 9. Обновление из git
+
+Рабочие файлы — `config.toml`, `tg.session`, `bridge.db`, каталог `photos` и
+`.venv` — в репозиторий не входят, поэтому обновление их не трогает.
+
+### Первый раз: связать установленный каталог с репозиторием
+
+Если мост разворачивали из архива или образа, каталог ещё не репозиторий:
 
 ```bash
 rc-service icq-tg-bridge stop
 cd /opt/icq-tg-bridge
-# заменить файлы проекта, сохранив config.toml, tg.session, bridge.db
-sudo -u icqbridge .venv/bin/python -m pip install -r requirements.txt
+git config --global --add safe.directory /opt/icq-tg-bridge   # каталог чужого владельца
+git init -q
+git remote add origin https://github.com/<вы>/icq-tg-bridge.git
+git fetch origin
+git reset --hard origin/main     # приводит код к состоянию репозитория
+chown -R icqbridge:icqbridge /opt/icq-tg-bridge
 rc-service icq-tg-bridge start
 ```
 
+`git reset --hard` перезаписывает только то, что есть в репозитории; файлы с
+настройками, сессией и базой он не видит и не трогает. Локальные правки кода,
+если вы их делали, будут потеряны — сохраните их заранее (`git stash` тут не
+поможет, репозиторий только что создан).
+
+### Дальше: обычное обновление
+
+```bash
+cp /opt/icq-tg-bridge/bridge.db /root/bridge.db.backup   # на всякий случай
+rc-service icq-tg-bridge stop
+cd /opt/icq-tg-bridge
+git pull --ff-only
+.venv/bin/python -m pip install -q -r requirements.txt   # если менялись зависимости
+chown -R icqbridge:icqbridge /opt/icq-tg-bridge
+rc-service icq-tg-bridge start
+tail -f /var/log/icq-tg-bridge.log
+```
+
 Схема базы обновляется сама при запуске: недостающие колонки добавляются,
-данные сохраняются.
+данные сохраняются. Обратной миграции нет — поэтому копия перед обновлением.
+
+### Проверить до запуска
+
+```bash
+cd /opt/icq-tg-bridge
+for t in tests/test_*.py; do .venv/bin/python "$t" || echo "СБОЙ: $t"; done
+```
+
+Тестам не нужны ни Telegram, ни телефон, и рабочих файлов они не трогают.
+
+### Откатиться
+
+```bash
+rc-service icq-tg-bridge stop
+cd /opt/icq-tg-bridge
+git log --oneline -5             # найти предыдущий коммит
+git reset --hard <коммит>
+cp /root/bridge.db.backup bridge.db   # только если база успела измениться
+chown -R icqbridge:icqbridge /opt/icq-tg-bridge
+rc-service icq-tg-bridge start
+```
+
+### Если правили код на месте
+
+```bash
+git status                # покажет изменённые файлы
+git diff > /root/my.patch # сохранить свои правки
+git checkout -- .         # вернуть исходное состояние
+git pull --ff-only
+```
 
 ## 10. Резервная копия
 

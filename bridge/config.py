@@ -43,6 +43,8 @@ class Config:
     ack_on: str = "read"
     ack_timeout: int = 30
     catch_up: bool = True
+    allow_delete: bool = True
+    allow_delete_revoke: bool = True
     roster_limit: int = 0
     alias_max_chars: int = 40
     topics_limit: int = 50
@@ -103,6 +105,8 @@ class Config:
             ack_on=str(br.get("ack_on", cls.ack_on)),
             ack_timeout=int(br.get("ack_timeout", cls.ack_timeout)),
             catch_up=bool(br.get("catch_up", True)),
+            allow_delete=bool(br.get("allow_delete", True)),
+            allow_delete_revoke=bool(br.get("allow_delete_revoke", True)),
             roster_limit=int(br.get("roster_limit", cls.roster_limit)),
             alias_max_chars=int(br.get("alias_max_chars", cls.alias_max_chars)),
             topics_limit=int(br.get("topics_limit", cls.topics_limit)),
