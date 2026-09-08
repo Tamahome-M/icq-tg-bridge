@@ -1,0 +1,17 @@
+# Настройки службы моста (/etc/conf.d/icq-tg-bridge)
+
+# От чьего имени работает мост.
+bridge_user="icqbridge"
+
+# Куда установлен проект.
+bridge_dir="/opt/icq-tg-bridge"
+
+# Файл настроек.
+bridge_config="/opt/icq-tg-bridge/config.toml"
+
+# Подробность журнала моста: INFO или DEBUG.
+bridge_loglevel="INFO"
+
+# Отдельно — подробность записей Telethon. По умолчанию WARNING: на INFO он
+# пишет о каналах и обновлениях, на DEBUG — о каждом пакете.
+bridge_telethon_loglevel="WARNING"

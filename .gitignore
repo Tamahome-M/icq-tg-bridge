@@ -1,0 +1,21 @@
+# рабочее окружение
+.venv/
+__pycache__/
+*.py[cod]
+
+# настройки с ключами и паролем
+config.toml
+config.*.toml
+!config.example.toml
+
+# сессия Telegram — это полный доступ к аккаунту
+*.session
+*.session-journal
+*.session.dead
+
+# состояние моста
+bridge.db
+bridge.db-wal
+bridge.db-shm
+photos/
+*.log

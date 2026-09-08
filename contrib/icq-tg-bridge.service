@@ -1,0 +1,35 @@
+[Unit]
+Description=Мост ICQ (OSCAR) <-> Telegram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=icqbridge
+Group=icqbridge
+WorkingDirectory=/opt/icq-tg-bridge
+Environment=BRIDGE_CONFIG=/opt/icq-tg-bridge/config.toml
+Environment=BRIDGE_TELETHON_LOGLEVEL=WARNING
+ExecStart=/opt/icq-tg-bridge/.venv/bin/python /opt/icq-tg-bridge/run.py
+Restart=always
+RestartSec=10
+
+# Мосту нужен только свой каталог и сеть — остальное закрываем.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ReadWritePaths=/opt/icq-tg-bridge
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryMax=512M
+
+# Порты ниже 1024 требуют этой возможности; для 5190 и 8080 она не нужна.
+# AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

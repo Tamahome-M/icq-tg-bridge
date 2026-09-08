@@ -1,0 +1,43 @@
+#!/sbin/openrc-run
+# Служба моста ICQ (OSCAR) <-> Telegram для OpenRC.
+# Установка: cp contrib/icq-tg-bridge.openrc /etc/init.d/icq-tg-bridge
+#            chmod +x /etc/init.d/icq-tg-bridge
+# Настройки переопределяются в /etc/conf.d/icq-tg-bridge
+
+: ${bridge_user:=icqbridge}
+: ${bridge_dir:=/opt/icq-tg-bridge}
+: ${bridge_config:=${bridge_dir}/config.toml}
+: ${bridge_loglevel:=INFO}
+: ${bridge_telethon_loglevel:=WARNING}
+
+name="icq-tg-bridge"
+description="Мост ICQ (OSCAR) <-> Telegram"
+
+command="${bridge_dir}/.venv/bin/python"
+command_args="${bridge_dir}/run.py"
+command_user="${bridge_user}:${bridge_user}"
+command_background=true
+directory="${bridge_dir}"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/${RC_SVCNAME}.log"
+error_log="/var/log/${RC_SVCNAME}.log"
+
+export BRIDGE_CONFIG="${bridge_config}"
+export BRIDGE_LOGLEVEL="${bridge_loglevel}"
+export BRIDGE_TELETHON_LOGLEVEL="${bridge_telethon_loglevel}"
+
+depend() {
+	need net
+	after firewall
+}
+
+start_pre() {
+	checkpath --directory --mode 0750 --owner "${bridge_user}:${bridge_user}" \
+		"${bridge_dir}/photos"
+	checkpath --file --mode 0640 --owner "${bridge_user}:${bridge_user}" \
+		"${output_log}"
+	if [ ! -f "${bridge_config}" ]; then
+		eerror "нет файла настроек ${bridge_config}"
+		return 1
+	fi
+}
