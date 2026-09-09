@@ -177,8 +177,9 @@ class Bridge:
 
         Доставляем всё, что моложе busy_hold_minutes, не пропуская через новый
         фильтр: эти сообщения и так отложены из-за «занят», а человек вернулся.
-        Исключение — переход в тихий режим («не беспокоить», «недоступен»):
-        там телефон должен молчать.
+        Исключения два: переход в тихий режим («не беспокоить», «недоступен») —
+        там телефон должен молчать, и заглушённые в Telegram чаты — они
+        придержаны как раз из-за мьюта, и снимать его возврат в сеть не должен.
         """
         rows = self.storage.take_held()
         if not rows:
@@ -192,6 +193,10 @@ class Bridge:
         delivered = 0
         for uin, text, ts in rows:
             if ts < cutoff:
+                continue
+            contact = self.storage.contact_by_uin(uin)
+            if (self.mode != policy.ALL and contact is not None
+                    and contact.muted):
                 continue
             await self.oscar.deliver(uin, text)
             delivered += 1

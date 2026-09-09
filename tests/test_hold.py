@@ -69,6 +69,28 @@ async def main() -> None:
     assert not any("старое" in t for t in texts), texts
     bridge.storage.close()
 
+    # --- заглушённое придерживается, но при возврате в сеть не всплывает ---
+    bridge = make_bridge()
+    await bridge.on_owner_status(C.STATUS_OCCUPIED)
+    now = int(time.time())
+    await bridge.on_telegram_message(-4002, "Вася", "из заглушённой", now)
+    await bridge.on_telegram_message(555, "", "личное", now)
+    assert bridge.storage.held_count() == 1, "заглушённое личное должно придержаться"
+    assert bridge.storage.pending_count() == 1, "незаглушённое личное должно пройти"
+
+    await bridge.on_owner_status(C.STATUS_ONLINE)
+    assert bridge.storage.pending_count() == 1, \
+        "заглушённый чат не должен прорываться вместе с придержанным"
+
+    # А в «свободен для беседы» доходит и оно.
+    await bridge.on_owner_status(C.STATUS_OCCUPIED)
+    await bridge.on_telegram_message(-4002, "Вася", "ещё из заглушённой", int(time.time()))
+    assert bridge.storage.held_count() == 1
+    await bridge.on_owner_status(C.STATUS_FREE_FOR_CHAT)
+    assert bridge.storage.pending_count() == 2, "тут заглушённое должно дойти"
+    print("  заглушённое: придерживается и не всплывает при возврате — ок")
+    bridge.storage.close()
+
     # --- «не беспокоить»: молчит то, что заглушено в Telegram -------------
     bridge = make_bridge()
     await bridge.on_owner_status(C.STATUS_DND)
