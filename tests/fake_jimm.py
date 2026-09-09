@@ -34,6 +34,7 @@ class FakeJimm:
         self.capabilities: dict[int, bytes] = {}
         self.icon_hashes: dict[int, bytes] = {}
         self.privacy: list[tuple[int, int]] = []
+        self.urls: list[tuple[int, str]] = []      # ссылки из URL-сообщений
         self.received: list[tuple[int, str]] = []
         self.acks: list[bytes] = []
         self.next_msg_id = 1000
@@ -142,7 +143,8 @@ class FakeJimm:
         assert len(block) >= 53, f"блок {len(block)} байт, Jimm ждёт минимум 53"
 
         msg_type = struct.unpack_from("<H", block, 45)[0]
-        assert msg_type == 0x0001, f"тип сообщения {msg_type:#06x} Jimm не покажет"
+        assert msg_type in (0x0001, 0x0004), \
+            f"тип сообщения {msg_type:#06x} Jimm не покажет"
         text_len = struct.unpack_from("<H", block, 51)[0]
         assert len(block) >= 53 + text_len + 8, "блок обрывается на тексте"
         raw = block[53:53 + text_len]
@@ -158,6 +160,14 @@ class FakeJimm:
         ack = (cookie + struct.pack(">H", channel) + pstr8(sender_raw)
                + struct.pack(">H", 0x0003) + block[:51]
                + struct.pack("<H", 1) + b"\x00")
+
+        if msg_type == 0x0004:
+            # URL-сообщение: подпись и ссылка разделены байтом 0xFE — так их
+            # делит и настоящий клиент, показывая ссылку отдельной строкой.
+            head, sep, tail_url = raw.partition(b"\xfe")
+            self.urls.append((sender, tail_url.decode(encoding, "replace") if sep else ""))
+            return sender, head.decode(encoding, "replace"), ack
+
         return sender, raw.decode(encoding, "replace"), ack
 
     async def flush_acks(self) -> None:

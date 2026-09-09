@@ -643,11 +643,12 @@ class Bridge:
             photo = self.photos.convert(raw, caption)
             if photo is None:
                 continue
-            line = f"{self.photo_url(photo.token)} ({photo.size // 1024 or 1} КБ)"
+            link = self.photo_url(photo.token)
+            line = f"{link} ({photo.size // 1024 or 1} КБ)"
             if caption:
                 text = emoji.to_text(caption) if self.cfg.emoji_to_text else caption
                 line = f"{text}\n{line}"
-            await self.oscar.deliver(contact.uin, line, forced=True)
+            await self.oscar.deliver(contact.uin, line, forced=True, url=link)
             sent += 1
         if not sent:
             await self.reply(contact, "Не получилось подготовить фото")
@@ -694,9 +695,12 @@ class Bridge:
 
         minutes = self.cfg.render_ttl_minutes
         note = f", ссылка живёт {minutes} мин" if minutes > 0 else ""
+        link = self.render_url(page.token)
+        # Ссылка идёт и текстом, и отдельным полем: по полю клиент печатает
+        # её своей строкой, по тексту — добавляет в меню «Открыть ссылку».
         await self.reply(contact,
-                         f"{self.render_url(page.token)}\n"
-                         f"{len(items)} сообщений, {len(page.assets)} вложений{note}")
+                         f"{link}\n{len(items)} сообщений, "
+                         f"{len(page.assets)} вложений{note}", url=link)
 
     def render_url(self, token: str) -> str:
         host = self.cfg.photos_public_host or self.cfg.bos_host or "127.0.0.1"
@@ -706,13 +710,16 @@ class Bridge:
         host = self.cfg.photos_public_host or self.cfg.bos_host or "127.0.0.1"
         return f"http://{host}:{self.cfg.photos_port}/p/{token}.jpg"
 
-    async def reply(self, contact: Contact, text: str) -> None:
+    async def reply(self, contact: Contact, text: str, url: str = "") -> None:
         """Служебный ответ моста — приходит от того же контакта.
 
         Такие сообщения — ответ на команду с телефона, поэтому доставляются
         при любом статусе, даже в «не беспокоить».
+
+        С непустым url ответ уходит URL-сообщением: клиент печатает ссылку
+        отдельной строкой и даёт открыть её браузером телефона.
         """
-        await self.oscar.deliver(contact.uin, text, forced=True)
+        await self.oscar.deliver(contact.uin, text, forced=True, url=url)
 
     # --- запуск ---------------------------------------------------------
 

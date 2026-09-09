@@ -204,6 +204,52 @@ async def run_web() -> None:
     print("  раздача: ок (страница, вложения, чужие ссылки)")
 
 
+async def run_url_message() -> None:
+    """Ссылка доезжает до клиента отдельным полем URL-сообщения."""
+    from bridge.access import AccessControl        # noqa: F401  (уже импортирован)
+    from bridge.db import Storage
+    from bridge.oscar.server import OscarServer
+    from tests.fake_jimm import FakeJimm
+
+    cfg = Config()
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 1
+    cfg.oscar_uin, cfg.oscar_password = "1", "s3cret"
+    cfg.bos_host = "127.0.0.1"
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+
+    async def on_outgoing(*_):
+        return 1
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts)
+    await server.start()
+
+    client = FakeJimm("127.0.0.1", cfg.oscar_port, cfg.oscar_uin, cfg.oscar_password)
+    await client.connect()
+    await client.bos(await client.login_md5_jimm())
+    await client.drain_for(0.5)
+
+    link = "http://10.0.0.1:8080/r/k7m3qb2xta"
+    await server.deliver(uin, f"{link}\n12 сообщений", forced=True, url=link)
+    await client.drain_for(0.6)
+
+    assert (uin, link) in client.urls, client.urls
+    got = [text for sender, text in client.received if "сообщений" in text]
+    assert got and got[0].startswith(link), \
+        "ссылка должна остаться и в тексте — иначе не будет пункта «Открыть ссылку»"
+
+    # Обычное сообщение остаётся обычным.
+    before = len(client.urls)
+    await server.deliver(uin, "просто текст")
+    await client.drain_for(0.5)
+    assert len(client.urls) == before, client.urls
+
+    await client.close()
+    server._server.close()
+    storage.close()
+    print("  URL-сообщение: ок (ссылка отдельным полем и в тексте)")
+
+
 async def run_command() -> None:
     """Команда целиком: от разбора до ссылки в ответе."""
     assert history.parse("!render").name == "render"
@@ -241,8 +287,10 @@ async def run_command() -> None:
     bridge.telegram.render_items = render_items
 
     sent: list[str] = []
+    links: list[str] = []
 
-    async def deliver(target, text, forced=False):
+    async def deliver(target, text, forced=False, url=""):
+        links.append(url)
         sent.append(text)
         return True
 
@@ -257,6 +305,8 @@ async def run_command() -> None:
     assert link[0].startswith("http://10.0.0.1:8080/r/"), link
     assert "2 сообщений, 1 вложений" in link[0], link
     assert "30 мин" in link[0], "срок жизни ссылки должен быть в ответе"
+    assert link[0].split("\n")[0] in links, \
+        "ссылка должна уйти и отдельным полем — URL-сообщением"
 
     token = link[0].split("/r/")[1].split("\n")[0]
     body = bridge.render.page_for(token)
@@ -289,6 +339,7 @@ async def main() -> None:
     await run_expiry()
     await run_web()
     await run_command()
+    await run_url_message()
     print("СТРАНИЦА ПЕРЕПИСКИ ПРОВЕРЕНА")
 
 

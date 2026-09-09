@@ -87,15 +87,24 @@ CONTACT_CAPABILITIES = CAP_TYPING + CAP_IS_ICQ
 GUID_UTF8 = b"{0946134E-4C7F-11D1-8222-444553540000}"
 
 MSG_TYPE_PLAIN = 0x0001
+# URL-сообщение ICQ: клиент печатает ссылку отдельной строкой и помечает
+# сообщение своим значком. Подпись и ссылка разделяются байтом 0xFE.
+MSG_TYPE_URL = 0x0004
+URL_SEPARATOR = b"\xfe"
 
 
-def channel2_message(cookie: bytes, text: str) -> bytes:
+def channel2_message(cookie: bytes, text: str, url: str = "") -> bytes:
     """Расширенное сообщение ICQ (канал 2) — то, на что Jimm отвечает SNAC 04/0B.
 
     Раскладка жёсткая: клиент читает поля по фиксированным смещениям и до
     начала текста ждёт ровно 53 байта.
+
+    С непустым url сообщение уходит типом 0x0004: клиент разбирает тело по
+    байту 0xFE и показывает ссылку отдельной строкой.
     """
-    payload = text.encode("utf-8")
+    msg_type = MSG_TYPE_URL if url else MSG_TYPE_PLAIN
+    payload = (text.encode("utf-8") + URL_SEPARATOR + url.encode("utf-8")
+               if url else text.encode("utf-8"))
     block = (
         struct.pack("<H", 0x001B)      # длина заголовка
         + struct.pack("<H", 0x0008)    # версия протокола
@@ -106,7 +115,7 @@ def channel2_message(cookie: bytes, text: str) -> bytes:
         + struct.pack("<H", 0xFFFF)    # счётчик
         + struct.pack("<H", 0x000E)
         + bytes(12)
-        + struct.pack("<H", MSG_TYPE_PLAIN)
+        + struct.pack("<H", msg_type)
         + struct.pack("<H", 0)         # состояние
         + struct.pack("<H", 0)         # приоритет
         + struct.pack("<H", len(payload))
