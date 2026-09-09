@@ -90,7 +90,8 @@ class Bridge:
 
         contact = self._by_uin.get(uin)
         if contact is not None and not policy.allows(self.mode, contact.kind,
-                                                     bool(contact.favourite)):
+                                                     bool(contact.favourite),
+                                                     bool(contact.muted)):
             return C.STATUS_NA if policy.holds(self.mode) else C.STATUS_DND
         return real
 
@@ -155,7 +156,8 @@ class Bridge:
         contact = self.storage.contact_by_uin(uin)
         if contact is None:
             return "send"
-        if policy.allows(self.mode, contact.kind, bool(contact.favourite)):
+        if policy.allows(self.mode, contact.kind, bool(contact.favourite),
+                         bool(contact.muted)):
             return "send"
         return "hold" if policy.holds(self.mode) else "drop"
 
@@ -212,7 +214,8 @@ class Bridge:
             favourite = int(d.pinned or d.title.strip().lower() in self.cfg.favourites)
             uin = self.storage.uin_for_peer(d.peer_id, kind=d.kind, title=d.title,
                                             group_name=d.group_name, position=d.position,
-                                            favourite=favourite, topic_id=d.topic_id)
+                                            favourite=favourite, topic_id=d.topic_id,
+                                            muted=int(d.muted))
             self._unread[d.peer_id] = d.unread
             code = STATUS_CODES.get(d.status, C.STATUS_ONLINE)
             changed = uin in self._statuses and self._statuses[uin] != code
@@ -288,7 +291,8 @@ class Bridge:
 
         # Статус в Jimm решает, что доставлять, а что придержать или пропустить.
         if contact is not None and not policy.allows(self.mode, contact.kind,
-                                                     bool(contact.favourite)):
+                                                     bool(contact.favourite),
+                                                     bool(contact.muted)):
             if policy.holds(self.mode):
                 self.storage.hold(uin, text, ts or int(time.time()),
                                   self.cfg.offline_queue_per_chat)
@@ -330,7 +334,8 @@ class Bridge:
         if not active:
             await self.stop_typing(contact.uin)
             return
-        if not policy.allows(self.mode, contact.kind, bool(contact.favourite)):
+        if not policy.allows(self.mode, contact.kind, bool(contact.favourite),
+                             bool(contact.muted)):
             return
 
         await self.oscar.notify_typing(contact.uin, True)

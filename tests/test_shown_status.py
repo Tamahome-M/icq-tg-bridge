@@ -29,6 +29,8 @@ def make_bridge() -> tuple[Bridge, list[tuple[int, int]]]:
     bridge.storage.uin_for_peer(-4001, kind="chat", title="Дача", group_name="Группы")
     bridge.storage.uin_for_peer(-100200, kind="channel", title="Новости",
                                 group_name="Каналы", favourite=1)
+    bridge.storage.uin_for_peer(-4002, kind="chat", title="Шумная",
+                                group_name="Группы", muted=1)
     bridge._roster = bridge.storage.contacts()
     bridge._by_uin = {c.uin: c for c in bridge._roster}
 
@@ -65,10 +67,12 @@ async def main() -> None:
     assert bridge.status_of(favourite) == C.STATUS_NA, "избранное тоже копится"
     assert (group, C.STATUS_NA) in sent, "смена режима должна разослать статусы"
 
-    # «Не беспокоить»: всё групповое выглядит заглушённым.
+    # «Не беспокоить»: заглушённый в Telegram чат выглядит заглушённым,
+    # остальные — как есть, потому что сообщения от них дойдут.
+    muted = bridge.storage.contact_by_peer(-4002).uin
     await bridge.on_owner_status(C.STATUS_DND)
-    assert bridge.status_of(group) == C.STATUS_DND
-    assert bridge.status_of(favourite) == C.STATUS_DND
+    assert bridge.status_of(muted) == C.STATUS_DND, "заглушённый должен быть виден как молчащий"
+    assert bridge.status_of(group) == C.STATUS_ONLINE, "незаглушённый проходит"
     assert bridge.status_of(mom) == C.STATUS_ONLINE
 
     # Офлайн важнее подмены: если собеседника нет, так и показываем.

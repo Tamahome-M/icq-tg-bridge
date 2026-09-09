@@ -37,6 +37,7 @@ class Dialog:
     unread: int = 0
     pinned: bool = False
     topic_id: int = 0          # тема форума; 0 — обычный чат
+    muted: bool = False        # чат заглушён в Telegram
 
 
 class TelegramSide:
@@ -99,6 +100,7 @@ class TelegramSide:
             group = self._folder_for(folders, entity, kind) or KIND_TITLES.get(kind, "Чаты")
             title = dialog.name or str(peer_id)
             pinned = bool(getattr(dialog, "pinned", False))
+            muted = is_muted(dialog)
             status = status_of(entity, kind)
 
             # Форум — это несколько чатов в одном: каждая тема становится
@@ -108,12 +110,14 @@ class TelegramSide:
                 for topic in topics:
                     out.append(Dialog(peer_id, "chat", topic.title or f"Тема {topic.id}",
                                       title[:self.cfg.alias_max_chars], position,
-                                      status, topic.unread_count or 0, pinned, topic.id))
+                                      status, topic.unread_count or 0, pinned,
+                                      topic.id, muted))
                     position += 1
                 continue
 
             out.append(Dialog(peer_id, kind, title, group, position,
-                              status, dialog.unread_count or 0, pinned))
+                              status, dialog.unread_count or 0, pinned,
+                              muted=muted))
             position += 1
         spread: dict[str, int] = {}
         for dialog in out:
@@ -446,6 +450,26 @@ class TelegramSide:
         except Exception:
             return str(peer_id), "chat"
         return utils.get_display_name(entity) or str(peer_id), self._kind(entity)
+
+
+def is_muted(dialog) -> bool:
+    """Заглушён ли чат в самом Telegram.
+
+    Уведомления там выключаются двумя способами: беззвучным режимом и
+    отключением до определённого момента (у «навсегда» дата очень далёкая).
+    """
+    settings = getattr(getattr(dialog, "dialog", None), "notify_settings", None)
+    if settings is None:
+        return False
+    if getattr(settings, "silent", False):
+        return True
+    until = getattr(settings, "mute_until", None)
+    if until is None:
+        return False
+    try:
+        return until > dt.datetime.now(dt.timezone.utc)
+    except TypeError:              # на всякий случай, если пришло число
+        return bool(until)
 
 
 def topic_of(message) -> int:

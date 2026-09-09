@@ -28,6 +28,9 @@ def make_bridge() -> Bridge:
     bridge = Bridge(cfg)
     bridge.storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
     bridge.storage.uin_for_peer(-4001, kind="chat", title="Дача", group_name="Группы")
+    # Заглушённый в Telegram чат: в «не беспокоить» он молчит.
+    bridge.storage.uin_for_peer(-4002, kind="chat", title="Шумная", group_name="Группы",
+                                muted=1)
     bridge.storage.uin_for_peer(-100200, kind="channel", title="Новости",
                                 group_name="Каналы", favourite=1)
     bridge._roster = bridge.storage.contacts()
@@ -66,17 +69,21 @@ async def main() -> None:
     assert not any("старое" in t for t in texts), texts
     bridge.storage.close()
 
-    # --- «не беспокоить»: групповое пропадает совсем ----------------------
+    # --- «не беспокоить»: молчит то, что заглушено в Telegram -------------
     bridge = make_bridge()
     await bridge.on_owner_status(C.STATUS_DND)
     assert bridge.mode == policy.PERSONAL
-    await bridge.on_telegram_message(-4001, "Вася", "в группе", int(time.time()))
-    await bridge.on_telegram_message(-100200, "", "в канале", int(time.time()))
+
+    await bridge.on_telegram_message(-4002, "Вася", "из заглушённой", int(time.time()))
     assert bridge.storage.held_count() == 0, "«не беспокоить» ничего не копит"
-    assert bridge.storage.pending_count() == 0, "и ничего не доставляет"
+    assert bridge.storage.pending_count() == 0, "заглушённый чат не должен доходить"
+
+    # Незаглушённая группа проходит: так настроено в самом Telegram.
+    await bridge.on_telegram_message(-4001, "Вася", "из обычной", int(time.time()))
+    assert bridge.storage.pending_count() == 1, "незаглушённый чат должен доходить"
 
     await bridge.on_owner_status(C.STATUS_ONLINE)
-    assert bridge.storage.pending_count() == 0, "после «не беспокоить» ничего не догоняет"
+    assert bridge.storage.pending_count() == 1, "пропущенное не догоняет"
     bridge.storage.close()
 
     # --- из «занят» сразу в «не беспокоить»: придержанное не всплывает -----
@@ -133,7 +140,9 @@ async def main() -> None:
 
     # Владелец входит в «не беспокоить»: групповое доставлять нельзя.
     await bridge.on_owner_status(C.STATUS_DND)
-    assert bridge.verdict_for(group.uin) == "drop", "групповое должно отсеиваться"
+    muted = bridge.storage.contact_by_peer(-4002)
+    assert bridge.verdict_for(muted.uin) == "drop", "заглушённое должно отсеиваться"
+    assert bridge.verdict_for(group.uin) == "send", "незаглушённое должно доходить"
     assert bridge.verdict_for(mom.uin) == "send", "личное должно доходить"
 
     # В «занят» то же самое, но с сохранением до смены статуса.
@@ -150,12 +159,14 @@ async def main() -> None:
     group = bridge.storage.contact_by_peer(-4001)
     await bridge.on_owner_status(C.STATUS_DND)
 
-    await bridge.reply(group, "ответ на команду")
+    await bridge.reply(bridge.storage.contact_by_peer(-4002), "ответ на команду")
     rows = bridge.storage.peek_pending()
     assert len(rows) == 1 and rows[0][4] is True, \
         "ответ на команду должен быть помечен как обязательный"
 
-    await bridge.oscar.deliver(group.uin, "обычное из группы")
+    # Обычное сообщение из заглушённого чата в тишине доставляться не должно.
+    silent = bridge.storage.contact_by_peer(-4002)
+    await bridge.oscar.deliver(silent.uin, "обычное из заглушённой")
     rows = bridge.storage.peek_pending()
     assert [r[4] for r in rows] == [True, False], [r[4] for r in rows]
 

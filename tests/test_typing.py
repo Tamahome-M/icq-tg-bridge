@@ -27,6 +27,8 @@ def make_bridge() -> tuple[Bridge, list[tuple[int, bool]]]:
     bridge = Bridge(cfg)
     bridge.storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
     bridge.storage.uin_for_peer(-4001, kind="chat", title="Дача", group_name="Группы")
+    bridge.storage.uin_for_peer(-4002, kind="chat", title="Шумная",
+                                group_name="Группы", muted=1)
     bridge._roster = bridge.storage.contacts()
 
     sent: list[tuple[int, bool]] = []
@@ -76,11 +78,11 @@ async def main() -> None:
     await bridge.on_telegram_typing(555, False)
     assert sent == [(mom, True), (mom, False)], sent
 
-    # --- «не беспокоить»: группа не должна дёргать телефон ----------------
+    # --- «не беспокоить»: заглушённый чат не должен дёргать телефон -------
     sent.clear()
     await bridge.on_owner_status(C.STATUS_DND)
-    await bridge.on_telegram_typing(-4001, True)
-    assert sent == [], f"в тишине индикатор показывать нельзя: {sent}"
+    await bridge.on_telegram_typing(-4002, True)
+    assert sent == [], f"из заглушённого чата индикатор показывать нельзя: {sent}"
     bridge.storage.close()
 
     print("  индикатор набора: гаснет по таймауту, по сообщению и по отмене — ок")
