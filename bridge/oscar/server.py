@@ -46,6 +46,7 @@ RATE_PAIRS = [
     (C.SSI, 0x0002), (C.SSI, 0x0003), (C.SSI, 0x0004), (C.SSI, 0x0006),
     (C.SSI, 0x0007), (C.SSI, 0x0008), (C.SSI, 0x0009), (C.SSI, 0x000A),
     (C.ICQ, 0x0002), (C.ICQ, 0x0003),
+    (C.SSBI, C.SSBI_ICQ_REQ), (C.SSBI, C.SSBI_ICQ_REPLY),
 ]
 
 
@@ -58,6 +59,8 @@ class Session:
         self.reader = reader
         self.writer = writer
         self.seq = int.from_bytes(os.urandom(2), "big") & 0x7FFF
+        # Соединение, открытое только ради аватарок: сообщений через него нет.
+        self.service_only = False
         self.authorized = False
         self.ready = False
         self.closed = False
@@ -148,7 +151,16 @@ class Session:
 
         cookie = tlvs.get(C.TLV_AUTH_COOKIE)
         if cookie is not None:
-            if self.server.consume_cookie(cookie):
+            kind = self.server.consume_cookie(cookie)
+            if kind == "bart":
+                # Отдельное соединение за аватарками: основное трогать нельзя,
+                # иначе телефон останется без сообщений.
+                self.service_only = True
+                self.authorized = True
+                log.debug("подключение за аватарками с %s", self.peer)
+                await self.send_snac(C.OSERVICE, C.SRV_READY,
+                                     struct.pack(">H", C.SSBI))
+            elif kind:
                 await self.start_bos()
             else:
                 log.warning("неизвестный cookie от %s", self.peer)
@@ -325,6 +337,7 @@ class Session:
             (C.SSI, C.SSI_DELETE): self.on_ssi_delete,
             (C.SSI, C.SSI_REMOVE_ME): self.on_ssi_remove_me,
             (C.ICQ, 0x0002): self.on_icq_meta,
+            (C.SSBI, C.SSBI_ICQ_REQ): self.on_icon_request,
         }.get((s.family, s.subtype))
 
         if handler is None:
@@ -634,7 +647,8 @@ class Session:
         else:
             await self.send_snac(C.BUDDY, C.BUDDY_ARRIVED,
                                  blocks.user_info(str(uin), status=status,
-                                                  signon_time=self.signon_time))
+                                                  signon_time=self.signon_time,
+                                                  icon_hash=self.server.icon_hash(uin)))
 
     # --- сообщения ------------------------------------------------------
 
@@ -725,10 +739,47 @@ class Session:
                              blocks.typing_packet(uin, active))
 
     async def on_service_request(self, s: Snac) -> None:
-        """Клиент просит адрес дополнительного сервиса (обычно аватары).
-        Такого у нас нет — отвечаем ошибкой, иначе он будет ждать впустую."""
-        log.debug("запрошен дополнительный сервис — отвечаю отказом")
-        await self.send_error(C.OSERVICE, 0x0001, s.request_id)
+        """Клиент просит адрес дополнительного сервиса.
+
+        Аватарки живут в семействе 0x10, и за ними клиент идёт отдельным
+        соединением — присылаем адрес того же сервера и cookie на один вход.
+        Остальные сервисы отвечаем отказом, иначе клиент будет ждать впустую.
+        """
+        family = struct.unpack(">H", s.data[:2])[0] if len(s.data) >= 2 else 0
+        if family != C.SSBI or not self.server.avatars_enabled:
+            log.debug("запрошен сервис 0x%04x — отвечаю отказом", family)
+            await self.send_error(C.OSERVICE, 0x0001, s.request_id)
+            return
+
+        cookie = self.server.new_cookie("bart")
+        body = (tlv_u16(C.TLV_SERVICE_ID, C.SSBI)
+                + tlv(C.TLV_BOS_ADDRESS,
+                      self.server.service_address(self.writer).encode())
+                + tlv(C.TLV_AUTH_COOKIE, cookie))
+        log.debug("отправляю клиента за аватарками на %s",
+                  self.server.service_address(self.writer))
+        await self.send_snac(C.OSERVICE, C.SERVICE_REDIRECT, body,
+                             request_id=s.request_id)
+
+    async def on_icon_request(self, s: Snac) -> None:
+        """SNAC 10/06 — клиент просит аватарку контакта."""
+        r = Reader(s.data)
+        try:
+            target = r.pstr8().decode("latin-1")
+        except Exception:
+            return
+        if not target.isdigit():
+            return
+        got = await self.server.avatar(int(target))
+        if got is None:
+            log.debug("аватарки для UIN %s нет", target)
+            await self.send_error(C.SSBI, 0x0001, s.request_id)
+            return
+        icon_hash, image = got
+        log.info("отдаю аватарку UIN %s, %d байт", target, len(image))
+        await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
+                             blocks.icon_reply(int(target), icon_hash, image),
+                             request_id=s.request_id)
 
     async def on_icbm_client_ack(self, s: Snac) -> None:
         """Клиент подтвердил получение — теперь запись можно убрать из очереди."""
@@ -784,7 +835,9 @@ class OscarServer:
                  search: Callable[[str], Awaitable[list[dict]]] | None = None,
                  verdict_for: Callable[[int], str] | None = None,
                  on_remove: Callable[[int, bool], Awaitable[None]] | None = None,
-                 on_privacy: Callable[[int, bool], Awaitable[None]] | None = None):
+                 on_privacy: Callable[[int, bool], Awaitable[None]] | None = None,
+                 avatar: Callable[[int], Awaitable[tuple[bytes, bytes] | None]] | None = None,
+                 icon_hash: Callable[[int], bytes | None] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -796,6 +849,10 @@ class OscarServer:
         self.verdict_for = verdict_for or (lambda uin: "send")
         self.on_remove = on_remove or self._ignore_remove
         self.on_privacy = on_privacy or self._ignore_privacy
+        # Аватарки: примета для блока сведений и сама картинка по запросу.
+        self.avatar = avatar or self._no_avatar
+        self.icon_hash = icon_hash or (lambda uin: None)
+        self.avatars_enabled = bool(getattr(cfg, "avatars", True))
         self.uin = str(cfg.oscar_uin)
         self.password = cfg.oscar_password
         self.ssi_encoding = cfg.ssi_encoding
@@ -871,15 +928,29 @@ class OscarServer:
         finally:
             self.access.free_slot()
 
-    def new_cookie(self) -> bytes:
+    def new_cookie(self, kind: str = "bos") -> bytes:
         cookie = os.urandom(16)
         now = time.time()
-        self._cookies = {c: t for c, t in self._cookies.items() if now - t < 120}
-        self._cookies[cookie] = now
+        self._cookies = {c: (t, k) for c, (t, k) in self._cookies.items()
+                         if now - t < 120}
+        self._cookies[cookie] = (now, kind)
         return cookie
 
-    def consume_cookie(self, cookie: bytes) -> bool:
-        return self._cookies.pop(cookie, None) is not None
+    def consume_cookie(self, cookie: bytes) -> str | None:
+        """Возвращает род cookie: «bos» — обычный вход, «bart» — за аватарками."""
+        got = self._cookies.pop(cookie, None)
+        return got[1] if got else None
+
+    def service_address(self, writer: asyncio.StreamWriter) -> str:
+        """Куда идти за аватарками.
+
+        Старые клиенты берут из ответа только имя хоста и стучатся на 5190,
+        поэтому порт добавляем, лишь когда он другой: клиент, умеющий его
+        прочитать, попадёт куда надо, а не умеющий — хотя бы на 5190.
+        """
+        address = self.bos_address(writer)
+        host, _, port = address.rpartition(":")
+        return host if port == "5190" else address
 
     def bos_address(self, writer: asyncio.StreamWriter) -> str:
         host = self.cfg.bos_host
@@ -961,6 +1032,10 @@ class OscarServer:
 
     @staticmethod
     async def _ignore_privacy(uin: int, muted: bool) -> None:
+        return None
+
+    @staticmethod
+    async def _no_avatar(uin: int) -> tuple[bytes, bytes] | None:
         return None
 
     async def notify_typing(self, uin: int, active: bool) -> None:

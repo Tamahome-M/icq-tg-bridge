@@ -32,6 +32,7 @@ class FakeJimm:
         self.offline_uins: list[int] = []
         self.statuses: dict[int, int] = {}
         self.capabilities: dict[int, bytes] = {}
+        self.icon_hashes: dict[int, bytes] = {}
         self.received: list[tuple[int, str]] = []
         self.acks: list[bytes] = []
         self.next_msg_id = 1000
@@ -83,6 +84,12 @@ class FakeJimm:
             self.online_uins.append(uin)
             self.statuses[uin] = struct.unpack(">I", raw)[0]
             self.capabilities[uin] = tlvs.get(C.UI_TLV_CAPABILITIES) or b""
+            bart = tlvs.get(C.UI_TLV_BART)
+            if bart and len(bart) >= 4:
+                # тип приметы, флаги, длина, дальше сам хеш
+                kind, flags, size = struct.unpack(">HBB", bart[:4])
+                if kind == C.BART_ICON:
+                    self.icon_hashes[uin] = bart[4:4 + size]
         elif (s.family, s.subtype) == (C.BUDDY, C.BUDDY_DEPARTED):
             self.offline_uins.append(int(s.reader().pstr8()))
         elif (s.family, s.subtype) == (C.ICBM, C.ICBM_ACK):
@@ -338,6 +345,44 @@ class FakeJimm:
     async def request_service(self, family: int) -> None:
         """Просит адрес дополнительного сервиса — так Jimm ищет аватары."""
         await self.send_snac(C.OSERVICE, C.SERVICE_REQUEST, struct.pack(">H", family))
+
+    async def request_avatar(self, uin: int, timeout: float = 5.0) -> dict:
+        """Забирает аватарку так же, как настоящий Jimm.
+
+        Сначала спрашивает адрес службы, потом открывает к ней отдельное
+        соединение по выданному cookie и уже там просит картинку.
+        """
+        await self.request_service(C.SSBI)
+        redirect = await self.expect(C.OSERVICE, C.SERVICE_REDIRECT, timeout)
+        tlvs = redirect.reader().tlvs(3)
+        host = (tlvs.get(C.TLV_BOS_ADDRESS) or b"").decode()
+        cookie = tlvs.get(C.TLV_AUTH_COOKIE) or b""
+        port = int(host.partition(":")[2] or 5190)
+
+        main_reader, main_writer = self.reader, self.writer
+        self.reader, self.writer = await asyncio.open_connection(self.host, port)
+        try:
+            await self.recv_flap()
+            await self.send_flap(1, struct.pack(">I", 1) + tlv(C.TLV_AUTH_COOKIE, cookie))
+            await self.expect(C.OSERVICE, C.SRV_READY, timeout)
+            await self.send_snac(C.OSERVICE, C.CLI_READY, b"")
+
+            digest = self.icon_hashes.get(uin, b"\x00" * 16)
+            body = (pstr8(str(uin).encode()) + b"\x01" + struct.pack(">H", 1)
+                    + b"\x01" + bytes([len(digest)]) + digest)
+            await self.send_snac(C.SSBI, C.SSBI_ICQ_REQ, body)
+            reply = await self.expect(C.SSBI, C.SSBI_ICQ_REPLY, timeout)
+        finally:
+            self.writer.close()
+            self.reader, self.writer = main_reader, main_writer
+
+        r = reply.reader()
+        got_uin = int(r.pstr8())
+        # Клиент отсчитывает начало картинки по длине блока примет: две
+        # штуки подряд и разделительный байт между ними.
+        r.read(2 + 1 + 1 + 16 + 1 + 2 + 1 + 1 + 16)
+        length = r.u16()
+        return {"uin": got_uin, "image": r.read(length), "hash": digest}
 
     async def set_status(self, status: int) -> None:
         """Ставит статус так же, как это делает Jimm."""

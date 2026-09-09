@@ -50,6 +50,9 @@ class Config:
     topics_limit: int = 50
     favourites: tuple[str, ...] = ()
     busy_hold_minutes: int = 30
+    avatars: bool = True
+    avatar_size: int = 64
+    avatar_max_kb: int = 4
     photos_enabled: bool = True
     photos_host: str = "0.0.0.0"
     photos_port: int = 8080
@@ -112,6 +115,9 @@ class Config:
             topics_limit=int(br.get("topics_limit", cls.topics_limit)),
             favourites=tuple(str(x).strip().lower() for x in br.get("favourites", [])),
             busy_hold_minutes=int(br.get("busy_hold_minutes", cls.busy_hold_minutes)),
+            avatars=bool(br.get("avatars", cls.avatars)),
+            avatar_size=int(br.get("avatar_size", cls.avatar_size)),
+            avatar_max_kb=int(br.get("avatar_max_kb", cls.avatar_max_kb)),
             photos_enabled=bool(ph.get("enabled", True)),
             photos_host=ph.get("host", cls.photos_host),
             photos_port=int(ph.get("port", cls.photos_port)),

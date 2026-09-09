@@ -40,6 +40,7 @@ class Dialog:
     pinned: bool = False
     topic_id: int = 0          # тема форума; 0 — обычный чат
     muted: bool = False        # чат заглушён в Telegram
+    photo_id: int = 0          # какая сейчас аватарка; 0 — фото нет
 
 
 class TelegramSide:
@@ -104,6 +105,7 @@ class TelegramSide:
             pinned = bool(getattr(dialog, "pinned", False))
             muted = is_muted(dialog)
             status = status_of(entity, kind)
+            photo_id = photo_id_of(entity)
 
             # Форум — это несколько чатов в одном: каждая тема становится
             # отдельным собеседником, а сам форум — группой контакт-листа.
@@ -113,13 +115,13 @@ class TelegramSide:
                     out.append(Dialog(peer_id, "chat", topic.title or f"Тема {topic.id}",
                                       title[:self.cfg.alias_max_chars], position,
                                       status, topic.unread_count or 0, pinned,
-                                      topic.id, muted))
+                                      topic.id, muted, photo_id))
                     position += 1
                 continue
 
             out.append(Dialog(peer_id, kind, title, group, position,
                               status, dialog.unread_count or 0, pinned,
-                              muted=muted))
+                              muted=muted, photo_id=photo_id))
             position += 1
         spread: dict[str, int] = {}
         for dialog in out:
@@ -312,6 +314,16 @@ class TelegramSide:
             except Exception:
                 continue
         return None
+
+    async def avatar(self, peer_id: int) -> bytes | None:
+        """Маленькая аватарка чата — та, что Telegram отдаёт для списков."""
+        try:
+            entity = await self.client.get_input_entity(peer_id)
+            return await self.client.download_profile_photo(entity, file=bytes,
+                                                            download_big=False)
+        except Exception:
+            log.warning("аватарка чата %s недоступна", peer_id)
+            return None
 
     async def set_muted(self, peer_id: int, muted: bool) -> bool:
         """Заглушает чат в Telegram или возвращает ему голос.
@@ -506,6 +518,12 @@ def status_of(entity, kind: str) -> str:
     if kind != "user":
         return "online"
     return status_name(getattr(entity, "status", None))
+
+
+def photo_id_of(entity) -> int:
+    """Идентификатор аватарки чата; 0 — фотографии нет или она не видна."""
+    photo = getattr(entity, "photo", None)
+    return int(getattr(photo, "photo_id", 0) or 0)
 
 
 def status_name(status) -> str:

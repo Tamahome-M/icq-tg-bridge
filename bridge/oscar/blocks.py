@@ -13,7 +13,7 @@ from .proto import Reader, TLVList, pstr8, pstr16, tlv, tlv_u16, tlv_u32
 
 def user_info(screenname: str, *, warning: int = 0, user_class: int | None = None,
               status: int = C.STATUS_ONLINE, signon_time: int | None = None,
-              online_seconds: int = 0) -> bytes:
+              online_seconds: int = 0, icon_hash: bytes | None = None) -> bytes:
     """Блок сведений о пользователе — им сервер описывает и себя, и контакты."""
     if user_class is None:
         user_class = C.CLASS_FREE | C.CLASS_ICQ
@@ -29,7 +29,28 @@ def user_info(screenname: str, *, warning: int = 0, user_class: int | None = Non
         + tlv(C.UI_TLV_CAPABILITIES, CONTACT_CAPABILITIES)
     )
     tlv_count = 7
+    if icon_hash:
+        # Примета аватарки: увидев её, клиент сам придёт за картинкой в
+        # семейство 0x10. Хеш для него — просто ярлык: каким прислали, таким
+        # он его и вернёт в запросе.
+        body += tlv(C.UI_TLV_BART,
+                    struct.pack(">HBB", C.BART_ICON, C.BART_ICON_FLAGS, len(icon_hash))
+                    + icon_hash)
+        tlv_count += 1
     return pstr8(screenname.encode("ascii", "replace")) + struct.pack(">HH", warning, tlv_count) + body
+
+
+def icon_reply(uin: int, icon_hash: bytes, image: bytes) -> bytes:
+    """Тело SNAC 10/07: аватарка контакта.
+
+    Приметы идут дважды подряд — так устроен ответ настоящего сервера, и клиент
+    отсчитывает начало картинки по этой длине, а не по разбору полей.
+    """
+    marks = (struct.pack(">HBB", C.BART_ICON, C.BART_ICON_FLAGS, len(icon_hash))
+             + icon_hash)
+    return (pstr8(str(uin).encode("ascii"))
+            + marks + b"\x00" + marks
+            + struct.pack(">H", len(image)) + image)
 
 
 def buddy_departed(uin: int) -> bytes:

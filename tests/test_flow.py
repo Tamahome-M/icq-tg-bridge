@@ -133,8 +133,9 @@ async def run_case(login_mode: str) -> None:
     await client.drain_for(0.4)
     assert (uins["Мама"], True) in client.typing, client.typing
 
-    # Запрос дополнительного сервиса: отвечаем отказом, а не молчанием.
-    await client.request_service(0x0010)
+    # Незнакомый дополнительный сервис: отвечаем отказом, а не молчанием.
+    # За аватарками (0x10) отвечаем адресом службы — это проверяет test_avatars.
+    await client.request_service(0x000D)
     await client.drain_for(0.4)
     assert any(family == C.OSERVICE for family, _ in client.errors), client.errors
 

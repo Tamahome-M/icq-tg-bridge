@@ -11,6 +11,7 @@ POPUP = 0x0008
 PD = 0x0009         # приватность
 USER_LOOKUP = 0x000A
 STATS = 0x000B
+SSBI = 0x0010       # аватарки на сервере (BART)
 SSI = 0x0013        # контакт-лист на сервере
 ICQ = 0x0015        # расширения ICQ
 AUTH = 0x0017       # авторизация
@@ -27,6 +28,7 @@ FAMILY_VERSIONS = {
     PD: 1,
     USER_LOOKUP: 1,
     STATS: 1,
+    SSBI: 1,
     SSI: 3,
     ICQ: 1,
 }
@@ -43,7 +45,20 @@ CLI_VERSIONS = 0x0017
 SRV_VERSIONS = 0x0018
 SET_STATUS = 0x001E
 SERVICE_REQUEST = 0x0004    # клиент просит адрес дополнительного сервиса
+SERVICE_REDIRECT = 0x0005   # ответ: куда идти за этим сервисом
 SRV_MOTD = 0x0013
+
+# SSBI — аватарки. Клиент просит картинку по хешу, который сервер прислал
+# в приметах контакта (TLV 0x001D блока сведений).
+SSBI_ERROR = 0x0001
+SSBI_ICQ_REQ = 0x0006       # клиент просит аватарку контакта
+SSBI_ICQ_REPLY = 0x0007     # ответ с картинкой
+BART_ICON = 0x0001          # тип приметы: хеш аватарки
+BART_ICON_FLAGS = 0x01
+BART_HASH_SIZE = 16
+
+# TLV ответа 01/05
+TLV_SERVICE_ID = 0x000D
 
 # LOCATE
 LOCATE_RIGHTS_REQ = 0x0002
@@ -125,6 +140,7 @@ UI_TLV_EXTERNAL_IP = 0x000A
 UI_TLV_DC_INFO = 0x000C
 UI_TLV_CAPABILITIES = 0x000D
 UI_TLV_ONLINE_TIME = 0x000F
+UI_TLV_BART = 0x001D        # приметы картинок: аватарка, x-статус
 
 # Классы пользователя
 CLASS_FREE = 0x0010
