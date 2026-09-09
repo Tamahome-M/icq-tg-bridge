@@ -633,8 +633,9 @@ class Bridge:
             raise RuntimeError(
                 f"Telegram аннулировал сессию ({type(exc).__name__}). "
                 f"Войдите заново: ./run.py login\n"
-                f"Если это повторяется через минуту после каждого входа — дело в общих "
-                f"ключах telegram-cli (api_id 2899): Telegram гасит такие сессии. "
+                f"Если это повторяется через минуту после каждого входа — дело в чужих "
+                f"публично известных ключах (например, api_id 2899 из telegram-cli): "
+                f"Telegram гасит созданные с ними сессии. "
                 f"Получите свои api_id/api_hash на my.telegram.org и впишите в config.toml."
             ) from exc
 

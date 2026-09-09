@@ -27,9 +27,9 @@ class Config:
     tg_api_hash: str = ""
     tg_session: str = "tg.session"
     mark_read: bool = False
-    tg_device_model: str = "PC"
+    tg_device_model: str = "PC 64bit"
     tg_system_version: str = "Linux"
-    tg_app_version: str = "Telegram-cli 1.4.1"
+    tg_app_version: str = "4.16.8"
     tg_lang_code: str = "en"
 
     db: str = "bridge.db"
