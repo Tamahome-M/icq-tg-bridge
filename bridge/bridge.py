@@ -12,6 +12,7 @@ from . import avatars as avatar_lib
 from . import emoji, history, policy
 from .access import AccessControl
 from .photos import PhotoStore
+from .render import Item, RenderStore, Transcoder
 from .webserver import PhotoServer
 from .config import Config
 from .db import Contact, Storage
@@ -68,13 +69,23 @@ class Bridge:
                         if cfg.avatars else None)
         self.photos: PhotoStore | None = None
         self.photo_server: PhotoServer | None = None
+        self.render: RenderStore | None = None
+        if cfg.render_enabled and cfg.photos_enabled:
+            self.render = RenderStore(
+                cfg.render_dir,
+                Transcoder(cfg.render_ffmpeg, cfg.render_video_seconds,
+                           cfg.render_audio_seconds, cfg.render_timeout,
+                           cfg.render_dir),
+                cfg.render_ttl_minutes, cfg.photo_width, cfg.photo_height,
+                cfg.photo_max_kb * 1024, cfg.render_encoding)
         if cfg.photos_enabled:
             self.photos = PhotoStore(cfg.photos_dir, cfg.photo_width, cfg.photo_height,
                                      cfg.photo_max_kb * 1024, cfg.photo_keep_hours)
             self.photo_server = PhotoServer(self.photos, cfg.photos_host, cfg.photos_port,
                                             AccessControl(
                                                 allow_from=cfg.allow_from,
-                                                max_connections=cfg.max_connections))
+                                                max_connections=cfg.max_connections),
+                                            render=self.render)
 
     # --- контакт-лист ---------------------------------------------------
 
@@ -292,6 +303,10 @@ class Bridge:
                     removed = self.photos.cleanup()
                     if removed:
                         log.info("удалено %d старых снимков", removed)
+                if self.render is not None:
+                    gone = self.render.cleanup()
+                    if gone:
+                        log.info("просроченные страницы убраны, файлов удалено: %d", gone)
             except Exception:
                 log.exception("не удалось обновить контакт-лист")
 
@@ -563,6 +578,10 @@ class Bridge:
             await self.send_photos(contact, command.count or 1)
             return
 
+        if command.name == "render":
+            await self.send_render(contact, command.count)
+            return
+
         since = None if command.count else history.since_midnight()
         cap = self.cfg.history_limit
         try:
@@ -632,6 +651,56 @@ class Bridge:
             sent += 1
         if not sent:
             await self.reply(contact, "Не получилось подготовить фото")
+
+    async def send_render(self, contact: Contact, count: int | None) -> None:
+        """Команда !render: собирает переписку в страницу для браузера телефона.
+
+        Как и !last, без числа берёт сегодняшние сообщения, с числом — столько
+        последних. Ссылка одна на всю страницу и живёт ограниченное время.
+        """
+        if self.render is None or self.photo_server is None:
+            await self.reply(contact, "Сборка страницы выключена в настройках моста")
+            return
+
+        cap = self.cfg.render_messages
+        if count and count > cap:
+            await self.reply(contact, f"Больше {cap} сообщений за раз не соберу (render.messages)")
+            count = cap
+        since = None if count else history.since_midnight()
+        try:
+            rows = await self.telegram.render_items(
+                contact.peer_id, count, since, cap, contact.topic_id,
+                self.cfg.render_source_max_mb * 1024 * 1024)
+        except Exception:
+            log.exception("не удалось собрать сообщения чата %r", contact.title)
+            await self.reply(contact, "Не получилось загрузить сообщения")
+            return
+
+        if not rows:
+            await self.reply(contact, "За сегодня сообщений нет" if since
+                             else "Сообщений нет")
+            return
+
+        items = [Item(when=r["when"], who=r["who"],
+                      text=emoji.to_text(r["text"]) if self.cfg.emoji_to_text else r["text"],
+                      mine=r["mine"], kind=r["kind"], raw=r["raw"],
+                      seconds=r["seconds"], name=r["name"])
+                 for r in rows]
+        await self.reply(contact, f"Собираю {len(items)} сообщений, это займёт время…")
+        page = await self.render.build(contact.title, items)
+        if page is None:
+            await self.reply(contact, "Не получилось собрать страницу")
+            return
+
+        minutes = self.cfg.render_ttl_minutes
+        note = f", ссылка живёт {minutes} мин" if minutes > 0 else ""
+        await self.reply(contact,
+                         f"{self.render_url(page.token)}\n"
+                         f"{len(items)} сообщений, {len(page.assets)} вложений{note}")
+
+    def render_url(self, token: str) -> str:
+        host = self.cfg.photos_public_host or self.cfg.bos_host or "127.0.0.1"
+        return f"http://{host}:{self.cfg.photos_port}/r/{token}"
 
     def photo_url(self, token: str) -> str:
         host = self.cfg.photos_public_host or self.cfg.bos_host or "127.0.0.1"

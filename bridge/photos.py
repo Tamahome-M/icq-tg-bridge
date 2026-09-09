@@ -40,6 +40,33 @@ class Photo:
     caption: str
 
 
+def shrink(raw: bytes, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT,
+           max_bytes: int = DEFAULT_MAX_BYTES) -> tuple[bytes, int, int] | None:
+    """Ужимает картинку под экран телефона: данные, ширина, высота."""
+    if not raw or len(raw) > MAX_SOURCE_BYTES:
+        log.warning("картинка %d КБ слишком велика, пропускаю", len(raw or b"") // 1024)
+        return None
+    try:
+        Image.MAX_IMAGE_PIXELS = MAX_SOURCE_PIXELS
+        image = Image.open(io.BytesIO(raw))
+        image = ImageOps.exif_transpose(image)
+        image = image.convert("RGB")
+    except Exception:
+        log.warning("не удалось прочитать картинку (%d байт)", len(raw))
+        return None
+
+    image.thumbnail((width, height), Image.LANCZOS)
+    data = b""
+    for quality in QUALITY_STEPS:
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=quality, optimize=True,
+                   progressive=False)      # старые браузеры не любят прогрессивный JPEG
+        data = buffer.getvalue()
+        if len(data) <= max_bytes:
+            break
+    return data, image.width, image.height
+
+
 class PhotoStore:
     def __init__(self, directory: str, width: int = DEFAULT_WIDTH,
                  height: int = DEFAULT_HEIGHT, max_bytes: int = DEFAULT_MAX_BYTES,
@@ -53,36 +80,17 @@ class PhotoStore:
 
     def convert(self, raw: bytes, caption: str = "") -> Photo | None:
         """Ужимает картинку под экран телефона и кладёт в хранилище."""
-        if len(raw) > MAX_SOURCE_BYTES:
-            log.warning("картинка %d КБ слишком велика, пропускаю", len(raw) // 1024)
+        got = shrink(raw, self.width, self.height, self.max_bytes)
+        if got is None:
             return None
-        try:
-            Image.MAX_IMAGE_PIXELS = MAX_SOURCE_PIXELS
-            image = Image.open(io.BytesIO(raw))
-            image = ImageOps.exif_transpose(image)
-            image = image.convert("RGB")
-        except Exception:
-            log.warning("не удалось прочитать картинку (%d байт)", len(raw))
-            return None
-
-        image.thumbnail((self.width, self.height), Image.LANCZOS)
-
-        data = b""
-        for quality in QUALITY_STEPS:
-            buffer = io.BytesIO()
-            image.save(buffer, format="JPEG", quality=quality, optimize=True,
-                       progressive=False)      # старые браузеры не любят прогрессивный JPEG
-            data = buffer.getvalue()
-            if len(data) <= self.max_bytes:
-                break
+        data, width, height = got
 
         token = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8]
         path = os.path.join(self.directory, f"{token}.jpg")
         with open(path, "wb") as fh:
             fh.write(data)
-        log.info("картинка ужата до %dx%d, %d КБ", image.width, image.height,
-                 len(data) // 1024)
-        return Photo(token, path, len(data), image.width, image.height, caption)
+        log.info("картинка ужата до %dx%d, %d КБ", width, height, len(data) // 1024)
+        return Photo(token, path, len(data), width, height, caption)
 
     def path_for(self, token: str) -> str | None:
         """Путь к файлу по токену из ссылки."""

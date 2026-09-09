@@ -16,6 +16,17 @@ Pillow ставится колесом из PyPI и системных заго�
 emerge --ask media-libs/libjpeg-turbo sys-libs/zlib
 ```
 
+Команда `!render` перекодирует видео и голосовые через ffmpeg — нужна сборка
+с кодеками `h263` и `libopencore_amrnb`:
+
+```bash
+echo "media-video/ffmpeg amr opencore-amr" >> /etc/portage/package.use/ffmpeg
+emerge --ask media-video/ffmpeg
+```
+
+Без ffmpeg мост работает как обычно: на странице `!render` соберутся текст
+и фотографии, а видео с голосовыми останутся пометками.
+
 Проверьте версию: нужен Python 3.11 или новее — мост читает настройки
 модулем `tomllib` из стандартной библиотеки.
 
