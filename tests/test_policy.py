@@ -19,8 +19,10 @@ MATRIX = {
     C.STATUS_DND: (True, True, False, True),               # не беспокоить
     C.STATUS_NA: (False, True, False, False),              # недоступен: только избранное
     C.STATUS_OCCUPIED: (True, True, False, True),          # занят
+    policy.STATUS_INVISIBLE: (False, False, False, False),  # невидимый
     0x0013: (True, True, False, True),                     # DND в связке с другими
     0x0021: (True, True, True, True),                      # «свободен» с флагами
+    0x0102: (False, False, False, False),                  # невидимый вместе с DND
 }
 
 def main() -> None:
@@ -53,6 +55,15 @@ def main() -> None:
     # Придержанное отдаётся только в разговорчивых режимах.
     assert policy.releases(policy.ALL) and policy.releases(policy.UNMUTED)
     assert not policy.releases(policy.QUIET) and not policy.releases(policy.FAVOURITES)
+    # «Невидимый» — только избранные собеседники, каналы и группы молчат.
+    assert policy.allows(policy.INVISIBLE, "user", True)
+    assert policy.allows(policy.INVISIBLE, "user", True, muted=True), \
+        "пометку избранного мьют не отменяет"
+    assert not policy.allows(policy.INVISIBLE, "user", False), "неизбранный молчит"
+    assert not policy.allows(policy.INVISIBLE, "channel", True), "избранный канал молчит"
+    assert not policy.allows(policy.INVISIBLE, "chat", True), "избранная группа молчит"
+    assert not policy.releases(policy.INVISIBLE)
+
     # Незнакомый статус ведёт себя как обычный «в сети».
     assert policy.mode_for(0x0800) == policy.UNMUTED
 

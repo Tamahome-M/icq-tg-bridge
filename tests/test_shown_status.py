@@ -9,6 +9,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from bridge import policy
 from bridge.bridge import Bridge
 from bridge.config import Config
 from bridge.oscar import const as C
@@ -83,6 +84,18 @@ async def main() -> None:
     assert bridge.status_of(favourite) == C.STATUS_ONLINE, "избранное проходит"
     assert bridge.status_of(mom) == C.STATUS_DND, "личные тоже отсеиваются"
     assert bridge.status_of(group) == C.STATUS_DND
+
+    # «Невидимый»: доходят только избранные собеседники.
+    bridge.storage.toggle_favourite(mom)
+    bridge._roster = bridge.storage.contacts()
+    bridge._by_uin = {c.uin: c for c in bridge._roster}
+    await bridge.on_owner_status(policy.STATUS_INVISIBLE)
+    assert bridge.status_of(mom) == C.STATUS_ONLINE, "избранный собеседник проходит"
+    assert bridge.status_of(favourite) == C.STATUS_DND, "избранный канал молчит"
+    assert bridge.status_of(group) == C.STATUS_DND
+    bridge.storage.toggle_favourite(mom)
+    bridge._roster = bridge.storage.contacts()
+    bridge._by_uin = {c.uin: c for c in bridge._roster}
 
     # Офлайн важнее подмены: если собеседника нет, так и показываем.
     bridge._statuses[group] = C.STATUS_OFFLINE

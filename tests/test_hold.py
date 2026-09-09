@@ -123,6 +123,30 @@ async def main() -> None:
     assert bridge.storage.held_count() == 0, "и копить дальше тоже незачем"
     bridge.storage.close()
 
+    # --- «невидимый»: только избранные собеседники ------------------------
+    bridge = make_bridge()
+    await bridge.on_owner_status(C.STATUS_OCCUPIED)
+    now = int(time.time())
+    await bridge.on_telegram_message(-4001, "Вася", "в группе", now)
+    assert bridge.storage.held_count() == 1
+
+    await bridge.on_owner_status(policy.STATUS_INVISIBLE)
+    assert bridge.mode == policy.INVISIBLE
+    assert bridge.storage.pending_count() == 0, "в невидимость придержанное не отдаём"
+
+    await bridge.on_telegram_message(-100200, "", "из избранного канала", now)
+    await bridge.on_telegram_message(555, "", "от мамы", now)
+    assert bridge.storage.pending_count() == 0, \
+        "неизбранный собеседник и канал в невидимости молчат"
+    assert bridge.storage.held_count() == 0, "невидимость ничего не копит"
+
+    mom = bridge.storage.contact_by_peer(555)
+    bridge.storage.toggle_favourite(mom.uin)
+    await bridge.on_telegram_message(555, "", "снова от мамы", now)
+    assert bridge.storage.pending_count() == 1, "избранный собеседник должен доходить"
+    print("  «невидимый»: доходят только избранные собеседники — ок")
+    bridge.storage.close()
+
     # --- команда !fav: чат становится избранным и остаётся им -------------
     bridge = make_bridge()
     group = bridge.storage.contact_by_peer(-4001)
