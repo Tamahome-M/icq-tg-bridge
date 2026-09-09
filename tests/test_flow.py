@@ -369,7 +369,8 @@ async def run_contact_info() -> None:
             return None
         return {"title": "Новости дня", "kind": "Канал", "username": "@news",
                 "phone": "", "members": "участников: 1234",
-                "about": "Всё самое важное", "bday": (15, 3, 1985)}
+                "about": "Всё самое важное", "bday": (15, 3, 1985),
+                "marks": "Избранный, Заглушенный"}
 
     server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
                          None, chat_info)
@@ -392,6 +393,8 @@ async def run_contact_info() -> None:
     assert info["homepage"] == "t.me/news", info
     assert info["company"] == "Telegram", info
     assert info["bday"] == "15.3.1985", info
+    assert info["position"] == "Избранный, Заглушенный", \
+        f"пометки чата должны приехать в «Должность», пришло {info.get('position')!r}"
     assert info["age"] > 0, "возраст должен считаться по году рождения"
 
     # Поиск чатов из окна поиска Jimm.

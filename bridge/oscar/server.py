@@ -320,7 +320,7 @@ class Session:
             (C.SSI, C.SSI_RIGHTS_REQ): self.on_ssi_rights,
             (C.SSI, C.SSI_LIST_REQ): self.on_ssi_list,
             (C.SSI, C.SSI_LIST_REQ_IF_CHANGED): self.on_ssi_list,
-            (C.SSI, C.SSI_ADD): self.on_ssi_edit,
+            (C.SSI, C.SSI_ADD): self.on_ssi_add,
             (C.SSI, C.SSI_UPDATE): self.on_ssi_edit,
             (C.SSI, C.SSI_DELETE): self.on_ssi_delete,
             (C.SSI, C.SSI_REMOVE_ME): self.on_ssi_remove_me,
@@ -439,15 +439,35 @@ class Session:
                              b"".join(struct.pack(">H", 0) for _ in range(count)),
                              request_id=s.request_id)
 
+    async def on_ssi_add(self, s: Snac) -> None:
+        """Добавление в списки видимости.
+
+        «В невид. список» кладёт контакт в список запрета, «В видим. список» —
+        в список разрешённых. Для моста это удобный способ заглушить чат:
+        обычные контакты клиент сюда не добавляет.
+        """
+        for name, _group_id, _item_id, item_type, _extra in blocks.parse_ssi_items(s.data):
+            target = name.decode("latin-1", "replace")
+            if not target.isdigit():
+                continue
+            if item_type in (C.SSI_TYPE_DENY, C.SSI_TYPE_IGNORE):
+                await self.server.on_privacy(int(target), muted=True)
+            elif item_type == C.SSI_TYPE_PERMIT:
+                await self.server.on_privacy(int(target), muted=False)
+        await self.on_ssi_edit(s)
+
     async def on_ssi_delete(self, s: Snac) -> None:
         """«Удалить» в клиенте: чат убирается и в Telegram — у себя."""
         items = blocks.parse_ssi_items(s.data)
         for name, _group_id, _item_id, item_type, _extra in items:
-            if item_type != C.SSI_TYPE_BUDDY:
-                continue           # группы контакт-листа ведёт Telegram
             target = name.decode("latin-1", "replace")
-            if target.isdigit():
+            if not target.isdigit():
+                continue
+            if item_type == C.SSI_TYPE_BUDDY:
                 await self.server.on_remove(int(target), revoke=False)
+            elif item_type in (C.SSI_TYPE_DENY, C.SSI_TYPE_IGNORE):
+                # Убрали из списка запрета — значит чат снова можно слышать.
+                await self.server.on_privacy(int(target), muted=False)
         await self.send_snac(C.SSI, C.SSI_EDIT_ACK,
                              b"".join(struct.pack(">H", 0) for _ in range(max(1, len(items)))),
                              request_id=s.request_id)
@@ -570,7 +590,7 @@ class Session:
             + struct.pack("<H", 0)                # код страны
             + blocks.asciiz("Telegram", enc)      # организация
             + blocks.asciiz(info.get("kind", ""), enc)   # отдел
-            + empty                               # должность
+            + blocks.asciiz(info.get("marks", ""), enc)  # должность: пометки чата
         )
         await self.send_info_part(uin, seq, C.ICQ_INFO_WORK, work)
 
@@ -763,7 +783,8 @@ class OscarServer:
                  chat_info: Callable[[int], Awaitable[dict | None]] | None = None,
                  search: Callable[[str], Awaitable[list[dict]]] | None = None,
                  verdict_for: Callable[[int], str] | None = None,
-                 on_remove: Callable[[int, bool], Awaitable[None]] | None = None):
+                 on_remove: Callable[[int, bool], Awaitable[None]] | None = None,
+                 on_privacy: Callable[[int, bool], Awaitable[None]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -774,6 +795,7 @@ class OscarServer:
         # Решает судьбу записи очереди по текущему статусу: send, hold или drop.
         self.verdict_for = verdict_for or (lambda uin: "send")
         self.on_remove = on_remove or self._ignore_remove
+        self.on_privacy = on_privacy or self._ignore_privacy
         self.uin = str(cfg.oscar_uin)
         self.password = cfg.oscar_password
         self.ssi_encoding = cfg.ssi_encoding
@@ -811,6 +833,18 @@ class OscarServer:
         asyncio.create_task(self.sender_loop())
         log.info("OSCAR слушает %s:%d, UIN владельца %s",
                  self.cfg.oscar_host, self.cfg.oscar_port, self.uin)
+
+    async def stop(self) -> None:
+        """Перестаёт принимать подключения и закрывает текущую сессию."""
+        if self._server is not None:
+            self._server.close()
+            try:
+                await self._server.wait_closed()
+            except Exception:
+                pass
+            self._server = None
+        if self.session is not None:
+            await self.session.close()
 
     async def _accept(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         peer = writer.get_extra_info("peername")
@@ -864,7 +898,10 @@ class OscarServer:
             self.session = None
             self.awaiting.clear()
             # Неподтверждённое отправим заново, когда телефон вернётся.
-            returned = self.storage.reset_sent()
+            try:
+                returned = self.storage.reset_sent()
+            except Exception:
+                returned = 0     # мост останавливается, база уже закрыта
             log.info("телефон отключился%s",
                      f", в очередь вернулось {returned} сообщений" if returned else "")
 
@@ -920,6 +957,10 @@ class OscarServer:
 
     @staticmethod
     async def _ignore_remove(uin: int, revoke: bool) -> None:
+        return None
+
+    @staticmethod
+    async def _ignore_privacy(uin: int, muted: bool) -> None:
         return None
 
     async def notify_typing(self, uin: int, active: bool) -> None:

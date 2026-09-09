@@ -24,6 +24,8 @@ KIND_TITLES = {
 
 # Насколько давно человек был в сети, чтобы всё ещё считать его «отошёл»
 RECENTLY_SECONDS = 15 * 60
+# «Заглушить навсегда» в Telegram — это отключение до очень далёкой даты
+MUTE_FOREVER = 2 ** 31 - 1
 
 
 @dataclass
@@ -37,6 +39,7 @@ class Dialog:
     unread: int = 0
     pinned: bool = False
     topic_id: int = 0          # тема форума; 0 — обычный чат
+    muted: bool = False        # чат заглушён в Telegram
 
 
 class TelegramSide:
@@ -99,6 +102,7 @@ class TelegramSide:
             group = self._folder_for(folders, entity, kind) or KIND_TITLES.get(kind, "Чаты")
             title = dialog.name or str(peer_id)
             pinned = bool(getattr(dialog, "pinned", False))
+            muted = is_muted(dialog)
             status = status_of(entity, kind)
 
             # Форум — это несколько чатов в одном: каждая тема становится
@@ -108,12 +112,14 @@ class TelegramSide:
                 for topic in topics:
                     out.append(Dialog(peer_id, "chat", topic.title or f"Тема {topic.id}",
                                       title[:self.cfg.alias_max_chars], position,
-                                      status, topic.unread_count or 0, pinned, topic.id))
+                                      status, topic.unread_count or 0, pinned,
+                                      topic.id, muted))
                     position += 1
                 continue
 
             out.append(Dialog(peer_id, kind, title, group, position,
-                              status, dialog.unread_count or 0, pinned))
+                              status, dialog.unread_count or 0, pinned,
+                              muted=muted))
             position += 1
         spread: dict[str, int] = {}
         for dialog in out:
@@ -307,6 +313,23 @@ class TelegramSide:
                 continue
         return None
 
+    async def set_muted(self, peer_id: int, muted: bool) -> bool:
+        """Заглушает чат в Telegram или возвращает ему голос.
+
+        «Навсегда» в Telegram выражается очень далёкой датой, поэтому берём
+        её же; снятие — нулевой датой.
+        """
+        until = MUTE_FOREVER if muted else 0
+        try:
+            entity = await self.client.get_input_entity(peer_id)
+            await self.client(functions.account.UpdateNotifySettingsRequest(
+                peer=types.InputNotifyPeer(entity),
+                settings=types.InputPeerNotifySettings(mute_until=until)))
+            return True
+        except Exception:
+            log.exception("не удалось изменить уведомления чата %s", peer_id)
+            return False
+
     async def delete_chat(self, peer_id: int, revoke: bool = False) -> bool:
         """Удаляет чат: для групп и каналов это выход из них, для личной
         переписки — удаление истории; revoke убирает её и у собеседника."""
@@ -446,6 +469,26 @@ class TelegramSide:
         except Exception:
             return str(peer_id), "chat"
         return utils.get_display_name(entity) or str(peer_id), self._kind(entity)
+
+
+def is_muted(dialog) -> bool:
+    """Заглушён ли чат в самом Telegram.
+
+    Уведомления там выключаются двумя способами: беззвучным режимом и
+    отключением до определённого момента (у «навсегда» дата очень далёкая).
+    """
+    settings = getattr(getattr(dialog, "dialog", None), "notify_settings", None)
+    if settings is None:
+        return False
+    if getattr(settings, "silent", False):
+        return True
+    until = getattr(settings, "mute_until", None)
+    if until is None:
+        return False
+    try:
+        return until > dt.datetime.now(dt.timezone.utc)
+    except TypeError:              # на всякий случай, если пришло число
+        return bool(until)
 
 
 def topic_of(message) -> int:

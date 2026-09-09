@@ -24,6 +24,7 @@ class Contact:
     last_ts: int = 0   # время последнего сообщения, дошедшего до телефона
     gone: int = 0      # 1, если чата больше нет в Telegram
     hidden: int = 0    # 1, если убран из списка с телефона
+    muted: int = 0     # 1, если чат заглушён в самом Telegram
     favourite: int = 0  # 1 — чат закреплён или назван избранным в настройках
 
 
@@ -50,6 +51,7 @@ class Storage:
                 favourite  INTEGER NOT NULL DEFAULT 0,
                 fav_manual INTEGER,
                 hidden     INTEGER NOT NULL DEFAULT 0,
+                muted      INTEGER NOT NULL DEFAULT 0,
                 UNIQUE (peer_id, topic_id)
             );
             CREATE TABLE IF NOT EXISTS pending (
@@ -86,6 +88,9 @@ class Storage:
                 "ALTER TABLE contacts ADD COLUMN favourite INTEGER NOT NULL DEFAULT 0")
         if "fav_manual" not in columns:
             self.conn.execute("ALTER TABLE contacts ADD COLUMN fav_manual INTEGER")
+        if "muted" not in columns and "topic_id" in columns:
+            self.conn.execute(
+                "ALTER TABLE contacts ADD COLUMN muted INTEGER NOT NULL DEFAULT 0")
         if "hidden" not in columns and "topic_id" in columns:
             self.conn.execute(
                 "ALTER TABLE contacts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
@@ -108,6 +113,7 @@ class Storage:
                     favourite  INTEGER NOT NULL DEFAULT 0,
                     fav_manual INTEGER,
                     hidden     INTEGER NOT NULL DEFAULT 0,
+                    muted      INTEGER NOT NULL DEFAULT 0,
                     UNIQUE (peer_id, topic_id)
                 );
                 INSERT INTO contacts_new
@@ -131,7 +137,7 @@ class Storage:
 
     def uin_for_peer(self, peer_id: int, *, kind: str, title: str,
                      group_name: str, position: int = 0, favourite: int = 0,
-                     topic_id: int = 0) -> int:
+                     topic_id: int = 0, muted: int = 0) -> int:
         """Возвращает UIN чата, заводя его при первой встрече.
 
         topic_id отличает темы форума: у каждой темы свой собеседник.
@@ -144,16 +150,16 @@ class Storage:
             uin = row["uin"]
             self.conn.execute(
                 "UPDATE contacts SET kind=?, title=?, group_name=?, position=?, gone=0,"
-                " favourite=? WHERE uin=?",
-                (kind, title, group_name, position, favourite, uin),
+                " favourite=?, muted=? WHERE uin=?",
+                (kind, title, group_name, position, favourite, muted, uin),
             )
             return uin
         row = self.conn.execute("SELECT MAX(uin) AS m FROM contacts").fetchone()
         uin = max(row["m"] or 0, UIN_BASE) + 1
         self.conn.execute(
             "INSERT INTO contacts (uin, peer_id, topic_id, kind, title, group_name,"
-            " position, favourite) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (uin, peer_id, topic_id, kind, title, group_name, position, favourite),
+            " position, favourite, muted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (uin, peer_id, topic_id, kind, title, group_name, position, favourite, muted),
         )
         return uin
 
@@ -164,7 +170,7 @@ class Storage:
         сотни контактов. Избранные остаются в списке при любом ограничении.
         """
         rows = self.conn.execute(
-            "SELECT uin, peer_id, topic_id, kind, title, group_name, position, last_ts, gone, hidden, COALESCE(fav_manual, favourite) AS favourite FROM contacts WHERE gone = 0 AND hidden = 0 ORDER BY position, uin"
+            "SELECT uin, peer_id, topic_id, kind, title, group_name, position, last_ts, gone, hidden, muted, COALESCE(fav_manual, favourite) AS favourite FROM contacts WHERE gone = 0 AND hidden = 0 ORDER BY position, uin"
         ).fetchall()
         contacts = [Contact(**dict(r)) for r in rows]
         if limit > 0 and len(contacts) > limit:
@@ -203,10 +209,15 @@ class Storage:
         """Все живые чаты, включая убранные с телефона."""
         rows = self.conn.execute(
             "SELECT uin, peer_id, topic_id, kind, title, group_name, position, last_ts,"
-            " gone, hidden, COALESCE(fav_manual, favourite) AS favourite"
+            " gone, hidden, muted, COALESCE(fav_manual, favourite) AS favourite"
             " FROM contacts WHERE gone = 0 ORDER BY position, uin"
         ).fetchall()
         return [Contact(**dict(r)) for r in rows]
+
+    def set_muted(self, uin: int, muted: bool) -> None:
+        """Запоминает, что чат заглушён в Telegram."""
+        self.conn.execute("UPDATE contacts SET muted = ? WHERE uin = ?",
+                          (int(muted), uin))
 
     def mark_gone(self, uin: int) -> None:
         """Убирает контакт из списка, сохраняя за чатом его UIN."""
@@ -223,7 +234,7 @@ class Storage:
         marks = ",".join("?" * len(present))
         # present — список peer_id; темы исчезнувшего чата уходят вместе с ним
         rows = self.conn.execute(
-            f"SELECT uin, peer_id, topic_id, kind, title, group_name, position, last_ts, gone, hidden, COALESCE(fav_manual, favourite) AS favourite FROM contacts WHERE gone = 0 AND peer_id NOT IN ({marks})",
+            f"SELECT uin, peer_id, topic_id, kind, title, group_name, position, last_ts, gone, hidden, muted, COALESCE(fav_manual, favourite) AS favourite FROM contacts WHERE gone = 0 AND peer_id NOT IN ({marks})",
             present,
         ).fetchall()
         if rows:
@@ -235,13 +246,13 @@ class Storage:
 
     def contact_by_uin(self, uin: int) -> Contact | None:
         row = self.conn.execute(
-            "SELECT uin, peer_id, topic_id, kind, title, group_name, position, last_ts, gone, hidden, COALESCE(fav_manual, favourite) AS favourite FROM contacts WHERE uin = ?", (uin,)).fetchone()
+            "SELECT uin, peer_id, topic_id, kind, title, group_name, position, last_ts, gone, hidden, muted, COALESCE(fav_manual, favourite) AS favourite FROM contacts WHERE uin = ?", (uin,)).fetchone()
         return Contact(**dict(row)) if row else None
 
     def contact_by_peer(self, peer_id: int, topic_id: int = 0) -> Contact | None:
         row = self.conn.execute(
             "SELECT uin, peer_id, topic_id, kind, title, group_name, position, last_ts,"
-            " gone, hidden, COALESCE(fav_manual, favourite) AS favourite"
+            " gone, hidden, muted, COALESCE(fav_manual, favourite) AS favourite"
             " FROM contacts WHERE peer_id = ? AND topic_id = ?",
             (peer_id, topic_id),
         ).fetchone()

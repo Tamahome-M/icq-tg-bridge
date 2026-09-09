@@ -52,14 +52,14 @@ class Bridge:
         self.oscar = OscarServer(cfg, self.storage, self.on_phone_message,
                                  self.roster, self.status_of, self.chat_info,
                                  self.search_chats, self.verdict_for,
-                                 self.on_phone_remove)
+                                 self.on_phone_remove, self.on_phone_privacy)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
         self._by_uin: dict[int, Contact] = {}
         self._unread: dict[int, int] = {}
         self._typing: dict[int, asyncio.Task] = {}
-        self.mode = policy.FAVOURITES
+        self.mode = policy.UNMUTED
         self.oscar.on_owner_status = self.on_owner_status
         self.oscar.on_typing = self.on_phone_typing
         self.photos: PhotoStore | None = None
@@ -90,7 +90,8 @@ class Bridge:
 
         contact = self._by_uin.get(uin)
         if contact is not None and not policy.allows(self.mode, contact.kind,
-                                                     bool(contact.favourite)):
+                                                     bool(contact.favourite),
+                                                     bool(contact.muted)):
             return C.STATUS_NA if policy.holds(self.mode) else C.STATUS_DND
         return real
 
@@ -155,7 +156,8 @@ class Bridge:
         contact = self.storage.contact_by_uin(uin)
         if contact is None:
             return "send"
-        if policy.allows(self.mode, contact.kind, bool(contact.favourite)):
+        if policy.allows(self.mode, contact.kind, bool(contact.favourite),
+                         bool(contact.muted)):
             return "send"
         return "hold" if policy.holds(self.mode) else "drop"
 
@@ -175,20 +177,26 @@ class Bridge:
 
         Доставляем всё, что моложе busy_hold_minutes, не пропуская через новый
         фильтр: эти сообщения и так отложены из-за «занят», а человек вернулся.
-        Исключение — переход в «не беспокоить»: там телефон должен молчать.
+        Исключения два: переход в тихий режим («не беспокоить», «недоступен») —
+        там телефон должен молчать, и заглушённые в Telegram чаты — они
+        придержаны как раз из-за мьюта, и снимать его возврат в сеть не должен.
         """
         rows = self.storage.take_held()
         if not rows:
             return
-        if self.mode == policy.PERSONAL:
-            log.info("после «занят» выбран режим тишины — %d придержанных не отдаю",
-                     len(rows))
+        if not policy.releases(self.mode):
+            log.info("после «занят» выбран режим тишины (%s) — %d придержанных не отдаю",
+                     policy.MODE_NAMES[self.mode], len(rows))
             return
 
         cutoff = time.time() - self.cfg.busy_hold_minutes * 60
         delivered = 0
         for uin, text, ts in rows:
             if ts < cutoff:
+                continue
+            contact = self.storage.contact_by_uin(uin)
+            if (self.mode != policy.ALL and contact is not None
+                    and contact.muted):
                 continue
             await self.oscar.deliver(uin, text)
             delivered += 1
@@ -204,6 +212,15 @@ class Bridge:
         if info and self.cfg.emoji_to_text:
             info = {k: emoji.to_text(v) if isinstance(v, str) else v
                     for k, v in info.items()}
+        if info is not None:
+            # Пометки чата — то, чего в Telegram-профиле нет, но что решает
+            # судьбу его сообщений: избранное и выключенные уведомления.
+            marks = []
+            if contact.favourite:
+                marks.append("Избранный")
+            if contact.muted:
+                marks.append("Заглушенный")
+            info["marks"] = ", ".join(marks)
         return info
 
     async def refresh_roster(self) -> None:
@@ -212,7 +229,8 @@ class Bridge:
             favourite = int(d.pinned or d.title.strip().lower() in self.cfg.favourites)
             uin = self.storage.uin_for_peer(d.peer_id, kind=d.kind, title=d.title,
                                             group_name=d.group_name, position=d.position,
-                                            favourite=favourite, topic_id=d.topic_id)
+                                            favourite=favourite, topic_id=d.topic_id,
+                                            muted=int(d.muted))
             self._unread[d.peer_id] = d.unread
             code = STATUS_CODES.get(d.status, C.STATUS_ONLINE)
             changed = uin in self._statuses and self._statuses[uin] != code
@@ -288,7 +306,8 @@ class Bridge:
 
         # Статус в Jimm решает, что доставлять, а что придержать или пропустить.
         if contact is not None and not policy.allows(self.mode, contact.kind,
-                                                     bool(contact.favourite)):
+                                                     bool(contact.favourite),
+                                                     bool(contact.muted)):
             if policy.holds(self.mode):
                 self.storage.hold(uin, text, ts or int(time.time()),
                                   self.cfg.offline_queue_per_chat)
@@ -330,7 +349,8 @@ class Bridge:
         if not active:
             await self.stop_typing(contact.uin)
             return
-        if not policy.allows(self.mode, contact.kind, bool(contact.favourite)):
+        if not policy.allows(self.mode, contact.kind, bool(contact.favourite),
+                             bool(contact.muted)):
             return
 
         await self.oscar.notify_typing(contact.uin, True)
@@ -361,6 +381,36 @@ class Bridge:
         contact = self.storage.contact_by_peer(peer_id)
         if contact is not None:
             await self.oscar.confirm_read(contact.uin, max_id)
+
+    async def on_phone_privacy(self, uin: int, muted: bool) -> None:
+        """Списки видимости в клиенте управляют уведомлениями Telegram.
+
+        «В невид. список» заглушает чат, «В видим. список» возвращает ему
+        голос — то же самое, что выключить уведомления в самом Telegram.
+        Во всех статусах, кроме «свободен для беседы», это сразу решает,
+        дойдут ли от чата сообщения.
+        """
+        contact = self.storage.contact_by_uin(uin)
+        if contact is None:
+            log.warning("список видимости для неизвестного UIN %d", uin)
+            return
+        if bool(contact.muted) == muted:
+            return
+
+        if not await self.telegram.set_muted(contact.peer_id, muted):
+            await self.reply(contact, "Не получилось изменить уведомления в Telegram")
+            return
+
+        self.storage.set_muted(contact.uin, muted)
+        self._roster = self.storage.contacts(self.cfg.roster_limit)
+        self._by_uin = {c.uin: c for c in self._roster}
+        log.info("чат %r %s в Telegram", contact.title,
+                 "заглушён" if muted else "снова со звуком")
+
+        shown = self.status_of(contact.uin)
+        if self._shown.get(contact.uin) != shown:
+            self._shown[contact.uin] = shown
+            await self.oscar.notify_status(contact.uin, shown)
 
     async def on_phone_remove(self, uin: int, revoke: bool) -> None:
         """Удаление контакта с телефона.
@@ -589,7 +639,11 @@ class Bridge:
             ) from exc
 
     async def close(self) -> None:
+        # Порядок важен: сначала перестаём принимать и отдавать, и только
+        # потом закрываем базу — иначе уходящая сессия обратится к ней уже
+        # закрытой.
         if self.photo_server is not None:
             await self.photo_server.stop()
+        await self.oscar.stop()
         await self.telegram.stop()
         self.storage.close()
