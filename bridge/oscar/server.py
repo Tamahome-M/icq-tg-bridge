@@ -850,9 +850,10 @@ class OscarServer:
         self.on_remove = on_remove or self._ignore_remove
         self.on_privacy = on_privacy or self._ignore_privacy
         # Аватарки: примета для блока сведений и сама картинка по запросу.
-        self.avatar = avatar or self._no_avatar
-        self.icon_hash = icon_hash or (lambda uin: None)
-        self.avatars_enabled = bool(getattr(cfg, "avatars", True))
+        self.avatars_enabled = bool(getattr(cfg, "avatars", False))
+        self.avatar = (avatar or self._no_avatar) if self.avatars_enabled else self._no_avatar
+        self.icon_hash = ((icon_hash or (lambda uin: None))
+                          if self.avatars_enabled else (lambda uin: None))
         self.uin = str(cfg.oscar_uin)
         self.password = cfg.oscar_password
         self.ssi_encoding = cfg.ssi_encoding

@@ -50,7 +50,7 @@ class Config:
     topics_limit: int = 50
     favourites: tuple[str, ...] = ()
     busy_hold_minutes: int = 30
-    avatars: bool = True
+    avatars: bool = False
     avatar_size: int = 64
     avatar_max_kb: int = 4
     photos_enabled: bool = True

@@ -80,6 +80,7 @@ def make_config() -> Config:
     cfg.oscar_uin = "1"
     cfg.oscar_password = "s3cret"
     cfg.bos_host = "127.0.0.1"
+    cfg.avatars = True
     return cfg
 
 
@@ -144,6 +145,7 @@ async def run_bridge_side() -> None:
     cfg.db = os.path.join(work, "test.db")
     cfg.tg_session = os.path.join(work, "test.session")
     cfg.photos_enabled = False
+    cfg.avatars = True
     bridge = Bridge(cfg)
 
     uin = bridge.storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
@@ -173,10 +175,50 @@ async def run_bridge_side() -> None:
     print("  сторона моста: ок (примета из Telegram, картинка по запросу)")
 
 
+async def run_disabled() -> None:
+    """С выключенными аватарками мост ведёт себя как раньше."""
+    cfg = make_config()
+    cfg.oscar_port = PORT + 1
+    cfg.avatars = False
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Семья")
+
+    store = avatars.AvatarStore(size=64, max_bytes=4096)
+    store.remember(uin, 777)
+    raw = big_png()
+
+    async def on_outgoing(*_):
+        return 1
+
+    async def avatar(asked: int):
+        return store.store(asked, raw)
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
+                         avatar=avatar, icon_hash=store.hash_of)
+    await server.start()
+
+    client = FakeJimm("127.0.0.1", cfg.oscar_port, cfg.oscar_uin, cfg.oscar_password)
+    await client.connect()
+    await client.bos(await client.login_md5_jimm())
+    await client.drain_for(0.7)
+
+    assert client.icon_hashes == {}, "приметы слать не должны"
+
+    await client.request_service(C.SSBI)
+    await client.drain_for(0.4)
+    assert any(family == C.OSERVICE for family, _ in client.errors), \
+        "на запрос службы должен быть отказ, а не молчание"
+
+    await client.close()
+    server._server.close()
+    print("  выключенные аватарки: ок (ни примет, ни службы)")
+
+
 async def main() -> None:
     run_store()
     await run_protocol()
     await run_bridge_side()
+    await run_disabled()
     print("АВАТАРКИ ПРОВЕРЕНЫ")
 
 
