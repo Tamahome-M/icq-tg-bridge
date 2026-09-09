@@ -411,7 +411,7 @@ class FakeJimm:
                 r.u16le()                  # код страны
                 info["company"] = asciiz()
                 info["department"] = asciiz()
-                asciiz()                   # должность
+                info["position"] = asciiz()
             elif part == C.ICQ_INFO_ABOUT:
                 info["about"] = asciiz()
             elif part == C.ICQ_INFO_INTERESTS:

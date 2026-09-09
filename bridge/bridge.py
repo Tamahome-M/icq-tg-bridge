@@ -212,6 +212,15 @@ class Bridge:
         if info and self.cfg.emoji_to_text:
             info = {k: emoji.to_text(v) if isinstance(v, str) else v
                     for k, v in info.items()}
+        if info is not None:
+            # Пометки чата — то, чего в Telegram-профиле нет, но что решает
+            # судьбу его сообщений: избранное и выключенные уведомления.
+            marks = []
+            if contact.favourite:
+                marks.append("Избранный")
+            if contact.muted:
+                marks.append("Заглушенный")
+            info["marks"] = ", ".join(marks)
         return info
 
     async def refresh_roster(self) -> None:

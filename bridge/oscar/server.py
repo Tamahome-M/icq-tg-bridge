@@ -590,7 +590,7 @@ class Session:
             + struct.pack("<H", 0)                # код страны
             + blocks.asciiz("Telegram", enc)      # организация
             + blocks.asciiz(info.get("kind", ""), enc)   # отдел
-            + empty                               # должность
+            + blocks.asciiz(info.get("marks", ""), enc)  # должность: пометки чата
         )
         await self.send_info_part(uin, seq, C.ICQ_INFO_WORK, work)
 

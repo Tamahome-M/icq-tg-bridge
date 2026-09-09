@@ -43,7 +43,12 @@ def make_bridge() -> Bridge:
         calls.append((peer_id, muted))
         return True
 
+    async def chat_info(peer_id):
+        return {"title": "Шумный", "kind": "Личный чат", "username": "",
+                "phone": "", "members": "", "about": ""}
+
     bridge.telegram.set_muted = set_muted
+    bridge.telegram.chat_info = chat_info
     bridge.calls = calls
     bridge._roster = bridge.storage.contacts()
     bridge._by_uin = {c.uin: c for c in bridge._roster}
@@ -71,11 +76,20 @@ async def run_bridge_side() -> None:
     assert bridge.verdict_for(uin) == "drop", "заглушённый собеседник молчит"
     assert bridge.status_of(uin) == C.STATUS_DND, "и выглядеть заглушённым"
 
+    # Карточка контакта показывает пометки чата в поле «Должность».
+    assert (await bridge.chat_info(uin))["marks"] == "Заглушенный"
+    bridge.storage.toggle_favourite(uin)
+    assert (await bridge.chat_info(uin))["marks"] == "Избранный, Заглушенный"
+
     # «В видим. список» — возвращаем звук.
     await bridge.on_phone_privacy(uin, muted=False)
     assert bridge.calls[-1] == (-4001, False), bridge.calls
     assert bridge.storage.contact_by_uin(uin).muted == 0
     assert bridge.verdict_for(uin) == "send", "снова должен доходить"
+    assert (await bridge.chat_info(uin))["marks"] == "Избранный", \
+        "со звуком остаётся только пометка избранного"
+    bridge.storage.toggle_favourite(uin)
+    assert (await bridge.chat_info(uin))["marks"] == "", "пометок нет — поле пустое"
 
     bridge.storage.close()
     print("  списки видимости: ок (заглушают и возвращают звук)")
