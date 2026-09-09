@@ -52,7 +52,7 @@ class Bridge:
         self.oscar = OscarServer(cfg, self.storage, self.on_phone_message,
                                  self.roster, self.status_of, self.chat_info,
                                  self.search_chats, self.verdict_for,
-                                 self.on_phone_remove)
+                                 self.on_phone_remove, self.on_phone_privacy)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
@@ -367,6 +367,35 @@ class Bridge:
         if contact is not None:
             await self.oscar.confirm_read(contact.uin, max_id)
 
+    async def on_phone_privacy(self, uin: int, muted: bool) -> None:
+        """Списки видимости в клиенте управляют уведомлениями Telegram.
+
+        «В невид. список» заглушает чат, «В видим. список» возвращает ему
+        голос — то же самое, что выключить уведомления в самом Telegram.
+        В статусе «не беспокоить» это сразу решает, дойдут ли сообщения.
+        """
+        contact = self.storage.contact_by_uin(uin)
+        if contact is None:
+            log.warning("список видимости для неизвестного UIN %d", uin)
+            return
+        if bool(contact.muted) == muted:
+            return
+
+        if not await self.telegram.set_muted(contact.peer_id, muted):
+            await self.reply(contact, "Не получилось изменить уведомления в Telegram")
+            return
+
+        self.storage.set_muted(contact.uin, muted)
+        self._roster = self.storage.contacts(self.cfg.roster_limit)
+        self._by_uin = {c.uin: c for c in self._roster}
+        log.info("чат %r %s в Telegram", contact.title,
+                 "заглушён" if muted else "снова со звуком")
+
+        shown = self.status_of(contact.uin)
+        if self._shown.get(contact.uin) != shown:
+            self._shown[contact.uin] = shown
+            await self.oscar.notify_status(contact.uin, shown)
+
     async def on_phone_remove(self, uin: int, revoke: bool) -> None:
         """Удаление контакта с телефона.
 
@@ -594,7 +623,11 @@ class Bridge:
             ) from exc
 
     async def close(self) -> None:
+        # Порядок важен: сначала перестаём принимать и отдавать, и только
+        # потом закрываем базу — иначе уходящая сессия обратится к ней уже
+        # закрытой.
         if self.photo_server is not None:
             await self.photo_server.stop()
+        await self.oscar.stop()
         await self.telegram.stop()
         self.storage.close()

@@ -214,6 +214,11 @@ class Storage:
         ).fetchall()
         return [Contact(**dict(r)) for r in rows]
 
+    def set_muted(self, uin: int, muted: bool) -> None:
+        """Запоминает, что чат заглушён в Telegram."""
+        self.conn.execute("UPDATE contacts SET muted = ? WHERE uin = ?",
+                          (int(muted), uin))
+
     def mark_gone(self, uin: int) -> None:
         """Убирает контакт из списка, сохраняя за чатом его UIN."""
         self.conn.execute("UPDATE contacts SET gone = 1 WHERE uin = ?", (uin,))

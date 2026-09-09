@@ -91,6 +91,7 @@ SSI_TYPE_GROUP = 0x0001
 SSI_TYPE_PERMIT = 0x0002
 SSI_TYPE_DENY = 0x0003
 SSI_TYPE_PDINFO = 0x0004
+SSI_TYPE_IGNORE = 0x000E       # список игнорируемых
 
 # TLV внутри элементов контакт-листа
 SSI_TLV_MEMBERS = 0x00C8       # список item_id внутри группы

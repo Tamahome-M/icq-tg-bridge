@@ -24,6 +24,8 @@ KIND_TITLES = {
 
 # Насколько давно человек был в сети, чтобы всё ещё считать его «отошёл»
 RECENTLY_SECONDS = 15 * 60
+# «Заглушить навсегда» в Telegram — это отключение до очень далёкой даты
+MUTE_FOREVER = 2 ** 31 - 1
 
 
 @dataclass
@@ -310,6 +312,23 @@ class TelegramSide:
             except Exception:
                 continue
         return None
+
+    async def set_muted(self, peer_id: int, muted: bool) -> bool:
+        """Заглушает чат в Telegram или возвращает ему голос.
+
+        «Навсегда» в Telegram выражается очень далёкой датой, поэтому берём
+        её же; снятие — нулевой датой.
+        """
+        until = MUTE_FOREVER if muted else 0
+        try:
+            entity = await self.client.get_input_entity(peer_id)
+            await self.client(functions.account.UpdateNotifySettingsRequest(
+                peer=types.InputNotifyPeer(entity),
+                settings=types.InputPeerNotifySettings(mute_until=until)))
+            return True
+        except Exception:
+            log.exception("не удалось изменить уведомления чата %s", peer_id)
+            return False
 
     async def delete_chat(self, peer_id: int, revoke: bool = False) -> bool:
         """Удаляет чат: для групп и каналов это выход из них, для личной
