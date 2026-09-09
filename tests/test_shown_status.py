@@ -51,29 +51,38 @@ async def main() -> None:
     favourite = bridge.storage.contact_by_peer(-100200).uin
 
     # «Свободен для беседы»: проходят все, статусы настоящие.
+    muted = bridge.storage.contact_by_peer(-4002).uin
     await bridge.on_owner_status(C.STATUS_FREE_FOR_CHAT)
     assert bridge.status_of(group) == C.STATUS_ONLINE, NAMES[bridge.status_of(group)]
+    assert bridge.status_of(muted) == C.STATUS_ONLINE, "тут доходит и заглушённое"
 
-    # «В сети»: обычная группа отсеивается — показываем «не беспокоить».
+    # «В сети»: отсеивается только заглушённое в Telegram.
     await bridge.on_owner_status(C.STATUS_ONLINE)
-    assert bridge.status_of(group) == C.STATUS_DND, "группа должна выглядеть заглушённой"
+    assert bridge.status_of(muted) == C.STATUS_DND, "заглушённый выглядит молчащим"
+    assert bridge.status_of(group) == C.STATUS_ONLINE, "незаглушённая группа проходит"
     assert bridge.status_of(favourite) == C.STATUS_ONLINE, "избранное не заглушаем"
     assert bridge.status_of(mom) == C.STATUS_ONLINE, "личные всегда проходят"
 
-    # «Занят»: сообщения копятся — показываем «недоступен».
+    # «Занят»: групповое копится — показываем «недоступен», личное и избранное идут.
     sent.clear()
     await bridge.on_owner_status(C.STATUS_OCCUPIED)
     assert bridge.status_of(group) == C.STATUS_NA, "в «занят» показываем «недоступен»"
-    assert bridge.status_of(favourite) == C.STATUS_NA, "избранное тоже копится"
+    assert bridge.status_of(favourite) == C.STATUS_ONLINE, "избранное проходит"
+    assert bridge.status_of(mom) == C.STATUS_ONLINE, "личные проходят"
     assert (group, C.STATUS_NA) in sent, "смена режима должна разослать статусы"
 
-    # «Не беспокоить»: заглушённый в Telegram чат выглядит заглушённым,
-    # остальные — как есть, потому что сообщения от них дойдут.
-    muted = bridge.storage.contact_by_peer(-4002).uin
+    # «Не беспокоить»: то же, что «занят», но непрошедшее пропадает.
     await bridge.on_owner_status(C.STATUS_DND)
-    assert bridge.status_of(muted) == C.STATUS_DND, "заглушённый должен быть виден как молчащий"
-    assert bridge.status_of(group) == C.STATUS_ONLINE, "незаглушённый проходит"
+    assert bridge.status_of(muted) == C.STATUS_DND, "заглушённый молчит"
+    assert bridge.status_of(group) == C.STATUS_DND, "обычная группа тоже молчит"
+    assert bridge.status_of(favourite) == C.STATUS_ONLINE, "избранное проходит"
     assert bridge.status_of(mom) == C.STATUS_ONLINE
+
+    # «Недоступен»: доходит только избранное, даже мама молчит.
+    await bridge.on_owner_status(C.STATUS_NA)
+    assert bridge.status_of(favourite) == C.STATUS_ONLINE, "избранное проходит"
+    assert bridge.status_of(mom) == C.STATUS_DND, "личные тоже отсеиваются"
+    assert bridge.status_of(group) == C.STATUS_DND
 
     # Офлайн важнее подмены: если собеседника нет, так и показываем.
     bridge._statuses[group] = C.STATUS_OFFLINE

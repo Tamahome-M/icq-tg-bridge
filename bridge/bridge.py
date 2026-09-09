@@ -59,7 +59,7 @@ class Bridge:
         self._by_uin: dict[int, Contact] = {}
         self._unread: dict[int, int] = {}
         self._typing: dict[int, asyncio.Task] = {}
-        self.mode = policy.FAVOURITES
+        self.mode = policy.UNMUTED
         self.oscar.on_owner_status = self.on_owner_status
         self.oscar.on_typing = self.on_phone_typing
         self.photos: PhotoStore | None = None
@@ -177,14 +177,15 @@ class Bridge:
 
         Доставляем всё, что моложе busy_hold_minutes, не пропуская через новый
         фильтр: эти сообщения и так отложены из-за «занят», а человек вернулся.
-        Исключение — переход в «не беспокоить»: там телефон должен молчать.
+        Исключение — переход в тихий режим («не беспокоить», «недоступен»):
+        там телефон должен молчать.
         """
         rows = self.storage.take_held()
         if not rows:
             return
-        if self.mode == policy.PERSONAL:
-            log.info("после «занят» выбран режим тишины — %d придержанных не отдаю",
-                     len(rows))
+        if not policy.releases(self.mode):
+            log.info("после «занят» выбран режим тишины (%s) — %d придержанных не отдаю",
+                     policy.MODE_NAMES[self.mode], len(rows))
             return
 
         cutoff = time.time() - self.cfg.busy_hold_minutes * 60
@@ -372,7 +373,8 @@ class Bridge:
 
         «В невид. список» заглушает чат, «В видим. список» возвращает ему
         голос — то же самое, что выключить уведомления в самом Telegram.
-        В статусе «не беспокоить» это сразу решает, дойдут ли сообщения.
+        Во всех статусах, кроме «свободен для беседы», это сразу решает,
+        дойдут ли от чата сообщения.
         """
         contact = self.storage.contact_by_uin(uin)
         if contact is None:

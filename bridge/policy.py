@@ -4,28 +4,30 @@ from __future__ import annotations
 
 from .oscar import const as C
 
-# Режимы доставки
-ALL = "all"                    # всё подряд
-FAVOURITES = "favourites"      # личные и избранные группы с каналами
-PERSONAL = "personal"          # всё, кроме заглушённых в Telegram
-BUSY = "busy"                  # только личные, остальное придерживаем
+# Режимы доставки, от самого разговорчивого к самому тихому
+ALL = "all"                    # всё подряд, даже заглушённое в Telegram
+UNMUTED = "unmuted"            # всё, что не заглушено в Telegram
+BUSY = "busy"                  # личные и избранные, остальное придерживаем
+QUIET = "quiet"                # то же, но остальное просто отбрасываем
+FAVOURITES = "favourites"      # только избранное
 
 # Статус в Jimm — режим доставки. Проверяем по битам, начиная с самого
 # «разговорчивого»: клиенты любят слать статусы комбинациями вроде DND|OCCUPIED.
 STATUS_RULES = (
     (C.STATUS_FREE_FOR_CHAT, ALL),        # «свободен для беседы»
-    (C.STATUS_DND, PERSONAL),             # «не беспокоить» — пропущенное не вернётся
-    (C.STATUS_NA, PERSONAL),              # «недоступен»
+    (C.STATUS_DND, QUIET),                # «не беспокоить» — пропущенное не вернётся
+    (C.STATUS_NA, FAVOURITES),            # «недоступен»
     (C.STATUS_OCCUPIED, BUSY),            # «занят» — придержим и отдадим свежее
-    (0x0100, PERSONAL),                   # «невидимый»
-    (C.STATUS_AWAY, FAVOURITES),          # «отошёл» — как обычный онлайн
+    (0x0100, UNMUTED),                    # «невидимый»
+    (C.STATUS_AWAY, UNMUTED),             # «отошёл» — как обычный онлайн
 )
 
 MODE_NAMES = {
     ALL: "принимаю все чаты",
-    FAVOURITES: "принимаю личные и избранные",
-    PERSONAL: "принимаю всё, кроме заглушённых в Telegram",
-    BUSY: "принимаю только личные, остальное придержу",
+    UNMUTED: "принимаю всё, кроме заглушённого в Telegram",
+    BUSY: "принимаю личные и избранные, остальное придержу",
+    QUIET: "принимаю только личные и избранные",
+    FAVOURITES: "принимаю только избранное",
 }
 
 STATUS_NAMES = {
@@ -44,7 +46,7 @@ def mode_for(status: int) -> str:
     for bit, mode in STATUS_RULES:
         if status & bit:
             return mode
-    return FAVOURITES          # обычный «в сети»
+    return UNMUTED             # обычный «в сети»
 
 
 def status_name(status: int) -> str:
@@ -57,20 +59,28 @@ def status_name(status: int) -> str:
 def allows(mode: str, kind: str, favourite: bool, muted: bool = False) -> bool:
     """Пропускать ли сообщение из чата такого рода при таком режиме.
 
-    В «не беспокоить» мост опирается на сам Telegram: заглушённый там чат
-    молчит и на телефоне, остальные проходят. Так не приходится держать
-    два списка исключений — достаточно того, что уже настроено в Telegram.
+    Про то, что важно, а что нет, мост не гадает: он смотрит на настройки
+    уведомлений в самом Telegram. Заглушённый там чат молчит и на телефоне —
+    во всех режимах, кроме «свободен для беседы», где проходит вообще всё.
+    «Недоступен» — обратный случай: там пометка «избранное» перевешивает
+    и мьют, потому что её ставят руками и ради этого статуса.
     """
     if mode == ALL:
         return True
-    personal = kind in ("user", "bot")
-    if mode == PERSONAL:
-        return not muted
-    if mode == BUSY:
-        return personal
-    return personal or favourite
+    if mode == FAVOURITES:
+        return favourite
+    if muted:
+        return False
+    if mode == UNMUTED:
+        return True
+    return kind in ("user", "bot") or favourite
 
 
 def holds(mode: str) -> bool:
     """Нужно ли придержать то, что не прошло фильтр, до смены статуса."""
     return mode == BUSY
+
+
+def releases(mode: str) -> bool:
+    """Отдавать ли придержанное, когда «занят» сменился на этот режим."""
+    return mode in (ALL, UNMUTED)

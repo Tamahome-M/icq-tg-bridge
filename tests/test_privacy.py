@@ -52,8 +52,8 @@ def make_bridge() -> Bridge:
 
 async def run_bridge_side() -> None:
     bridge = make_bridge()
-    uin = bridge.storage.uin_for_peer(-4001, kind="chat", title="Шумная",
-                                      group_name="Группы")
+    uin = bridge.storage.uin_for_peer(-4001, kind="user", title="Шумный",
+                                      group_name="Личные")
     bridge._roster = bridge.storage.contacts()
     bridge._by_uin = {c.uin: c for c in bridge._roster}
 
@@ -68,7 +68,7 @@ async def run_bridge_side() -> None:
 
     # В «не беспокоить» заглушённый чат больше не доходит.
     await bridge.on_owner_status(C.STATUS_DND)
-    assert bridge.verdict_for(uin) == "drop", "заглушённый чат должен молчать"
+    assert bridge.verdict_for(uin) == "drop", "заглушённый собеседник молчит"
     assert bridge.status_of(uin) == C.STATUS_DND, "и выглядеть заглушённым"
 
     # «В видим. список» — возвращаем звук.
