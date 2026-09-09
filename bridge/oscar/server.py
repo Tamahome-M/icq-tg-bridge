@@ -481,6 +481,10 @@ class Session:
             elif item_type in (C.SSI_TYPE_DENY, C.SSI_TYPE_IGNORE):
                 # Убрали из списка запрета — значит чат снова можно слышать.
                 await self.server.on_privacy(int(target), muted=False)
+            elif item_type == C.SSI_TYPE_PERMIT:
+                # «Отменить видим. список» — обратное действие для «В видим.
+                # список», значит и звук выключаем обратно.
+                await self.server.on_privacy(int(target), muted=True)
         await self.send_snac(C.SSI, C.SSI_EDIT_ACK,
                              b"".join(struct.pack(">H", 0) for _ in range(max(1, len(items)))),
                              request_id=s.request_id)

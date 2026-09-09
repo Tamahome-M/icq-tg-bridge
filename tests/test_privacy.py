@@ -138,7 +138,25 @@ async def run_protocol_side() -> None:
     await client.send_snac(C.SSI, C.SSI_DELETE, ssi_item(uin, C.SSI_TYPE_DENY))
     await asyncio.sleep(0.3)
     assert seen[-1] == (uin, False), seen
+
+    # «Отменить видим. список» — удаление разрешения, звук выключается обратно.
+    await client.send_snac(C.SSI, C.SSI_DELETE, ssi_item(uin, C.SSI_TYPE_PERMIT))
+    await asyncio.sleep(0.3)
+    assert seen[-1] == (uin, True), seen
+
+    # «Отменить невид. список» — обратное ему, звук возвращается.
+    await client.send_snac(C.SSI, C.SSI_DELETE, ssi_item(uin, C.SSI_TYPE_IGNORE))
+    await asyncio.sleep(0.3)
+    assert seen[-1] == (uin, False), seen
     assert removed == [], "списки видимости не должны удалять чат"
+
+    # Клиент шлёт правку пачкой: сперва снимает одну пометку, потом ставит
+    # другую. Так выглядит «В невид. список» у контакта, уже бывшего видимым.
+    before = len(seen)
+    await client.send_snac(C.SSI, C.SSI_DELETE, ssi_item(uin, C.SSI_TYPE_PERMIT))
+    await client.send_snac(C.SSI, C.SSI_ADD, ssi_item(uin, C.SSI_TYPE_DENY))
+    await asyncio.sleep(0.3)
+    assert seen[before:] == [(uin, True), (uin, True)], seen[before:]
 
     # А удаление самого контакта по-прежнему удаляет чат.
     await client.send_snac(C.SSI, C.SSI_DELETE, ssi_item(uin, C.SSI_TYPE_BUDDY))
