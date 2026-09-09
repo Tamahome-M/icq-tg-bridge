@@ -8,6 +8,7 @@ import time
 
 from telethon import errors
 
+from . import avatars as avatar_lib
 from . import emoji, history, policy
 from .access import AccessControl
 from .photos import PhotoStore
@@ -52,7 +53,8 @@ class Bridge:
         self.oscar = OscarServer(cfg, self.storage, self.on_phone_message,
                                  self.roster, self.status_of, self.chat_info,
                                  self.search_chats, self.verdict_for,
-                                 self.on_phone_remove, self.on_phone_privacy)
+                                 self.on_phone_remove, self.on_phone_privacy,
+                                 self.avatar, self.icon_hash)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
@@ -62,6 +64,8 @@ class Bridge:
         self.mode = policy.UNMUTED
         self.oscar.on_owner_status = self.on_owner_status
         self.oscar.on_typing = self.on_phone_typing
+        self.avatars = (avatar_lib.AvatarStore(cfg.avatar_size, cfg.avatar_max_kb * 1024)
+                        if cfg.avatars else None)
         self.photos: PhotoStore | None = None
         self.photo_server: PhotoServer | None = None
         if cfg.photos_enabled:
@@ -223,6 +227,28 @@ class Bridge:
             info["marks"] = ", ".join(marks)
         return info
 
+    def icon_hash(self, uin: int) -> bytes | None:
+        """Примета аватарки для блока сведений о контакте."""
+        return self.avatars.hash_of(uin) if self.avatars else None
+
+    async def avatar(self, uin: int) -> tuple[bytes, bytes] | None:
+        """Аватарка по запросу телефона: берём из кэша или тянем из Telegram."""
+        if self.avatars is None:
+            return None
+        ready = self.avatars.cached(uin)
+        if ready is not None:
+            return ready
+        contact = self.storage.contact_by_uin(uin)
+        if contact is None or self.avatars.hash_of(uin) is None:
+            return None
+        raw = await self.telegram.avatar(contact.peer_id)
+        if raw is None:
+            return None
+        got = self.avatars.store(uin, raw)
+        if got is not None:
+            log.info("аватарка чата %r готова: %d байт", contact.title, len(got[1]))
+        return got
+
     async def refresh_roster(self) -> None:
         dialogs = await self.telegram.dialogs()
         for d in dialogs:
@@ -232,6 +258,8 @@ class Bridge:
                                             favourite=favourite, topic_id=d.topic_id,
                                             muted=int(d.muted))
             self._unread[d.peer_id] = d.unread
+            if self.avatars is not None:
+                self.avatars.remember(uin, d.photo_id)
             code = STATUS_CODES.get(d.status, C.STATUS_ONLINE)
             changed = uin in self._statuses and self._statuses[uin] != code
             self._statuses[uin] = code
