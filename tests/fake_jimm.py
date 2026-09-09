@@ -33,6 +33,7 @@ class FakeJimm:
         self.statuses: dict[int, int] = {}
         self.capabilities: dict[int, bytes] = {}
         self.icon_hashes: dict[int, bytes] = {}
+        self.privacy: list[tuple[int, int]] = []
         self.received: list[tuple[int, str]] = []
         self.acks: list[bytes] = []
         self.next_msg_id = 1000
@@ -271,6 +272,10 @@ class FakeJimm:
                 extra = Reader(r.pstr16()).tlvs()
                 if item_type == C.SSI_TYPE_GROUP and group_id:
                     self.groups[group_id] = name.decode(encoding, "replace")
+                elif item_type in (C.SSI_TYPE_DENY, C.SSI_TYPE_PERMIT,
+                                   C.SSI_TYPE_IGNORE):
+                    # По этим элементам клиент рисует пометки списков видимости.
+                    self.privacy.append((int(name), item_type))
                 elif item_type == C.SSI_TYPE_BUDDY:
                     uin = int(name)
                     alias = (extra.get(C.SSI_TLV_ALIAS) or b"").decode(encoding, "replace")

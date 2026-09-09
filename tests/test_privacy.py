@@ -18,6 +18,7 @@ from bridge.oscar import blocks
 from bridge.oscar import const as C
 from bridge.oscar.proto import pstr16
 from bridge.oscar.server import OscarServer
+from bridge.tg.client import Dialog
 from tests.fake_jimm import FakeJimm
 
 PORT = 15500
@@ -101,7 +102,9 @@ async def run_protocol_side() -> None:
     cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT
     cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
     storage = Storage(":memory:")
-    uin = storage.uin_for_peer(-4001, kind="chat", title="Шумная", group_name="Группы")
+    uin = storage.uin_for_peer(-4001, kind="chat", title="Шумная", group_name="Группы",
+                               muted=1)
+    loud = storage.uin_for_peer(-4002, kind="chat", title="Обычная", group_name="Группы")
 
     async def on_outgoing(*_):
         return 1
@@ -123,6 +126,12 @@ async def run_protocol_side() -> None:
     client = FakeJimm("127.0.0.1", PORT, cfg.oscar_uin, cfg.oscar_password)
     await client.connect()
     await client.bos(await client.login_md5_jimm())
+
+    # Заглушённый в Telegram чат приезжает в списке как элемент запрета:
+    # по нему клиент рисует пометку невидимости, и она совпадает с Telegram.
+    assert (uin, C.SSI_TYPE_DENY) in client.privacy, client.privacy
+    assert not any(u == loud for u, _ in client.privacy), \
+        "незаглушённому чату пометка не нужна"
 
     # «В невид. список» — добавление в список запрета.
     await client.send_snac(C.SSI, C.SSI_ADD, ssi_item(uin, C.SSI_TYPE_DENY))
@@ -169,8 +178,50 @@ async def run_protocol_side() -> None:
     print("  разбор пакетов: ок (запрет, разрешение и удаление различаются)")
 
 
+async def run_desktop_side() -> None:
+    """Мьют, снятый в Telegram, доезжает до телефона сам."""
+    bridge = make_bridge()
+    sent: list[tuple[int, int]] = []
+
+    async def notify(uin: int, status: int) -> None:
+        sent.append((uin, status))
+
+    bridge.oscar.notify_status = notify
+
+    muted = [True]
+
+    async def dialogs():
+        return [Dialog(-4001, "chat", "Шумная", "Группы", 0, "online",
+                       muted=muted[0])]
+
+    bridge.telegram.dialogs = dialogs
+
+    await bridge.on_owner_status(C.STATUS_ONLINE)
+    await bridge.refresh_roster()
+    uin = bridge.storage.contact_by_peer(-4001).uin
+    assert bridge.status_of(uin) == C.STATUS_DND, "заглушённый выглядит молчащим"
+    assert (uin, C.STATUS_DND) in sent, sent
+
+    # Сняли мьют на десктопе: обновление списка должно поправить и статус.
+    muted[0] = False
+    sent.clear()
+    await bridge.refresh_roster()
+    assert bridge.status_of(uin) == C.STATUS_ONLINE, "мьюта больше нет"
+    assert (uin, C.STATUS_ONLINE) in sent, \
+        "снятый мьют должен доехать до телефона, а не ждать смены статуса"
+
+    # Лишнего не шлём: ничего не поменялось — и рассылки нет.
+    sent.clear()
+    await bridge.refresh_roster()
+    assert sent == [], sent
+
+    bridge.storage.close()
+    print("  мьют с десктопа: ок (статус на телефоне обновляется сам)")
+
+
 async def main() -> None:
     await run_bridge_side()
+    await run_desktop_side()
     await run_protocol_side()
     print("СПИСКИ ВИДИМОСТИ ПРОВЕРЕНЫ")
 

@@ -260,15 +260,12 @@ class Bridge:
             self._unread[d.peer_id] = d.unread
             if self.avatars is not None:
                 self.avatars.remember(uin, d.photo_id)
-            code = STATUS_CODES.get(d.status, C.STATUS_ONLINE)
-            changed = uin in self._statuses and self._statuses[uin] != code
-            self._statuses[uin] = code
-            if changed:
-                await self.oscar.notify_status(uin, code)
+            self._statuses[uin] = STATUS_CODES.get(d.status, C.STATUS_ONLINE)
         # Чаты, которых больше нет в Telegram, убираем из контакт-листа.
         for contact in self.storage.mark_missing([d.peer_id for d in dialogs]):
             log.info("чат %r исчез из Telegram — убираю из списка", contact.title)
             self._statuses[contact.uin] = C.STATUS_OFFLINE
+            self._shown[contact.uin] = C.STATUS_OFFLINE
             await self.oscar.notify_status(contact.uin, C.STATUS_OFFLINE)
 
         self._roster = self.storage.contacts(self.cfg.roster_limit)
@@ -281,6 +278,10 @@ class Bridge:
         online = sum(1 for c in self._roster
                      if self._statuses.get(c.uin, C.STATUS_ONLINE) != C.STATUS_OFFLINE)
         log.info("контакт-лист: %d чатов, из них в сети %d", len(self._roster), online)
+        # Статусы шлём после сборки списка: и настоящие обновления из Telegram,
+        # и подмену для тех, от кого сообщения сейчас не доходят. Снятый на
+        # десктопе мьют иначе доехал бы до телефона только со сменой статуса.
+        await self.refresh_shown_statuses()
 
     async def _refresh_loop(self) -> None:
         while True:

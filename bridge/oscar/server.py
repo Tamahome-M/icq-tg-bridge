@@ -407,6 +407,7 @@ class Session:
 
         enc = self.server.ssi_encoding
         items: list[bytes] = []
+        muted_items: list[bytes] = []
         group_ids: list[int] = []
         for group_index, (group_name, members) in enumerate(groups.items(), start=1):
             group_ids.append(group_index)
@@ -418,6 +419,16 @@ class Session:
                 title = contact.title[:self.server.alias_max_chars]
                 items.append(blocks.ssi_buddy(contact.uin, group_index, item_id,
                                               title.encode(enc, "replace")))
+                if contact.muted:
+                    # Заглушённый в Telegram чат отдаём как элемент списка
+                    # запрета: по нему клиент рисует свою пометку невидимости.
+                    # Другого способа её поправить нет — правки списка на лету
+                    # клиент от сервера не слушает, только этот список при входе.
+                    muted_items.append(blocks.ssi_item(
+                        str(contact.uin).encode("ascii"), 0, next_item_id,
+                        C.SSI_TYPE_DENY))
+                    next_item_id += 1
+        items.extend(muted_items)
         items.insert(0, blocks.ssi_group(b"", 0, group_ids))
         return items
 
