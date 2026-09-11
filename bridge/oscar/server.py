@@ -133,6 +133,9 @@ class Session:
         self.last_seen = time.time()
         if channel == 5:
             self.pings_seen += 1
+        if self.server.ack_works is None and self.server._probe_started:
+            # Признак жизни во время проверки подтверждений — повод решить.
+            self.server.wake_sender()
         if channel == 1:
             await self.handle_signon(payload)
         elif channel == 2:
@@ -979,6 +982,11 @@ class OscarServer:
         if self.session is not None and self.session is not session:
             asyncio.create_task(self.session.close())
         self.session = session
+        # Умеет ли клиент подтверждать, выясняем заново для каждого сеанса:
+        # прошлое решение могло относиться к другой сборке или к зависшему
+        # телефону, а первое подтверждение приходит быстро.
+        self.ack_works = None
+        self._probe_started = 0.0
 
     def session_gone(self, session: Session) -> None:
         if self.session is session:
@@ -1123,20 +1131,50 @@ class OscarServer:
         """Пока ждём первого подтверждения, просыпаемся к сроку проверки."""
         if self.ack_works is None and self._probe_started:
             left = self.ack_timeout - (time.time() - self._probe_started)
-            return max(0.2, min(SENDER_IDLE_POLL, left + 0.1))
+            if left > 0:
+                return max(0.2, min(SENDER_IDLE_POLL, left + 0.1))
+            # Срок вышел, а решения нет — клиент молчит. Заглядываем почаще,
+            # чтобы вовремя закрыть немой сеанс; это дёшево.
+            return min(SENDER_IDLE_POLL, 1.0)
         return SENDER_IDLE_POLL
 
     def check_acks(self) -> None:
         """Следит за подтверждениями: возвращает в очередь потерянное и
-        отключает расширенный режим, если клиент его не поддерживает."""
-        if self.ack_works is None and self._probe_started:
-            if time.time() - self._probe_started > self.ack_timeout:
-                log.warning("подтверждений от клиента нет — перехожу на обычные сообщения")
-                self.ack_works = False
-                self.awaiting.clear()
-                self.storage.reset_sent()
-                self.wake_sender()
+        отключает расширенный режим, если клиент его не поддерживает.
+
+        Молчание — не доказательство. Телефон, который завис или отвалился
+        без закрытия соединения, тоже ничего не подтверждает, но это не
+        значит, что он не умеет: решение «подтверждений не будет» принимается
+        только когда клиент после отправки подавал признаки жизни — пинги,
+        набор текста, что угодно. Совсем немой сеанс закрываем, и очередь
+        вернётся к следующему входу.
+        """
+        session = self.session
+        if session is None:
             return
+        silent_for = time.time() - session.last_seen
+
+        if self.ack_works is None and self._probe_started:
+            if time.time() - self._probe_started <= self.ack_timeout:
+                return
+            if session.last_seen <= self._probe_started:
+                # После отправки от клиента не было ничего — возможно, он
+                # мёртв. Ждём; совсем затянувшееся молчание закрываем сами.
+                if self.idle_timeout > 0 and silent_for > self.idle_timeout:
+                    log.warning("от клиента ни подтверждений, ни вестей %.0f с — "
+                                "закрываю сессию", silent_for)
+                    asyncio.create_task(session.close())
+                return
+            log.warning("клиент жив, но не подтверждает получение — "
+                        "перехожу на обычные сообщения")
+            self.ack_works = False
+            self.awaiting.clear()
+            self.storage.reset_sent()
+            self.wake_sender()
+            return
+
+        if silent_for > ACK_GRACE:
+            return          # молчащему телефону слать заново бессмысленно
         stale = self.storage.reset_sent(older_than=ACK_GRACE)
         if stale:
             log.warning("%d сообщений не подтверждены за %d с — отправлю заново",
