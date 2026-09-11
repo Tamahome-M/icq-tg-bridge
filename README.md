@@ -615,8 +615,13 @@ INFO    oscar    сессия 91.78.159.171:24529 закрыта: молчани
 ```
 
 Уровень и файл задаются в секции `[log]` (`level`, `telethon_level`, `file`
-с ротацией по `file_max_mb` и `file_keep`); переменные окружения
-`BRIDGE_LOGLEVEL` и `BRIDGE_TELETHON_LOGLEVEL` сильнее настроек.
+с ротацией по `file_max_mb` и `file_keep`). Переменные окружения
+`BRIDGE_LOGLEVEL` и `BRIDGE_TELETHON_LOGLEVEL` сильнее настроек — под OpenRC
+их выставляет `bridge_loglevel` в `/etc/conf.d/icq-tg-bridge`, **только если
+там не пусто**; пустое значение (умолчание) отдаёт слово `config.toml`. Так
+конфиг задаёт постоянный уровень, а conf.d — временное перекрытие без правки
+конфига. Под службой журнал и так пишется в `/var/log/icq-tg-bridge.log`
+(OpenRC) или journald (systemd), `file` в `[log]` там не нужен.
 
 ## Ограничения
 

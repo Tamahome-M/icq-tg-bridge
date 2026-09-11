@@ -7,8 +7,8 @@
 : ${bridge_user:=icqbridge}
 : ${bridge_dir:=/opt/icq-tg-bridge}
 : ${bridge_config:=${bridge_dir}/config.toml}
-: ${bridge_loglevel:=INFO}
-: ${bridge_telethon_loglevel:=WARNING}
+: ${bridge_loglevel:=}
+: ${bridge_telethon_loglevel:=}
 
 name="icq-tg-bridge"
 description="Мост ICQ (OSCAR) <-> Telegram"
@@ -23,8 +23,11 @@ output_log="/var/log/${RC_SVCNAME}.log"
 error_log="/var/log/${RC_SVCNAME}.log"
 
 export BRIDGE_CONFIG="${bridge_config}"
-export BRIDGE_LOGLEVEL="${bridge_loglevel}"
-export BRIDGE_TELETHON_LOGLEVEL="${bridge_telethon_loglevel}"
+# Уровень журнала обычно задаётся в config.toml, секция [log]. Переменные
+# окружения сильнее настроек, поэтому экспортируем их, только если в conf.d
+# что-то написано явно — иначе config.toml не имел бы голоса.
+[ -n "${bridge_loglevel}" ] && export BRIDGE_LOGLEVEL="${bridge_loglevel}"
+[ -n "${bridge_telethon_loglevel}" ] && export BRIDGE_TELETHON_LOGLEVEL="${bridge_telethon_loglevel}"
 
 depend() {
 	need net

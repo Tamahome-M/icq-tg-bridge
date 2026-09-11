@@ -9,7 +9,9 @@ User=icqbridge
 Group=icqbridge
 WorkingDirectory=/opt/icq-tg-bridge
 Environment=BRIDGE_CONFIG=/opt/icq-tg-bridge/config.toml
-Environment=BRIDGE_TELETHON_LOGLEVEL=WARNING
+# Уровень журнала — в config.toml, секция [log]. Переменная сильнее настроек,
+# поэтому раскомментируйте только для временного перекрытия:
+# Environment=BRIDGE_LOGLEVEL=DEBUG
 ExecStart=/opt/icq-tg-bridge/.venv/bin/python /opt/icq-tg-bridge/run.py
 Restart=always
 RestartSec=10
