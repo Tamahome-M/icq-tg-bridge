@@ -81,6 +81,15 @@ class Bridge:
     def roster(self) -> list[Contact]:
         return self._roster
 
+    def _reload_roster(self) -> None:
+        """Перечитывает контакт-лист из базы — всегда с roster_limit.
+
+        Без ограничения телефон при следующем входе получил бы все чаты
+        разом, а индекс по UIN разошёлся бы со списком.
+        """
+        self._roster = self.storage.contacts(self.cfg.roster_limit)
+        self._by_uin = {c.uin: c for c in self._roster}
+
     def status_of(self, uin: int) -> int:
         """Статус контакта для контакт-листа.
 
@@ -135,7 +144,7 @@ class Bridge:
                               "kind": KIND_TITLES.get(contact.kind, "Чат"),
                               "username": ""})
         if found:
-            self._roster = self.storage.contacts(self.cfg.roster_limit)
+            self._reload_roster()
             return found[:SEARCH_LIMIT]
 
         for item in await self.telegram.search_chats(query, SEARCH_LIMIT):
@@ -147,7 +156,7 @@ class Bridge:
                           "username": item["username"]})
         if found:
             # Новые чаты появятся в контакт-листе после перезахода в Jimm.
-            self._roster = self.storage.contacts()
+            self._reload_roster()
         return found
 
     def verdict_for(self, uin: int) -> str:
@@ -268,8 +277,7 @@ class Bridge:
             self._shown[contact.uin] = C.STATUS_OFFLINE
             await self.oscar.notify_status(contact.uin, C.STATUS_OFFLINE)
 
-        self._roster = self.storage.contacts(self.cfg.roster_limit)
-        self._by_uin = {c.uin: c for c in self._roster}
+        self._reload_roster()
         total = len(self.storage.contacts())
         if self.cfg.roster_limit and total > len(self._roster):
             log.info("в контакт-лист телефона идут %d чатов из %d (roster_limit); "
@@ -319,7 +327,7 @@ class Bridge:
             uin = self.storage.uin_for_peer(
                 peer_id, kind=kind, title=title, group_name=group,
                 position=9999, topic_id=topic_id)
-            self._roster = self.storage.contacts(self.cfg.roster_limit)
+            self._reload_roster()
             log.info("новый чат %r получил UIN %d (появится в списке после перевхода)", title, uin)
         else:
             uin = contact.uin
@@ -431,8 +439,7 @@ class Bridge:
             return
 
         self.storage.set_muted(contact.uin, muted)
-        self._roster = self.storage.contacts(self.cfg.roster_limit)
-        self._by_uin = {c.uin: c for c in self._roster}
+        self._reload_roster()
         log.info("чат %r %s в Telegram", contact.title,
                  "заглушён" if muted else "снова со звуком")
 
@@ -462,7 +469,7 @@ class Bridge:
                              "Убрал тему из контакт-листа, сообщения из неё "
                              "приходить не будут.")
             self.storage.set_hidden(contact.uin)
-            self._roster = self.storage.contacts(self.cfg.roster_limit)
+            self._reload_roster()
             await self.oscar.notify_status(contact.uin, C.STATUS_OFFLINE)
             log.info("тема %r убрана с телефона (в Telegram осталась)", contact.title)
             return
@@ -484,7 +491,7 @@ class Bridge:
         # Из контакт-листа чат уходит при следующем входе; запись остаётся,
         # чтобы за ним сохранился прежний UIN, если он вернётся.
         self.storage.mark_gone(contact.uin)
-        self._roster = self.storage.contacts(self.cfg.roster_limit)
+        self._reload_roster()
         await self.oscar.notify_status(contact.uin, C.STATUS_OFFLINE)
         log.info("чат %r удалён%s", contact.title,
                  " у обеих сторон" if revoke else "")
@@ -596,7 +603,7 @@ class Bridge:
         if value is None:
             await self.reply(contact, "Этот чат мне неизвестен")
             return
-        self._roster = self.storage.contacts()
+        self._reload_roster()
 
         if contact.kind in ("user", "bot"):
             note = " (на личные чаты это не влияет — они приходят всегда)"
