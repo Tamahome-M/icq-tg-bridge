@@ -306,7 +306,11 @@ async def run_without_acks() -> None:
     await client.drain_for(0.7)
 
     await server.deliver(uin, "Привет без подтверждений")
-    await client.drain_for(4.0)
+    await client.drain_for(1.5)
+    # Клиент жив: пингует, как настоящий, — только тогда молчание про
+    # подтверждения считается ответом «не умею».
+    await client.ping()
+    await client.drain_for(2.5)
 
     assert client.channels[0] == 2, "первая попытка должна идти каналом 2"
     assert 1 in client.channels, f"отката на канал 1 не случилось: {client.channels}"
@@ -317,6 +321,65 @@ async def run_without_acks() -> None:
     await client.close()
     server._server.close()
     print("  клиент без подтверждений: ок (откат на обычные сообщения, ничего не потеряно)")
+
+
+async def run_dead_phone() -> None:
+    """Зависший телефон — не клиент без подтверждений.
+
+    Соединение живо с точки зрения сокета, но от телефона нет ничего: ни
+    подтверждений, ни пингов. Переходить на обычные сообщения нельзя — они
+    ушли бы в никуда и пропали из очереди.
+    """
+    cfg = make_config()
+    cfg.oscar_port = PORT + 6
+    cfg.ack_timeout = 1
+    cfg.idle_timeout = 3
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+
+    async def on_outgoing(*_):
+        return 1
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts)
+    await server.start()
+
+    client = FakeJimm("127.0.0.1", cfg.oscar_port, cfg.oscar_uin, cfg.oscar_password)
+    client.send_acks = False
+    await client.connect()
+    await client.bos(await client.login_md5_jimm())
+    await client.drain_for(0.5)
+
+    await server.deliver(uin, "ты там?")
+    await client.drain_for(2.0)             # телефон молчит: ни пингов, ни подтверждений
+
+    assert server.ack_works is None, "молчание нельзя принимать за «не умею подтверждать»"
+    assert 1 not in client.channels, f"отката на канал 1 быть не должно: {client.channels}"
+    assert storage.in_flight_count() == 1 and storage.pending_count() == 1, \
+        "сообщение должно ждать в очереди, а не пропасть"
+
+    # Совсем немой сеанс мост закрывает сам, и очередь возвращается к входу.
+    await client.drain_for(3.0)
+    assert server.session is None or server.session.closed, "немой сеанс должен закрыться"
+    await asyncio.sleep(0.3)
+    assert storage.in_flight_count() == 0 and storage.pending_count() == 1, \
+        "после закрытия сообщение должно вернуться в очередь"
+
+    # Новый вход: то же сообщение доезжает, подтверждения проверяются заново.
+    client2 = FakeJimm("127.0.0.1", cfg.oscar_port, cfg.oscar_uin, cfg.oscar_password)
+    await client2.connect()
+    await client2.bos(await client2.login_md5_jimm())
+    await client2.drain_for(1.0)
+    assert any("ты там?" in t for _, t in client2.received), client2.received
+    assert server.ack_works is True, "живой клиент с подтверждениями должен опознаться заново"
+    assert storage.pending_count() == 0
+
+    await client2.close()
+    try:
+        await client.close()
+    except Exception:
+        pass
+    server._server.close()
+    print("  зависший телефон: ок (нет отката на канал 1, очередь цела, сеанс закрыт)")
 
 
 async def run_no_blocking() -> None:
@@ -497,6 +560,7 @@ async def main() -> None:
     await run_queue_safety()
     await run_without_acks()
     await run_no_blocking()
+    await run_dead_phone()
     await run_status_modes()
     await run_contact_info()
     await run_roster_changes()

@@ -356,6 +356,10 @@ class FakeJimm:
                 await self.send_snac(C.ICQ, C.ICQ_TO_SERVER, tlv(0x0001, ack))
             return resp
 
+    async def ping(self) -> None:
+        """Keepalive — пустой кадр канала 5, как шлёт Jimm раз в две минуты."""
+        await self.send_flap(5, b"")
+
     async def send_typing(self, uin: int, active: bool) -> None:
         """Сообщает серверу, что владелец набирает сообщение."""
         await self.send_snac(C.ICBM, C.ICBM_CLIENT_EVENT,
