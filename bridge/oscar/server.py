@@ -79,6 +79,24 @@ class Session:
         self.last_seen = time.time()
         self.pings_seen = 0
         self._lock = asyncio.Lock()
+        # Всё, что ходит в Telegram, выполняется отдельными задачами: цикл
+        # чтения не должен ждать чужой сети — иначе пропадают пинги и
+        # подтверждения, а сторож считает живой телефон отвалившимся.
+        self._tasks: set[asyncio.Task] = set()
+
+    def spawn(self, coro) -> asyncio.Task:
+        """Запускает обработчик в фоне и не даёт его ошибке пропасть молча."""
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+
+        def done(t: asyncio.Task) -> None:
+            self._tasks.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                log.error("сбой фоновой задачи сессии %s", self.peer,
+                          exc_info=t.exception())
+
+        task.add_done_callback(done)
+        return task
 
     # --- отправка -------------------------------------------------------
 
@@ -130,6 +148,8 @@ class Session:
             return
         self.closed = True
         self.server.session_gone(self)
+        for task in list(self._tasks):
+            task.cancel()
         try:
             self.writer.close()
             await self.writer.wait_closed()
@@ -305,9 +325,12 @@ class Session:
             return
         while not self.closed:
             await asyncio.sleep(30)
-            if self.pings_seen and time.time() - self.last_seen > timeout:
-                log.warning("от телефона нет вестей %.0f с — закрываю сессию",
-                            time.time() - self.last_seen)
+            silent = time.time() - self.last_seen
+            # Клиент, который пингует, обязан пинговать; который не пингует —
+            # хотя бы что-то присылать. Иначе оборванное без FIN соединение
+            # висело бы вечно, а очередь ждала бы подтверждений от пустоты.
+            if (self.pings_seen and silent > timeout) or silent > 3 * timeout:
+                log.warning("от телефона нет вестей %.0f с — закрываю сессию", silent)
                 await self.close()
                 return
 
@@ -326,6 +349,12 @@ class Session:
         if not self.authorized:
             return
 
+        # Эти обработчики ходят в Telegram — их ждать в цикле чтения нельзя.
+        background = {
+            (C.ICBM, C.ICBM_SEND), (C.ICBM, C.ICBM_CLIENT_EVENT),
+            (C.SSI, C.SSI_ADD), (C.SSI, C.SSI_DELETE), (C.SSI, C.SSI_REMOVE_ME),
+            (C.ICQ, 0x0002), (C.SSBI, C.SSBI_ICQ_REQ),
+        }
         handler = {
             (C.OSERVICE, C.CLI_VERSIONS): self.on_versions,
             (C.OSERVICE, C.RATE_REQ): self.on_rate_req,
@@ -353,6 +382,9 @@ class Session:
 
         if handler is None:
             log.debug("без обработчика: %s", s)
+            return
+        if (s.family, s.subtype) in background:
+            self.spawn(handler(s))
             return
         await handler(s)
 
@@ -651,6 +683,8 @@ class Session:
         if self.ready:
             return
         self.ready = True
+        if self.service_only:
+            return          # соединение за аватарками: ни списка статусов, ни очереди
         log.info("клиент готов, %s", self.peer)
         asyncio.create_task(self.announce_buddies())
         self.offline_phase = True
@@ -751,8 +785,9 @@ class Session:
             return
 
         # Cookie в подтверждении обязан быть тем же, что прислал клиент:
-        # по нему он и находит своё сообщение.
-        if self.server.ack_on_read:
+        # по нему он и находит своё сообщение. Команду мосту подтверждаем
+        # сразу: у неё нет номера в Telegram, и прочтения ждать не от кого.
+        if self.server.ack_on_read and sent_id > 0:
             # Галочку поставим, когда собеседник прочитает сообщение.
             self.server.remember_sent(int(target), sent_id, cookie, channel)
         else:
@@ -1037,7 +1072,17 @@ class OscarServer:
 
     def session_arrived(self, session: Session) -> None:
         if self.session is not None and self.session is not session:
-            asyncio.create_task(self.session.close())
+            # Телефон переподключился, а старое соединение ещё живо. Всё, что
+            # ушло туда без подтверждения, возвращаем в очередь сейчас — иначе
+            # оно не попадёт в офлайн-пачку и будет ждать срока повтора.
+            old = self.session
+            self.session = None
+            asyncio.create_task(old.close())
+            self.awaiting.clear()
+            returned = self.storage.reset_sent()
+            if returned:
+                log.info("старое соединение заменено, в очередь вернулось %d сообщений",
+                         returned)
         self.session = session
         # Умеет ли клиент подтверждать, выясняем заново для каждого сеанса:
         # прошлое решение могло относиться к другой сборке или к зависшему
