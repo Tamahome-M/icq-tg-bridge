@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import email.utils
 import hmac
 import html
 import logging
 import os
+import re
 import secrets
 import time
 from urllib.parse import parse_qs, quote, unquote
@@ -35,7 +37,10 @@ MAX_BODY = 4096              # форма входа — и только она
 MIME_PAGE = "application/vnd.wap.xhtml+xml"
 REALM = "icq-tg-bridge"
 COOKIE = "bridge_auth"
+SESSION_PARAM = "s"                   # токен сеанса в адресе — для браузеров без cookie
 SESSION_SECONDS = 30 * 24 * 3600     # вошёл с телефона — и на месяц свободен
+# Ссылки внутри страниц, к которым дописывается токен сеанса.
+_LINK_RE = re.compile(rb'(href|src)="(/[^"?#]*)"')
 _NOT_FOUND_BODY = "не найдено".encode("utf-8")
 
 # Раздел «Загрузки»: типы файлов, которые телефон должен опознать. JAD и JAR
@@ -142,9 +147,10 @@ class PhotoServer:
             return
 
         set_cookie = ""
+        url_token = ""
         open_area = path.startswith("/d/") and self.downloads_dir and not self.downloads_protected
         if self.password and not open_area:
-            ok, set_cookie = self._authorized(host, params, headers)
+            ok, set_cookie, url_token = self._authorized(host, params, headers)
             if not ok:
                 await self._challenge(writer, path, head_only)
                 return
@@ -155,6 +161,13 @@ class PhotoServer:
             await self._reply(writer, 404, "text/plain; charset=utf-8", _NOT_FOUND_BODY)
             return
         content, mime, what = found
+        if url_token and what in ("страница", "список", "загрузки"):
+            # Браузер без cookie: токен сеанса едет дальше в каждой ссылке —
+            # и в картинках, и во вложениях, — иначе следующий шаг снова
+            # спросит пароль.
+            content = _LINK_RE.sub(
+                lambda m: m.group(1) + b'="' + m.group(2)
+                + f"?{SESSION_PARAM}={url_token}".encode() + b'"', content)
         # Страницы не кэшируем: они живут недолго и должны честно исчезать.
         cache = "no-cache" if what in ("страница", "список", "загрузки") else "max-age=86400"
         await self._reply(writer, 200, mime, content, head_only,
@@ -174,10 +187,21 @@ class PhotoServer:
         return token
 
     def _cookie_header(self, token: str) -> str:
-        return f"Set-Cookie: {COOKIE}={token}; Path=/; Max-Age={SESSION_SECONDS}"
+        # Старые браузеры знают только Expires, новые — Max-Age: шлём оба.
+        expires = email.utils.formatdate(time.time() + SESSION_SECONDS, usegmt=True)
+        return (f"Set-Cookie: {COOKIE}={token}; Path=/; Max-Age={SESSION_SECONDS}; "
+                f"Expires={expires}")
 
-    def _authorized(self, host: str, params: dict, headers: dict) -> tuple[bool, str]:
-        """Пускать ли; второе — заголовок Set-Cookie, если вход только что случился."""
+    def _session_alive(self, token: str) -> bool:
+        return bool(token) and self._sessions.get(token, 0) > time.time()
+
+    def _authorized(self, host: str, params: dict, headers: dict) -> tuple[bool, str, str]:
+        """Пускать ли.
+
+        Второе — заголовок Set-Cookie, если вход только что случился; третье —
+        токен сеанса, который надо пронести в ссылках страницы (для браузера,
+        который вошёл по адресу и cookie не хранит).
+        """
         auth = headers.get("authorization", "")
         if auth.lower().startswith("basic "):
             try:
@@ -187,28 +211,34 @@ class PhotoServer:
             _, _, password = raw.partition(":")
             if self._check(password):
                 self.access.note_success(host)
-                return True, ""
+                return True, "", ""
             self.access.note_failure(host)
             log.warning("неверный пароль (Basic) с %s", host)
-            return False, ""
+            return False, "", ""
 
         cookies = {}
         for piece in headers.get("cookie", "").split(";"):
             name, _, value = piece.strip().partition("=")
             cookies[name] = value
-        token = cookies.get(COOKIE, "")
-        if token and self._sessions.get(token, 0) > time.time():
-            return True, ""
+        if self._session_alive(cookies.get(COOKIE, "")):
+            return True, "", ""
+
+        # Токен сеанса в адресе: его получают ссылки страницы после входа по
+        # ключу, так что пароль сам по себе в адресах дальше не гуляет.
+        url_token = (params.get(SESSION_PARAM) or [""])[0]
+        if self._session_alive(url_token):
+            return True, "", url_token
 
         key = (params.get("key") or [""])[0]
         if key:
             if self._check(key):
                 self.access.note_success(host)
+                token = self._session()
                 log.info("вход по ключу в адресе с %s", host)
-                return True, self._cookie_header(self._session())
+                return True, self._cookie_header(token), token
             self.access.note_failure(host)
             log.warning("неверный ключ в адресе с %s", host)
-        return False, ""
+        return False, "", ""
 
     async def _challenge(self, writer, path: str, head_only: bool) -> None:
         """401 с Basic и формой входа в теле: кто умеет Basic, увидит окно,
