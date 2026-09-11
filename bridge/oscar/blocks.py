@@ -134,6 +134,21 @@ def channel2_message(cookie: bytes, text: str, url: str = "") -> bytes:
     )
 
 
+def offline_message(sender: int, ts: int, text: str) -> bytes:
+    """Запись офлайн-сообщения ICQ (ответ 0x0041 семейства 0x15).
+
+    Время идёт по Гринвичу — клиент сам переводит в местное. Длина текста
+    включает завершающий ноль, как в оригинальном протоколе; Jimm проверяет,
+    что после текста в записи ничего нет.
+    """
+    t = time.gmtime(ts)
+    payload = text.encode("utf-8") + b"\x00"
+    return (struct.pack("<IHBBBB", sender, t.tm_year, t.tm_mon, t.tm_mday,
+                        t.tm_hour, t.tm_min)
+            + bytes([MSG_TYPE_PLAIN, 0])       # тип и флаги
+            + struct.pack("<H", len(payload)) + payload)
+
+
 def message_fragments(text: str) -> bytes:
     """Тело сообщения ICBM: фрагмент возможностей + фрагмент текста."""
     try:

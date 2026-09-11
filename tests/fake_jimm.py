@@ -35,6 +35,7 @@ class FakeJimm:
         self.icon_hashes: dict[int, bytes] = {}
         self.privacy: list[tuple[int, int]] = []
         self.urls: list[tuple[int, str]] = []      # ссылки из URL-сообщений
+        self.offline: list[tuple[int, tuple, str]] = []   # офлайн-сообщения с датой
         self.received: list[tuple[int, str]] = []
         self.acks: list[bytes] = []
         self.next_msg_id = 1000
@@ -225,7 +226,13 @@ class FakeJimm:
         assert channel == 4, f"после SNAC 17/03 ожидали канал 4, пришёл {channel}"
         return tlvs.get(C.TLV_AUTH_COOKIE)
 
-    async def bos(self, cookie: bytes, encoding: str = "cp1251") -> None:
+    async def bos(self, cookie: bytes, encoding: str = "cp1251",
+                  request_offline: bool = True) -> None:
+        """Вход на BOS по cookie и вся цепочка запросов, как у Jimm.
+
+        В конце, как и настоящий клиент, спрашивает офлайн-сообщения —
+        request_offline=False оставляет этот шаг вызывающему.
+        """
         self.writer.close()
         self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
         await self.recv_flap()
@@ -262,6 +269,8 @@ class FakeJimm:
         await self.send_snac(C.OSERVICE, C.CLI_READY,
                              b"".join(struct.pack(">HHHH", f, v, 0x0110, 0x0629)
                                       for f, v in C.FAMILY_VERSIONS.items()))
+        if request_offline:
+            await self.offline_messages()
 
     async def read_ssi(self, encoding: str) -> None:
         """Читает контакт-лист так же, как Jimm.
@@ -299,7 +308,12 @@ class FakeJimm:
             assert s.flags & 0x0001, "часть без метки должна быть помечена как неполная"
 
     async def offline_messages(self) -> int:
-        """Запрашивает офлайн-сообщения так же, как это делает Jimm."""
+        """Запрашивает офлайн-сообщения так же, как это делает Jimm.
+
+        Записи 0x0041 разбираются по тем же смещениям, что в ActionListener:
+        uin, дата, тип, длина, текст с завершающим нулём — и попадают в
+        received. На 0x0042 уходит подтверждение 0x003E, как у клиента.
+        """
         body = struct.pack("<HIHH", 8, int(self.uin), C.ICQ_OFFLINE_REQ, 2)
         await self.send_snac(C.ICQ, C.ICQ_TO_SERVER, tlv(0x0001, body))
         while True:
@@ -316,7 +330,31 @@ class FakeJimm:
             r = Reader(value)
             r.u16le()
             r.u32le()
-            return r.u16le()
+            resp = r.u16le()
+            if resp == C.ICQ_OFFLINE_MSG:
+                r.u16le()                                   # номер запроса
+                buf = r.read(r.left)
+                assert len(buf) > 13, "запись офлайн-сообщения слишком коротка"
+                sender = struct.unpack_from("<I", buf, 0)[0]
+                year = struct.unpack_from("<H", buf, 4)[0]
+                month, day, hour, minute = buf[6], buf[7], buf[8], buf[9]
+                msg_type = struct.unpack_from("<H", buf, 10)[0]
+                text_len = struct.unpack_from("<H", buf, 12)[0]
+                assert len(buf) == 14 + text_len, \
+                    f"запись {len(buf)} байт при длине текста {text_len} — Jimm бросит исключение"
+                assert msg_type in (0x0001, 0x0004), f"тип {msg_type:#06x} Jimm не покажет"
+                raw = buf[14:14 + text_len].rstrip(b"\x00")
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = raw.decode("cp1251", "replace")
+                self.offline.append((sender, (year, month, day, hour, minute), text))
+                self.received.append((sender, text))
+                continue
+            if resp == C.ICQ_OFFLINE_DONE:
+                ack = struct.pack("<HIHH", 8, int(self.uin), C.ICQ_OFFLINE_DELETE, 2)
+                await self.send_snac(C.ICQ, C.ICQ_TO_SERVER, tlv(0x0001, ack))
+            return resp
 
     async def send_typing(self, uin: int, active: bool) -> None:
         """Сообщает серверу, что владелец набирает сообщение."""
