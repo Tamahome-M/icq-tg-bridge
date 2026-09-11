@@ -708,7 +708,7 @@ class Session:
                              + pstr8(str(uin).encode("ascii")))
 
     async def deliver(self, uin: int, text: str, wait_ack: bool = False,
-                      row_id: int | None = None) -> bool:
+                      row_id: int | None = None, url: str = "") -> bool:
         """Отправляет текст телефону. True — кадры ушли в сокет.
 
         В режиме подтверждений сообщение уходит расширенным форматом (канал 2),
@@ -721,8 +721,11 @@ class Session:
             sender = blocks.user_info(str(uin), signon_time=self.signon_time)
 
             if wait_ack:
+                # Ссылку отдаём только с последней частью: клиент показывает
+                # её отдельной строкой, и двоить её ни к чему.
+                part_url = url if index == len(parts) - 1 else ""
                 body = (cookie + struct.pack(">H", 2) + sender
-                        + tlv(0x0005, blocks.channel2_message(cookie, part)))
+                        + tlv(0x0005, blocks.channel2_message(cookie, part, part_url)))
             else:
                 body = (cookie + struct.pack(">H", 1) + sender
                         + tlv(0x0002, blocks.message_fragments(part))
@@ -998,13 +1001,15 @@ class OscarServer:
 
     # --- доставка -------------------------------------------------------
 
-    async def push(self, uin: int, text: str, row_id: int | None = None) -> bool:
+    async def push(self, uin: int, text: str, row_id: int | None = None,
+                   url: str = "") -> bool:
         """Отправляет одну запись очереди телефону."""
         if not self.online:
             return False
 
         with_ack = self.use_ack and self.ack_works is not False
-        if not await self.session.deliver(uin, text, wait_ack=with_ack, row_id=row_id):
+        if not await self.session.deliver(uin, text, wait_ack=with_ack, row_id=row_id,
+                                          url=url):
             return False
 
         if row_id is not None:
@@ -1017,7 +1022,8 @@ class OscarServer:
                 self.storage.drop_pending(row_id)
         return True
 
-    async def deliver(self, uin: int, text: str, forced: bool = False) -> bool:
+    async def deliver(self, uin: int, text: str, forced: bool = False,
+                      url: str = "") -> bool:
         """Принимает сообщение к доставке.
 
         Пишем в очередь и будим отправителя. Ждать подтверждения прямо здесь
@@ -1026,7 +1032,7 @@ class OscarServer:
         forced — ответ на команду с телефона: доставляется при любом статусе,
         ведь его запросили руками.
         """
-        self.storage.queue(uin, text, self.cfg.offline_queue_per_chat, forced)
+        self.storage.queue(uin, text, self.cfg.offline_queue_per_chat, forced, url)
         self.wake_sender()
         return True
 
@@ -1150,7 +1156,7 @@ class OscarServer:
         if not rows:
             return
         sent = skipped = 0
-        for row_id, uin, text, ts, forced in rows:
+        for row_id, uin, text, ts, forced, url in rows:
             if not self.online:
                 break
 
@@ -1169,7 +1175,7 @@ class OscarServer:
             if time.time() - ts > STALE_SECONDS:
                 stamp = time.strftime("%d.%m %H:%M", time.localtime(ts))
                 text = f"[{stamp}] {text}"
-            if not await self.push(uin, text, row_id):
+            if not await self.push(uin, text, row_id, url):
                 break
             sent += 1
         if skipped:

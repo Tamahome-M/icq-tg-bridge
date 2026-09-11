@@ -18,4 +18,5 @@ bridge.db
 bridge.db-wal
 bridge.db-shm
 photos/
+render/
 *.log

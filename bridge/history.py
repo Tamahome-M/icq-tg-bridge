@@ -4,6 +4,8 @@
   !last 10    — десять последних сообщений
   !lastfoto   — ссылка на последнее фото чата
   !lastfoto 3 — три последних фото
+  !render     — страница переписки за сегодня: фото, видео и голосовые
+  !render 20  — то же по двадцати последним сообщениям
   !fav        — добавить чат в избранное или убрать оттуда
   !help       — короткая справка
 """
@@ -16,8 +18,8 @@ from dataclasses import dataclass
 PREFIX = "!"
 
 HELP = ("Команды: !last — история за сегодня; !last N — N последних сообщений; "
-        "!lastfoto [N] — фото ссылкой; !fav — избранное вкл/выкл; "
-        "!help — эта справка.")
+        "!lastfoto [N] — фото ссылкой; !render [N] — страница с фото, видео и "
+        "голосовыми; !fav — избранное вкл/выкл; !help — эта справка.")
 
 
 @dataclass
@@ -52,10 +54,13 @@ def parse(text: str) -> Command | None:
         kind = "photo"
     elif name == "!last":
         kind = "last"
+    elif name == "!render":
+        kind = "render"
     else:
         return None               # неизвестное — считаем обычным текстом
 
-    sample = "!last 10" if kind == "last" else "!lastfoto 3"
+    sample = {"last": "!last 10", "photo": "!lastfoto 3",
+              "render": "!render 20"}[kind]
     if len(parts) == 1:
         return Command(kind)
     if len(parts) > 2:

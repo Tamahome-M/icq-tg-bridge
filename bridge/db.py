@@ -60,7 +60,8 @@ class Storage:
                 text    TEXT    NOT NULL,
                 ts      INTEGER NOT NULL,
                 sent_at INTEGER NOT NULL DEFAULT 0,
-                forced  INTEGER NOT NULL DEFAULT 0
+                forced  INTEGER NOT NULL DEFAULT 0,
+                url     TEXT    NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS pending_uin ON pending(uin);
             CREATE TABLE IF NOT EXISTS held (
@@ -132,6 +133,11 @@ class Storage:
         if "forced" not in pending_columns:
             self.conn.execute(
                 "ALTER TABLE pending ADD COLUMN forced INTEGER NOT NULL DEFAULT 0")
+        if "url" not in pending_columns:
+            # Ссылка, ради которой сообщение отправляется URL-сообщением ICQ:
+            # клиент показывает её отдельной строкой и даёт открыть браузером.
+            self.conn.execute(
+                "ALTER TABLE pending ADD COLUMN url TEXT NOT NULL DEFAULT ''")
 
     # --- контакты -------------------------------------------------------
 
@@ -260,11 +266,15 @@ class Storage:
 
     # --- очередь офлайна ------------------------------------------------
 
-    def queue(self, uin: int, text: str, limit_per_chat: int, forced: bool = False) -> None:
-        """forced — ответ на команду с телефона: такое доставляем при любом статусе."""
+    def queue(self, uin: int, text: str, limit_per_chat: int, forced: bool = False,
+              url: str = "") -> None:
+        """forced — ответ на команду с телефона: такое доставляем при любом статусе.
+
+        url — ссылка, которую стоит отдать URL-сообщением, а не простым текстом.
+        """
         self.conn.execute(
-            "INSERT INTO pending (uin, text, ts, forced) VALUES (?, ?, ?, ?)",
-            (uin, text, int(time.time()), int(forced)),
+            "INSERT INTO pending (uin, text, ts, forced, url) VALUES (?, ?, ?, ?, ?)",
+            (uin, text, int(time.time()), int(forced), url),
         )
         self.conn.execute(
             "DELETE FROM pending WHERE uin = ? AND id NOT IN ("
@@ -272,13 +282,15 @@ class Storage:
             (uin, uin, limit_per_chat),
         )
 
-    def peek_pending(self) -> list[tuple[int, int, str, int]]:
+    def peek_pending(self) -> list[tuple[int, int, str, int, bool, str]]:
         """Записи, ожидающие отправки. Уже отправленные, но ещё не
         подтверждённые, пропускаем — чтобы не слать их повторно."""
         rows = self.conn.execute(
-            "SELECT id, uin, text, ts, forced FROM pending WHERE sent_at = 0 ORDER BY id"
+            "SELECT id, uin, text, ts, forced, url FROM pending WHERE sent_at = 0 "
+            "ORDER BY id"
         ).fetchall()
-        return [(r["id"], r["uin"], r["text"], r["ts"], bool(r["forced"])) for r in rows]
+        return [(r["id"], r["uin"], r["text"], r["ts"], bool(r["forced"]), r["url"])
+                for r in rows]
 
     def mark_sent(self, row_id: int) -> None:
         self.conn.execute("UPDATE pending SET sent_at = ? WHERE id = ?",

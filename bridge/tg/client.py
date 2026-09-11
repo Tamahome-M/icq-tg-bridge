@@ -283,6 +283,72 @@ class TelegramSide:
         items.reverse()
         return items
 
+    async def render_items(self, peer_id: int, count: int | None,
+                           since: "dt.datetime | None", cap: int, topic_id: int = 0,
+                           max_media_bytes: int = 0) -> list[dict]:
+        """Сообщения вместе с вложениями — для страницы, которую собирает !render.
+
+        Отличие от history в том, что вложения приезжают данными: фотографию
+        берём миниатюрой, видео и голосовые — файлом, если он не слишком велик.
+        """
+        try:
+            chat = await self.client.get_entity(peer_id)
+        except Exception:
+            chat = None
+        private = isinstance(chat, types.User)
+        chat_name = utils.get_display_name(chat) if chat else str(peer_id)
+        names: dict[int, str] = {}
+
+        out: list[dict] = []
+        async for msg in self.client.iter_messages(peer_id, limit=min(count or cap, cap),
+                                                   reply_to=topic_id or None):
+            if since is not None and msg.date < since:
+                break
+            if msg.out:
+                who = "Я"
+            elif private:
+                who = chat_name
+            else:
+                who = await self._sender_name(msg, names)
+
+            kind = media_kind(msg)
+            raw = None
+            if kind == "photo":
+                raw = await self._download_small(msg)
+            elif kind:
+                size = getattr(getattr(msg, "file", None), "size", 0) or 0
+                if max_media_bytes and size > max_media_bytes:
+                    log.info("вложение %d КБ больше потолка — оставляю пометкой",
+                             size // 1024)
+                    kind = ""
+                else:
+                    try:
+                        raw = await msg.download_media(file=bytes)
+                    except Exception:
+                        log.warning("не смог скачать вложение сообщения %s", msg.id)
+                        raw = None
+            if kind and not raw:
+                kind = ""
+
+            text = (msg.message or "").strip()
+            if not text and not kind:
+                text = describe_message(msg)
+            if not text and not kind:
+                continue
+
+            out.append({
+                "when": msg.date.astimezone().strftime("%H:%M"),
+                "who": who,
+                "text": text,
+                "mine": bool(msg.out),
+                "kind": kind,
+                "raw": raw,
+                "seconds": int(getattr(getattr(msg, "file", None), "duration", 0) or 0),
+                "name": getattr(getattr(msg, "file", None), "name", "") or "",
+            })
+        out.reverse()
+        return out
+
     async def last_photos(self, peer_id: int, count: int,
                           topic_id: int = 0) -> list[tuple[bytes, str]]:
         """Последние фотографии чата: сами данные и подпись.
@@ -518,6 +584,21 @@ def status_of(entity, kind: str) -> str:
     if kind != "user":
         return "online"
     return status_name(getattr(entity, "status", None))
+
+
+def media_kind(msg) -> str:
+    """Что во вложении: фото, видео, голосовое, звук — или ничего."""
+    if getattr(msg, "photo", None):
+        return "photo"
+    if getattr(msg, "voice", None):
+        return "voice"
+    if getattr(msg, "video_note", None) or getattr(msg, "video", None):
+        return "video"
+    if getattr(msg, "audio", None):
+        return "audio"
+    if getattr(msg, "gif", None):
+        return "video"
+    return ""
 
 
 def photo_id_of(entity) -> int:
