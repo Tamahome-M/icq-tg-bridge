@@ -84,6 +84,32 @@ class Page:
     body: bytes
     made: float
     assets: list[str] = field(default_factory=list)
+    path: str = ""             # адрес страницы — по формату из настроек
+    title: str = ""
+    messages: int = 0
+
+
+# Транслитерация для адреса: кириллица в URL на телефоне — мучение.
+_TRANSLIT = dict(zip(
+    "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+    ["a", "b", "v", "g", "d", "e", "e", "zh", "z", "i", "j", "k", "l", "m", "n", "o", "p",
+     "r", "s", "t", "u", "f", "h", "c", "ch", "sh", "sch", "", "y", "", "e", "yu", "ya"]))
+
+
+def slug(title: str, limit: int = 16) -> str:
+    """Название чата латиницей и цифрами: «Дача 2026» → dacha-2026."""
+    out = []
+    for ch in title.lower():
+        if ch in _TRANSLIT:
+            out.append(_TRANSLIT[ch])
+        elif ch.isascii() and ch.isalnum():
+            out.append(ch)
+        else:
+            out.append("-")
+    text = "".join(out).strip("-")
+    while "--" in text:
+        text = text.replace("--", "-")
+    return text[:limit].strip("-") or "chat"
 
 
 def _token() -> str:
@@ -181,7 +207,8 @@ class RenderStore:
                  ttl_minutes: int = 30, width: int = photos.DEFAULT_WIDTH,
                  height: int = photos.DEFAULT_HEIGHT,
                  photo_max_bytes: int = photos.DEFAULT_MAX_BYTES,
-                 encoding: str = "utf-8"):
+                 encoding: str = "utf-8", path_format: str = "/r/{n}",
+                 next_seq: Callable[[], int] | None = None, index: bool = False):
         self.directory = directory
         self.transcoder = transcoder
         self.ttl = ttl_minutes * 60
@@ -189,9 +216,27 @@ class RenderStore:
         self.height = height
         self.photo_max_bytes = photo_max_bytes
         self.encoding = encoding
+        # Адрес страницы: {n} — сквозной номер, {chat} — название латиницей,
+        # {token} — случайный. Номер короткий и набирается с телефона, зато
+        # угадывается — на этот случай у сервера есть пароль.
+        self.path_format = path_format if path_format.startswith("/") else "/" + path_format
+        self._next_seq = next_seq or self._local_seq
+        self._seq = 0
+        self.index_enabled = index
         self._pages: dict[str, Page] = {}
         self._assets: dict[str, Asset] = {}
+        self._paths: dict[str, str] = {}      # адрес -> токен страницы
         os.makedirs(directory, exist_ok=True)
+
+    def _local_seq(self) -> int:
+        self._seq += 1
+        return self._seq
+
+    def make_path(self, title: str, token: str) -> str:
+        path = self.path_format.format(n=self._next_seq(), chat=slug(title), token=token)
+        # Занятый адрес (например, {chat} без номера) переходит к новой странице:
+        # старая остаётся доступной только по токену.
+        return path
 
     # --- хранение -------------------------------------------------------
 
@@ -223,6 +268,39 @@ class RenderStore:
             return None
         return page.body
 
+    def page_by_path(self, path: str) -> bytes | None:
+        """Страница по её адресу из ссылки — или по токену, как раньше."""
+        path = path.rstrip("/") or "/"
+        token = self._paths.get(path)
+        if token is None and path.startswith("/r/"):
+            token = path[len("/r/"):]
+        return self.page_for(token or "")
+
+    def is_index(self, path: str) -> bool:
+        return self.index_enabled and path.rstrip("/") in ("/r", "/r/index")
+
+    def live_pages(self) -> list[Page]:
+        pages = [p for p in self._pages.values() if self.alive(p.made)]
+        return sorted(pages, key=lambda p: -p.made)
+
+    def index_html(self) -> bytes:
+        """Список живых страниц — чтобы не набирать адреса руками."""
+        rows = []
+        for page in self.live_pages():
+            left = max(0, int((page.made + self.ttl - time.time()) / 60)) if self.ttl > 0 else 0
+            when = time.strftime("%H:%M", time.localtime(page.made))
+            note = f"{when}, {page.messages} сообщ., {len(page.assets)} влож."
+            if self.ttl > 0:
+                note += f", ещё {left} мин"
+            rows.append(f'<div align="left" class="msg"><table width="94%" cellpadding="3" '
+                        f'cellspacing="0" bgcolor="{COLOR_THEIRS}"><tr>'
+                        f'<td bgcolor="{COLOR_THEIRS}"><div class="who">'
+                        f'<a href="{html.escape(page.path)}">{html.escape(page.title)}</a></div>'
+                        f'<div class="time">{html.escape(note)}</div></td></tr></table></div><br/>')
+        if not rows:
+            rows.append('<div class="txt">Страниц пока нет — наберите !render в чате.</div>')
+        return self._document("Страницы", rows).encode(self.encoding, "xmlcharrefreplace")
+
     def _page_of(self, asset_token: str) -> Page | None:
         for page in self._pages.values():
             if asset_token in page.assets:
@@ -250,6 +328,7 @@ class RenderStore:
                 except OSError:
                     pass
             del self._pages[token]
+            self._paths = {path: t for path, t in self._paths.items() if t != token}
 
         if self.ttl > 0:
             deadline = time.time() - self.ttl
@@ -291,10 +370,12 @@ class RenderStore:
                     await progress(done, total)
 
         body = self._document(title, rows).encode(self.encoding, "xmlcharrefreplace")
-        page = Page(token, body, time.time(), assets)
+        page = Page(token, body, time.time(), assets, self.make_path(title, token),
+                    title, len(items))
         self._pages[token] = page
-        log.info("страница %s: %d сообщений, %d вложений, %d КБ",
-                 token, len(items), len(assets), len(body) // 1024)
+        self._paths[page.path.rstrip("/") or "/"] = token
+        log.info("страница %s (%s): %d сообщений, %d вложений, %d КБ",
+                 page.path, token, len(items), len(assets), len(body) // 1024)
         return page
 
     async def _row(self, item: Item) -> tuple[str, list[str]]:

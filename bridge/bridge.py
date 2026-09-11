@@ -78,7 +78,8 @@ class Bridge:
                            cfg.render_audio_seconds, cfg.render_timeout,
                            cfg.render_dir),
                 cfg.render_ttl_minutes, cfg.photo_width, cfg.photo_height,
-                cfg.photo_max_kb * 1024, cfg.render_encoding)
+                cfg.photo_max_kb * 1024, cfg.render_encoding, cfg.render_path,
+                lambda: self.storage.next_seq("render"), cfg.render_index)
         if cfg.photos_enabled:
             self.photos = PhotoStore(cfg.photos_dir, cfg.photo_width, cfg.photo_height,
                                      cfg.photo_max_kb * 1024, cfg.photo_keep_hours)
@@ -86,7 +87,10 @@ class Bridge:
                                             AccessControl(
                                                 allow_from=cfg.allow_from,
                                                 max_connections=cfg.max_connections),
-                                            render=self.render)
+                                            render=self.render,
+                                            password=cfg.photos_password,
+                                            downloads_dir=cfg.downloads_dir,
+                                            downloads_protected=cfg.downloads_protected)
 
     # --- контакт-лист ---------------------------------------------------
 
@@ -748,20 +752,23 @@ class Bridge:
 
         minutes = self.cfg.render_ttl_minutes
         note = f", ссылка живёт {minutes} мин" if minutes > 0 else ""
-        link = self.render_url(page.token)
+        link = self.web_url(page.path)
         # Ссылка идёт и текстом, и отдельным полем: по полю клиент печатает
         # её своей строкой, по тексту — добавляет в меню «Открыть ссылку».
         await self.reply(contact,
                          f"{link}\n{len(items)} сообщений, "
                          f"{len(page.assets)} вложений{note}", url=link)
 
-    def render_url(self, token: str) -> str:
+    def web_url(self, path: str) -> str:
+        """Полный адрес на мини-сервере: public_url, если задан, иначе хост и порт."""
+        if self.cfg.photos_public_url:
+            return self.cfg.photos_public_url + path
         host = self.cfg.photos_public_host or self.cfg.bos_host or "127.0.0.1"
-        return f"http://{host}:{self.cfg.photos_port}/r/{token}"
+        port = "" if self.cfg.photos_port == 80 else f":{self.cfg.photos_port}"
+        return f"http://{host}{port}{path}"
 
     def photo_url(self, token: str) -> str:
-        host = self.cfg.photos_public_host or self.cfg.bos_host or "127.0.0.1"
-        return f"http://{host}:{self.cfg.photos_port}/p/{token}.jpg"
+        return self.web_url(f"/p/{token}.jpg")
 
     async def reply(self, contact: Contact, text: str, url: str = "") -> None:
         """Служебный ответ моста — приходит от того же контакта.

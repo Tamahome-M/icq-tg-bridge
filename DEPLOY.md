@@ -20,8 +20,16 @@ emerge --ask media-libs/libjpeg-turbo sys-libs/zlib
 с кодеками `h263` и `libopencore_amrnb`:
 
 ```bash
-echo "media-video/ffmpeg amr opencore-amr" >> /etc/portage/package.use/ffmpeg
+echo "media-video/ffmpeg amr" >> /etc/portage/package.use/ffmpeg
 emerge --ask media-video/ffmpeg
+```
+
+Флаг `amr` тянет `opencore-amr` — в нём кодер AMR-NB, которым кодируется звук;
+`amrenc` (широкополосный AMR-WB) не нужен. Кодер H.263 и контейнеры 3GP/AMR у
+ffmpeg встроенные. После сборки проверьте, что оба кодера на месте:
+
+```bash
+ffmpeg -hide_banner -encoders | grep -E 'libopencore_amrnb|h263'
 ```
 
 Без ffmpeg мост работает как обычно: на странице `!render` соберутся текст
