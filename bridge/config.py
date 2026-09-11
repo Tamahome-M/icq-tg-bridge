@@ -78,6 +78,11 @@ class Config:
     emoji_to_text: bool = True
     text_to_emoji: bool = True
     offline_queue_per_chat: int = 30
+    log_level: str = "INFO"
+    log_telethon_level: str = "WARNING"
+    log_file: str = ""
+    log_file_max_mb: int = 5
+    log_file_keep: int = 3
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -86,6 +91,7 @@ class Config:
         oscar = raw.get("oscar", {})
         ph = raw.get("photos", {})
         rn = raw.get("render", {})
+        lg = raw.get("log", {})
         tg = raw.get("telegram", {})
         br = raw.get("bridge", {})
         base = os.path.dirname(os.path.abspath(path))
@@ -153,6 +159,11 @@ class Config:
             render_source_max_mb=int(rn.get("source_max_mb", cls.render_source_max_mb)),
             render_timeout=int(rn.get("timeout", cls.render_timeout)),
             render_encoding=rn.get("encoding", cls.render_encoding),
+            log_level=str(lg.get("level", cls.log_level)).upper(),
+            log_telethon_level=str(lg.get("telethon_level", cls.log_telethon_level)).upper(),
+            log_file=_resolve(base, lg["file"]) if lg.get("file") else "",
+            log_file_max_mb=int(lg.get("file_max_mb", cls.log_file_max_mb)),
+            log_file_keep=int(lg.get("file_keep", cls.log_file_keep)),
             emoji_to_text=bool(br.get("emoji_to_text", True)),
             text_to_emoji=bool(br.get("text_to_emoji", True)),
             offline_queue_per_chat=int(br.get("offline_queue_per_chat", cls.offline_queue_per_chat)),

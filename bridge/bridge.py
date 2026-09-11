@@ -363,6 +363,7 @@ class Bridge:
             text = f"{sender}: {text}"
         if self.cfg.emoji_to_text:
             text = emoji.to_text(text)
+        name = f"«{contact.title}» ({uin})" if contact else f"UIN {uin}"
 
         # Сообщение пришло — значит набор закончен.
         await self.stop_typing(uin)
@@ -371,16 +372,21 @@ class Bridge:
         if contact is not None and not policy.allows(self.mode, contact.kind,
                                                      bool(contact.favourite),
                                                      bool(contact.muted)):
+            why = (f"заглушён в Telegram" if contact.muted
+                   else f"режим «{policy.MODE_NAMES[self.mode]}»")
             if policy.holds(self.mode):
                 self.storage.hold(uin, text, ts or int(time.time()),
                                   self.cfg.offline_queue_per_chat)
-                log.debug("«занят»: придержал сообщение из %r", contact.title)
+                log.info("из Telegram: %s — придержано до смены статуса (%s)", name, why)
             else:
-                log.debug("статус «%s»: сообщение из %r не доставляю",
-                          policy.status_name(self.oscar.owner_status), contact.title)
+                log.info("из Telegram: %s — не доставляю (%s)", name, why)
+            log.debug("из Telegram: %s: %s", name, text[:300])
             if ts:
                 self.storage.note_delivered(peer_id, ts, topic_id)
             return False
+        log.info("из Telegram: %s → в очередь телефону, %d симв.%s", name, len(text),
+                 "" if self.oscar.online else " (телефон не в сети)")
+        log.debug("из Telegram: %s: %s", name, text[:300])
         await self.oscar.deliver(uin, text, ts=ts)
         # Отмечаем даже то, что легло в очередь: оно уже сохранено в базе,
         # и при следующем запуске догружать его повторно не нужно.
@@ -396,7 +402,7 @@ class Bridge:
         if self._statuses.get(contact.uin) == code:
             return
         self._statuses[contact.uin] = code
-        log.debug("%s теперь %s", contact.title, status)
+        log.debug("статус Telegram: «%s» теперь %s", contact.title, status)
 
         # На телефон уходит не сам статус, а то, что должно быть видно:
         # у отфильтрованных чатов он подменён на «не беспокоить».
@@ -410,6 +416,8 @@ class Bridge:
         contact = self.storage.contact_by_peer(peer_id)
         if contact is None:
             return
+        log.debug("Telegram: в чате «%s» %s", contact.title,
+                  "печатают" if active else "перестали печатать")
         if not active:
             await self.stop_typing(contact.uin)
             return
@@ -444,6 +452,7 @@ class Bridge:
         """Собеседник прочитал наши сообщения — телефон ставит галочку."""
         contact = self.storage.contact_by_peer(peer_id)
         if contact is not None:
+            log.debug("Telegram: в чате «%s» прочитано до %d", contact.title, max_id)
             await self.oscar.confirm_read(contact.uin, max_id)
 
     async def on_phone_privacy(self, uin: int, muted: bool) -> None:
@@ -591,6 +600,8 @@ class Bridge:
 
     async def run_command(self, contact: Contact, command: history.Command) -> None:
         """Выполняет команду, набранную в окне чата на телефоне."""
+        log.info("команда !%s%s от телефона в чате «%s»", command.name,
+                 f" {command.count}" if command.count else "", contact.title)
         if command.name == "help":
             await self.reply(contact, history.HELP)
             return
@@ -761,6 +772,7 @@ class Bridge:
         С непустым url ответ уходит URL-сообщением: клиент печатает ссылку
         отдельной строкой и даёт открыть её браузером телефона.
         """
+        log.debug("ответ телефону в чат «%s»: %s", contact.title, text[:300])
         await self.oscar.deliver(contact.uin, text, forced=True, url=url)
 
     # --- запуск ---------------------------------------------------------

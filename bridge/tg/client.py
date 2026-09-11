@@ -294,6 +294,10 @@ class TelegramSide:
             peer_id = utils.get_peer_id(event.message.peer_id)
             topic_id = topic_of(event.message)
             text = describe_message(event.message)
+            log.debug("событие Telegram: сообщение %s в чате %s%s, %s",
+                      getattr(event.message, "id", "?"),
+                      peer_id, f" (тема {topic_id})" if topic_id else "",
+                      media_kind(event.message) or "текст")
             sender = ""
             if self.cfg.show_sender_in_groups and not event.is_private:
                 try:
@@ -402,6 +406,8 @@ class TelegramSide:
                 "name": getattr(getattr(msg, "file", None), "name", "") or "",
             })
         out.reverse()
+        log.info("страница: собрано %d сообщений, из них с вложениями %d",
+                 len(out), sum(1 for r in out if r["kind"]))
         return out
 
     async def last_photos(self, peer_id: int, count: int,
@@ -458,6 +464,8 @@ class TelegramSide:
             await self.client(functions.account.UpdateNotifySettingsRequest(
                 peer=types.InputNotifyPeer(entity),
                 settings=types.InputPeerNotifySettings(mute_until=until)))
+            log.debug("Telegram: уведомления чата %s %s", peer_id,
+                      "выключены" if muted else "включены")
             return True
         except Exception:
             log.exception("не удалось изменить уведомления чата %s", peer_id)

@@ -45,16 +45,35 @@ CONFIG = os.environ.get("BRIDGE_CONFIG",
                         os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.toml"))
 
 
-def setup_logging() -> None:
-    logging.basicConfig(
-        level=os.environ.get("BRIDGE_LOGLEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)-7s %(name)-8s %(message)s",
-        datefmt="%H:%M:%S",
-    )
+LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)-8s %(message)s"
+
+
+def setup_logging(cfg=None) -> None:
+    """Журнал: уровень и файл из секции [log], переменные окружения сильнее.
+
+    INFO — события: кто подключился, что ушло и пришло (без текста), что
+    отсеяно и почему. DEBUG — сами сообщения и каждый SNAC. WARNING — то,
+    что мост пережил сам, ERROR — то, что не должно было случиться.
+    """
+    level = os.environ.get("BRIDGE_LOGLEVEL") or (cfg.log_level if cfg else "INFO")
+    telethon = (os.environ.get("BRIDGE_TELETHON_LOGLEVEL")
+                or (cfg.log_telethon_level if cfg else "WARNING"))
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+    root.setLevel(level.upper())
+    console = logging.StreamHandler()
+    console.setFormatter(logging.Formatter(LOG_FORMAT, datefmt="%H:%M:%S"))
+    root.addHandler(console)
+    if cfg is not None and cfg.log_file:
+        from logging.handlers import RotatingFileHandler
+        handler = RotatingFileHandler(cfg.log_file, maxBytes=cfg.log_file_max_mb * 1024 * 1024,
+                                      backupCount=cfg.log_file_keep, encoding="utf-8")
+        handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt="%d.%m %H:%M:%S"))
+        root.addHandler(handler)
     # Telethon многословен: в отладочном режиме моста его записи о пакетах
     # забивают журнал. Держим его отдельно, по умолчанию тише.
-    logging.getLogger("telethon").setLevel(
-        os.environ.get("BRIDGE_TELETHON_LOGLEVEL", "WARNING").upper())
+    logging.getLogger("telethon").setLevel(telethon.upper())
 
 
 async def main() -> int:
@@ -64,6 +83,7 @@ async def main() -> int:
               f"и заполните его.", file=sys.stderr)
         return 1
     cfg = Config.load(CONFIG)
+    setup_logging(cfg)
 
     from bridge.config import warn_about_permissions
     loose = warn_about_permissions([CONFIG, cfg.tg_session, cfg.db])
