@@ -397,6 +397,26 @@ async def run_password() -> None:
     status, _, data = await http("GET", "/r/", {"Cookie": cookie})
     assert status == 200 and "Мама".encode() in data, "cookie должна открывать и список"
 
+    # Браузер без cookie: после входа по ключу ссылки страницы несут токен
+    # сеанса, по которому пускают дальше — и сам пароль в них не гуляет.
+    status, hdrs, data = await http("GET", "/r/?key=s3cret")
+    assert status == 200
+    import re
+    tokens = set(re.findall(rb'\?s=([A-Za-z0-9_-]+)"', data))
+    assert len(tokens) == 1, f"в ссылках списка должен быть один токен сеанса: {data[-300:]}"
+    token_s = tokens.pop().decode()
+    assert b"s3cret" not in data, "пароль в ссылки попадать не должен"
+    assert (page.path + "?s=" + token_s).encode() in data, data[-300:]
+    status, _, data = await http("GET", f"{page.path}?s={token_s}")
+    assert status == 200 and "секрет".encode() in data, "по токену из ссылки должны пускать"
+    assert f'/m/'.encode() not in data or f"?s={token_s}".encode() in data, \
+        "вложения на странице тоже должны нести токен"
+    status, _, _ = await http("GET", f"{page.path}?s=nonsense")
+    assert status == 401, "чужой токен не пускает"
+    # Вход по cookie или Basic ссылки не трогает.
+    status, _, data = await http("GET", "/r/", {"Cookie": cookie})
+    assert b"?s=" not in data, "с cookie токен в ссылках не нужен"
+
     # Форма: неверный пароль — снова форма, верный — переход с cookie.
     status, _, data = await http("POST", "/login", {"Content-Type": "application/x-www-form-urlencoded"},
                                  b"p=wrong&next=" + page.path.encode())
