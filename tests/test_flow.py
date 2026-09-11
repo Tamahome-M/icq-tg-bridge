@@ -370,8 +370,13 @@ async def run_dead_phone() -> None:
     await client2.bos(await client2.login_md5_jimm())
     await client2.drain_for(1.0)
     assert any("ты там?" in t for _, t in client2.received), client2.received
-    assert server.ack_works is True, "живой клиент с подтверждениями должен опознаться заново"
     assert storage.pending_count() == 0
+    # Накопленное ушло офлайн-пачкой, без подтверждений канала 2, поэтому
+    # проверка подтверждений начинается с первого живого сообщения.
+    assert server.ack_works is None, "решение о прошлом сеансе не должно переноситься"
+    await server.deliver(uin, "а теперь?")
+    await client2.drain_for(1.0)
+    assert server.ack_works is True, "живой клиент с подтверждениями должен опознаться заново"
 
     await client2.close()
     try:
