@@ -658,7 +658,7 @@ for t in tests/test_*.py; do .venv/bin/python "$t" || echo "СБОЙ: $t"; done
 | `api_id`, `api_hash` | — | ключи приложения с my.telegram.org |
 | `session` | `tg.session` | файл сессии; равносилен доступу к аккаунту |
 | `device_model`, `system_version`, `app_version`, `lang_code` | как у Telegram Desktop | чем клиент представляется серверу |
-| `mark_read` | `false` | помечать ли чат прочитанным в Telegram после доставки на телефон |
+| `mark_read` | `false` | помечать ли сообщение прочитанным в Telegram после доставки на телефон; отсеянное по статусу не помечается |
 | `avatars` | `false` | отдавать ли телефону аватарки чатов |
 | `avatar_size` | `64` | сторона квадратика в точках |
 | `avatar_max_kb` | `4` | потолок веса одной аватарки |
