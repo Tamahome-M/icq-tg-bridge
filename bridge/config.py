@@ -151,7 +151,7 @@ class Config:
             photos_port=int(ph.get("port", cls.photos_port)),
             photos_public_host=ph.get("public_host", ""),
             photos_public_url=str(ph.get("public_url", "")).rstrip("/"),
-            photos_password=str(ph.get("password", "")),
+            photos_password=str(ph.get("web_password", "")),
             photos_dir=_resolve(base, ph.get("dir", cls.photos_dir)),
             photo_width=int(ph.get("width", cls.photo_width)),
             photo_height=int(ph.get("height", cls.photo_height)),
