@@ -58,6 +58,29 @@ DOWNLOAD_TYPES = {
 }
 
 
+def _parse_range(value: str, size: int) -> tuple[int, int] | None:
+    """«bytes=7300-» или «bytes=0-999» — начало и конец включительно; иначе None."""
+    if not value.lower().startswith("bytes=") or size <= 0:
+        return None
+    spec = value[6:].split(",", 1)[0].strip()
+    start_s, sep, end_s = spec.partition("-")
+    if not sep:
+        return None
+    try:
+        if start_s == "":                     # последние N байт
+            length = int(end_s)
+            if length <= 0:
+                return None
+            return max(0, size - length), size - 1
+        start = int(start_s)
+        end = int(end_s) if end_s else size - 1
+    except ValueError:
+        return None
+    if start < 0 or start >= size or end < start:
+        return None
+    return start, min(end, size - 1)
+
+
 class PhotoServer:
     def __init__(self, store: PhotoStore, host: str, port: int,
                  access: AccessControl | None = None,
@@ -124,10 +147,11 @@ class PhotoServer:
 
             path, _, query = parts[1].partition("?")
             params = parse_qs(query, keep_blank_values=True)
-            log.debug("HTTP %s %s от %s", method, parts[1][:120], host)
+            log.debug("HTTP %s %s от %s; agent=%r range=%r", method, parts[1][:120], host,
+                      headers.get("user-agent", "")[:80], headers.get("range", ""))
             await self._route(writer, host, method, path, params, headers, body)
-        except (asyncio.TimeoutError, ConnectionError, OSError, asyncio.IncompleteReadError):
-            pass
+        except (asyncio.TimeoutError, ConnectionError, OSError, asyncio.IncompleteReadError) as exc:
+            log.warning("соединение с %s оборвано: %s", host, type(exc).__name__)
         except Exception:
             log.exception("ошибка обработки запроса")
         finally:
@@ -170,9 +194,27 @@ class PhotoServer:
                 + f"?{SESSION_PARAM}={url_token}".encode() + b'"', content)
         # Страницы не кэшируем: они живут недолго и должны честно исчезать.
         cache = "no-cache" if what in ("страница", "список", "загрузки") else "max-age=86400"
-        await self._reply(writer, 200, mime, content, head_only,
-                          extra=[f"Cache-Control: {cache}"] + ([set_cookie] if set_cookie else []))
-        log.info("отдана %s %s (%d байт)", what, path[:48], len(content))
+        extra = [f"Cache-Control: {cache}", "Accept-Ranges: bytes"]
+        if set_cookie:
+            extra.append(set_cookie)
+
+        # Качалка телефона может просить кусок: после обрыва — с места обрыва.
+        status, part, note = 200, content, ""
+        span = _parse_range(headers.get("range", ""), len(content))
+        if span is not None:
+            start, end = span
+            status, part = 206, content[start:end + 1]
+            extra.append(f"Content-Range: bytes {start}-{end}/{len(content)}")
+            note = f", байты {start}-{end} из {len(content)}"
+        elif headers.get("range"):
+            log.debug("диапазон %r не разобран — отдаю целиком", headers.get("range"))
+
+        sent = await self._reply(writer, status, mime, part, head_only, extra=extra)
+        if sent:
+            log.info("отдана %s %s (%d байт%s)", what, path[:48], len(part), note)
+        else:
+            log.warning("%s %s: клиент оборвал приём, %d байт не дошли",
+                        what, path[:48], writer.transport.get_write_buffer_size())
 
     # --- пароль -----------------------------------------------------------
 
@@ -374,12 +416,24 @@ class PhotoServer:
         ).encode("utf-8", "xmlcharrefreplace")
 
     async def _reply(self, writer, status: int, mime: str, body: bytes,
-                     head_only: bool = False, extra: list[str] | None = None) -> None:
-        reasons = {200: "OK", 302: "Found", 401: "Unauthorized", 404: "Not Found"}
+                     head_only: bool = False, extra: list[str] | None = None) -> bool:
+        """Пишет ответ и дожидается, пока он уйдёт. False — клиент оборвал приём.
+
+        drain() возвращается, как только буфер опустился ниже порога, а не
+        когда телефон всё дочитал; для честного «отдано» ждём закрытия.
+        """
+        reasons = {200: "OK", 206: "Partial Content", 302: "Found",
+                   401: "Unauthorized", 404: "Not Found"}
         lines = [f"HTTP/1.1 {status} {reasons.get(status, 'OK')}",
                  f"Content-Type: {mime}", f"Content-Length: {len(body)}"]
         lines.extend(extra or [])
         lines.append("Connection: close")
         header = ("\r\n".join(lines) + "\r\n\r\n").encode("utf-8")
-        writer.write(header if head_only else header + body)
-        await writer.drain()
+        try:
+            writer.write(header if head_only else header + body)
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except (ConnectionError, OSError):
+            return False
