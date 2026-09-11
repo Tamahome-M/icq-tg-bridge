@@ -89,6 +89,7 @@ class Config:
     log_file: str = ""
     log_file_max_mb: int = 5
     log_file_keep: int = 3
+    log_filtered: bool = True
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -177,6 +178,7 @@ class Config:
             log_file=_resolve(base, lg["file"]) if lg.get("file") else "",
             log_file_max_mb=int(lg.get("file_max_mb", cls.log_file_max_mb)),
             log_file_keep=int(lg.get("file_keep", cls.log_file_keep)),
+            log_filtered=bool(lg.get("filtered", cls.log_filtered)),
             emoji_to_text=bool(br.get("emoji_to_text", True)),
             text_to_emoji=bool(br.get("text_to_emoji", True)),
             offline_queue_per_chat=int(br.get("offline_queue_per_chat", cls.offline_queue_per_chat)),

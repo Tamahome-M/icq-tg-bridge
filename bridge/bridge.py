@@ -378,12 +378,15 @@ class Bridge:
                                                      bool(contact.muted)):
             why = (f"заглушён в Telegram" if contact.muted
                    else f"режим «{policy.MODE_NAMES[self.mode]}»")
+            # Отсеянных бывает много (заглушённые каналы шумят), поэтому
+            # уровень этих строк выбирается настройкой.
+            level = logging.INFO if self.cfg.log_filtered else logging.DEBUG
             if policy.holds(self.mode):
                 self.storage.hold(uin, text, ts or int(time.time()),
                                   self.cfg.offline_queue_per_chat)
-                log.info("из Telegram: %s — придержано до смены статуса (%s)", name, why)
+                log.log(level, "из Telegram: %s — придержано до смены статуса (%s)", name, why)
             else:
-                log.info("из Telegram: %s — не доставляю (%s)", name, why)
+                log.log(level, "из Telegram: %s — не доставляю (%s)", name, why)
             log.debug("из Telegram: %s: %s", name, text[:300])
             if ts:
                 self.storage.note_delivered(peer_id, ts, topic_id)
@@ -420,19 +423,24 @@ class Bridge:
         contact = self.storage.contact_by_peer(peer_id)
         if contact is None:
             return
-        log.debug("Telegram: в чате «%s» %s", contact.title,
-                  "печатают" if active else "перестали печатать")
         if not active:
-            await self.stop_typing(contact.uin)
+            await self.stop_typing(contact.uin, "собеседник закончил")
             return
         if not policy.allows(self.mode, contact.kind, bool(contact.favourite),
                              bool(contact.muted)):
+            log.debug("Telegram: в чате «%s» печатают, но чат отсеян — не показываю",
+                      contact.title)
             return
 
-        await self.oscar.notify_typing(contact.uin, True)
         old = self._typing.pop(contact.uin, None)
-        if old is not None:
+        if old is None:
+            # Telegram повторяет «печатает» каждые несколько секунд —
+            # в журнал попадает только начало, продления лишь продлевают.
+            log.info("«%s» печатает — показываю на телефоне", contact.title)
+        else:
             old.cancel()
+            log.debug("«%s» всё ещё печатает", contact.title)
+        await self.oscar.notify_typing(contact.uin, True)
         self._typing[contact.uin] = asyncio.create_task(self._typing_expiry(contact.uin))
 
     async def _typing_expiry(self, uin: int) -> None:
@@ -442,14 +450,19 @@ class Bridge:
         except asyncio.CancelledError:
             return
         self._typing.pop(uin, None)
+        contact = self._by_uin.get(uin) or self.storage.contact_by_uin(uin)
+        log.info("«%s» перестал печатать — гашу по молчанию (%d с)",
+                 contact.title if contact else uin, TYPING_TIMEOUT)
         await self.oscar.notify_typing(uin, False)
 
-    async def stop_typing(self, uin: int) -> None:
+    async def stop_typing(self, uin: int, why: str = "пришло сообщение") -> None:
         """Гасит индикатор сразу — клиент сам этого не делает."""
         task = self._typing.pop(uin, None)
         if task is None:
             return
         task.cancel()
+        contact = self._by_uin.get(uin) or self.storage.contact_by_uin(uin)
+        log.info("«%s» перестал печатать — %s", contact.title if contact else uin, why)
         await self.oscar.notify_typing(uin, False)
 
     async def on_telegram_read(self, peer_id: int, max_id: int) -> None:
@@ -540,6 +553,8 @@ class Bridge:
         """Владелец печатает в Jimm — передаём в Telegram."""
         contact = self.storage.contact_by_uin(uin)
         if contact is not None:
+            log.info("телефон %s в чате «%s»", "печатает" if active else "перестал печатать",
+                     contact.title)
             await self.telegram.set_typing(contact.peer_id, active)
 
     async def on_phone_message(self, uin: int, text: str) -> int | None:
