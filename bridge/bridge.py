@@ -712,11 +712,25 @@ class Bridge:
 
         items = [Item(when=r["when"], who=r["who"],
                       text=emoji.to_text(r["text"]) if self.cfg.emoji_to_text else r["text"],
-                      mine=r["mine"], kind=r["kind"], raw=r["raw"],
-                      seconds=r["seconds"], name=r["name"])
+                      mine=r["mine"], kind=r["kind"], raw=r.get("raw"),
+                      fetch=r.get("fetch"), seconds=r["seconds"], name=r["name"])
                  for r in rows]
-        await self.reply(contact, f"Собираю {len(items)} сообщений, это займёт время…")
-        page = await self.render.build(contact.title, items)
+        attachments = sum(1 for i in items if i.kind)
+        await self.reply(contact, f"Собираю {len(items)} сообщений"
+                         + (f", вложений {attachments} — это займёт время…"
+                            if attachments else "…"))
+
+        last_note = time.time()
+
+        async def progress(done: int, total: int) -> None:
+            # На GPRS минуты тишины пугают — но и трещать на каждое вложение
+            # незачем: отчёт не чаще раза в двадцать секунд.
+            nonlocal last_note
+            if done < total and time.time() - last_note > 20:
+                last_note = time.time()
+                await self.reply(contact, f"Готово {done} из {total} вложений…")
+
+        page = await self.render.build(contact.title, items, progress)
         if page is None:
             await self.reply(contact, "Не получилось собрать страницу")
             return

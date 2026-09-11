@@ -43,8 +43,11 @@ class Photo:
 def shrink(raw: bytes, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT,
            max_bytes: int = DEFAULT_MAX_BYTES) -> tuple[bytes, int, int] | None:
     """Ужимает картинку под экран телефона: данные, ширина, высота."""
-    if not raw or len(raw) > MAX_SOURCE_BYTES:
-        log.warning("картинка %d КБ слишком велика, пропускаю", len(raw or b"") // 1024)
+    if not raw:
+        log.warning("картинка пустая, пропускаю")
+        return None
+    if len(raw) > MAX_SOURCE_BYTES:
+        log.warning("картинка %d КБ слишком велика, пропускаю", len(raw) // 1024)
         return None
     try:
         Image.MAX_IMAGE_PIXELS = MAX_SOURCE_PIXELS

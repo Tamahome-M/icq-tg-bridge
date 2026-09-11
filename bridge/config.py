@@ -35,6 +35,8 @@ class Config:
     db: str = "bridge.db"
     grouping: str = "folders"
     other_group: str = "Прочее"
+    archive_group: str = "Архив"
+    mirror_outgoing: bool = False
     show_sender_in_groups: bool = True
     max_message_chars: int = 900
     history_limit: int = 100
@@ -111,6 +113,8 @@ class Config:
             db=_resolve(base, br.get("db", cls.db)),
             grouping=br.get("grouping", cls.grouping),
             other_group=br.get("other_group", cls.other_group),
+            archive_group=br.get("archive_group", cls.archive_group),
+            mirror_outgoing=bool(br.get("mirror_outgoing", cls.mirror_outgoing)),
             show_sender_in_groups=bool(br.get("show_sender_in_groups", True)),
             max_message_chars=int(br.get("max_message_chars", cls.max_message_chars)),
             history_limit=int(br.get("history_limit", cls.history_limit)),

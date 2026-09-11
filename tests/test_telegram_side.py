@@ -92,7 +92,26 @@ def check_folders():
     assert side._folder_for(folders, channel, "channel") == "Каналы"
     assert side._folder_for(folders, bot, "bot") == "Прочее"
     assert side._folder_for([], mom, "user") is None    # без папок — группировка по типу
-    print("  раскладка по папкам: ок")
+
+    # Галочки папки: заглушённый, прочитанный и архивный чат папка может
+    # исключить — но только попавший в неё по типу, не добавленный явно.
+    strict = [("Каналы", Filter("Каналы", broadcasts=True, exclude_muted=True,
+                                exclude_read=True, exclude_archived=True)),
+              ("Семья", Filter("Семья", include=[types.InputPeerUser(user_id=777001,
+                                                                     access_hash=0)],
+                               exclude_muted=True))]
+    assert side._folder_for(strict, channel, "channel", muted=False, unread=3) == "Каналы"
+    assert side._folder_for(strict, channel, "channel", muted=True, unread=3) == "Прочее"
+    assert side._folder_for(strict, channel, "channel", muted=False, unread=0) == "Прочее"
+    assert side._folder_for(strict, channel, "channel", unread=3, archived=True) == "Архив"
+    assert side._folder_for(strict, mom, "user", muted=True) == "Семья", \
+        "явно добавленный чат остаётся в папке при любых галочках"
+
+    # Архив без своей папки — в группу «Архив», а если её имя пустое — как все.
+    assert side._folder_for(folders, bot, "bot", archived=True) == "Архив"
+    cfg.archive_group = ""
+    assert side._folder_for(folders, bot, "bot", archived=True) == "Прочее"
+    print("  раскладка по папкам: ок (галочки папок и архив)")
 
 
 class FakeEvent:
@@ -158,7 +177,24 @@ def check_events() -> None:
         event = FakeEvent(message=Msg(text), is_private=True)
         asyncio.run(side._on_new_message(event))
     assert reads == ["это покажем"], f"прочитанным помечено лишнее: {reads}"
-    print("  события: ок (набор в группе, прочтение только показанного)")
+
+    # Свои сообщения с других устройств приходят как «Я», а отправленное
+    # самим мостом обратно не возвращается.
+    seen.clear()
+    side._own_ids[(555, 41)] = __import__("time").time()
+    own = Msg("написал с десктопа")
+    own.id = 42
+    asyncio.run(side._on_own_message(FakeEvent(message=own)))
+    assert seen == [("msg", 555, "написал с десктопа")], seen
+    bridge_sent = Msg("ушло с телефона")
+    bridge_sent.id = 41
+    seen.clear()
+    asyncio.run(side._on_own_message(FakeEvent(message=bridge_sent)))
+    assert seen == [], "отправленное мостом не должно возвращаться на телефон"
+    side._sending[555] = 1                    # отправка в этот чат прямо сейчас идёт
+    asyncio.run(side._on_own_message(FakeEvent(message=own)))
+    assert seen == [], "во время отправки мостом исходящее в тот же чат не зеркалим"
+    print("  события: ок (набор в группе, прочтение только показанного, зеркало своих)")
 
 
 if __name__ == "__main__":

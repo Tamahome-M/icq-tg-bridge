@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable
@@ -62,6 +63,9 @@ class TelegramSide:
             system_lang_code=cfg.tg_lang_code,
         )
         self.me: types.User | None = None
+        # Что отправлено самим мостом: такие исходящие телефону не возвращаем.
+        self._own_ids: dict[tuple[int, int], float] = {}
+        self._sending: dict[int, int] = {}
 
     async def start(self) -> None:
         await self.client.connect()
@@ -71,6 +75,10 @@ class TelegramSide:
         self.me = await self.client.get_me()
         log.info("вошли как %s (id=%s)", utils.get_display_name(self.me), self.me.id)
         self.client.add_event_handler(self._on_new_message, events.NewMessage(incoming=True))
+        if self.cfg.mirror_outgoing:
+            # Написанное с других устройств — тоже часть разговора на телефоне.
+            self.client.add_event_handler(self._on_own_message,
+                                          events.NewMessage(outgoing=True))
         if self.on_status is not None or self.on_typing is not None:
             self.client.add_event_handler(self._on_user_update, events.UserUpdate)
         if self.on_read is not None:
@@ -100,10 +108,14 @@ class TelegramSide:
                 continue
             kind = self._kind(entity)
             peer_id = utils.get_peer_id(entity)
-            group = self._folder_for(folders, entity, kind) or KIND_TITLES.get(kind, "Чаты")
             title = dialog.name or str(peer_id)
             pinned = bool(getattr(dialog, "pinned", False))
             muted = is_muted(dialog)
+            archived = bool(getattr(dialog, "archived", False))
+            unread = dialog.unread_count or 0
+            group = (self._folder_for(folders, entity, kind, muted, unread, archived)
+                     or (self.cfg.archive_group if archived and self.cfg.archive_group
+                         else KIND_TITLES.get(kind, "Чаты")))
             status = status_of(entity, kind)
             photo_id = photo_id_of(entity)
 
@@ -170,7 +182,14 @@ class TelegramSide:
             log.info("папок в Telegram нет, группирую по типу чата")
         return out
 
-    def _folder_for(self, folders, entity, kind: str) -> str | None:
+    def _folder_for(self, folders, entity, kind: str, muted: bool = False,
+                    unread: int = 0, archived: bool = False) -> str | None:
+        """Папка чата — как её вычислил бы сам Telegram.
+
+        Явно добавленный чат остаётся в папке при любых флагах; чат, попавший
+        туда по типу, папка может исключить как заглушённый, прочитанный или
+        архивный — эти галочки в настройках папки тоже учитываем.
+        """
         if not folders:
             return None
         peer_id = utils.get_peer_id(entity)
@@ -179,8 +198,17 @@ class TelegramSide:
                 continue
             if _peer_in(f, "pinned_peers", peer_id) or _peer_in(f, "include_peers", peer_id):
                 return title
-            if self._matches_flags(f, entity, kind):
-                return title
+            if not self._matches_flags(f, entity, kind):
+                continue
+            if getattr(f, "exclude_muted", False) and muted:
+                continue
+            if getattr(f, "exclude_read", False) and unread <= 0:
+                continue
+            if getattr(f, "exclude_archived", False) and archived:
+                continue
+            return title
+        if archived and self.cfg.archive_group:
+            return self.cfg.archive_group
         return self.cfg.other_group
 
     def _matches_flags(self, f, entity, kind: str) -> bool:
@@ -233,6 +261,33 @@ class TelegramSide:
             await self.client(functions.messages.SetTypingRequest(peer_id, action))
         except Exception:
             log.debug("не удалось передать «печатает» в чат %s", peer_id)
+
+    async def _on_own_message(self, event) -> None:
+        """Своё сообщение с другого устройства: показываем как «Я: …».
+
+        Отправленное самим мостом сюда тоже прилетает — его узнаём по номеру
+        (или по тому, что отправка в этот чат прямо сейчас идёт) и молчим.
+        """
+        try:
+            peer_id = utils.get_peer_id(event.message.peer_id)
+            if self._sending.get(peer_id) or self._forget_own(peer_id, event.message.id):
+                return
+            text = describe_message(event.message)
+            if not text:
+                return
+            await self.on_message(peer_id, "Я", text,
+                                  int(event.message.date.timestamp()),
+                                  topic_of(event.message))
+        except Exception:
+            log.exception("ошибка обработки своего сообщения")
+
+    def _forget_own(self, peer_id: int, message_id: int) -> bool:
+        """True, если сообщение отправил мост; запись при этом убирается."""
+        now = time.time()
+        for key, stamp in list(self._own_ids.items()):
+            if now - stamp > 300:
+                del self._own_ids[key]
+        return self._own_ids.pop((peer_id, message_id), None) is not None
 
     async def _on_new_message(self, event) -> None:
         try:
@@ -315,9 +370,9 @@ class TelegramSide:
                 who = await self._sender_name(msg, names)
 
             kind = media_kind(msg)
-            raw = None
+            fetch = None
             if kind == "photo":
-                raw = await self._download_small(msg)
+                fetch = (lambda m=msg: self._download_small(m))
             elif kind:
                 size = getattr(getattr(msg, "file", None), "size", 0) or 0
                 if max_media_bytes and size > max_media_bytes:
@@ -325,13 +380,9 @@ class TelegramSide:
                              size // 1024)
                     kind = ""
                 else:
-                    try:
-                        raw = await msg.download_media(file=bytes)
-                    except Exception:
-                        log.warning("не смог скачать вложение сообщения %s", msg.id)
-                        raw = None
-            if kind and not raw:
-                kind = ""
+                    # Само вложение скачается, когда страница до него дойдёт:
+                    # держать в памяти всё разом незачем.
+                    fetch = (lambda m=msg: m.download_media(file=bytes))
 
             text = (msg.message or "").strip()
             if not text and not kind:
@@ -345,7 +396,8 @@ class TelegramSide:
                 "text": text,
                 "mine": bool(msg.out),
                 "kind": kind,
-                "raw": raw,
+                "raw": None,
+                "fetch": fetch,
                 "seconds": int(getattr(getattr(msg, "file", None), "duration", 0) or 0),
                 "name": getattr(getattr(msg, "file", None), "name", "") or "",
             })
@@ -537,11 +589,18 @@ class TelegramSide:
         Для форума ответ уходит в нужную тему: у Telegram тема — это ответ
         на её корневое сообщение.
         """
-        if topic_id:
-            message = await self.client.send_message(peer_id, text, reply_to=topic_id)
-        else:
-            message = await self.client.send_message(peer_id, text)
-        return getattr(message, "id", None)
+        self._sending[peer_id] = self._sending.get(peer_id, 0) + 1
+        try:
+            if topic_id:
+                message = await self.client.send_message(peer_id, text, reply_to=topic_id)
+            else:
+                message = await self.client.send_message(peer_id, text)
+        finally:
+            self._sending[peer_id] -= 1
+        message_id = getattr(message, "id", None)
+        if message_id:
+            self._own_ids[(peer_id, message_id)] = time.time()
+        return message_id
 
     async def title_for(self, peer_id: int) -> tuple[str, str]:
         """Название и тип чата — нужны, когда сообщение пришло из нового чата."""
