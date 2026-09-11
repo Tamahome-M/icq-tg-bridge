@@ -894,10 +894,14 @@ class Session:
         здесь нельзя: очередь встала бы на всё время ожидания.
         """
         parts = _split_text(text, self.server.max_message_chars)
-        log.info("телефону ← %s: %d симв.%s, канал %d%s",
+        # Это отправка, не доставка: доставку по каналу 2 подтверждает сам
+        # телефон (строка «телефон подтвердил» ниже), по каналу 1 подтверждений
+        # нет вовсе — там «ушло в сокет» и есть всё, что мы знаем.
+        log.info("телефону ← %s: %d симв.%s, канал %d%s — %s",
                  self.server.name_of(uin), len(text),
                  f" в {len(parts)} частях" if len(parts) > 1 else "",
-                 2 if wait_ack else 1, ", со ссылкой" if url else "")
+                 2 if wait_ack else 1, ", со ссылкой" if url else "",
+                 "ждём подтверждения" if wait_ack else "без подтверждения")
         log.debug("телефону ← %s: %s", self.server.name_of(uin), text[:300])
         for index, part in enumerate(parts):
             cookie = blocks.new_cookie()
@@ -991,9 +995,14 @@ class Session:
         """Клиент подтвердил получение — теперь запись можно убрать из очереди."""
         cookie = s.data[:8]
         row_id = self.server.awaiting.pop(cookie, None)
-        log.debug("телефон подтвердил получение, cookie %s%s, в ожидании ещё %d",
-                  cookie[:4].hex(), "" if row_id else " (без записи в очереди)",
-                  len(self.server.awaiting))
+        r = Reader(s.data)
+        r.read(8)
+        r.u16()
+        target = r.pstr8().decode("latin-1", "replace") if r.left else ""
+        log.info("телефон подтвердил получение: %s, cookie %s%s",
+                 self.server.name_of(target) if target else "?", cookie[:4].hex(),
+                 "" if row_id else " (повтор или без записи в очереди)")
+        log.debug("   в ожидании подтверждений ещё %d", len(self.server.awaiting))
         if self.server.ack_works is None:
             log.info("телефон подтверждает получение — работаем с подтверждениями")
             self.server.ack_works = True
