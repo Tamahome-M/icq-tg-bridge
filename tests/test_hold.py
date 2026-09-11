@@ -254,6 +254,26 @@ async def main() -> None:
     print("  «занят»: придерживает и отдаёт свежее — ок")
     print("  «не беспокоить»: не копит и не догоняет — ок")
     print("  команда !fav: переключает избранное и переживает обновление списка — ок")
+
+    # --- roster_limit переживает !fav и прочие перечитывания списка ----------
+    bridge = make_bridge()
+    bridge.cfg.roster_limit = 2
+    bridge._reload_roster()
+    assert len(bridge.roster()) == 2, "ограничение списка должно действовать"
+
+    group = bridge.storage.contact_by_peer(-4001)
+    await bridge.run_command(group, history.parse("!fav"))
+    assert len(bridge.roster()) == 2, \
+        f"после !fav список раздулся до {len(bridge.roster())} — ограничение потеряно"
+    assert bridge._by_uin[group.uin].favourite == 1, \
+        "индекс по UIN должен обновляться вместе со списком"
+    assert any(c.uin == group.uin for c in bridge.roster()), \
+        "избранный чат остаётся в ограниченном списке"
+
+    await bridge.search_chats("дач")
+    assert len(bridge.roster()) == 2, "поиск тоже не должен снимать ограничение"
+    bridge.storage.close()
+    print("  roster_limit: ок (не слетает после !fav и поиска)")
     print("ПРИДЕРЖАНИЕ ПРОВЕРЕНО")
 
 
