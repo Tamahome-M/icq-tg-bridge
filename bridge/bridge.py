@@ -60,8 +60,9 @@ class Bridge:
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
         self._by_uin: dict[int, Contact] = {}
-        self._unread: dict[int, int] = {}
+        self._unread: dict[tuple[int, int], int] = {}   # (peer_id, topic_id)
         self._typing: dict[int, asyncio.Task] = {}
+        self._refresh_task: asyncio.Task | None = None
         self.mode = policy.UNMUTED
         self.oscar.on_owner_status = self.on_owner_status
         self.oscar.on_typing = self.on_phone_typing
@@ -159,9 +160,14 @@ class Bridge:
             return found[:SEARCH_LIMIT]
 
         for item in await self.telegram.search_chats(query, SEARCH_LIMIT):
-            uin = self.storage.uin_for_peer(
-                item["peer_id"], kind=item["kind"], title=item["title"],
-                group_name=KIND_TITLES.get(item["kind"], "Чаты"), position=9999)
+            known = self.storage.contact_by_peer(item["peer_id"])
+            if known is not None:
+                # Чат уже есть — его группу, позицию и мьют трогать нельзя.
+                uin = known.uin
+            else:
+                uin = self.storage.uin_for_peer(
+                    item["peer_id"], kind=item["kind"], title=item["title"],
+                    group_name=KIND_TITLES.get(item["kind"], "Чаты"), position=9999)
             found.append({"uin": uin, "title": item["title"],
                           "kind": KIND_TITLES.get(item["kind"], "Чат"),
                           "username": item["username"]})
@@ -222,7 +228,7 @@ class Bridge:
             if (self.mode != policy.ALL and contact is not None
                     and contact.muted):
                 continue
-            await self.oscar.deliver(uin, text)
+            await self.oscar.deliver(uin, text, ts=ts)
             delivered += 1
         log.info("после «занят» доставлено %d из %d придержанных (свежее %d минут)",
                  delivered, len(rows), self.cfg.busy_hold_minutes)
@@ -277,7 +283,7 @@ class Bridge:
                                             group_name=d.group_name, position=d.position,
                                             favourite=favourite, topic_id=d.topic_id,
                                             muted=int(d.muted))
-            self._unread[d.peer_id] = d.unread
+            self._unread[(d.peer_id, d.topic_id)] = d.unread
             if self.avatars is not None:
                 self.avatars.remember(uin, d.photo_id)
             self._statuses[uin] = STATUS_CODES.get(d.status, C.STATUS_ONLINE)
@@ -321,15 +327,20 @@ class Bridge:
     # --- маршрутизация --------------------------------------------------
 
     async def on_telegram_message(self, peer_id: int, sender: str, text: str,
-                                  ts: int = 0, topic_id: int = 0) -> None:
+                                  ts: int = 0, topic_id: int = 0) -> bool:
+        """Возвращает True, если сообщение ушло телефону (или встало в очередь).
+
+        По этому Telegram-сторона решает, помечать ли его прочитанным:
+        отброшенное по статусу телефон не видел, значит и читать его нечем.
+        """
         if not text:
-            return
+            return False
         contact = self.storage.contact_by_peer(peer_id, topic_id)
         if contact is not None and contact.hidden:
             log.debug("чат %r убран с телефона — сообщение не доставляю", contact.title)
             if ts:
                 self.storage.note_delivered(peer_id, ts, topic_id)
-            return
+            return False
         if contact is None:
             title, kind = await self.telegram.title_for(peer_id)
             if topic_id:
@@ -369,12 +380,13 @@ class Bridge:
                           policy.status_name(self.oscar.owner_status), contact.title)
             if ts:
                 self.storage.note_delivered(peer_id, ts, topic_id)
-            return
-        await self.oscar.deliver(uin, text)
+            return False
+        await self.oscar.deliver(uin, text, ts=ts)
         # Отмечаем даже то, что легло в очередь: оно уже сохранено в базе,
         # и при следующем запуске догружать его повторно не нужно.
         if ts:
             self.storage.note_delivered(peer_id, ts, topic_id)
+        return True
 
     async def on_telegram_status(self, peer_id: int, status: str) -> None:
         contact = self.storage.contact_by_peer(peer_id)
@@ -532,10 +544,16 @@ class Bridge:
             text = emoji.to_emoji(text)
         try:
             message_id = await self.telegram.send(contact.peer_id, text, contact.topic_id)
-            log.info("-> %s: %s", contact.title, text[:60])
+            log.info("-> %s: %d симв.", contact.title, len(text))
+            log.debug("-> %s: %s", contact.title, text[:200])
             return message_id
-        except Exception:
+        except errors.FloodWaitError as exc:
+            log.warning("Telegram просит подождать %d с (чат %r)", exc.seconds, contact.title)
+            await self.reply(contact, f"Не отправлено: Telegram просит подождать {exc.seconds} с")
+            return None
+        except Exception as exc:
             log.exception("не удалось отправить в чат %r", contact.title)
+            await self.reply(contact, f"Не отправлено в Telegram: {type(exc).__name__}")
             return None
 
     async def catch_up(self) -> None:
@@ -546,9 +564,11 @@ class Bridge:
         """
         if not self.cfg.catch_up:
             return
+        self._reload_roster()          # отметки «доставлено» берём свежими
         total = 0
         for contact in self._roster:
-            if contact.last_ts <= 0 or self._unread.get(contact.peer_id, 0) <= 0:
+            if (contact.last_ts <= 0
+                    or self._unread.get((contact.peer_id, contact.topic_id), 0) <= 0):
                 continue
             try:
                 missed = await self.telegram.missed(contact.peer_id, contact.last_ts,
@@ -562,8 +582,9 @@ class Bridge:
                     text = f"{sender}: {text}"
                 if self.cfg.emoji_to_text:
                     text = emoji.to_text(text)
-                self.storage.queue(contact.uin, text, self.cfg.offline_queue_per_chat)
-                self.storage.note_delivered(contact.peer_id, ts)
+                self.storage.queue(contact.uin, text, self.cfg.offline_queue_per_chat,
+                                   ts=ts)
+                self.storage.note_delivered(contact.peer_id, ts, contact.topic_id)
                 total += 1
         if total:
             log.info("догружено %d пропущенных сообщений", total)
@@ -737,7 +758,9 @@ class Bridge:
         await self.oscar.start()
         if self.photo_server is not None:
             await self.photo_server.start()
-        asyncio.create_task(self._refresh_loop())
+        if self.render is not None:
+            self.render.cleanup()          # осиротевшее после прошлого запуска
+        self._refresh_task = asyncio.create_task(self._refresh_loop())
         log.info("мост готов, ждём подключения Jimm")
         try:
             await self.telegram.client.run_until_disconnected()
@@ -755,6 +778,11 @@ class Bridge:
         # Порядок важен: сначала перестаём принимать и отдавать, и только
         # потом закрываем базу — иначе уходящая сессия обратится к ней уже
         # закрытой.
+        if self._refresh_task is not None:
+            self._refresh_task.cancel()
+        for task in self._typing.values():
+            task.cancel()
+        self._typing.clear()
         if self.photo_server is not None:
             await self.photo_server.stop()
         await self.oscar.stop()

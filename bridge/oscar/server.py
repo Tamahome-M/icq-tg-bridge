@@ -1130,7 +1130,7 @@ class OscarServer:
         return True
 
     async def deliver(self, uin: int, text: str, forced: bool = False,
-                      url: str = "") -> bool:
+                      url: str = "", ts: int = 0) -> bool:
         """Принимает сообщение к доставке.
 
         Пишем в очередь и будим отправителя. Ждать подтверждения прямо здесь
@@ -1139,7 +1139,7 @@ class OscarServer:
         forced — ответ на команду с телефона: доставляется при любом статусе,
         ведь его запросили руками.
         """
-        self.storage.queue(uin, text, self.cfg.offline_queue_per_chat, forced, url)
+        self.storage.queue(uin, text, self.cfg.offline_queue_per_chat, forced, url, ts)
         self.wake_sender()
         return True
 

@@ -203,15 +203,18 @@ class TelegramSide:
     async def _on_user_update(self, event) -> None:
         """Собеседник появился в сети, ушёл или начал набирать сообщение."""
         try:
-            peer_id = utils.get_peer_id(types.PeerUser(event.user_id))
+            user_peer = utils.get_peer_id(types.PeerUser(event.user_id))
+            # Набор текста относится к чату, где печатают: в группе это сама
+            # группа, а не личный чат с этим человеком.
+            chat_peer = getattr(event, "chat_id", None) or user_peer
             if self.on_typing is not None:
                 if getattr(event, "typing", False):
-                    await self.on_typing(peer_id, True)
+                    await self.on_typing(chat_peer, True)
                 elif getattr(event, "cancel", False):
-                    await self.on_typing(peer_id, False)
+                    await self.on_typing(chat_peer, False)
             status = getattr(event, "status", None)
             if status is not None and self.on_status is not None:
-                await self.on_status(peer_id, status_name(status))
+                await self.on_status(user_peer, status_name(status))
         except Exception:
             log.exception("ошибка обработки события о пользователе")
 
@@ -242,9 +245,9 @@ class TelegramSide:
                     sender = utils.get_display_name(await event.get_sender()) or ""
                 except Exception:
                     sender = ""
-            await self.on_message(peer_id, sender, text,
-                                  int(event.message.date.timestamp()), topic_id)
-            if self.cfg.mark_read:
+            shown = await self.on_message(peer_id, sender, text,
+                                          int(event.message.date.timestamp()), topic_id)
+            if self.cfg.mark_read and shown:
                 await event.message.mark_read()
         except Exception:
             log.exception("ошибка обработки входящего сообщения")

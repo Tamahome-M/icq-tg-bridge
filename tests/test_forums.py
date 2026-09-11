@@ -138,6 +138,37 @@ async def main() -> None:
     bridge.storage.close()
     print("  история и фото в теме: ок (спрашиваем только свою тему)")
     print("  темы форума: ок (свои UIN, маршрутизация в обе стороны)")
+
+    # --- догрузка при старте: отметка «доставлено» ставится своей теме -----
+    bridge = make_bridge()
+    dev = bridge.storage.uin_for_peer(FORUM, kind="chat", title="Разработка",
+                                      group_name="Рабочий форум", topic_id=42)
+    bridge.storage.note_delivered(FORUM, 1_000, 42)       # что-то уже доставляли
+    bridge._reload_roster()
+    bridge._unread[(FORUM, 42)] = 1
+
+    calls: list[tuple] = []
+
+    async def missed(peer_id, since_ts, cap, topic_id=0):
+        calls.append((peer_id, since_ts, topic_id))
+        return [(1_500, "Вася", "новое в теме")] if since_ts < 1_500 else []
+
+    bridge.telegram.missed = missed
+    await bridge.catch_up()
+    assert calls == [(FORUM, 1_000, 42)], calls
+    assert bridge.storage.pending_count() == 1, "новое должно встать в очередь"
+    rows = bridge.storage.peek_pending()
+    assert rows[0][3] == 1_500, "в очереди должно быть настоящее время сообщения"
+    assert bridge.storage.contact_by_uin(dev).last_ts == 1_500, \
+        "отметка «доставлено» должна встать у самой темы"
+
+    # Второй запуск: та же тема больше ничего не догружает.
+    calls.clear()
+    await bridge.catch_up()
+    assert calls == [(FORUM, 1_500, 42)], calls
+    assert bridge.storage.pending_count() == 1, "повторной догрузки быть не должно"
+    bridge.storage.close()
+    print("  догрузка тем: ок (отметка у темы, без повторов)")
     print("ФОРУМЫ ПРОВЕРЕНЫ")
 
 
