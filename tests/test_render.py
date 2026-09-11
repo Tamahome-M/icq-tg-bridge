@@ -302,6 +302,191 @@ async def run_url_message() -> None:
     print("  URL-сообщение: ок (ссылка отдельным полем и в тексте)")
 
 
+async def run_paths_and_index() -> None:
+    """Адрес страницы по формату из настроек и список страниц."""
+    work = tempfile.mkdtemp()
+    coder = render.Transcoder("нет", workdir=work)
+    item = [render.Item(when="10:00", who="Вася", text="привет")]
+
+    store = render.RenderStore(os.path.join(work, "a"), coder, path_format="/r/{n}")
+    first = await store.build("Дача 2026", list(item))
+    second = await store.build("Мама", list(item))
+    assert (first.path, second.path) == ("/r/1", "/r/2"), (first.path, second.path)
+    assert store.page_by_path("/r/2") == second.body
+    assert store.page_by_path("/r/2/") == second.body, "хвостовая косая не мешает"
+    assert store.page_by_path("/r/" + first.token) == first.body, "по токену — тоже"
+    assert store.page_by_path("/r/9") is None
+
+    store = render.RenderStore(os.path.join(work, "b"), coder, path_format="{chat}/{n}")
+    page = await store.build("Дача 2026", list(item))
+    assert page.path == "/dacha-2026/1", page.path
+    assert store.page_by_path("/dacha-2026/1") is not None
+
+    store = render.RenderStore(os.path.join(work, "c"), coder, path_format="/{chat}")
+    old = await store.build("Мама", list(item))
+    new = await store.build("Мама", list(item))
+    assert store.page_by_path("/mama") == new.body, "занятый адрес переходит новой странице"
+    assert store.page_for(old.token) is not None, "а старая остаётся по токену"
+
+    # Список страниц: выключен по умолчанию, включённый показывает живые.
+    assert not store.is_index("/r/")
+    store.index_enabled = True
+    assert store.is_index("/r/") and store.is_index("/r") and store.is_index("/r/index")
+    listing = store.index_html().decode("utf-8")
+    assert 'href="/mama"' in listing and "Мама" in listing, listing[-400:]
+    store._pages[new.token].made -= 3600
+    store._pages[old.token].made -= 3600
+    assert "Страниц пока нет" in store.index_html().decode("utf-8")
+    print("  адреса и список: ок (номер, название, токен, индекс)")
+
+
+async def run_password() -> None:
+    """Пароль: Basic, форма с cookie, ключ в адресе — и бан за перебор."""
+    import base64
+    from bridge.access import AccessControl
+    from bridge.photos import PhotoStore
+    from bridge.webserver import PhotoServer
+
+    work = tempfile.mkdtemp()
+    store = render.RenderStore(os.path.join(work, "render"),
+                               render.Transcoder("нет", workdir=work), index=True)
+    page = await store.build("Мама", [render.Item(when="10:00", who="Мама", text="секрет")])
+    port = PORT + 2
+    access = AccessControl(max_failures=3, ban_seconds=60)
+    server = PhotoServer(PhotoStore(os.path.join(work, "photos")), "127.0.0.1", port,
+                         access, render=store, password="s3cret")
+    await server.start()
+
+    async def http(method: str, path: str, headers: dict | None = None,
+                   body: bytes = b"") -> tuple[int, dict, bytes]:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        lines = [f"{method} {path} HTTP/1.1", "Host: phone"]
+        for k, v in (headers or {}).items():
+            lines.append(f"{k}: {v}")
+        if body:
+            lines.append(f"Content-Length: {len(body)}")
+        writer.write(("\r\n".join(lines) + "\r\n\r\n").encode() + body)
+        await writer.drain()
+        raw = await asyncio.wait_for(reader.read(200000), timeout=5)
+        writer.close()
+        head, _, data = raw.partition(b"\r\n\r\n")
+        head_lines = head.decode("latin-1").split("\r\n")
+        status = int(head_lines[0].split()[1])
+        hdrs = {}
+        for line in head_lines[1:]:
+            k, _, v = line.partition(":")
+            hdrs[k.strip().lower()] = v.strip()
+        return status, hdrs, data
+
+    # Без пароля — 401 с вызовом Basic и формой в теле.
+    status, hdrs, data = await http("GET", page.path)
+    assert status == 401, status
+    assert "basic" in hdrs.get("www-authenticate", "").lower(), hdrs
+    assert b"<form" in data and "секрет".encode() not in data
+
+    # Basic с верным паролем — страница.
+    token = base64.b64encode(b"icq:s3cret").decode()
+    status, _, data = await http("GET", page.path, {"Authorization": f"Basic {token}"})
+    assert status == 200 and "секрет".encode() in data
+
+    # Ключ в адресе — страница и cookie на будущее.
+    status, hdrs, data = await http("GET", page.path + "?key=s3cret")
+    assert status == 200 and "секрет".encode() in data
+    cookie = hdrs.get("set-cookie", "").split(";")[0]
+    assert cookie.startswith("bridge_auth="), hdrs
+    status, _, data = await http("GET", "/r/", {"Cookie": cookie})
+    assert status == 200 and "Мама".encode() in data, "cookie должна открывать и список"
+
+    # Форма: неверный пароль — снова форма, верный — переход с cookie.
+    status, _, data = await http("POST", "/login", {"Content-Type": "application/x-www-form-urlencoded"},
+                                 b"p=wrong&next=" + page.path.encode())
+    assert status == 200 and "не подошёл".encode() in data
+    status, hdrs, _ = await http("POST", "/login", {"Content-Type": "application/x-www-form-urlencoded"},
+                                 b"p=s3cret&next=" + page.path.encode())
+    assert status == 302 and hdrs.get("location") == page.path, hdrs
+    assert hdrs.get("set-cookie", "").startswith("bridge_auth=")
+
+    # Перебор: после трёх неверных попыток подряд адрес отключается
+    # (удачный вход выше счётчик обнулил).
+    for _ in range(3):
+        await http("GET", page.path + "?key=nope")
+    try:
+        status, _, _ = await http("GET", page.path + "?key=s3cret")
+        assert status != 200, "после бана даже верный пароль не должен проходить"
+    except (ConnectionError, asyncio.IncompleteReadError, OSError):
+        pass                                      # соединение просто закрыли — тоже отказ
+
+    await server.stop()
+    print("  пароль: ок (Basic, ключ в адресе, форма с cookie, бан за перебор)")
+
+
+async def run_downloads() -> None:
+    """Раздел «Загрузки»: список каталога и файлы с правильными типами."""
+    from bridge.access import AccessControl
+    from bridge.photos import PhotoStore
+    from bridge.webserver import PhotoServer
+
+    work = tempfile.mkdtemp()
+    files = os.path.join(work, "files")
+    os.makedirs(files)
+    with open(os.path.join(files, "jimm.jad"), "w") as fh:
+        fh.write("MIDlet-Name: Jimm\nMIDlet-Jar-URL: jimm.jar\n")
+    with open(os.path.join(files, "jimm.jar"), "wb") as fh:
+        fh.write(b"PK\x03\x04" + b"0" * 2000)
+    with open(os.path.join(files, ".secret"), "w") as fh:
+        fh.write("нельзя")
+    os.makedirs(os.path.join(files, "sub"))
+    with open(os.path.join(work, "outside.txt"), "w") as fh:
+        fh.write("снаружи")
+
+    port = PORT + 3
+    server = PhotoServer(PhotoStore(os.path.join(work, "photos")), "127.0.0.1", port,
+                         AccessControl(), password="s3cret", downloads_dir=files)
+    await server.start()
+
+    async def get(path: str) -> tuple[int, str, bytes]:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(f"GET {path} HTTP/1.1\r\nHost: phone\r\n\r\n".encode())
+        await writer.drain()
+        raw = await asyncio.wait_for(reader.read(200000), timeout=5)
+        writer.close()
+        head, _, body = raw.partition(b"\r\n\r\n")
+        lines = head.decode("latin-1").split("\r\n")
+        mime = next((l.split(":", 1)[1].strip() for l in lines if l.lower().startswith("content-type")), "")
+        return int(lines[0].split()[1]), mime, body
+
+    # Список: без пароля (установщик телефона его спросить не умеет), скрытых
+    # файлов и подкаталогов в нём нет.
+    status, mime, body = await get("/d/")
+    assert status == 200 and "vnd.wap.xhtml" in mime, (status, mime)
+    text = body.decode("utf-8")
+    assert 'href="/d/jimm.jad"' in text and 'href="/d/jimm.jar"' in text, text
+    assert ".secret" not in text and "sub" not in text, text
+
+    status, mime, body = await get("/d/jimm.jad")
+    assert status == 200 and mime == "text/vnd.sun.j2me.app-descriptor", (status, mime)
+    assert b"MIDlet-Jar-URL" in body
+    status, mime, body = await get("/d/jimm.jar")
+    assert status == 200 and mime == "application/java-archive" and len(body) == 2004
+
+    # Обходные пути и скрытое — мимо.
+    for bad in ("/d/../outside.txt", "/d/.secret", "/d/sub", "/d/%2e%2e/outside.txt"):
+        status, _, _ = await get(bad)
+        assert status == 404, f"{bad} не должен отдаваться: {status}"
+
+    # А остальное под паролем по-прежнему.
+    status, _, _ = await get("/r/")
+    assert status == 401, status
+
+    # protected = true закрывает и загрузки.
+    server.downloads_protected = True
+    status, _, _ = await get("/d/jimm.jar")
+    assert status == 401, "с protected загрузки должны спрашивать пароль"
+
+    await server.stop()
+    print("  загрузки: ок (список, типы jad/jar, без обходных путей, пароль по желанию)")
+
+
 async def run_command() -> None:
     """Команда целиком: от разбора до ссылки в ответе."""
     assert history.parse("!render").name == "render"
@@ -360,8 +545,10 @@ async def run_command() -> None:
     assert link[0].split("\n")[0] in links, \
         "ссылка должна уйти и отдельным полем — URL-сообщением"
 
-    token = link[0].split("/r/")[1].split("\n")[0]
-    body = bridge.render.page_for(token)
+    # По умолчанию адрес — сквозной номер: его можно набрать на кнопках.
+    path = "/r/" + link[0].split("/r/")[1].split("\n")[0]
+    assert path == "/r/1", path
+    body = bridge.render.page_by_path(path)
     assert body is not None and "Привет".encode("utf-8") in body
 
     # С числом — столько последних сообщений, и не больше потолка.
@@ -391,6 +578,9 @@ async def main() -> None:
     await run_lazy_and_progress()
     await run_expiry()
     await run_web()
+    await run_paths_and_index()
+    await run_password()
+    await run_downloads()
     await run_command()
     await run_url_message()
     print("СТРАНИЦА ПЕРЕПИСКИ ПРОВЕРЕНА")

@@ -358,6 +358,13 @@ class Storage:
             (key, value),
         )
 
+    def next_seq(self, name: str) -> int:
+        """Сквозной счётчик с таким именем: 1, 2, 3… — переживает перезапуск."""
+        key = f"seq_{name}"
+        value = int(self.get_meta(key, "0") or 0) + 1
+        self.set_meta(key, str(value))
+        return value
+
     def get_meta(self, key: str, default: str | None = None) -> str | None:
         row = self.conn.execute("SELECT v FROM meta WHERE k = ?", (key,)).fetchone()
         return row["v"] if row else default

@@ -59,6 +59,8 @@ class Config:
     photos_host: str = "0.0.0.0"
     photos_port: int = 8080
     photos_public_host: str = ""
+    photos_public_url: str = ""
+    photos_password: str = ""
     photos_dir: str = "photos"
     photo_width: int = 176
     photo_height: int = 220
@@ -75,6 +77,10 @@ class Config:
     render_source_max_mb: int = 25
     render_timeout: int = 120
     render_encoding: str = "utf-8"
+    render_path: str = "/r/{n}"
+    render_index: bool = False
+    downloads_dir: str = ""
+    downloads_protected: bool = False
     emoji_to_text: bool = True
     text_to_emoji: bool = True
     offline_queue_per_chat: int = 30
@@ -92,6 +98,7 @@ class Config:
         ph = raw.get("photos", {})
         rn = raw.get("render", {})
         lg = raw.get("log", {})
+        dl = raw.get("downloads", {})
         tg = raw.get("telegram", {})
         br = raw.get("bridge", {})
         base = os.path.dirname(os.path.abspath(path))
@@ -143,6 +150,8 @@ class Config:
             photos_host=ph.get("host", cls.photos_host),
             photos_port=int(ph.get("port", cls.photos_port)),
             photos_public_host=ph.get("public_host", ""),
+            photos_public_url=str(ph.get("public_url", "")).rstrip("/"),
+            photos_password=str(ph.get("password", "")),
             photos_dir=_resolve(base, ph.get("dir", cls.photos_dir)),
             photo_width=int(ph.get("width", cls.photo_width)),
             photo_height=int(ph.get("height", cls.photo_height)),
@@ -159,6 +168,10 @@ class Config:
             render_source_max_mb=int(rn.get("source_max_mb", cls.render_source_max_mb)),
             render_timeout=int(rn.get("timeout", cls.render_timeout)),
             render_encoding=rn.get("encoding", cls.render_encoding),
+            render_path=str(rn.get("path", cls.render_path)),
+            render_index=bool(rn.get("index", cls.render_index)),
+            downloads_dir=_resolve(base, dl["dir"]) if dl.get("dir") else "",
+            downloads_protected=bool(dl.get("protected", cls.downloads_protected)),
             log_level=str(lg.get("level", cls.log_level)).upper(),
             log_telethon_level=str(lg.get("telethon_level", cls.log_telethon_level)).upper(),
             log_file=_resolve(base, lg["file"]) if lg.get("file") else "",
