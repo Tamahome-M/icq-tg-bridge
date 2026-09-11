@@ -317,10 +317,49 @@ async def run_without_acks() -> None:
     assert any("без подтверждений" in t for _, t in client.received), client.received
     assert storage.pending_count() == 0, "сообщение осталось в очереди"
     assert server.ack_works is False, "режим подтверждений должен был отключиться"
-
     await client.close()
+    await asyncio.sleep(0.3)
+
+    # Решение живёт до перезапуска: новый сеанс не ждёт полминуты заново.
+    client2 = FakeJimm("127.0.0.1", cfg.oscar_port, cfg.oscar_uin, cfg.oscar_password)
+    client2.send_acks = False
+    await client2.connect()
+    await client2.bos(await client2.login_md5_jimm())
+    await client2.drain_for(0.3)
+    await server.deliver(uin, "сразу простым")
+    await client2.drain_for(0.6)
+    assert client2.channels and client2.channels[0] == 1, \
+        f"после решения сообщения должны сразу идти каналом 1: {client2.channels}"
+    assert any("сразу простым" in t for _, t in client2.received)
+    await client2.close()
+    await asyncio.sleep(0.3)
+
+    # Обратный случай: решение «подтверждает» есть, а клиент сменился и не
+    # подтверждает ничего — после срока ожидания мост сдаётся сам.
+    from bridge.oscar import server as server_module
+    server.ack_works = True
+    grace = server_module.ACK_GRACE
+    server_module.ACK_GRACE = 1
+    try:
+        client3 = FakeJimm("127.0.0.1", cfg.oscar_port, cfg.oscar_uin, cfg.oscar_password)
+        client3.send_acks = False
+        await client3.connect()
+        await client3.bos(await client3.login_md5_jimm())
+        await client3.drain_for(0.3)
+        await server.deliver(uin, "а ты подтверждаешь?")
+        await client3.drain_for(2.3)              # больше ACK_GRACE с запасом на целые секунды
+        await client3.ping()                      # жив — просто не подтверждает
+        await client3.drain_for(0.3)
+        server.check_acks()                       # то, что отправитель делает раз в SENDER_IDLE_POLL
+        await client3.drain_for(0.8)
+        assert server.ack_works is False, "живой клиент без единого подтверждения за срок ожидания"
+        assert 1 in client3.channels, client3.channels
+        await client3.close()
+    finally:
+        server_module.ACK_GRACE = grace
+
     server._server.close()
-    print("  клиент без подтверждений: ок (откат на обычные сообщения, ничего не потеряно)")
+    print("  клиент без подтверждений: ок (откат, решение до перезапуска, смена клиента)")
 
 
 async def run_dead_phone() -> None:

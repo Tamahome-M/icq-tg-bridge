@@ -131,6 +131,7 @@ class Session:
         self.close_reason = ""
         self.sent_messages = 0        # телефону
         self.got_messages = 0         # от телефона
+        self.acks_seen = 0            # подтверждений 04/0B за сеанс
         self._lock = asyncio.Lock()
         # Всё, что ходит в Telegram, выполняется отдельными задачами: цикл
         # чтения не должен ждать чужой сети — иначе пропадают пинги и
@@ -994,6 +995,7 @@ class Session:
         log.debug("телефон подтвердил получение, cookie %s%s, в ожидании ещё %d",
                   cookie[:4].hex(), "" if row_id else " (без записи в очереди)",
                   len(self.server.awaiting))
+        self.acks_seen += 1
         if self.server.ack_works is None:
             log.info("телефон подтверждает получение — работаем с подтверждениями")
             self.server.ack_works = True
@@ -1211,10 +1213,11 @@ class OscarServer:
                 log.info("старое соединение заменено, в очередь вернулось %d сообщений",
                          returned)
         self.session = session
-        # Умеет ли клиент подтверждать, выясняем заново для каждого сеанса:
-        # прошлое решение могло относиться к другой сборке или к зависшему
-        # телефону, а первое подтверждение приходит быстро.
-        self.ack_works = None
+        # Решение «умеет ли клиент подтверждать» живёт до перезапуска моста:
+        # проверка в каждом сеансе стоила бы полминуты ожидания на первое
+        # сообщение (а если канал 2 всё же показывается — и дублей). Зависший
+        # телефон решения не даёт, так что переносить его безопасно; сама
+        # проверка, если ещё не завершена, начинается заново.
         self._probe_started = 0.0
 
     def session_gone(self, session: Session) -> None:
@@ -1408,10 +1411,22 @@ class OscarServer:
         if silent_for > ACK_GRACE:
             return          # молчащему телефону слать заново бессмысленно
         stale = self.storage.reset_sent(older_than=ACK_GRACE)
-        if stale:
-            log.warning("%d сообщений не подтверждены за %d с — отправлю заново",
-                        stale, ACK_GRACE)
+        if not stale:
+            return
+        if self.ack_works and session.acks_seen == 0:
+            # Решение «подтверждает» принято в прошлом сеансе, а этот клиент
+            # за весь срок ожидания не подтвердил ничего, хотя жив: сборка
+            # сменилась. Дальше — обычные сообщения, без бесконечных повторов.
+            log.warning("клиент за %d с не подтвердил ни одного сообщения — "
+                        "перехожу на обычные сообщения", ACK_GRACE)
+            self.ack_works = False
+            self.awaiting.clear()
+            self.storage.reset_sent()
             self.wake_sender()
+            return
+        log.warning("%d сообщений не подтверждены за %d с — отправлю заново",
+                    stale, ACK_GRACE)
+        self.wake_sender()
 
     def sift_pending(self) -> list[tuple[int, int, str, int, str]]:
         """Разбирает очередь по текущему статусу.
