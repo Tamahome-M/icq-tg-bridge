@@ -132,6 +132,47 @@ async def run_page() -> None:
     print("  страница: ок (вёрстка, вложения, экранирование)")
 
 
+async def run_lazy_and_progress() -> None:
+    """Вложения тянутся по одному, а о ходе дела сообщается."""
+    work = tempfile.mkdtemp()
+    store = render.RenderStore(os.path.join(work, "render"),
+                               render.Transcoder(fake_ffmpeg(work), workdir=work),
+                               ttl_minutes=30)
+    order: list[str] = []
+    ticks: list[tuple[int, int]] = []
+
+    def loader(name: str, data: bytes):
+        async def fetch():
+            order.append(name)
+            return data
+        return fetch
+
+    async def progress(done: int, total: int) -> None:
+        ticks.append((done, total))
+
+    items = [
+        render.Item(when="10:00", who="Вася", text="без вложения"),
+        render.Item(when="10:01", who="Вася", kind="photo", fetch=loader("фото", picture())),
+        render.Item(when="10:02", who="Вася", kind="voice", fetch=loader("голос", b"v"),
+                    seconds=3),
+        render.Item(when="10:03", who="Вася", kind="video", fetch=loader("видео", b"m"),
+                    seconds=9),
+    ]
+    page = await store.build("Чат", items, progress)
+    assert order == ["фото", "голос", "видео"], "вложения должны тянуться по очереди"
+    assert ticks == [(1, 3), (2, 3), (3, 3)], ticks
+    assert len(page.assets) == 3
+
+    # Сломавшийся загрузчик не роняет страницу — остаётся пометка.
+    async def broken():
+        raise RuntimeError("сеть упала")
+
+    page2 = await store.build("Чат", [render.Item(when="10:04", who="Вася",
+                                                  kind="photo", fetch=broken)])
+    assert "не открылось" in page2.body.decode("utf-8")
+    print("  ленивые вложения и прогресс: ок")
+
+
 async def run_expiry() -> None:
     work = tempfile.mkdtemp()
     store = render.RenderStore(os.path.join(work, "render"),
@@ -152,7 +193,18 @@ async def run_expiry() -> None:
     assert store.cleanup() == 1, "уборка должна удалить файл"
     assert not os.path.exists(path), "файл должен исчезнуть с диска"
     assert store.page_for(page.token) is None
-    print("  срок жизни: ок (ссылка перестаёт работать, файлы убираются)")
+
+    # Сироты после перезапуска: файлы есть, страниц в памяти нет.
+    orphan = os.path.join(store.directory, "zzzzzzzzzz.3gp")
+    fresh = os.path.join(store.directory, "yyyyyyyyyy.jpg")
+    with open(orphan, "wb") as fh:
+        fh.write(b"old")
+    with open(fresh, "wb") as fh:
+        fh.write(b"new")
+    os.utime(orphan, (time.time() - 3600, time.time() - 3600))
+    assert store.cleanup() == 1, "старый сирота должен уйти, свежий — остаться"
+    assert not os.path.exists(orphan) and os.path.exists(fresh)
+    print("  срок жизни: ок (ссылка перестаёт работать, файлы и сироты убираются)")
 
 
 async def run_web() -> None:
@@ -336,6 +388,7 @@ async def run_command() -> None:
 async def main() -> None:
     await run_transcoder()
     await run_page()
+    await run_lazy_and_progress()
     await run_expiry()
     await run_web()
     await run_command()

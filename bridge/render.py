@@ -20,6 +20,7 @@ import os
 import secrets
 import time
 from dataclasses import dataclass, field
+from typing import Awaitable, Callable
 
 from . import photos
 
@@ -57,6 +58,10 @@ class Item:
     mine: bool = False
     kind: str = ""             # photo, video, voice, audio — или пусто
     raw: bytes | None = None
+    # Загрузчик вложения: данные тянутся, когда до них дошла очередь, и
+    # отпускаются сразу после перекодирования — иначе страница на двадцать
+    # видео держала бы в памяти сотни мегабайт.
+    fetch: Callable[[], Awaitable[bytes | None]] | None = None
     seconds: int = 0
     name: str = ""             # имя файла, если оно есть
 
@@ -149,6 +154,7 @@ class Transcoder:
                 _, err = await asyncio.wait_for(proc.communicate(), timeout=self.timeout)
             except asyncio.TimeoutError:
                 proc.kill()
+                await proc.wait()          # иначе останется зомби
                 log.warning("ffmpeg не уложился в %d с — бросаю", self.timeout)
                 return None
             if proc.returncode != 0:
@@ -224,7 +230,12 @@ class RenderStore:
         return None
 
     def cleanup(self) -> int:
-        """Убирает просроченное — и из памяти, и с диска."""
+        """Убирает просроченное — и из памяти, и с диска.
+
+        Страницы живут в памяти, поэтому после перезапуска файлы прошлых
+        страниц (и временные файлы недоделанной перекодировки) остались бы
+        навсегда: их убираем по возрасту файла.
+        """
         gone = 0
         for token, page in list(self._pages.items()):
             if self.alive(page.made):
@@ -239,21 +250,45 @@ class RenderStore:
                 except OSError:
                     pass
             del self._pages[token]
+
+        if self.ttl > 0:
+            deadline = time.time() - self.ttl
+            for name in os.listdir(self.directory):
+                if name.split(".", 1)[0] in self._assets:
+                    continue
+                path = os.path.join(self.directory, name)
+                try:
+                    if os.path.isfile(path) and os.path.getmtime(path) < deadline:
+                        os.unlink(path)
+                        gone += 1
+                except OSError:
+                    continue
         return gone
 
     # --- сборка страницы ------------------------------------------------
 
-    async def build(self, title: str, items: list[Item]) -> Page | None:
-        """Перекодирует вложения и собирает страницу. None — собирать нечего."""
+    async def build(self, title: str, items: list[Item],
+                    progress: Callable[[int, int], Awaitable[None]] | None = None) -> Page | None:
+        """Перекодирует вложения и собирает страницу. None — собирать нечего.
+
+        progress(готово, всего) зовётся после каждого вложения — на медленной
+        связи минуты тишины пугают, и есть чем их заполнить.
+        """
         if not items:
             return None
         token = _token()
         assets: list[str] = []
         rows: list[str] = []
+        total = sum(1 for item in items if item.kind)
+        done = 0
         for item in items:
             row, used = await self._row(item)
             rows.append(row)
             assets.extend(used)
+            if item.kind:
+                done += 1
+                if progress is not None:
+                    await progress(done, total)
 
         body = self._document(title, rows).encode(self.encoding, "xmlcharrefreplace")
         page = Page(token, body, time.time(), assets)
@@ -294,14 +329,25 @@ class RenderStore:
                   + "".join(inner) + "</td></tr></table></div><br/>")
         return bubble, used
 
+    async def _raw(self, item: Item) -> bytes:
+        if item.raw is not None:
+            return item.raw
+        if item.fetch is None:
+            return b""
+        try:
+            return await item.fetch() or b""
+        except Exception as exc:
+            log.warning("не смог скачать вложение: %s", exc)
+            return b""
+
     async def _media(self, item: Item) -> tuple[str, str]:
         """Вложение: картинка прямо в странице, видео и звук — ссылкой."""
         if not item.kind:
             return "", ""
+        raw = await self._raw(item)
 
         if item.kind == "photo":
-            got = photos.shrink(item.raw or b"", self.width, self.height,
-                                self.photo_max_bytes)
+            got = photos.shrink(raw, self.width, self.height, self.photo_max_bytes)
             if got is None:
                 return '<div class="txt">[фото не открылось]</div>', ""
             data, width, height = got
@@ -310,7 +356,8 @@ class RenderStore:
                     f'height="{height}" alt="фото"/></div>'), asset.token
 
         if item.kind in ("video", "voice", "audio"):
-            data = await self.transcoder.convert(item.raw or b"", item.kind)
+            data = await self.transcoder.convert(raw, item.kind)
+            del raw                    # исходник больше не нужен
             if not data:
                 what = {"video": "видео", "voice": "голосовое",
                         "audio": "аудио"}[item.kind]

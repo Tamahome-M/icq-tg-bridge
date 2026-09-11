@@ -272,6 +272,19 @@ async def main() -> None:
 
     await bridge.search_chats("дач")
     assert len(bridge.roster()) == 2, "поиск тоже не должен снимать ограничение"
+
+    # Поиск по Telegram не затирает группу и мьют уже известного чата.
+    async def search_chats(query, limit):
+        return [{"peer_id": -4002, "kind": "chat", "title": "Шумная", "username": "@noisy"}]
+
+    bridge.telegram.search_chats = search_chats
+    before = bridge.storage.contact_by_peer(-4002)
+    found = await bridge.search_chats("noisy")
+    after = bridge.storage.contact_by_peer(-4002)
+    assert found and found[0]["uin"] == before.uin, found
+    assert (after.group_name, after.muted, after.position) == \
+        (before.group_name, before.muted, before.position), \
+        "известный чат после поиска не должен менять группу, мьют и позицию"
     bridge.storage.close()
     print("  roster_limit: ок (не слетает после !fav и поиска)")
     print("ПРИДЕРЖАНИЕ ПРОВЕРЕНО")

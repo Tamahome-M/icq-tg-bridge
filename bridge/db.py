@@ -267,14 +267,16 @@ class Storage:
     # --- очередь офлайна ------------------------------------------------
 
     def queue(self, uin: int, text: str, limit_per_chat: int, forced: bool = False,
-              url: str = "") -> None:
+              url: str = "", ts: int = 0) -> None:
         """forced — ответ на команду с телефона: такое доставляем при любом статусе.
 
         url — ссылка, которую стоит отдать URL-сообщением, а не простым текстом.
+        ts — когда сообщение было написано на самом деле: по нему ставится
+        метка времени и время в офлайн-пачке. Без него — сейчас.
         """
         self.conn.execute(
             "INSERT INTO pending (uin, text, ts, forced, url) VALUES (?, ?, ?, ?, ?)",
-            (uin, text, int(time.time()), int(forced), url),
+            (uin, text, int(ts or time.time()), int(forced), url),
         )
         self.conn.execute(
             "DELETE FROM pending WHERE uin = ? AND id NOT IN ("

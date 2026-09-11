@@ -387,6 +387,86 @@ async def run_dead_phone() -> None:
     print("  зависший телефон: ок (нет отката на канал 1, очередь цела, сеанс закрыт)")
 
 
+async def run_replaced_session() -> None:
+    """Телефон переподключился, пока старое соединение ещё живо.
+
+    Неподтверждённое из старого сеанса должно вернуться в очередь сразу и
+    уехать новому соединению офлайн-пачкой, а не ждать срока повтора.
+    """
+    cfg = make_config()
+    cfg.oscar_port = PORT + 7
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+
+    async def on_outgoing(*_):
+        return 1
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts)
+    await server.start()
+
+    old = FakeJimm("127.0.0.1", cfg.oscar_port, cfg.oscar_uin, cfg.oscar_password)
+    old.send_acks = False                    # завис: читает, но не подтверждает
+    await old.connect()
+    await old.bos(await old.login_md5_jimm())
+    await old.drain_for(0.5)
+
+    await server.deliver(uin, "ты тут?")
+    await old.drain_for(0.7)
+    assert storage.in_flight_count() == 1, "сообщение должно висеть неподтверждённым"
+
+    new = FakeJimm("127.0.0.1", cfg.oscar_port, cfg.oscar_uin, cfg.oscar_password)
+    await new.connect()
+    await new.bos(await new.login_md5_jimm())
+    await new.drain_for(0.7)
+    assert any("ты тут?" in t for _, _, t in new.offline), \
+        f"неподтверждённое должно приехать новому соединению сразу: {new.offline}"
+    assert storage.pending_count() == 0, "после подтверждения пачки очередь пуста"
+
+    await new.close()
+    try:
+        await old.close()
+    except Exception:
+        pass
+    server._server.close()
+    print("  подмена сессии: ок (неподтверждённое уезжает новому соединению сразу)")
+
+
+async def run_background_handlers() -> None:
+    """Пока сообщение уходит в медленный Telegram, телефон должен читаться."""
+    cfg = make_config()
+    cfg.oscar_port = PORT + 8
+    cfg.ack_on = "sent"
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+
+    async def slow_outgoing(target, text):
+        await asyncio.sleep(1.5)          # FloodWait, медленная сеть — что угодно
+        return 7
+
+    server = OscarServer(cfg, storage, slow_outgoing, storage.contacts)
+    await server.start()
+
+    client = FakeJimm("127.0.0.1", cfg.oscar_port, cfg.oscar_uin, cfg.oscar_password)
+    await client.connect()
+    await client.bos(await client.login_md5_jimm())
+    await client.drain_for(0.5)
+
+    await client.say(uin, "медленно")
+    await asyncio.sleep(0.2)
+    before = server.session.last_seen
+    await client.ping()
+    await asyncio.sleep(0.3)
+    assert server.session.last_seen > before, \
+        "пинг должен быть прочитан, пока отправка в Telegram ещё идёт"
+
+    await client.drain_for(1.8)
+    assert client.acks, "после отправки должно прийти подтверждение"
+
+    await client.close()
+    server._server.close()
+    print("  фоновые обработчики: ок (чтение не ждёт Telegram)")
+
+
 async def run_no_blocking() -> None:
     """Очередь не должна стоять, пока телефон молчит: сообщения уходят
     одно за другим, а подтверждения приходят когда придут."""
@@ -566,6 +646,8 @@ async def main() -> None:
     await run_without_acks()
     await run_no_blocking()
     await run_dead_phone()
+    await run_replaced_session()
+    await run_background_handlers()
     await run_status_modes()
     await run_contact_info()
     await run_roster_changes()

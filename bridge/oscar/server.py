@@ -54,6 +54,54 @@ RATE_PAIRS = [
 ]
 
 
+# Имена SNAC для отладочного журнала: по «04/06 ICBM_SEND» в логе понятно,
+# что происходит, без справочника под рукой.
+SNAC_NAMES = {
+    (C.OSERVICE, C.SRV_READY): "SRV_READY", (C.OSERVICE, C.CLI_READY): "CLI_READY",
+    (C.OSERVICE, C.RATE_REQ): "RATE_REQ", (C.OSERVICE, C.RATE_RESP): "RATE_RESP",
+    (C.OSERVICE, C.RATE_ACK): "RATE_ACK", (C.OSERVICE, C.SELF_INFO_REQ): "SELF_INFO_REQ",
+    (C.OSERVICE, C.SELF_INFO): "SELF_INFO", (C.OSERVICE, C.CLI_VERSIONS): "CLI_VERSIONS",
+    (C.OSERVICE, C.SRV_VERSIONS): "SRV_VERSIONS", (C.OSERVICE, C.SET_STATUS): "SET_STATUS",
+    (C.OSERVICE, C.SERVICE_REQUEST): "SERVICE_REQUEST",
+    (C.OSERVICE, C.SERVICE_REDIRECT): "SERVICE_REDIRECT",
+    (C.LOCATE, C.LOCATE_RIGHTS_REQ): "LOCATE_RIGHTS_REQ", (C.LOCATE, C.LOCATE_RIGHTS): "LOCATE_RIGHTS",
+    (C.BUDDY, C.BUDDY_RIGHTS_REQ): "BUDDY_RIGHTS_REQ", (C.BUDDY, C.BUDDY_RIGHTS): "BUDDY_RIGHTS",
+    (C.BUDDY, C.BUDDY_ARRIVED): "BUDDY_ARRIVED", (C.BUDDY, C.BUDDY_DEPARTED): "BUDDY_DEPARTED",
+    (C.ICBM, C.ICBM_PARAM_REQ): "ICBM_PARAM_REQ", (C.ICBM, C.ICBM_PARAM_INFO): "ICBM_PARAM_INFO",
+    (C.ICBM, C.ICBM_SEND): "ICBM_SEND", (C.ICBM, C.ICBM_INCOMING): "ICBM_INCOMING",
+    (C.ICBM, C.ICBM_ACK): "ICBM_ACK", (C.ICBM, C.ICBM_CLIENT_ACK): "ICBM_CLIENT_ACK",
+    (C.ICBM, C.ICBM_CLIENT_EVENT): "ICBM_TYPING",
+    (C.PD, C.PD_RIGHTS_REQ): "PD_RIGHTS_REQ", (C.PD, C.PD_RIGHTS): "PD_RIGHTS",
+    (C.SSI, C.SSI_RIGHTS_REQ): "SSI_RIGHTS_REQ", (C.SSI, C.SSI_RIGHTS): "SSI_RIGHTS",
+    (C.SSI, C.SSI_LIST_REQ): "SSI_LIST_REQ", (C.SSI, C.SSI_LIST_REQ_IF_CHANGED): "SSI_CHECKOUT",
+    (C.SSI, C.SSI_LIST): "SSI_LIST", (C.SSI, C.SSI_ACTIVATE): "SSI_ACTIVATE",
+    (C.SSI, C.SSI_ADD): "SSI_ADD", (C.SSI, C.SSI_UPDATE): "SSI_UPDATE",
+    (C.SSI, C.SSI_DELETE): "SSI_DELETE", (C.SSI, C.SSI_EDIT_ACK): "SSI_EDIT_ACK",
+    (C.SSI, C.SSI_EDIT_START): "SSI_EDIT_START", (C.SSI, C.SSI_EDIT_END): "SSI_EDIT_END",
+    (C.SSI, C.SSI_REMOVE_ME): "SSI_REMOVE_ME",
+    (C.ICQ, C.ICQ_TO_SERVER): "ICQ_META_REQ", (C.ICQ, C.ICQ_FROM_SERVER): "ICQ_META_REPLY",
+    (C.AUTH, C.AUTH_MD5_KEY_REQ): "AUTH_KEY_REQ", (C.AUTH, C.AUTH_MD5_KEY_REPLY): "AUTH_KEY",
+    (C.AUTH, C.AUTH_LOGIN_REQ): "AUTH_LOGIN", (C.AUTH, C.AUTH_LOGIN_REPLY): "AUTH_REPLY",
+    (C.SSBI, C.SSBI_ICQ_REQ): "ICON_REQ", (C.SSBI, C.SSBI_ICQ_REPLY): "ICON_REPLY",
+}
+
+
+def snac_name(family: int, subtype: int) -> str:
+    name = SNAC_NAMES.get((family, subtype))
+    if name is None and subtype == 0x0001:
+        name = "ERROR"
+    return f"{family:02x}/{subtype:02x}" + (f" {name}" if name else "")
+
+
+def _hms(seconds: float) -> str:
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds} с"
+    if seconds < 3600:
+        return f"{seconds // 60} мин"
+    return f"{seconds // 3600} ч {seconds % 3600 // 60} мин"
+
+
 class Session:
     """Одно TCP-соединение от клиента."""
 
@@ -72,13 +120,36 @@ class Session:
         self.authorized = False
         self.ready = False
         self.closed = False
-        self.peer = writer.get_extra_info("peername")
+        raw_peer = writer.get_extra_info("peername")
+        self.peer = f"{raw_peer[0]}:{raw_peer[1]}" if raw_peer else "?"
         self.signon_time = int(time.time())
         self.item_to_uin: dict[int, int] = {}
         self.auth_key = b""
         self.last_seen = time.time()
         self.pings_seen = 0
+        self.client_name = "?"
+        self.close_reason = ""
+        self.sent_messages = 0        # телефону
+        self.got_messages = 0         # от телефона
         self._lock = asyncio.Lock()
+        # Всё, что ходит в Telegram, выполняется отдельными задачами: цикл
+        # чтения не должен ждать чужой сети — иначе пропадают пинги и
+        # подтверждения, а сторож считает живой телефон отвалившимся.
+        self._tasks: set[asyncio.Task] = set()
+
+    def spawn(self, coro) -> asyncio.Task:
+        """Запускает обработчик в фоне и не даёт его ошибке пропасть молча."""
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+
+        def done(t: asyncio.Task) -> None:
+            self._tasks.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                log.error("сбой фоновой задачи сессии %s", self.peer,
+                          exc_info=t.exception())
+
+        task.add_done_callback(done)
+        return task
 
     # --- отправка -------------------------------------------------------
 
@@ -99,6 +170,7 @@ class Session:
 
     async def send_snac(self, family: int, subtype: int, data: bytes = b"",
                         flags: int = 0, request_id: int = 0) -> bool:
+        log.debug("-> SNAC %s, %d байт", snac_name(family, subtype), len(data))
         return await self.send_flap(2, snac(family, subtype, data, flags, request_id))
 
     async def send_error(self, family: int, code: int, request_id: int) -> None:
@@ -112,24 +184,38 @@ class Session:
             while not self.closed:
                 header = await self.reader.readexactly(6)
                 if header[0] != 0x2A:
-                    log.warning("мусор вместо FLAP от %s", self.peer)
+                    log.warning("мусор вместо FLAP от %s: %s", self.peer, header.hex())
+                    self.close_reason = "мусор в потоке"
                     break
                 channel = header[1]
                 length = struct.unpack(">H", header[4:6])[0]
                 payload = await self.reader.readexactly(length) if length else b""
                 await self.handle_flap(channel, payload)
-        except (asyncio.IncompleteReadError, ConnectionError, OSError):
-            pass
+        except (asyncio.IncompleteReadError, ConnectionError, OSError) as exc:
+            self.close_reason = self.close_reason or f"обрыв соединения ({type(exc).__name__})"
         except Exception:
             log.exception("сбой в сессии %s", self.peer)
+            self.close_reason = "внутренняя ошибка"
         finally:
             await self.close()
 
-    async def close(self) -> None:
+    async def close(self, reason: str = "") -> None:
         if self.closed:
             return
         self.closed = True
+        self.close_reason = reason or self.close_reason or "закрыто сервером"
+        if self.service_only:
+            log.debug("соединение за аватарками %s закрыто: %s", self.peer, self.close_reason)
+        elif self.authorized:
+            log.info("сессия %s закрыта: %s; длилась %s, телефону %d сообщений, "
+                     "от телефона %d", self.peer, self.close_reason,
+                     _hms(time.time() - self.signon_time), self.sent_messages,
+                     self.got_messages)
+        else:
+            log.debug("соединение %s закрыто до входа: %s", self.peer, self.close_reason)
         self.server.session_gone(self)
+        for task in list(self._tasks):
+            task.cancel()
         try:
             self.writer.close()
             await self.writer.wait_closed()
@@ -149,7 +235,7 @@ class Session:
         elif channel == 2:
             await self.handle_snac(Snac.parse(payload))
         elif channel == 4:
-            await self.close()
+            await self.close("клиент попрощался (FLAP канал 4)")
         # канал 5 — keepalive, отвечать не нужно
 
     # --- авторизация ----------------------------------------------------
@@ -162,7 +248,10 @@ class Session:
 
         cookie = tlvs.get(C.TLV_AUTH_COOKIE)
         if cookie is not None:
-            kind = self.server.consume_cookie(cookie)
+            got = self.server.consume_cookie(cookie)
+            kind, client = got if got else (None, "")
+            if client:
+                self.client_name = client
             if kind == "bart":
                 # Отдельное соединение за аватарками: основное трогать нельзя,
                 # иначе телефон останется без сообщений.
@@ -185,6 +274,7 @@ class Session:
         if name is not None and roasted is not None:
             password = roast_password(roasted).decode("latin-1")
             client = (tlvs.get(C.TLV_CLIENT_ID_STRING) or b"?").decode("latin-1", "replace")
+            self.client_name = client
             log.info("вход по XOR, клиент %r", client)
             await self.finish_auth(name.decode("latin-1"),
                                    self.check_password(password), method="XOR")
@@ -243,7 +333,7 @@ class Session:
         клиенту, приславшему SNAC 17/02, — как SNAC 17/03. Jimm использует
         второй способ и первого варианта не ждёт.
         """
-        host = self.peer[0] if self.peer else ""
+        host = self.peer.rpartition(":")[0]
         if not password_ok or screenname.strip() != self.server.uin:
             log.warning("отказ в авторизации для %r (%s) с %s — %s", screenname, method, self.peer,
                         "неверный UIN" if screenname.strip() != self.server.uin else "неверный пароль")
@@ -252,7 +342,7 @@ class Session:
                     + tlv_u16(C.TLV_ERROR_CODE, C.AUTH_ERR_BAD_PASSWORD)
                     + tlv(C.TLV_ERROR_URL, b""))
         else:
-            cookie = self.server.new_cookie()
+            cookie = self.server.new_cookie(client=self.client_name)
             body = (tlv(C.TLV_SCREENNAME, screenname.encode("latin-1", "replace"))
                     + tlv(C.TLV_BOS_ADDRESS, self.server.bos_address(self.writer).encode())
                     + tlv(C.TLV_AUTH_COOKIE, cookie))
@@ -274,7 +364,7 @@ class Session:
         if s.subtype == C.AUTH_MD5_KEY_REQ:
             self.auth_key = ("%d" % int.from_bytes(os.urandom(4), "big")).encode()
             self.server.last_auth_key = self.auth_key
-            log.info("запрошен ключ для MD5-входа, выдан %s", self.auth_key.decode())
+            log.debug("запрошен ключ для MD5-входа, выдан %s", self.auth_key.decode())
             await self.send_snac(C.AUTH, C.AUTH_MD5_KEY_REPLY,
                                  pstr16(self.auth_key), request_id=s.request_id)
         elif s.subtype == C.AUTH_LOGIN_REQ:
@@ -282,6 +372,7 @@ class Session:
             screenname = (tlvs.get(C.TLV_SCREENNAME) or b"").decode("latin-1")
             client = (tlvs.get(C.TLV_CLIENT_ID_STRING) or b"?").decode("latin-1", "replace")
 
+            self.client_name = client
             roasted = tlvs.get(C.TLV_ROASTED_PASS)
             if roasted is not None:
                 log.info("вход по XOR внутри SNAC, клиент %r", client)
@@ -305,10 +396,13 @@ class Session:
             return
         while not self.closed:
             await asyncio.sleep(30)
-            if self.pings_seen and time.time() - self.last_seen > timeout:
-                log.warning("от телефона нет вестей %.0f с — закрываю сессию",
-                            time.time() - self.last_seen)
-                await self.close()
+            silent = time.time() - self.last_seen
+            # Клиент, который пингует, обязан пинговать; который не пингует —
+            # хотя бы что-то присылать. Иначе оборванное без FIN соединение
+            # висело бы вечно, а очередь ждала бы подтверждений от пустоты.
+            if (self.pings_seen and silent > timeout) or silent > 3 * timeout:
+                log.warning("от телефона нет вестей %.0f с — закрываю сессию", silent)
+                await self.close(f"молчание {silent:.0f} с")
                 return
 
     async def start_bos(self) -> None:
@@ -319,13 +413,19 @@ class Session:
         await self.send_snac(C.OSERVICE, C.SRV_READY, families)
 
     async def handle_snac(self, s: Snac) -> None:
-        log.debug("<- %s", s)
+        log.debug("<- SNAC %s, %d байт", snac_name(s.family, s.subtype), len(s.data))
         if s.family == C.AUTH:
             await self.handle_auth_snac(s)
             return
         if not self.authorized:
             return
 
+        # Эти обработчики ходят в Telegram — их ждать в цикле чтения нельзя.
+        background = {
+            (C.ICBM, C.ICBM_SEND), (C.ICBM, C.ICBM_CLIENT_EVENT),
+            (C.SSI, C.SSI_ADD), (C.SSI, C.SSI_DELETE), (C.SSI, C.SSI_REMOVE_ME),
+            (C.ICQ, 0x0002), (C.SSBI, C.SSBI_ICQ_REQ),
+        }
         handler = {
             (C.OSERVICE, C.CLI_VERSIONS): self.on_versions,
             (C.OSERVICE, C.RATE_REQ): self.on_rate_req,
@@ -352,7 +452,10 @@ class Session:
         }.get((s.family, s.subtype))
 
         if handler is None:
-            log.debug("без обработчика: %s", s)
+            log.debug("SNAC %s без обработчика — пропускаю", snac_name(s.family, s.subtype))
+            return
+        if (s.family, s.subtype) in background:
+            self.spawn(handler(s))
             return
         await handler(s)
 
@@ -463,13 +566,19 @@ class Session:
                                  flags=0 if is_last else 0x0001,
                                  request_id=s.request_id)
             parts += 1
-        log.info("контакт-лист отдан: %d элементов в %d частях, версия %d",
-                 count, parts, stamp)
+        contacts = self.server.roster()
+        log.info("контакт-лист отдан: %d контактов, %d групп, %d заглушённых; "
+                 "%d элементов в %d частях, версия %d",
+                 len(contacts), len({c.group_name for c in contacts}),
+                 sum(1 for c in contacts if c.muted), count, parts, stamp)
 
     async def on_ssi_edit(self, s: Snac) -> None:
         """Правки контакт-листа с телефона не сохраняем — список ведёт Telegram,
         но клиенту отвечаем «принято», иначе он показывает ошибку."""
-        count = max(1, len(blocks.parse_ssi_items(s.data)))
+        items = blocks.parse_ssi_items(s.data)
+        log.debug("правка контакт-листа с телефона (%s): %s",
+                  snac_name(s.family, s.subtype), _describe_ssi(items))
+        count = max(1, len(items))
         await self.send_snac(C.SSI, C.SSI_EDIT_ACK,
                              b"".join(struct.pack(">H", 0) for _ in range(count)),
                              request_id=s.request_id)
@@ -481,7 +590,9 @@ class Session:
         в список разрешённых. Для моста это удобный способ заглушить чат:
         обычные контакты клиент сюда не добавляет.
         """
-        for name, _group_id, _item_id, item_type, _extra in blocks.parse_ssi_items(s.data):
+        items = blocks.parse_ssi_items(s.data)
+        log.info("телефон добавил в контакт-лист: %s", _describe_ssi(items))
+        for name, _group_id, _item_id, item_type, _extra in items:
             target = name.decode("latin-1", "replace")
             if not target.isdigit():
                 continue
@@ -494,6 +605,7 @@ class Session:
     async def on_ssi_delete(self, s: Snac) -> None:
         """«Удалить» в клиенте: чат убирается и в Telegram — у себя."""
         items = blocks.parse_ssi_items(s.data)
+        log.info("телефон удалил из контакт-листа: %s", _describe_ssi(items))
         for name, _group_id, _item_id, item_type, _extra in items:
             target = name.decode("latin-1", "replace")
             if not target.isdigit():
@@ -515,6 +627,7 @@ class Session:
         """«Удалиться из его КЛ»: чат удаляется у обеих сторон."""
         r = s.reader()
         target = r.pstr8().decode("latin-1", "replace") if r.left else ""
+        log.info("телефон просит «удалиться из КЛ» у %s", self.server.name_of(target))
         if target.isdigit():
             await self.server.on_remove(int(target), revoke=True)
 
@@ -583,12 +696,12 @@ class Session:
         info = await self.server.chat_info(target)
         enc = self.server.ssi_encoding
         if info is None:
-            log.info("сведений о UIN %d нет", target)
+            log.info("карточка %s: сведений нет", self.server.name_of(target))
             await self.send_icq_reply(uin, C.ICQ_META_RESP_TYPE, seq,
                                       struct.pack("<H", C.ICQ_INFO_END) + b"\x32")
             return
 
-        log.info("отдаю сведения о чате %r", info.get("title", target))
+        log.info("телефон открыл карточку %s", self.server.name_of(target))
         empty = blocks.asciiz("", enc)
 
         # Jimm показывает карточку, только собрав не меньше пяти пакетов
@@ -651,7 +764,9 @@ class Session:
         if self.ready:
             return
         self.ready = True
-        log.info("клиент готов, %s", self.peer)
+        if self.service_only:
+            return          # соединение за аватарками: ни списка статусов, ни очереди
+        log.info("клиент готов: %s, %r", self.peer, self.client_name)
         asyncio.create_task(self.announce_buddies())
         self.offline_phase = True
         asyncio.create_task(self._offline_gate())
@@ -686,9 +801,10 @@ class Session:
             self.offline_ids.append(row_id)
         await self.send_icq_reply(uin, C.ICQ_OFFLINE_DONE, seq, b"\x00")
         if count:
-            log.info("отдано %d офлайн-сообщений (%d записей очереди)", count, len(rows))
+            log.info("офлайн-пачка: %d сообщений (%d записей очереди) — ждём 0x003E",
+                     count, len(rows))
         else:
-            log.info("запрошены офлайн-сообщения — накопленного нет")
+            log.info("офлайн-пачка: накопленного нет")
         self.offline_phase = False
         self.server.wake_sender()
 
@@ -698,7 +814,8 @@ class Session:
             return
         for row_id in self.offline_ids:
             self.server.storage.drop_pending(row_id)
-        log.debug("офлайн-сообщения подтверждены: %d записей", len(self.offline_ids))
+        log.info("телефон подтвердил офлайн-пачку: %d записей убрано из очереди",
+                 len(self.offline_ids))
         self.offline_ids.clear()
 
     async def announce_buddies(self) -> None:
@@ -746,13 +863,18 @@ class Session:
             log.warning("нечисловой получатель %r", target)
             return
 
+        self.got_messages += 1
+        log.info("от телефона → %s: %d симв., канал %d, cookie %s",
+                 self.server.name_of(target), len(text), channel, cookie[:4].hex())
+        log.debug("от телефона → %s: %s", self.server.name_of(target), text[:300])
         sent_id = await self.server.on_outgoing(int(target), text)
         if not sent_id or not tlvs.has(0x0003):
             return
 
         # Cookie в подтверждении обязан быть тем же, что прислал клиент:
-        # по нему он и находит своё сообщение.
-        if self.server.ack_on_read:
+        # по нему он и находит своё сообщение. Команду мосту подтверждаем
+        # сразу: у неё нет номера в Telegram, и прочтения ждать не от кого.
+        if self.server.ack_on_read and sent_id > 0:
             # Галочку поставим, когда собеседник прочитает сообщение.
             self.server.remember_sent(int(target), sent_id, cookie, channel)
         else:
@@ -772,6 +894,11 @@ class Session:
         здесь нельзя: очередь встала бы на всё время ожидания.
         """
         parts = _split_text(text, self.server.max_message_chars)
+        log.info("телефону ← %s: %d симв.%s, канал %d%s",
+                 self.server.name_of(uin), len(text),
+                 f" в {len(parts)} частях" if len(parts) > 1 else "",
+                 2 if wait_ack else 1, ", со ссылкой" if url else "")
+        log.debug("телефону ← %s: %s", self.server.name_of(uin), text[:300])
         for index, part in enumerate(parts):
             cookie = blocks.new_cookie()
             sender = blocks.user_info(str(uin), signon_time=self.signon_time)
@@ -796,6 +923,9 @@ class Session:
             if not await self.send_snac(C.ICBM, C.ICBM_INCOMING, body):
                 self.server.awaiting.pop(cookie, None)
                 return False
+            log.debug("   часть %d/%d ушла, cookie %s%s", index + 1, len(parts),
+                      cookie[:4].hex(), " — ждём подтверждения" if wait_ack and row_id else "")
+        self.sent_messages += 1
         return True
 
     async def on_icbm_typing(self, s: Snac) -> None:
@@ -805,6 +935,8 @@ class Session:
         r.u16()                       # канал
         target = r.pstr8().decode("latin-1", "replace")
         flag = r.u16() if r.left >= 2 else 0
+        log.debug("телефон %s в чате %s", "печатает" if flag == 0x0002 else "перестал печатать",
+                  self.server.name_of(target))
         if target.isdigit():
             await self.server.on_typing(int(target), flag == 0x0002)
 
@@ -850,7 +982,7 @@ class Session:
             await self.send_error(C.SSBI, 0x0001, s.request_id)
             return
         icon_hash, image = got
-        log.info("отдаю аватарку UIN %s, %d байт", target, len(image))
+        log.info("аватарка %s отдана: %d байт", self.server.name_of(target), len(image))
         await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
                              blocks.icon_reply(int(target), icon_hash, image),
                              request_id=s.request_id)
@@ -859,13 +991,29 @@ class Session:
         """Клиент подтвердил получение — теперь запись можно убрать из очереди."""
         cookie = s.data[:8]
         row_id = self.server.awaiting.pop(cookie, None)
-        log.debug("подтверждение получения, cookie %s%s", cookie.hex(),
-                  "" if row_id else " (лишнее)")
+        log.debug("телефон подтвердил получение, cookie %s%s, в ожидании ещё %d",
+                  cookie[:4].hex(), "" if row_id else " (без записи в очереди)",
+                  len(self.server.awaiting))
         if self.server.ack_works is None:
             log.info("телефон подтверждает получение — работаем с подтверждениями")
             self.server.ack_works = True
         if row_id is not None:
             self.server.storage.drop_pending(row_id)
+
+
+_SSI_TYPE_NAMES = {C.SSI_TYPE_BUDDY: "контакт", C.SSI_TYPE_GROUP: "группа",
+                   C.SSI_TYPE_PERMIT: "видимый список", C.SSI_TYPE_DENY: "невидимый список",
+                   C.SSI_TYPE_IGNORE: "игнор"}
+
+
+def _describe_ssi(items) -> str:
+    """Элементы контакт-листа одной строкой: «контакт 100001, невидимый список 100002»."""
+    parts = []
+    for name, group_id, item_id, item_type, _extra in items:
+        kind = _SSI_TYPE_NAMES.get(item_type, f"тип 0x{item_type:04x}")
+        label = name.decode("latin-1", "replace") or f"#{item_id}"
+        parts.append(f"{kind} {label}")
+    return ", ".join(parts) or "пусто"
 
 
 def _chunked(items: list[bytes], limit: int):
@@ -998,24 +1146,38 @@ class OscarServer:
             return
 
         session = Session(self, reader, writer)
-        log.info("соединение с %s", session.peer)
+        log.info("соединение с %s (занято %d из %d)", session.peer,
+                 self.access.connections, self.access.max_connections)
         try:
             await session.run()
         finally:
             self.access.free_slot()
 
-    def new_cookie(self, kind: str = "bos") -> bytes:
+    def new_cookie(self, kind: str = "bos", client: str = "") -> bytes:
         cookie = os.urandom(16)
         now = time.time()
-        self._cookies = {c: (t, k) for c, (t, k) in self._cookies.items()
-                         if now - t < 120}
-        self._cookies[cookie] = (now, kind)
+        self._cookies = {c: v for c, v in self._cookies.items() if now - v[0] < 120}
+        self._cookies[cookie] = (now, kind, client)
         return cookie
 
-    def consume_cookie(self, cookie: bytes) -> str | None:
-        """Возвращает род cookie: «bos» — обычный вход, «bart» — за аватарками."""
+    def consume_cookie(self, cookie: bytes) -> tuple[str, str] | None:
+        """Род cookie («bos» — обычный вход, «bart» — за аватарками) и имя клиента."""
         got = self._cookies.pop(cookie, None)
-        return got[1] if got else None
+        return (got[1], got[2]) if got else None
+
+    def name_of(self, uin) -> str:
+        """Название чата для журнала: «Мама» (100001), а не голый номер."""
+        try:
+            number = int(uin)
+        except (TypeError, ValueError):
+            return repr(uin)
+        for contact in self.roster():
+            if contact.uin == number:
+                return f"«{contact.title}» ({number})"
+        contact = self.storage.contact_by_uin(number)
+        if contact is not None:
+            return f"«{contact.title}» ({number})"
+        return f"UIN {number}"
 
     def service_address(self, writer: asyncio.StreamWriter) -> str:
         """Куда идти за аватарками.
@@ -1037,7 +1199,17 @@ class OscarServer:
 
     def session_arrived(self, session: Session) -> None:
         if self.session is not None and self.session is not session:
-            asyncio.create_task(self.session.close())
+            # Телефон переподключился, а старое соединение ещё живо. Всё, что
+            # ушло туда без подтверждения, возвращаем в очередь сейчас — иначе
+            # оно не попадёт в офлайн-пачку и будет ждать срока повтора.
+            old = self.session
+            self.session = None
+            asyncio.create_task(old.close())
+            self.awaiting.clear()
+            returned = self.storage.reset_sent()
+            if returned:
+                log.info("старое соединение заменено, в очередь вернулось %d сообщений",
+                         returned)
         self.session = session
         # Умеет ли клиент подтверждать, выясняем заново для каждого сеанса:
         # прошлое решение могло относиться к другой сборке или к зависшему
@@ -1054,8 +1226,8 @@ class OscarServer:
                 returned = self.storage.reset_sent()
             except Exception:
                 returned = 0     # мост останавливается, база уже закрыта
-            log.info("телефон отключился%s",
-                     f", в очередь вернулось {returned} сообщений" if returned else "")
+            if returned:
+                log.info("в очередь вернулось %d неподтверждённых сообщений", returned)
 
     @property
     def online(self) -> bool:
@@ -1085,7 +1257,7 @@ class OscarServer:
         return True
 
     async def deliver(self, uin: int, text: str, forced: bool = False,
-                      url: str = "") -> bool:
+                      url: str = "", ts: int = 0) -> bool:
         """Принимает сообщение к доставке.
 
         Пишем в очередь и будим отправителя. Ждать подтверждения прямо здесь
@@ -1094,7 +1266,7 @@ class OscarServer:
         forced — ответ на команду с телефона: доставляется при любом статусе,
         ведь его запросили руками.
         """
-        self.storage.queue(uin, text, self.cfg.offline_queue_per_chat, forced, url)
+        self.storage.queue(uin, text, self.cfg.offline_queue_per_chat, forced, url, ts)
         self.wake_sender()
         return True
 
