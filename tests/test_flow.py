@@ -146,13 +146,56 @@ async def run_case(login_mode: str) -> None:
     await asyncio.sleep(0.2)
     assert storage.pending_count() == 1, "сообщение не встало в очередь"
 
+    # Накопленное клиент забирает офлайн-сообщениями: с настоящим временем,
+    # а очередь чистится по его подтверждению 0x003E.
     client2 = FakeJimm("127.0.0.1", PORT, cfg.oscar_uin, cfg.oscar_password)
     await client2.connect()
     cookie = await client2.login_xor()
-    await client2.bos(cookie)
-    await client2.drain_for(2.5)
-    assert any("Ты где?" in t for _, t in client2.received), client2.received
+    await client2.bos(cookie, request_offline=False)
+    await client2.drain_for(0.3)
+    assert not any("Ты где?" in t for _, t in client2.received), \
+        "до запроса офлайн-сообщений очередь трогать нельзя"
+    assert await client2.offline_messages() == 0x0042
+    assert any("Ты где?" in t for _, _, t in client2.offline), client2.offline
+    sender, when, _ = client2.offline[0]
+    assert sender == uins["Мама"], "отправитель — тот самый контакт"
+    assert when[0] >= 2026 and 1 <= when[1] <= 12, f"дата должна быть настоящей: {when}"
+    await client2.drain_for(0.5)
+    assert storage.pending_count() == 0, "подтверждение 0x003E должно очистить очередь"
+    assert not any("Ты где?" in t for _, t in client2.received[len(client2.offline):]), \
+        "после офлайн-выдачи то же сообщение не должно прийти повторно"
+    await client2.close()
+    await asyncio.sleep(0.3)
+
+    # Клиент, который офлайн-сообщений не просит, получает очередь обычным
+    # потоком — после короткого ожидания.
+    await server.deliver(uins["Мама"], "Ау?")
+    server.offline_wait = 0.5
+    client3 = FakeJimm("127.0.0.1", PORT, cfg.oscar_uin, cfg.oscar_password)
+    await client3.connect()
+    await client3.bos(await client3.login_xor(), request_offline=False)
+    await client3.drain_for(1.5)
+    assert any("Ау?" in t for _, t in client3.received), client3.received
     assert storage.pending_count() == 0
+    await client3.close()
+    await asyncio.sleep(0.3)
+
+    # Офлайн-выдача подчиняется тому же фильтру по статусу, что и обычная:
+    # то, что сейчас доставлять нельзя, не приезжает и в пачке.
+    server.offline_wait = 3.0
+    await server.deliver(uins["Дача 2026"], "в группе шумят")
+    await server.deliver(uins["Мама"], "а я жду")
+    server.verdict_for = lambda uin: "drop" if uin == uins["Дача 2026"] else "send"
+    client4 = FakeJimm("127.0.0.1", PORT, cfg.oscar_uin, cfg.oscar_password)
+    await client4.connect()
+    await client4.bos(await client4.login_xor())
+    await client4.drain_for(0.5)
+    texts4 = [t for _, _, t in client4.offline]
+    assert "а я жду" in texts4, texts4
+    assert "в группе шумят" not in texts4, "отсеянное по статусу не должно уезжать офлайн-пачкой"
+    assert storage.pending_count() == 0, "отсеянное выбрасывается, доставленное подтверждено"
+    server.verdict_for = lambda uin: "send"
+    client2 = client4
 
     await client2.close()
     server._server.close()

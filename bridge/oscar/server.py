@@ -32,6 +32,10 @@ SENT_MEMORY = 200                # столько отправленных по�
 AWAITING_LIMIT = 500             # потолок неподтверждённых сообщений в памяти
 ACK_GRACE = 600                  # столько ждём подтверждения, потом шлём заново
 STALE_SECONDS = 60               # с какого возраста сообщению ставится метка времени
+# Сколько ждать после «клиент готов» запроса офлайн-сообщений, прежде чем
+# отдать накопленное обычным потоком: Jimm спрашивает их сразу, а клиент,
+# который не спросит вовсе, не должен ждать вечно.
+OFFLINE_WAIT = 3.0
 
 # Пары «семейство/подтип» для ответа о лимитах скорости.
 RATE_PAIRS = [
@@ -61,6 +65,10 @@ class Session:
         self.seq = int.from_bytes(os.urandom(2), "big") & 0x7FFF
         # Соединение, открытое только ради аватарок: сообщений через него нет.
         self.service_only = False
+        # Накопленное отдаём офлайн-сообщениями по запросу клиента: пока он
+        # его не прислал (или не вышло время), обычный поток придерживаем.
+        self.offline_phase = False
+        self.offline_ids: list[int] = []
         self.authorized = False
         self.ready = False
         self.closed = False
@@ -532,10 +540,9 @@ class Session:
                                      struct.pack(">H", 0x0004),
                                      request_id=s.request_id)
         elif req_type == C.ICQ_OFFLINE_REQ:
-            log.info("запрошены офлайн-сообщения — отвечаю, что их нет")
-            await self.send_icq_reply(uin, C.ICQ_OFFLINE_DONE, seq, b"\x00")
+            await self.send_offline_messages(uin, seq)
         elif req_type == C.ICQ_OFFLINE_DELETE:
-            log.debug("клиент попросил очистить офлайн-сообщения")
+            self.offline_acknowledged()
         else:
             log.debug("запрос ICQ 0x%04x не поддерживаю", req_type)
             await self.send_snac(C.ICQ, C.ICQ_ERROR, struct.pack(">H", 0x0004),
@@ -643,7 +650,53 @@ class Session:
         self.ready = True
         log.info("клиент готов, %s", self.peer)
         asyncio.create_task(self.announce_buddies())
+        self.offline_phase = True
+        asyncio.create_task(self._offline_gate())
+
+    async def _offline_gate(self) -> None:
+        """Если клиент так и не спросил офлайн-сообщения — отдаём очередь как обычно."""
+        await asyncio.sleep(self.server.offline_wait)
+        if self.offline_phase and not self.closed:
+            log.debug("клиент не спросил офлайн-сообщения — отдаю очередь обычным потоком")
+            self.offline_phase = False
+            self.server.wake_sender()
+
+    async def send_offline_messages(self, uin: int, seq: int) -> None:
+        """Накопленное за время отсутствия — офлайн-сообщениями ICQ.
+
+        Клиент показывает их с настоящим временем отправки, а не с нашей
+        припиской. Фильтр по статусу тот же, что у обычного потока: что
+        сейчас доставлять нельзя, придерживается или выбрасывается. Записи
+        остаются помеченными отправленными, пока клиент не пришлёт 0x003E
+        «удалите» — это и есть подтверждение приёма всей пачки.
+        """
+        rows = self.server.sift_pending()
+        count = 0
+        for row_id, sender, text, ts, _url in rows:
+            if self.closed:
+                return
+            for part in _split_text(text, self.server.max_message_chars):
+                await self.send_icq_reply(uin, C.ICQ_OFFLINE_MSG, seq,
+                                          blocks.offline_message(sender, ts, part))
+                count += 1
+            self.server.storage.mark_sent(row_id)
+            self.offline_ids.append(row_id)
+        await self.send_icq_reply(uin, C.ICQ_OFFLINE_DONE, seq, b"\x00")
+        if count:
+            log.info("отдано %d офлайн-сообщений (%d записей очереди)", count, len(rows))
+        else:
+            log.info("запрошены офлайн-сообщения — накопленного нет")
+        self.offline_phase = False
         self.server.wake_sender()
+
+    def offline_acknowledged(self) -> None:
+        """Клиент подтвердил приём офлайн-сообщений — убираем их из очереди."""
+        if not self.offline_ids:
+            return
+        for row_id in self.offline_ids:
+            self.server.storage.drop_pending(row_id)
+        log.debug("офлайн-сообщения подтверждены: %d записей", len(self.offline_ids))
+        self.offline_ids.clear()
 
     async def announce_buddies(self) -> None:
         """Сообщает клиенту, кто из контактов в сети и с каким статусом."""
@@ -869,6 +922,7 @@ class OscarServer:
         self.on_privacy = on_privacy or self._ignore_privacy
         # Аватарки: примета для блока сведений и сама картинка по запросу.
         self.avatars_enabled = bool(getattr(cfg, "avatars", False))
+        self.offline_wait = OFFLINE_WAIT
         self.avatar = (avatar or self._no_avatar) if self.avatars_enabled else self._no_avatar
         self.icon_hash = ((icon_hash or (lambda uin: None))
                           if self.avatars_enabled else (lambda uin: None))
@@ -1149,20 +1203,17 @@ class OscarServer:
                         stale, ACK_GRACE)
             self.wake_sender()
 
-    async def drain_queue(self) -> None:
-        """Отправляет то, что ждёт очереди. Запись удаляется либо сразу
-        (обычные сообщения), либо по подтверждению от телефона."""
-        rows = self.storage.peek_pending()
-        if not rows:
-            return
-        sent = skipped = 0
-        for row_id, uin, text, ts, forced, url in rows:
-            if not self.online:
-                break
+    def sift_pending(self) -> list[tuple[int, int, str, int, str]]:
+        """Разбирает очередь по текущему статусу.
 
-            # Статус мог смениться, пока сообщения лежали в очереди: то, что
-            # сейчас доставлять нельзя, придерживаем или выбрасываем.
-            # Ответы на команды идут мимо фильтра — их запросили с телефона.
+        Возвращает то, что можно слать. Статус мог смениться, пока сообщения
+        лежали в очереди: что сейчас доставлять нельзя, придерживается или
+        выбрасывается. Ответы на команды идут мимо фильтра — их запросили
+        с телефона.
+        """
+        keep: list[tuple[int, int, str, int, str]] = []
+        skipped = 0
+        for row_id, uin, text, ts, forced, url in self.storage.peek_pending():
             verdict = "send" if forced else self.verdict_for(uin)
             if verdict != "send":
                 self.storage.drop_pending(row_id)
@@ -1170,7 +1221,23 @@ class OscarServer:
                     self.storage.hold(uin, text, ts, self.cfg.offline_queue_per_chat)
                 skipped += 1
                 continue
+            keep.append((row_id, uin, text, ts, url))
+        if skipped:
+            log.info("по текущему статусу пропущено %d накопленных сообщений", skipped)
+        return keep
 
+    async def drain_queue(self) -> None:
+        """Отправляет то, что ждёт очереди. Запись удаляется либо сразу
+        (обычные сообщения), либо по подтверждению от телефона."""
+        if getattr(self.session, "offline_phase", False):
+            return          # накопленное уйдёт офлайн-сообщениями по запросу клиента
+        rows = self.sift_pending()
+        if not rows:
+            return
+        sent = 0
+        for row_id, uin, text, ts, url in rows:
+            if not self.online:
+                break
             # Метку времени получает только то, что успело полежать в очереди.
             if time.time() - ts > STALE_SECONDS:
                 stamp = time.strftime("%d.%m %H:%M", time.localtime(ts))
@@ -1178,9 +1245,7 @@ class OscarServer:
             if not await self.push(uin, text, row_id, url):
                 break
             sent += 1
-        if skipped:
-            log.info("по текущему статусу пропущено %d накопленных сообщений", skipped)
-        if sent + skipped < len(rows):
+        if sent < len(rows):
             log.warning("отправлено %d из %d, остальное ждёт в очереди", sent, len(rows))
         elif sent > 1:
             log.info("отправлено %d накопленных сообщений", sent)
