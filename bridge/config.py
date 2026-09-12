@@ -95,6 +95,18 @@ class Config:
     log_file_max_mb: int = 5
     log_file_keep: int = 3
     log_filtered: bool = True
+    assistant_enabled: bool = False
+    assistant_command: str = "claude"
+    assistant_workdir: str = "claude"
+    assistant_model: str = ""
+    assistant_effort: str = "low"
+    assistant_system: str = ""
+    assistant_tools: str = "WebSearch,WebFetch"
+    assistant_args: str = ""
+    assistant_timeout: int = 300
+    assistant_session_hours: int = 0
+    assistant_title: str = "Claude"
+    assistant_group: str = "Боты"
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -105,6 +117,7 @@ class Config:
         rn = raw.get("render", {})
         lg = raw.get("log", {})
         dl = raw.get("downloads", {})
+        ai = raw.get("assistant", {})
         tg = raw.get("telegram", {})
         br = raw.get("bridge", {})
         base = os.path.dirname(os.path.abspath(path))
@@ -189,6 +202,18 @@ class Config:
             log_file_max_mb=int(lg.get("file_max_mb", cls.log_file_max_mb)),
             log_file_keep=int(lg.get("file_keep", cls.log_file_keep)),
             log_filtered=bool(lg.get("filtered", cls.log_filtered)),
+            assistant_enabled=bool(ai.get("enabled", cls.assistant_enabled)),
+            assistant_command=str(ai.get("command", cls.assistant_command)),
+            assistant_workdir=_resolve(base, ai.get("workdir", cls.assistant_workdir)),
+            assistant_model=str(ai.get("model", "")),
+            assistant_effort=str(ai.get("effort", cls.assistant_effort)),
+            assistant_system=str(ai.get("system", "")),
+            assistant_tools=str(ai.get("tools", cls.assistant_tools)),
+            assistant_args=str(ai.get("args", "")),
+            assistant_timeout=int(ai.get("timeout", cls.assistant_timeout)),
+            assistant_session_hours=int(ai.get("session_hours", cls.assistant_session_hours)),
+            assistant_title=str(ai.get("title", cls.assistant_title)),
+            assistant_group=str(ai.get("group", cls.assistant_group)),
             emoji_to_text=bool(br.get("emoji_to_text", True)),
             text_to_emoji=bool(br.get("text_to_emoji", True)),
             offline_queue_per_chat=int(br.get("offline_queue_per_chat", cls.offline_queue_per_chat)),
