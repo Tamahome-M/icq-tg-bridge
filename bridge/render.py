@@ -87,6 +87,8 @@ class Page:
     path: str = ""             # адрес страницы — по формату из настроек
     title: str = ""
     messages: int = 0
+    part: int = 1              # номер части; длинная переписка режется на части
+    parts: int = 1
 
 
 # Транслитерация для адреса: кириллица в URL на телефоне — мучение.
@@ -208,7 +210,8 @@ class RenderStore:
                  height: int = photos.DEFAULT_HEIGHT,
                  photo_max_bytes: int = photos.DEFAULT_MAX_BYTES,
                  encoding: str = "utf-8", path_format: str = "/r/{n}",
-                 next_seq: Callable[[], int] | None = None, index: bool = False):
+                 next_seq: Callable[[], int] | None = None, index: bool = False,
+                 page_max_bytes: int = 6 * 1024):
         self.directory = directory
         self.transcoder = transcoder
         self.ttl = ttl_minutes * 60
@@ -223,6 +226,10 @@ class RenderStore:
         self._next_seq = next_seq or self._local_seq
         self._seq = 0
         self.index_enabled = index
+        # Потолок одной страницы: браузер телефона (и WAP-шлюз за него)
+        # отвергает ответы больше своего предела — у Openwave на V3 это около
+        # 10 КБ, с запасом берём меньше. Что не влезло — на следующей части.
+        self.page_max_bytes = page_max_bytes
         self._pages: dict[str, Page] = {}
         self._assets: dict[str, Asset] = {}
         self._paths: dict[str, str] = {}      # адрес -> токен страницы
@@ -280,7 +287,7 @@ class RenderStore:
         return self.index_enabled and path.rstrip("/") in ("/r", "/r/index")
 
     def live_pages(self) -> list[Page]:
-        pages = [p for p in self._pages.values() if self.alive(p.made)]
+        pages = [p for p in self._pages.values() if self.alive(p.made) and p.part == 1]
         return sorted(pages, key=lambda p: -p.made)
 
     def index_html(self) -> bytes:
@@ -369,14 +376,59 @@ class RenderStore:
                 if progress is not None:
                     await progress(done, total)
 
-        body = self._document(title, rows).encode(self.encoding, "xmlcharrefreplace")
-        page = Page(token, body, time.time(), assets, self.make_path(title, token),
-                    title, len(items))
-        self._pages[token] = page
-        self._paths[page.path.rstrip("/") or "/"] = token
-        log.info("страница %s (%s): %d сообщений, %d вложений, %d КБ",
-                 page.path, token, len(items), len(assets), len(body) // 1024)
-        return page
+        chunks = self._split(title, rows)
+        path = self.make_path(title, token)
+        made = time.time()
+        first: Page | None = None
+        for index, chunk in enumerate(chunks, start=1):
+            part_token = token if index == 1 else _token()
+            part_path = path if index == 1 else f"{path.rstrip('/')}/{index}"
+            nav = self._nav(path, index, len(chunks))
+            body = self._document(title, chunk + [nav]).encode(self.encoding,
+                                                              "xmlcharrefreplace")
+            page = Page(part_token, body, made, assets if index == 1 else [],
+                        part_path, title, len(items), index, len(chunks))
+            self._pages[part_token] = page
+            self._paths[part_path.rstrip("/") or "/"] = part_token
+            first = first or page
+        log.info("страница %s (%s): %d сообщений, %d вложений, %d КБ%s",
+                 path, token, len(items), len(assets),
+                 sum(len(self._pages[t].body) for t in self._pages
+                     if self._pages[t].made == made) // 1024,
+                 f" в {len(chunks)} частях" if len(chunks) > 1 else "")
+        return first
+
+    def _split(self, title: str, rows: list[str]) -> list[list[str]]:
+        """Режет сообщения на части, чтобы каждая страница влезла в потолок."""
+        if self.page_max_bytes <= 0:
+            return [rows]
+        overhead = len(self._document(title, [self._nav("/x", 1, 2)]).encode(
+            self.encoding, "xmlcharrefreplace"))
+        chunks: list[list[str]] = [[]]
+        size = overhead
+        for row in rows:
+            weight = len(row.encode(self.encoding, "xmlcharrefreplace"))
+            if chunks[-1] and size + weight > self.page_max_bytes:
+                chunks.append([])
+                size = overhead
+            chunks[-1].append(row)
+            size += weight
+        return chunks
+
+    @staticmethod
+    def _nav(path: str, index: int, total: int) -> str:
+        """Переходы между частями — внизу, где палец после чтения."""
+        if total <= 1:
+            return ""
+        base = path.rstrip("/")
+        links = []
+        if index > 1:
+            prev = base if index == 2 else f"{base}/{index - 1}"
+            links.append(f'<a href="{html.escape(prev)}">&#171; назад</a>')
+        links.append(f"{index} из {total}")
+        if index < total:
+            links.append(f'<a href="{html.escape(base)}/{index + 1}">далее &#187;</a>')
+        return '<div class="txt" align="center">' + " &#160;|&#160; ".join(links) + "</div>"
 
     async def _row(self, item: Item) -> tuple[str, list[str]]:
         """Одно сообщение: пузырь с именем, временем, текстом и вложением."""
