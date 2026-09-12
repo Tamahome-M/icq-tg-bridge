@@ -242,6 +242,11 @@ class PhotoServer:
         self._sessions[token] = now + SESSION_SECONDS
         return token
 
+    def session_token(self) -> str:
+        """Токен сеанса для ссылки, которую мост шлёт телефону: открыв её,
+        не нужно вводить пароль. Пусто, если пароля нет — тогда и токен ни к чему."""
+        return self._session() if self.password else ""
+
     def _cookie_header(self, token: str) -> str:
         # Старые браузеры знают только Expires, новые — Max-Age: шлём оба.
         expires = email.utils.formatdate(time.time() + SESSION_SECONDS, usegmt=True)
