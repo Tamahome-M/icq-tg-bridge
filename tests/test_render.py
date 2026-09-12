@@ -242,9 +242,9 @@ async def run_web() -> None:
     server = PhotoServer(photos, "127.0.0.1", PORT, AccessControl(), render=store)
     await server.start()
 
-    async def get(path: str) -> tuple[str, bytes]:
+    async def get(path: str, extra: str = "") -> tuple[str, bytes]:
         reader, writer = await asyncio.open_connection("127.0.0.1", PORT)
-        writer.write(f"GET {path} HTTP/1.1\r\nHost: phone\r\n\r\n".encode())
+        writer.write(f"GET {path} HTTP/1.1\r\nHost: phone\r\n{extra}\r\n".encode())
         await writer.drain()
         raw = await asyncio.wait_for(reader.read(200000), timeout=5)
         writer.close()
@@ -266,6 +266,17 @@ async def run_web() -> None:
     head, body = await get(f"/m/{amr}.amr")
     assert "audio/amr" in head, head
     assert body == b"FAKEMEDIA", body
+    assert "Accept-Ranges: bytes" in head, "качалка телефона должна знать, что диапазоны можно"
+
+    # Диапазоны: качалка после обрыва просит хвост — отдаём 206 и ровно его.
+    head, body = await get(f"/m/{amr}.amr", "Range: bytes=4-\r\n")
+    assert head.startswith("HTTP/1.1 206"), head
+    assert "Content-Range: bytes 4-8/9" in head, head
+    assert body == b"MEDIA", body
+    head, body = await get(f"/m/{amr}.amr", "Range: bytes=0-3\r\n")
+    assert head.startswith("HTTP/1.1 206") and body == b"FAKE", (head, body)
+    head, body = await get(f"/m/{amr}.amr", "Range: bytes=500-\r\n")
+    assert head.startswith("HTTP/1.1 200") and body == b"FAKEMEDIA", "негодный диапазон — целиком"
 
     head, _ = await get("/r/чужое")
     assert "404" in head, head
