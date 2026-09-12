@@ -73,6 +73,9 @@ class Config:
     render_messages: int = 20
     render_ffmpeg: str = "ffmpeg"
     render_video_seconds: int = 60
+    render_video_codec: str = "h263"
+    render_video_kbps: int = 64
+    render_video_fps: int = 15
     render_audio_seconds: int = 300
     render_source_max_mb: int = 25
     render_timeout: int = 120
@@ -165,6 +168,9 @@ class Config:
             render_messages=int(rn.get("messages", cls.render_messages)),
             render_ffmpeg=rn.get("ffmpeg", cls.render_ffmpeg),
             render_video_seconds=int(rn.get("video_seconds", cls.render_video_seconds)),
+            render_video_codec=str(rn.get("video_codec", cls.render_video_codec)),
+            render_video_kbps=int(rn.get("video_kbps", cls.render_video_kbps)),
+            render_video_fps=int(rn.get("video_fps", cls.render_video_fps)),
             render_audio_seconds=int(rn.get("audio_seconds", cls.render_audio_seconds)),
             render_source_max_mb=int(rn.get("source_max_mb", cls.render_source_max_mb)),
             render_timeout=int(rn.get("timeout", cls.render_timeout)),

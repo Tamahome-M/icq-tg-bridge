@@ -375,9 +375,14 @@ class TelegramSide:
 
             kind = media_kind(msg)
             fetch = None
+            thumb = None
             if kind == "photo":
                 fetch = (lambda m=msg: self._download_small(m))
             elif kind:
+                if kind == "video":
+                    # Миниатюра ролика — как в ленте Telegram; без неё страница
+                    # обойдётся, так что провал загрузки не страшен.
+                    thumb = (lambda m=msg: self._download_thumb(m))
                 size = getattr(getattr(msg, "file", None), "size", 0) or 0
                 if max_media_bytes and size > max_media_bytes:
                     log.info("вложение %d КБ больше потолка — оставляю пометкой",
@@ -402,6 +407,7 @@ class TelegramSide:
                 "kind": kind,
                 "raw": None,
                 "fetch": fetch,
+                "thumb": thumb,
                 "seconds": int(getattr(getattr(msg, "file", None), "duration", 0) or 0),
                 "name": getattr(getattr(msg, "file", None), "name", "") or "",
             })
@@ -431,6 +437,13 @@ class TelegramSide:
         except Exception:
             log.exception("не удалось получить фотографии чата %s", peer_id)
         return out
+
+    async def _download_thumb(self, msg) -> bytes | None:
+        """Только миниатюра вложения — оригинал видео сюда тянуть незачем."""
+        try:
+            return await msg.download_media(file=bytes, thumb=-1)
+        except Exception:
+            return None
 
     async def _download_small(self, msg) -> bytes | None:
         for thumb in (-1, None):          # сперва миниатюра, потом оригинал
