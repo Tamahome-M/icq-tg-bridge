@@ -775,12 +775,23 @@ class Bridge:
                          f"{len(page.assets)} вложений{note}", url=link)
 
     def web_url(self, path: str) -> str:
-        """Полный адрес на мини-сервере: public_url, если задан, иначе хост и порт."""
+        """Полный адрес на мини-сервере: public_url, если задан, иначе хост и порт.
+
+        При включённом пароле в ссылку добавляется токен сеанса: открывший её
+        телефон пароля не вводит, а дальше страница проносит токен сама. Сам
+        пароль в ссылку не попадает — он ушёл бы открытым текстом по OSCAR и
+        остался бы в истории клиента.
+        """
         if self.cfg.photos_public_url:
-            return self.cfg.photos_public_url + path
-        host = self.cfg.photos_public_host or self.cfg.bos_host or "127.0.0.1"
-        port = "" if self.cfg.photos_port == 80 else f":{self.cfg.photos_port}"
-        return f"http://{host}{port}{path}"
+            base = self.cfg.photos_public_url
+        else:
+            host = self.cfg.photos_public_host or self.cfg.bos_host or "127.0.0.1"
+            port = "" if self.cfg.photos_port == 80 else f":{self.cfg.photos_port}"
+            base = f"http://{host}{port}"
+        token = ""
+        if self.cfg.photos_link_session and self.cfg.photos_password:
+            token = getattr(self.photo_server, "session_token", lambda: "")()
+        return base + path + (f"?s={token}" if token else "")
 
     def photo_url(self, token: str) -> str:
         return self.web_url(f"/p/{token}.jpg")

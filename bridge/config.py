@@ -61,6 +61,7 @@ class Config:
     photos_public_host: str = ""
     photos_public_url: str = ""
     photos_password: str = ""
+    photos_link_session: bool = True
     photos_dir: str = "photos"
     photo_width: int = 176
     photo_height: int = 220
@@ -153,6 +154,7 @@ class Config:
             photos_public_host=ph.get("public_host", ""),
             photos_public_url=str(ph.get("public_url", "")).rstrip("/"),
             photos_password=str(ph.get("password", "")),
+            photos_link_session=bool(ph.get("link_session", cls.photos_link_session)),
             photos_dir=_resolve(base, ph.get("dir", cls.photos_dir)),
             photo_width=int(ph.get("width", cls.photo_width)),
             photo_height=int(ph.get("height", cls.photo_height)),

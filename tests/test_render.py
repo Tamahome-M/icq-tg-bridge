@@ -582,6 +582,24 @@ async def run_command() -> None:
     assert asked[0][1] == cfg.render_messages, "больше потолка не просим"
     assert any("не соберу" in t for t in sent), sent
 
+    # С паролем на сервере ссылка несёт токен сеанса — пароля в ней нет,
+    # а сервер по токену пускает.
+    from bridge.access import AccessControl
+    from bridge.photos import PhotoStore
+    from bridge.webserver import PhotoServer
+    bridge.cfg.photos_password = "s3cret"
+    bridge.photo_server = PhotoServer(PhotoStore(cfg.photos_dir), "127.0.0.1", 0,
+                                      AccessControl(), password="s3cret")
+    url = bridge.web_url("/r/9")
+    assert url.startswith("http://10.0.0.1:8080/r/9?s=") and "s3cret" not in url, url
+    token = url.split("?s=")[1]
+    assert bridge.photo_server._session_alive(token), "токен из ссылки должен пускать"
+    bridge.cfg.photos_link_session = False
+    assert "?s=" not in bridge.web_url("/r/9"), "link_session = false — ссылка чистая"
+    bridge.cfg.photos_link_session = True
+    bridge.cfg.photos_password = ""
+    assert "?s=" not in bridge.web_url("/r/9"), "без пароля токен ни к чему"
+
     # Выключенная сборка отвечает понятным отказом.
     bridge.render = None
     sent.clear()
