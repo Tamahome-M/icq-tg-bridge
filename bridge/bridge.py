@@ -76,7 +76,8 @@ class Bridge:
                 cfg.render_dir,
                 Transcoder(cfg.render_ffmpeg, cfg.render_video_seconds,
                            cfg.render_audio_seconds, cfg.render_timeout,
-                           cfg.render_dir),
+                           cfg.render_dir, cfg.render_video_codec,
+                           cfg.render_video_kbps, cfg.render_video_fps),
                 cfg.render_ttl_minutes, cfg.photo_width, cfg.photo_height,
                 cfg.photo_max_kb * 1024, cfg.render_encoding, cfg.render_path,
                 lambda: self.storage.next_seq("render"), cfg.render_index)
@@ -743,7 +744,8 @@ class Bridge:
         items = [Item(when=r["when"], who=r["who"],
                       text=emoji.to_text(r["text"]) if self.cfg.emoji_to_text else r["text"],
                       mine=r["mine"], kind=r["kind"], raw=r.get("raw"),
-                      fetch=r.get("fetch"), seconds=r["seconds"], name=r["name"])
+                      fetch=r.get("fetch"), thumb=r.get("thumb"),
+                      seconds=r["seconds"], name=r["name"])
                  for r in rows]
         attachments = sum(1 for i in items if i.kind)
         await self.reply(contact, f"Собираю {len(items)} сообщений"

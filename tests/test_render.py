@@ -63,6 +63,12 @@ async def run_transcoder() -> None:
     assert "libopencore_amrnb" in args, args
     assert f"{render.VIDEO_WIDTH}:{render.VIDEO_HEIGHT}" in " ".join(args), args
     assert args[args.index("-t") + 1] == "30", "ограничение по времени видео"
+    # Плеер RAZR V3: H.263 Level 10 — не больше 64 кбит/с и 15 кадров в секунду.
+    assert args[args.index("-b:v") + 1] == "64k" and args[args.index("-r") + 1] == "15", args
+    assert "-maxrate" in args and "+faststart" in args, args
+    mp4 = render.Transcoder("x", video_codec="mpeg4").video_args("in", "out")
+    assert "mpeg4" in mp4 and "mp4v" in mp4 and "h263" not in mp4, mp4
+    assert render.Transcoder("x", video_codec="чушь").video_codec == "h263", "неизвестный кодек — h263"
 
     args = coder.audio_args("in.ogg", "out.amr")
     assert args[args.index("-t") + 1] == "90", "ограничение по времени звука"
@@ -156,12 +162,26 @@ async def run_lazy_and_progress() -> None:
         render.Item(when="10:02", who="Вася", kind="voice", fetch=loader("голос", b"v"),
                     seconds=3),
         render.Item(when="10:03", who="Вася", kind="video", fetch=loader("видео", b"m"),
-                    seconds=9),
+                    thumb=loader("превью", picture()), seconds=9),
     ]
     page = await store.build("Чат", items, progress)
-    assert order == ["фото", "голос", "видео"], "вложения должны тянуться по очереди"
+    assert order == ["фото", "голос", "превью", "видео"], "вложения должны тянуться по очереди"
     assert ticks == [(1, 3), (2, 3), (3, 3)], ticks
-    assert len(page.assets) == 3
+    assert len(page.assets) == 4, "у видео два файла: превью и ролик"
+    text = page.body.decode("utf-8")
+    assert 'alt="видео"' in text and "смотреть: видео 0:09" in text, \
+        "видео — картинкой-превью и ссылкой под ней"
+    assert "слушать: голосовое 0:03" in text
+
+    # Без превью и без ffmpeg: остаётся пометка, страница цела.
+    async def no_thumb():
+        return None
+    silent = render.RenderStore(os.path.join(work, "render2"),
+                                render.Transcoder("нет", workdir=work))
+    page3 = await silent.build("Чат", [render.Item(when="10:05", who="Вася", kind="video",
+                                                    fetch=loader("в", b"m"), thumb=no_thumb,
+                                                    seconds=5)])
+    assert "[видео 0:05 — перекодировать не вышло]" in page3.body.decode("utf-8")
 
     # Сломавшийся загрузчик не роняет страницу — остаётся пометка.
     async def broken():

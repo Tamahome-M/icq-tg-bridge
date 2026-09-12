@@ -44,9 +44,19 @@ COLOR_NAME = "#3a76a1"
 COLOR_TIME = "#8397a8"
 
 # H.263 понимает только стандартные размеры кадра; QCIF — то, что подходит
-# экрану такого телефона и что точно проигрывает его плеер.
+# экрану такого телефона и что точно проигрывает его плеер. Плеер RAZR V3
+# декодирует H.263 Baseline Level 10 и MPEG-4 Simple Profile Level 0: обоим
+# положено не больше 64 кбит/с и 15 кадров в секунду — выше плеер файл
+# просто не откроет.
 VIDEO_WIDTH = 176
 VIDEO_HEIGHT = 144
+VIDEO_KBPS = 64
+VIDEO_FPS = 15
+VIDEO_CODECS = {
+    "h263": ["-c:v", "h263"],
+    # Simple Profile, Level 0; тег mp4v — как пишут телефоны сами.
+    "mpeg4": ["-c:v", "mpeg4", "-profile:v", "0", "-level", "8", "-vtag", "mp4v"],
+}
 
 
 @dataclass
@@ -62,6 +72,8 @@ class Item:
     # отпускаются сразу после перекодирования — иначе страница на двадцать
     # видео держала бы в памяти сотни мегабайт.
     fetch: Callable[[], Awaitable[bytes | None]] | None = None
+    # Миниатюра видео из Telegram: показывается как фото, под ней ссылка.
+    thumb: Callable[[], Awaitable[bytes | None]] | None = None
     seconds: int = 0
     name: str = ""             # имя файла, если оно есть
 
@@ -130,12 +142,16 @@ class Transcoder:
 
     def __init__(self, ffmpeg: str = "ffmpeg", video_seconds: int = 60,
                  audio_seconds: int = 300, timeout: int = 120,
-                 workdir: str = "/tmp"):
+                 workdir: str = "/tmp", video_codec: str = "h263",
+                 video_kbps: int = VIDEO_KBPS, video_fps: int = VIDEO_FPS):
         self.ffmpeg = ffmpeg
         self.video_seconds = video_seconds
         self.audio_seconds = audio_seconds
         self.timeout = timeout
         self.workdir = workdir
+        self.video_codec = video_codec if video_codec in VIDEO_CODECS else "h263"
+        self.video_kbps = video_kbps
+        self.video_fps = video_fps
 
     @property
     def available(self) -> bool:
@@ -146,11 +162,16 @@ class Transcoder:
         # Кадр дополняем полями до ровного QCIF: H.263 других размеров не знает.
         scale = (f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,"
                  f"pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2")
-        return [self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
-                "-t", str(self.video_seconds), "-vf", scale, "-r", "12",
-                "-c:v", "h263", "-b:v", "128k",
-                "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1", "-b:a", "12.2k",
-                "-f", "3gp", dst]
+        kbps = f"{self.video_kbps}k"
+        return ([self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
+                 "-t", str(self.video_seconds), "-vf", scale, "-r", str(self.video_fps)]
+                + VIDEO_CODECS[self.video_codec]
+                # Ровный битрейт под потолок уровня: без maxrate кодер даёт
+                # пики выше, чем плеер готов принять.
+                + ["-b:v", kbps, "-maxrate", kbps, "-bufsize", kbps,
+                   "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1", "-b:a", "12.2k",
+                   # moov в начале: старый плеер не станет искать его в конце файла.
+                   "-movflags", "+faststart", "-f", "3gp", dst])
 
     def audio_args(self, src: str, dst: str) -> list[str]:
         return [self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
@@ -386,9 +407,8 @@ class RenderStore:
         if item.who:
             inner.append(f'<div class="who">{html.escape(item.who)}</div>')
 
-        media, token = await self._media(item)
-        if token:
-            used.append(token)
+        media, tokens = await self._media(item)
+        used.extend(tokens)
         if media:
             inner.append(media)
         if item.text:
@@ -421,38 +441,64 @@ class RenderStore:
             log.warning("не смог скачать вложение: %s", exc)
             return b""
 
-    async def _media(self, item: Item) -> tuple[str, str]:
-        """Вложение: картинка прямо в странице, видео и звук — ссылкой."""
-        if not item.kind:
+    def _picture(self, raw: bytes, alt: str) -> tuple[str, str]:
+        """Картинка прямо в странице: разметка и токен файла."""
+        got = photos.shrink(raw, self.width, self.height, self.photo_max_bytes)
+        if got is None:
             return "", ""
-        raw = await self._raw(item)
+        data, width, height = got
+        asset = self.put_asset(data, "jpg")
+        return (f'<div><img src="/m/{asset.token}.jpg" width="{width}" '
+                f'height="{height}" alt="{alt}"/></div>'), asset.token
+
+    async def _media(self, item: Item) -> tuple[str, list[str]]:
+        """Вложение: фото — картинкой, видео — превью и ссылкой, звук — ссылкой."""
+        if not item.kind:
+            return "", []
+        parts: list[str] = []
+        tokens: list[str] = []
 
         if item.kind == "photo":
-            got = photos.shrink(raw, self.width, self.height, self.photo_max_bytes)
-            if got is None:
-                return '<div class="txt">[фото не открылось]</div>', ""
-            data, width, height = got
-            asset = self.put_asset(data, "jpg")
-            return (f'<div><img src="/m/{asset.token}.jpg" width="{width}" '
-                    f'height="{height}" alt="фото"/></div>'), asset.token
+            markup, token = self._picture(await self._raw(item), "фото")
+            if not token:
+                return '<div class="txt">[фото не открылось]</div>', []
+            return markup, [token]
+
+        if item.kind == "video" and item.thumb is not None:
+            # Превью — та миниатюра, что Telegram показывает в ленте: видно,
+            # что за ролик, ещё до скачивания.
+            try:
+                thumb = await item.thumb() or b""
+            except Exception as exc:
+                log.warning("не смог скачать превью видео: %s", exc)
+                thumb = b""
+            if thumb:
+                markup, token = self._picture(thumb, "видео")
+                if token:
+                    parts.append(markup)
+                    tokens.append(token)
 
         if item.kind in ("video", "voice", "audio"):
+            label = {"video": "видео", "voice": "голосовое", "audio": "аудио"}[item.kind]
+            length = _hms(item.seconds)
+            raw = await self._raw(item)
             data = await self.transcoder.convert(raw, item.kind)
             del raw                    # исходник больше не нужен
             if not data:
-                what = {"video": "видео", "voice": "голосовое",
-                        "audio": "аудио"}[item.kind]
-                return f'<div class="txt">[{what} перекодировать не вышло]</div>', ""
+                parts.append(f'<div class="txt">[{label} {length} — перекодировать '
+                             f'не вышло]</div>'.replace("  ", " "))
+                return "".join(parts), tokens
             ext = "3gp" if item.kind == "video" else "amr"
             asset = self.put_asset(data, ext)
-            label = {"video": "видео", "voice": "голосовое", "audio": "аудио"}[item.kind]
-            length = _hms(item.seconds)
+            tokens.append(asset.token)
             note = f"{label} {length}".strip()
             size = f"{asset.size // 1024 or 1} КБ"
-            return (f'<div class="file"><a href="/m/{asset.token}.{ext}">'
-                    f'{html.escape(note)}, {size}</a></div>'), asset.token
+            verb = "смотреть" if item.kind == "video" else "слушать"
+            parts.append(f'<div class="file"><a href="/m/{asset.token}.{ext}">'
+                         f'{verb}: {html.escape(note)}, {size}</a></div>')
+            return "".join(parts), tokens
 
-        return "", ""
+        return "", []
 
     def _document(self, title: str, rows: list[str]) -> str:
         head = (
