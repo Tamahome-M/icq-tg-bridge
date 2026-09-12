@@ -372,6 +372,51 @@ async def run_paths_and_index() -> None:
     print("  адреса и список: ок (номер, название, токен, индекс)")
 
 
+async def run_parts() -> None:
+    """Длинная переписка режется на части под потолок страницы."""
+    work = tempfile.mkdtemp()
+    store = render.RenderStore(os.path.join(work, "render"),
+                               render.Transcoder("нет", workdir=work),
+                               path_format="/r/{n}", page_max_bytes=3000)
+    items = [render.Item(when=f"10:{i:02d}", who="Вася", text=f"сообщение {i} " + "х" * 300)
+             for i in range(12)]
+    first = await store.build("Дача", items)
+    assert first.parts > 1, "12 длинных сообщений в 3 КБ не влезут"
+    assert first.path == "/r/1" and first.part == 1
+
+    seen = 0
+    for k in range(1, first.parts + 1):
+        path = "/r/1" if k == 1 else f"/r/1/{k}"
+        body = store.page_by_path(path)
+        assert body is not None, f"часть {k} не отдаётся"
+        assert len(body) <= 3000, f"часть {k}: {len(body)} байт больше потолка"
+        text = body.decode("utf-8")
+        seen += text.count("сообщение ")
+        assert f"{k} из {first.parts}" in text
+        if k < first.parts:
+            assert f'href="/r/1/{k + 1}"' in text, "нужна ссылка «далее»"
+        if k > 1:
+            prev = "/r/1" if k == 2 else f"/r/1/{k - 1}"
+            assert f'href="{prev}"' in text, "нужна ссылка «назад»"
+    assert seen == 12, f"по частям должны разойтись все сообщения, а не {seen}"
+    assert store.page_by_path(f"/r/1/{first.parts + 1}") is None
+
+    # В списке — одна строка на переписку, не на каждую часть.
+    store.index_enabled = True
+    assert store.index_html().decode("utf-8").count('href="/r/1"') == 1
+
+    # Уборка снимает все части разом.
+    for page in store._pages.values():
+        page.made -= 3600
+    store.cleanup()
+    assert store.page_by_path("/r/1") is None and store.page_by_path("/r/1/2") is None
+
+    # Короткая переписка — одна часть, без навигации.
+    short = await store.build("Мама", [render.Item(when="10:00", who="Мама", text="привет")])
+    assert short.parts == 1 and "далее" not in short.body.decode("utf-8")
+    print("  части страницы: ок (потолок, навигация, список, уборка)")
+
+
 async def run_password() -> None:
     """Пароль: Basic, форма с cookie, ключ в адресе — и бан за перебор."""
     import base64
@@ -655,6 +700,7 @@ async def main() -> None:
     await run_expiry()
     await run_web()
     await run_paths_and_index()
+    await run_parts()
     await run_password()
     await run_downloads()
     await run_command()

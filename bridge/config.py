@@ -83,6 +83,7 @@ class Config:
     render_encoding: str = "utf-8"
     render_path: str = "/r/{n}"
     render_index: bool = False
+    render_page_max_kb: int = 6
     downloads_dir: str = ""
     downloads_protected: bool = False
     emoji_to_text: bool = True
@@ -179,6 +180,7 @@ class Config:
             render_encoding=rn.get("encoding", cls.render_encoding),
             render_path=str(rn.get("path", cls.render_path)),
             render_index=bool(rn.get("index", cls.render_index)),
+            render_page_max_kb=int(rn.get("page_max_kb", cls.render_page_max_kb)),
             downloads_dir=_resolve(base, dl["dir"]) if dl.get("dir") else "",
             downloads_protected=bool(dl.get("protected", cls.downloads_protected)),
             log_level=str(lg.get("level", cls.log_level)).upper(),

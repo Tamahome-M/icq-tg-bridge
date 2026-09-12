@@ -80,7 +80,8 @@ class Bridge:
                            cfg.render_video_kbps, cfg.render_video_fps),
                 cfg.render_ttl_minutes, cfg.photo_width, cfg.photo_height,
                 cfg.photo_max_kb * 1024, cfg.render_encoding, cfg.render_path,
-                lambda: self.storage.next_seq("render"), cfg.render_index)
+                lambda: self.storage.next_seq("render"), cfg.render_index,
+                cfg.render_page_max_kb * 1024)
         if cfg.photos_enabled:
             self.photos = PhotoStore(cfg.photos_dir, cfg.photo_width, cfg.photo_height,
                                      cfg.photo_max_kb * 1024, cfg.photo_keep_hours)
