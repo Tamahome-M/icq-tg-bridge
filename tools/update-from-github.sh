@@ -53,9 +53,16 @@ PY
 
 say "Распаковываю"
 "$PYTHON" - "$WORK/src.zip" "$WORK/unpacked" <<'PY'
-import sys, zipfile
+import os, sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as z:
     z.extractall(sys.argv[2])
+    # zipfile права не восстанавливает — возвращаем бит исполнения тем
+    # файлам, у которых он был (иначе этот самый скрипт после обновления
+    # перестаёт запускаться).
+    for info in z.infolist():
+        mode = (info.external_attr >> 16) & 0o777
+        if mode & 0o111 and not info.is_dir():
+            os.chmod(os.path.join(sys.argv[2], info.filename), mode)
 PY
 
 NEW=$(find "$WORK/unpacked" -mindepth 1 -maxdepth 1 -type d | head -1)
@@ -67,7 +74,7 @@ if [ -n "$DRY" ]; then
     "$PYTHON" - "$NEW" "$DIR" <<'PY'
 import filecmp, pathlib, sys
 new, cur = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-SKIP = {".git", ".venv", "photos", "__pycache__"}
+SKIP = {".git", ".venv", "photos", "render", "downloads", "claude", "__pycache__"}
 KEEP = {"config.toml", "bridge.db"}
 changed = added = 0
 for src in sorted(new.rglob("*")):
@@ -107,8 +114,10 @@ say "Обновляю файлы"
 import pathlib, shutil, sys
 new, cur = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 
-# Чего не касаемся вовсе: рабочие данные и локальное окружение.
-SKIP_PARTS = {".git", ".venv", "photos", "__pycache__"}
+# Чего не касаемся вовсе: рабочие данные и локальное окружение. Каталоги
+# снимков, страниц, загрузок и сеансов Claude в архиве не лежат — без этого
+# списка чистка «устаревших» файлов вымела бы их.
+SKIP_PARTS = {".git", ".venv", "photos", "render", "downloads", "claude", "__pycache__"}
 KEEP_NAMES = {"config.toml", "bridge.db", "bridge.db-wal", "bridge.db-shm"}
 
 def skip(rel: pathlib.Path) -> bool:
@@ -158,6 +167,8 @@ if id "$OWNER" >/dev/null 2>&1; then
     [ -f "$DIR/config.toml" ] && chmod 600 "$DIR/config.toml"
     for f in "$DIR"/*.session; do [ -f "$f" ] && chmod 600 "$f"; done
 fi
+# На всякий случай — даже если архив пришёл без прав.
+chmod 755 "$DIR"/tools/*.sh
 
 if [ -n "$START" ]; then
     say "Запускаю службу"
