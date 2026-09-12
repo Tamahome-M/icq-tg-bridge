@@ -35,6 +35,25 @@ ffmpeg -hide_banner -encoders | grep -E 'libopencore_amrnb|h263'
 Без ffmpeg мост работает как обычно: на странице `!render` соберутся текст
 и фотографии, а видео с голосовыми останутся пометками.
 
+Контакт «Claude» (секция `[assistant]`) разговаривает через Claude Code —
+программу `claude`, запущенную под пользователем моста по его подписке:
+
+```bash
+echo "dev-util/claude-code all-rights-reserved" >> /etc/portage/package.license
+emerge --ask dev-util/claude-code
+```
+
+Вход в аккаунт делается один раз и хранится в `~/.claude` того пользователя,
+от которого работает служба, поэтому и проверять надо от него (после шага 2):
+
+```bash
+su -s /bin/sh icqbridge -c 'claude -p "ответь одним словом: работает?"'
+```
+
+Первый запуск попросит войти по ссылке. Разрешения инструментов для
+неинтерактивного режима — в `tools` секции `[assistant]` или в
+`~icqbridge/.claude/settings.json`.
+
 Проверьте версию: нужен Python 3.11 или новее — мост читает настройки
 модулем `tomllib` из стандартной библиотеки.
 
