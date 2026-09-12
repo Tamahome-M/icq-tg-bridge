@@ -95,6 +95,17 @@ class Config:
     log_file_max_mb: int = 5
     log_file_keep: int = 3
     log_filtered: bool = True
+    assistant_enabled: bool = False
+    assistant_api_key: str = ""
+    assistant_model: str = "claude-opus-5"
+    assistant_system: str = ""
+    assistant_title: str = "Claude"
+    assistant_group: str = "Боты"
+    assistant_history: int = 20
+    assistant_max_tokens: int = 2000
+    assistant_effort: str = "low"
+    assistant_fallbacks: bool = True
+    assistant_timeout: int = 120
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -105,6 +116,7 @@ class Config:
         rn = raw.get("render", {})
         lg = raw.get("log", {})
         dl = raw.get("downloads", {})
+        ai = raw.get("assistant", {})
         tg = raw.get("telegram", {})
         br = raw.get("bridge", {})
         base = os.path.dirname(os.path.abspath(path))
@@ -189,6 +201,17 @@ class Config:
             log_file_max_mb=int(lg.get("file_max_mb", cls.log_file_max_mb)),
             log_file_keep=int(lg.get("file_keep", cls.log_file_keep)),
             log_filtered=bool(lg.get("filtered", cls.log_filtered)),
+            assistant_enabled=bool(ai.get("enabled", cls.assistant_enabled)),
+            assistant_api_key=str(ai.get("api_key", "")),
+            assistant_model=str(ai.get("model", cls.assistant_model)),
+            assistant_system=str(ai.get("system", "")),
+            assistant_title=str(ai.get("title", cls.assistant_title)),
+            assistant_group=str(ai.get("group", cls.assistant_group)),
+            assistant_history=int(ai.get("history", cls.assistant_history)),
+            assistant_max_tokens=int(ai.get("max_tokens", cls.assistant_max_tokens)),
+            assistant_effort=str(ai.get("effort", cls.assistant_effort)),
+            assistant_fallbacks=bool(ai.get("fallbacks", cls.assistant_fallbacks)),
+            assistant_timeout=int(ai.get("timeout", cls.assistant_timeout)),
             emoji_to_text=bool(br.get("emoji_to_text", True)),
             text_to_emoji=bool(br.get("text_to_emoji", True)),
             offline_queue_per_chat=int(br.get("offline_queue_per_chat", cls.offline_queue_per_chat)),

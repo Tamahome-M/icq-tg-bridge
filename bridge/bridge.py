@@ -9,6 +9,7 @@ import time
 from telethon import errors
 
 from . import avatars as avatar_lib
+from .assistant import ASSISTANT_PEER, Assistant
 from . import emoji, history, policy
 from .access import AccessControl
 from .photos import PhotoStore
@@ -63,6 +64,7 @@ class Bridge:
         self._unread: dict[tuple[int, int], int] = {}   # (peer_id, topic_id)
         self._typing: dict[int, asyncio.Task] = {}
         self._refresh_task: asyncio.Task | None = None
+        self._background: set[asyncio.Task] = set()
         self.mode = policy.UNMUTED
         self.oscar.on_owner_status = self.on_owner_status
         self.oscar.on_typing = self.on_phone_typing
@@ -71,6 +73,18 @@ class Bridge:
         self.photos: PhotoStore | None = None
         self.photo_server: PhotoServer | None = None
         self.render: RenderStore | None = None
+        self.assistant: Assistant | None = None
+        if cfg.assistant_enabled:
+            try:
+                import anthropic  # noqa: F401
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Для контакта Claude нужна библиотека anthropic: "
+                    ".venv/bin/python -m pip install -r requirements.txt") from exc
+            self.assistant = Assistant(
+                cfg.assistant_model, cfg.assistant_api_key, cfg.assistant_system,
+                cfg.assistant_history, cfg.assistant_max_tokens, cfg.assistant_effort,
+                cfg.assistant_fallbacks, cfg.assistant_timeout)
         if cfg.render_enabled and cfg.photos_enabled:
             self.render = RenderStore(
                 cfg.render_dir,
@@ -244,6 +258,11 @@ class Bridge:
         contact = self.storage.contact_by_uin(uin)
         if contact is None:
             return None
+        if contact.peer_id == ASSISTANT_PEER:
+            return {"title": contact.title, "kind": "Бот", "username": "", "phone": "",
+                    "members": "", "marks": "",
+                    "about": (f"Помощник Claude ({self.cfg.assistant_model}). Пишите "
+                              f"как обычно; !reset — забыть разговор.")}
         info = await self.telegram.chat_info(contact.peer_id)
         if info and self.cfg.emoji_to_text:
             info = {k: emoji.to_text(v) if isinstance(v, str) else v
@@ -293,8 +312,18 @@ class Bridge:
             if self.avatars is not None:
                 self.avatars.remember(uin, d.photo_id)
             self._statuses[uin] = STATUS_CODES.get(d.status, C.STATUS_ONLINE)
+        present = [d.peer_id for d in dialogs]
+        if self.assistant is not None:
+            # Контакт помощника — не из Telegram, но в списке наравне со всеми:
+            # избранный, чтобы roster_limit его не вытеснил.
+            uin = self.storage.uin_for_peer(ASSISTANT_PEER, kind="bot",
+                                            title=self.cfg.assistant_title,
+                                            group_name=self.cfg.assistant_group,
+                                            position=-1, favourite=1)
+            self._statuses[uin] = C.STATUS_ONLINE
+            present.append(ASSISTANT_PEER)
         # Чаты, которых больше нет в Telegram, убираем из контакт-листа.
-        for contact in self.storage.mark_missing([d.peer_id for d in dialogs]):
+        for contact in self.storage.mark_missing(present):
             log.info("чат %r исчез из Telegram — убираю из списка", contact.title)
             self._statuses[contact.uin] = C.STATUS_OFFLINE
             self._shown[contact.uin] = C.STATUS_OFFLINE
@@ -482,7 +511,7 @@ class Bridge:
         if contact is None:
             log.warning("список видимости для неизвестного UIN %d", uin)
             return
-        if bool(contact.muted) == muted:
+        if contact.peer_id == ASSISTANT_PEER or bool(contact.muted) == muted:
             return
 
         if not await self.telegram.set_muted(contact.peer_id, muted):
@@ -509,6 +538,10 @@ class Bridge:
         contact = self.storage.contact_by_uin(uin)
         if contact is None:
             log.warning("просьба удалить неизвестный UIN %d", uin)
+            return
+        if contact.peer_id == ASSISTANT_PEER:
+            await self.reply(contact, "Помощник выключается в настройках моста, "
+                                      "а не удалением контакта.")
             return
 
         if contact.topic_id:
@@ -550,7 +583,7 @@ class Bridge:
     async def on_phone_typing(self, uin: int, active: bool) -> None:
         """Владелец печатает в Jimm — передаём в Telegram."""
         contact = self.storage.contact_by_uin(uin)
-        if contact is not None:
+        if contact is not None and contact.peer_id != ASSISTANT_PEER:
             log.info("телефон %s в чате «%s»", "печатает" if active else "перестал печатать",
                      contact.title)
             await self.telegram.set_typing(contact.peer_id, active)
@@ -561,6 +594,14 @@ class Bridge:
         if contact is None:
             log.warning("сообщение на неизвестный UIN %d", uin)
             return None
+
+        if contact.peer_id == ASSISTANT_PEER:
+            # Галочку телефону — сразу, ответ придёт отдельным сообщением,
+            # когда Claude закончит думать.
+            task = asyncio.create_task(self.ask_assistant(contact, text))
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
+            return -1
 
         command = history.parse(text)
         if command is not None:
@@ -581,6 +622,37 @@ class Bridge:
             log.exception("не удалось отправить в чат %r", contact.title)
             await self.reply(contact, f"Не отправлено в Telegram: {type(exc).__name__}")
             return None
+
+    async def ask_assistant(self, contact: Contact, text: str) -> None:
+        """Вопрос помощнику: пока он думает, на телефоне «печатает»."""
+        if self.assistant is None:
+            await self.reply(contact, "Помощник выключен в настройках моста")
+            return
+        stripped = text.strip()
+        if stripped.lower() in ("!reset", "!сброс"):
+            self.assistant.reset()
+            await self.reply(contact, "Разговор забыт, начнём заново.")
+            return
+        if stripped.lower() == "!help":
+            await self.reply(contact, "Это помощник Claude: просто пишите вопрос. "
+                                      "!reset — забыть разговор.")
+            return
+        log.info("вопрос помощнику от телефона: %d симв.", len(stripped))
+        log.debug("вопрос помощнику: %s", stripped[:300])
+        await self.oscar.notify_typing(contact.uin, True)
+        try:
+            answer = await self.assistant.ask(stripped)
+        except Exception as exc:
+            log.warning("помощник не ответил: %s: %s", type(exc).__name__, str(exc)[:200])
+            await self.oscar.notify_typing(contact.uin, False)
+            await self.reply(contact, f"Не вышло спросить Claude: {type(exc).__name__}")
+            return
+        await self.oscar.notify_typing(contact.uin, False)
+        if self.cfg.emoji_to_text:
+            answer = emoji.to_text(answer)
+        log.info("ответ помощника: %d симв.", len(answer))
+        log.debug("ответ помощника: %s", answer[:300])
+        await self.reply(contact, answer)
 
     async def catch_up(self) -> None:
         """Догружает в очередь то, что пришло, пока мост не работал.
@@ -844,6 +916,8 @@ class Bridge:
         # закрытой.
         if self._refresh_task is not None:
             self._refresh_task.cancel()
+        for task in list(self._background):
+            task.cancel()
         for task in self._typing.values():
             task.cancel()
         self._typing.clear()
