@@ -211,7 +211,7 @@ class PhotoServer:
 
         sent = await self._reply(writer, status, mime, part, head_only, extra=extra)
         if sent:
-            log.info("отдана %s %s (%d байт%s)", what, path[:48], len(part), note)
+            log.info("отдано: %s %s (%d байт%s)", what, path[:48], len(part), note)
         else:
             log.warning("%s %s: клиент оборвал приём, %d байт не дошли",
                         what, path[:48], writer.transport.get_write_buffer_size())
