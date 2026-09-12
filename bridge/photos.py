@@ -107,13 +107,22 @@ class PhotoStore:
         if self.keep_hours <= 0:
             return 0
         deadline = time.time() - self.keep_hours * 3600
-        removed = 0
+        removed = kept = 0
         for name in os.listdir(self.directory):
             path = os.path.join(self.directory, name)
             try:
-                if os.path.isfile(path) and os.path.getmtime(path) < deadline:
+                if not os.path.isfile(path):
+                    continue
+                if os.path.getmtime(path) < deadline:
                     os.unlink(path)
                     removed += 1
+                else:
+                    kept += 1
             except OSError:
                 continue
+        if removed:
+            log.info("уборка снимков: удалено %d старше %d ч, осталось %d",
+                     removed, self.keep_hours, kept)
+        else:
+            log.debug("уборка снимков: убирать нечего, файлов %d", kept)
         return removed

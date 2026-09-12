@@ -318,18 +318,23 @@ class RenderStore:
         for token, page in list(self._pages.items()):
             if self.alive(page.made):
                 continue
+            removed = 0
             for asset_token in page.assets:
                 asset = self._assets.pop(asset_token, None)
                 if asset is None:
                     continue
                 try:
                     os.unlink(asset.path)
-                    gone += 1
+                    removed += 1
                 except OSError:
                     pass
             del self._pages[token]
             self._paths = {path: t for path, t in self._paths.items() if t != token}
+            gone += removed
+            log.info("страница %s «%s» просрочена — убрана, файлов удалено: %d",
+                     page.path, page.title, removed)
 
+        orphans = left = 0
         if self.ttl > 0:
             deadline = time.time() - self.ttl
             for name in os.listdir(self.directory):
@@ -337,12 +342,23 @@ class RenderStore:
                     continue
                 path = os.path.join(self.directory, name)
                 try:
-                    if os.path.isfile(path) and os.path.getmtime(path) < deadline:
+                    if not os.path.isfile(path):
+                        continue
+                    if os.path.getmtime(path) < deadline:
                         os.unlink(path)
-                        gone += 1
+                        orphans += 1
+                    else:
+                        left += 1
                 except OSError:
                     continue
-        return gone
+        if orphans:
+            log.info("уборка страниц: удалено %d файлов без страницы%s", orphans,
+                     f", ещё {left} моложе срока — позже" if left else "")
+        elif left:
+            log.debug("уборка страниц: %d файлов без страницы ждут срока", left)
+        else:
+            log.debug("уборка страниц: убирать нечего")
+        return gone + orphans
 
     # --- сборка страницы ------------------------------------------------
 
