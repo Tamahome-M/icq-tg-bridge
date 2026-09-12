@@ -791,7 +791,9 @@ class Bridge:
         token = ""
         if self.cfg.photos_link_session and self.cfg.photos_password:
             token = getattr(self.photo_server, "session_token", lambda: "")()
-        return base + path + (f"?s={token}" if token else "")
+        # Токен — в начале пути, чтобы адрес кончался расширением файла: старый
+        # браузер определяет тип файла по концу адреса.
+        return base + (f"/s/{token}" if token else "") + path
 
     def photo_url(self, token: str) -> str:
         return self.web_url(f"/p/{token}.jpg")
