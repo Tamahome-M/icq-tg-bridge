@@ -79,12 +79,13 @@ if [ -n "$DRY" ]; then
     "$PYTHON" - "$NEW" "$DIR" <<'PY'
 import filecmp, pathlib, sys
 new, cur = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-SKIP = {".git", ".venv", "photos", "render", "downloads", "claude", "__pycache__"}
+SKIP = {"photos", "render", "downloads", "claude", "__pycache__"}
 KEEP = {"config.toml", "bridge.db"}
 changed = added = 0
 for src in sorted(new.rglob("*")):
     rel = src.relative_to(new)
-    if src.is_dir() or SKIP & set(rel.parts) or rel.name in KEEP:
+    if (src.is_dir() or rel.parts[0].startswith(".") or SKIP & set(rel.parts)
+            or rel.name in KEEP):
         continue
     dst = cur / rel
     if not dst.exists():
@@ -121,12 +122,15 @@ new, cur = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 
 # Чего не касаемся вовсе: рабочие данные и локальное окружение. Каталоги
 # снимков, страниц, загрузок и сеансов Claude в архиве не лежат — без этого
-# списка чистка «устаревших» файлов вымела бы их.
-SKIP_PARTS = {".git", ".venv", "photos", "render", "downloads", "claude", "__pycache__"}
+# списка чистка «устаревших» файлов вымела бы их. Всё с точкой в начале —
+# тоже: каталог установки служит пользователю моста домом, и там лежат
+# .venv, .claude со входом в Claude Code и прочие его файлы.
+SKIP_PARTS = {"photos", "render", "downloads", "claude", "__pycache__"}
 KEEP_NAMES = {"config.toml", "bridge.db", "bridge.db-wal", "bridge.db-shm"}
 
 def skip(rel: pathlib.Path) -> bool:
-    return (bool(SKIP_PARTS & set(rel.parts))
+    return (rel.parts[0].startswith(".")
+            or bool(SKIP_PARTS & set(rel.parts))
             or rel.name in KEEP_NAMES
             or rel.name.startswith("tg.session")
             or rel.name.startswith("bridge.db.backup")
