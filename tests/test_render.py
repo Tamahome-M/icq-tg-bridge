@@ -267,6 +267,7 @@ async def run_web() -> None:
     assert "audio/amr" in head, head
     assert body == b"FAKEMEDIA", body
     assert "Accept-Ranges: bytes" in head, "качалка телефона должна знать, что диапазоны можно"
+    assert f'filename="{amr}.amr"' in head, "имя файла с расширением — подсказка телефону"
 
     # Диапазоны: качалка после обрыва просит хвост — отдаём 206 и ровно его.
     head, body = await get(f"/m/{amr}.amr", "Range: bytes=4-\r\n")
@@ -433,20 +434,25 @@ async def run_password() -> None:
     status, hdrs, data = await http("GET", "/r/?key=s3cret")
     assert status == 200
     import re
-    tokens = set(re.findall(rb'\?s=([A-Za-z0-9_-]+)"', data))
+    tokens = set(re.findall(rb'"/s/([A-Za-z0-9_-]+)/', data))
     assert len(tokens) == 1, f"в ссылках списка должен быть один токен сеанса: {data[-300:]}"
     token_s = tokens.pop().decode()
     assert b"s3cret" not in data, "пароль в ссылки попадать не должен"
-    assert (page.path + "?s=" + token_s).encode() in data, data[-300:]
-    status, _, data = await http("GET", f"{page.path}?s={token_s}")
+    assert f'href="/s/{token_s}{page.path}"'.encode() in data, data[-300:]
+    # Токен — в начале пути: адрес по-прежнему кончается расширением, и
+    # старый браузер понимает, что за файл качает.
+    status, _, data = await http("GET", f"/s/{token_s}{page.path}")
     assert status == 200 and "секрет".encode() in data, "по токену из ссылки должны пускать"
-    assert f'/m/'.encode() not in data or f"?s={token_s}".encode() in data, \
-        "вложения на странице тоже должны нести токен"
-    status, _, _ = await http("GET", f"{page.path}?s=nonsense")
+    status, _, data = await http("GET", f"/s/{token_s}/r/")
+    assert b'"/s/' + token_s.encode() in data, "ссылки страницы проносят токен дальше"
+    assert b"?s=" not in data, "хвост ?s= больше не используется"
+    status, _, _ = await http("GET", f"{page.path}?s={token_s}")
+    assert status == 200, "старая форма ?s= тоже пускает"
+    status, _, _ = await http("GET", f"/s/nonsense{page.path}")
     assert status == 401, "чужой токен не пускает"
     # Вход по cookie или Basic ссылки не трогает.
     status, _, data = await http("GET", "/r/", {"Cookie": cookie})
-    assert b"?s=" not in data, "с cookie токен в ссылках не нужен"
+    assert b'"/s/' not in data, "с cookie токен в ссылках не нужен"
 
     # Форма: неверный пароль — снова форма, верный — переход с cookie.
     status, _, data = await http("POST", "/login", {"Content-Type": "application/x-www-form-urlencoded"},

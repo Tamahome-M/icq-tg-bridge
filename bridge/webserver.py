@@ -38,6 +38,10 @@ MIME_PAGE = "application/vnd.wap.xhtml+xml"
 REALM = "icq-tg-bridge"
 COOKIE = "bridge_auth"
 SESSION_PARAM = "s"                   # токен сеанса в адресе — для браузеров без cookie
+# Тот же токен в начале пути: /s/<токен>/m/abc.3gp. Старый браузер определяет
+# тип файла по концу адреса, и «3gp?s=…» для него не расширение — а так адрес
+# кончается тем, чем должен.
+SESSION_PREFIX = "/s/"
 SESSION_SECONDS = 30 * 24 * 3600     # вошёл с телефона — и на месяц свободен
 # Ссылки внутри страниц, к которым дописывается токен сеанса.
 _LINK_RE = re.compile(rb'(href|src)="(/[^"?#]*)"')
@@ -170,6 +174,12 @@ class PhotoServer:
             await self._login(writer, host, method, params, body)
             return
 
+        # Токен в начале пути снимаем и считаем его тем же, что ?s=.
+        if path.startswith(SESSION_PREFIX):
+            token, _, rest = path[len(SESSION_PREFIX):].partition("/")
+            params = dict(params, **{SESSION_PARAM: [token]})
+            path = "/" + rest
+
         set_cookie = ""
         url_token = ""
         open_area = path.startswith("/d/") and self.downloads_dir and not self.downloads_protected
@@ -188,10 +198,10 @@ class PhotoServer:
         if url_token and what in ("страница", "список", "загрузки"):
             # Браузер без cookie: токен сеанса едет дальше в каждой ссылке —
             # и в картинках, и во вложениях, — иначе следующий шаг снова
-            # спросит пароль.
+            # спросит пароль. В начале пути, чтобы расширение осталось на месте.
+            prefix = f"{SESSION_PREFIX}{url_token}".encode()
             content = _LINK_RE.sub(
-                lambda m: m.group(1) + b'="' + m.group(2)
-                + f"?{SESSION_PARAM}={url_token}".encode() + b'"', content)
+                lambda m: m.group(1) + b'="' + prefix + m.group(2) + b'"', content)
         # Страницы не кэшируем: они живут недолго и должны честно исчезать.
         cache = "no-cache" if what in ("страница", "список", "загрузки") else "max-age=86400"
         extra = [f"Cache-Control: {cache}", "Accept-Ranges: bytes"]
@@ -209,6 +219,10 @@ class PhotoServer:
         elif headers.get("range"):
             log.debug("диапазон %r не разобран — отдаю целиком", headers.get("range"))
 
+        if what in ("вложение", "файл"):
+            # Имя с расширением — ещё одна подсказка телефону, что это за файл.
+            name = unquote(path.rsplit("/", 1)[-1]).replace('"', "")
+            extra.append(f'Content-Disposition: inline; filename="{name}"')
         sent = await self._reply(writer, status, mime, part, head_only, extra=extra)
         if sent:
             log.info("отдано: %s %s (%d байт%s)", what, path[:48], len(part), note)
