@@ -320,13 +320,9 @@ class Bridge:
             try:
                 await self.refresh_roster()
                 if self.photos is not None:
-                    removed = self.photos.cleanup()
-                    if removed:
-                        log.info("удалено %d старых снимков", removed)
+                    self.photos.cleanup()
                 if self.render is not None:
-                    gone = self.render.cleanup()
-                    if gone:
-                        log.info("просроченные страницы убраны, файлов удалено: %d", gone)
+                    self.render.cleanup()
             except Exception:
                 log.exception("не удалось обновить контакт-лист")
 
@@ -822,8 +818,12 @@ class Bridge:
         await self.oscar.start()
         if self.photo_server is not None:
             await self.photo_server.start()
+        # Уборка при старте: снимки старше срока и страницы, осиротевшие после
+        # прошлого запуска. Что убрали — пишут сами модули.
+        if self.photos is not None:
+            self.photos.cleanup()
         if self.render is not None:
-            self.render.cleanup()          # осиротевшее после прошлого запуска
+            self.render.cleanup()
         self._refresh_task = asyncio.create_task(self._refresh_loop())
         log.info("мост готов, ждём подключения Jimm")
         try:
