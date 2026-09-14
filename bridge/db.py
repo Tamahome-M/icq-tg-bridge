@@ -169,23 +169,34 @@ class Storage:
         )
         return uin
 
-    def contacts(self, limit: int = 0) -> list[Contact]:
+    def contacts(self, limit: int = 0, background: tuple[str, ...] = (),
+                 recent_since: int = 0) -> list[Contact]:
         """Контакт-лист: то, что сейчас есть в Telegram.
 
         limit оставляет только самые свежие чаты: старые телефоны не тянут
         сотни контактов. Избранные остаются в списке при любом ограничении.
+
+        background — фоновые группы (папки, в нижнем регистре): их чаты
+        претендуют на место последними, когда остальные уже размещены. Чат
+        из такой группы, писавший телефону после recent_since, идёт наравне
+        со всеми: раз пишет — пусть будет под рукой.
         """
         rows = self.conn.execute(
             "SELECT uin, peer_id, topic_id, kind, title, group_name, position, last_ts, gone, hidden, muted, COALESCE(fav_manual, favourite) AS favourite FROM contacts WHERE gone = 0 AND hidden = 0 ORDER BY position, uin"
         ).fetchall()
         contacts = [Contact(**dict(r)) for r in rows]
         if limit > 0 and len(contacts) > limit:
+            def deferred(c: Contact) -> bool:
+                return (c.group_name.strip().lower() in background
+                        and not (recent_since and c.last_ts >= recent_since))
             keep = [c for c in contacts if c.favourite][:limit]
-            for contact in contacts:
-                if len(keep) >= limit:
-                    break
-                if not contact.favourite:
-                    keep.append(contact)
+            for tier in (lambda c: not c.favourite and not deferred(c),
+                         lambda c: not c.favourite and deferred(c)):
+                for contact in contacts:
+                    if len(keep) >= limit:
+                        break
+                    if tier(contact):
+                        keep.append(contact)
             contacts = sorted(keep, key=lambda c: (c.position, c.uin))
         return contacts
 

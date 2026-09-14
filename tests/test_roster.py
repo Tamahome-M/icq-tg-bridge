@@ -108,7 +108,26 @@ async def run_limited_roster() -> None:
 
     # Ограничение не выбрасывает чаты из базы: сообщения из них дойдут.
     assert storage.contact_by_peer(3199) is not None
-    print("  ограничение списка: ок (свежие чаты и избранные)")
+
+    # Фоновая группа: её чаты берутся последними, даже самые свежие, —
+    # кроме того, что недавно писал телефону.
+    for i in range(20):
+        storage.uin_for_peer(5000 + i, kind="chat", title=f"Работа {i}",
+                             group_name="EVOLUTE I-SPACE NEW", position=-100 + i)
+    storage.note_delivered(5007, 1_000_000)
+    limited = storage.contacts(50, background=("evolute i-space new",), recent_since=900_000)
+    assert len(limited) == 50
+    groups = [c.group_name for c in limited]
+    assert groups.count("EVOLUTE I-SPACE NEW") == 1, "фоновые чаты не должны тянуть места"
+    assert any(c.peer_id == 5007 for c in limited), "недавно писавший чат — наравне со всеми"
+    assert {150, 180} <= {c.position for c in limited}
+    # Места хватило бы всем — фоновые тоже на месте.
+    assert sum(1 for c in storage.contacts(500, background=("evolute i-space new",))
+               if c.group_name == "EVOLUTE I-SPACE NEW") == 20
+    # Без давности признак «писал» не учитывается — вся группа в конце.
+    limited = storage.contacts(50, background=("evolute i-space new",))
+    assert not any(c.group_name == "EVOLUTE I-SPACE NEW" for c in limited)
+    print("  ограничение списка: ок (свежие чаты, избранные, фоновые группы)")
 
 
 async def main() -> None:

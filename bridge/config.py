@@ -51,6 +51,8 @@ class Config:
     alias_max_chars: int = 40
     topics_limit: int = 50
     favourites: tuple[str, ...] = ()
+    background_groups: tuple[str, ...] = ()
+    background_hours: int = 24
     busy_hold_minutes: int = 30
     avatars: bool = False
     avatar_size: int = 64
@@ -161,6 +163,9 @@ class Config:
             alias_max_chars=int(br.get("alias_max_chars", cls.alias_max_chars)),
             topics_limit=int(br.get("topics_limit", cls.topics_limit)),
             favourites=tuple(str(x).strip().lower() for x in br.get("favourites", [])),
+            background_groups=tuple(str(x).strip().lower()
+                                    for x in br.get("background_groups", [])),
+            background_hours=int(br.get("background_hours", cls.background_hours)),
             busy_hold_minutes=int(br.get("busy_hold_minutes", cls.busy_hold_minutes)),
             avatars=bool(br.get("avatars", cls.avatars)),
             avatar_size=int(br.get("avatar_size", cls.avatar_size)),

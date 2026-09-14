@@ -121,7 +121,11 @@ class Bridge:
         Без ограничения телефон при следующем входе получил бы все чаты
         разом, а индекс по UIN разошёлся бы со списком.
         """
-        self._roster = self.storage.contacts(self.cfg.roster_limit)
+        since = 0
+        if self.cfg.background_groups and self.cfg.background_hours > 0:
+            since = int(time.time()) - self.cfg.background_hours * 3600
+        self._roster = self.storage.contacts(self.cfg.roster_limit,
+                                             self.cfg.background_groups, since)
         self._by_uin = {c.uin: c for c in self._roster}
 
     def status_of(self, uin: int) -> int:
@@ -337,6 +341,13 @@ class Bridge:
             log.info("в контакт-лист телефона идут %d чатов из %d (roster_limit); "
                      "остальные приходят как сообщения и находятся поиском",
                      len(self._roster), total)
+            if self.cfg.background_groups:
+                shown = {c.uin for c in self._roster}
+                left = sum(1 for c in self.storage.contacts()
+                           if c.uin not in shown
+                           and c.group_name.strip().lower() in self.cfg.background_groups)
+                log.info("из фоновых групп отложено %d чатов — появятся, когда напишут",
+                         left)
         online = sum(1 for c in self._roster
                      if self._statuses.get(c.uin, C.STATUS_ONLINE) != C.STATUS_OFFLINE)
         log.info("контакт-лист: %d чатов, из них в сети %d", len(self._roster), online)
