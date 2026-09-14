@@ -135,6 +135,12 @@ rc-service icq-tg-bridge status
 tail -f /var/log/icq-tg-bridge.log
 ```
 
+Уровень журнала задаётся в `config.toml`, секция `[log]`. В
+`/etc/conf.d/icq-tg-bridge` есть `bridge_loglevel` — он перекрывает конфиг,
+только если не пуст: удобно временно включить `DEBUG`, не трогая настройки.
+Установленный раньше conf.d с `bridge_loglevel="INFO"` продолжит перекрывать
+конфиг — очистите значение, если хотите управлять уровнем из `config.toml`.
+
 Для профиля с systemd вместо этого:
 
 ```bash
