@@ -65,6 +65,7 @@ SNAC_NAMES = {
     (C.OSERVICE, C.SERVICE_REQUEST): "SERVICE_REQUEST",
     (C.OSERVICE, C.SERVICE_REDIRECT): "SERVICE_REDIRECT",
     (C.LOCATE, C.LOCATE_RIGHTS_REQ): "LOCATE_RIGHTS_REQ", (C.LOCATE, C.LOCATE_RIGHTS): "LOCATE_RIGHTS",
+    (C.LOCATE, C.LOCATE_SET_INFO): "LOCATE_SET_INFO",
     (C.BUDDY, C.BUDDY_RIGHTS_REQ): "BUDDY_RIGHTS_REQ", (C.BUDDY, C.BUDDY_RIGHTS): "BUDDY_RIGHTS",
     (C.BUDDY, C.BUDDY_ARRIVED): "BUDDY_ARRIVED", (C.BUDDY, C.BUDDY_DEPARTED): "BUDDY_DEPARTED",
     (C.ICBM, C.ICBM_PARAM_REQ): "ICBM_PARAM_REQ", (C.ICBM, C.ICBM_PARAM_INFO): "ICBM_PARAM_INFO",
@@ -128,6 +129,9 @@ class Session:
         self.last_seen = time.time()
         self.pings_seen = 0
         self.client_name = "?"
+        # Версия TeleMotoMax (старший, младший), если подключился он: такому
+        # клиенту можно слать то, чего обычный Jimm не поймёт.
+        self.tmm_version: tuple[int, int] | None = None
         self.close_reason = ""
         self.sent_messages = 0        # телефону
         self.got_messages = 0         # от телефона
@@ -433,6 +437,7 @@ class Session:
             (C.OSERVICE, C.CLI_READY): self.on_client_ready,
             (C.OSERVICE, C.SET_STATUS): self.on_set_status,
             (C.LOCATE, C.LOCATE_RIGHTS_REQ): self.on_locate_rights,
+            (C.LOCATE, C.LOCATE_SET_INFO): self.on_locate_set_info,
             (C.BUDDY, C.BUDDY_RIGHTS_REQ): self.on_buddy_rights,
             (C.ICBM, C.ICBM_PARAM_REQ): self.on_icbm_params,
             (C.ICBM, C.ICBM_SEND): self.on_icbm_send,
@@ -484,6 +489,24 @@ class Session:
         # Старшее слово — служебные флаги, статус лежит в младшем.
         status = struct.unpack(">I", raw[:4])[0] & 0xFFFF
         await self.server.owner_status_changed(status)
+
+    async def on_locate_set_info(self, s: Snac) -> None:
+        """Клиент объявил свои способности. Нас интересует одна — TeleMotoMax:
+        по ней сессия становится расширенной. Обычный Jimm её не шлёт."""
+        caps = s.reader().tlvs().get(C.LOCATE_TLV_CAPS) or b""
+        for i in range(0, len(caps) - 15, 16):
+            cap = caps[i:i + 16]
+            if cap.startswith(C.CAP_TMM_PREFIX):
+                self.tmm_version = (cap[4], cap[5])
+                self.client_name = f"TeleMotoMax {cap[4]}.{cap[5]}"
+                log.info("клиент %s: %s — расширенный протокол", self.peer, self.client_name)
+                return
+        log.debug("способности клиента: %d шт., TeleMotoMax среди них нет", len(caps) // 16)
+
+    @property
+    def extended(self) -> bool:
+        """Подключён TeleMotoMax — можно слать расширения протокола."""
+        return self.tmm_version is not None
 
     async def on_locate_rights(self, s: Snac) -> None:
         body = tlv_u16(0x0001, 1024) + tlv_u16(0x0002, 16) + tlv_u16(0x0003, 10)

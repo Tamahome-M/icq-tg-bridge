@@ -64,6 +64,11 @@ TLV_SERVICE_ID = 0x000D
 LOCATE_RIGHTS_REQ = 0x0002
 LOCATE_RIGHTS = 0x0003
 LOCATE_USER_INFO_REQ = 0x0015
+LOCATE_SET_INFO = 0x0004       # клиент объявляет свои способности (TLV 0x05)
+LOCATE_TLV_CAPS = 0x0005
+# Способность TeleMotoMax — форка Jimm для моста: «TMM:», старший и младший
+# номер версии, остальное нули. По ней мост узнаёт расширенный клиент.
+CAP_TMM_PREFIX = b"TMM:"
 
 # BUDDY
 BUDDY_RIGHTS_REQ = 0x0002
