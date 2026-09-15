@@ -21,6 +21,7 @@ import logging
 import os
 import time
 import zlib
+from types import SimpleNamespace
 from typing import Awaitable, Callable
 
 from ..history import HistoryItem
@@ -309,6 +310,8 @@ class MaxSide:
 
     async def dialogs(self) -> list[Dialog]:
         chats = await self._all_chats()
+        if self.cfg.max_contacts:
+            chats += self._contact_chats()
         out: list[Dialog] = []
         for position, chat in enumerate(chats):
             try:
@@ -368,6 +371,34 @@ class MaxSide:
         chats = sorted(found.values(), key=lambda c: -int(_attr(c, "last_event_time", 0) or 0))
         self._chats = {int(c.id): c for c in chats}
         return chats
+
+    def _contact_chats(self) -> list:
+        """Люди из адресной книги, с которыми переписки ещё нет.
+
+        Номер личного чата в MAX считается без сервера — это XOR номеров
+        собеседников, — так что такому контакту можно писать сразу: первое
+        сообщение и заведёт переписку. Чат описываем сами и кладём в кэш,
+        чтобы карточка и история работали как у настоящего."""
+        if not self.me_id:
+            return []
+        out = []
+        for user in _attr(self.client, "contacts", None) or []:
+            uid = int(_attr(user, "id", 0) or 0)
+            if not uid or uid == self.me_id:
+                continue
+            chat_id = uid ^ self.me_id
+            if chat_id in self._chats:
+                continue                    # переписка уже есть — она в списке
+            self._users[uid] = user
+            chat = SimpleNamespace(id=chat_id, type="DIALOG",
+                                   participants={self.me_id: 1, uid: 1}, title=None,
+                                   last_event_time=0, new_messages=0, base_icon_url="",
+                                   description="", participants_count=2, link=None)
+            self._chats[chat_id] = chat
+            out.append(chat)
+        if out:
+            log.info("MAX: контактов без переписки — %d, тоже в список", len(out))
+        return out
 
     def _kind(self, chat) -> str:
         kind = _enum_value(_attr(chat, "type", "")).upper()

@@ -22,6 +22,7 @@ from bridge.tg.client import Dialog
 ME = 1001
 MOM = 2002
 BOSS = 3003
+AUNT = 4004
 DIALOG_ID = ME ^ MOM
 GROUP_ID = -72_056_572_839_294       # группы в MAX нумеруются отрицательными числами
 NOW_MS = 1_800_000_000_000
@@ -48,7 +49,9 @@ class FakeMax:
     def __init__(self):
         self.me = NS(contact=user(ME, "Я сам"))
         self.users = {MOM: user(MOM, "Мама Петровна", phone=79990001122, about="мама"),
-                      BOSS: user(BOSS, "Шеф")}
+                      BOSS: user(BOSS, "Шеф"), AUNT: user(AUNT, "Тётя Валя")}
+        # Адресная книга: мама (переписка есть) и тётя (переписки нет).
+        self.contacts = [self.users[MOM], None, self.users[AUNT], self.me.contact]
         self.chats = [
             NS(id=0, type="DIALOG", participants={ME: 1}, title=None,
                last_event_time=NOW_MS - 5000, new_messages=0, base_icon_url="",
@@ -190,10 +193,19 @@ async def run_side() -> None:
     # Список чатов: одна группа, личный чат назван по собеседнику, свежие первыми.
     fake.chats_on_login = None
     dialogs = await side.dialogs()
-    assert [d.title for d in dialogs] == ["Работа", "Мама Петровна", "Я"], dialogs
+    assert [d.title for d in dialogs] == ["Работа", "Мама Петровна", "Я", "Тётя Валя"], dialogs
+    # Контакт без переписки: свой чат с вычисленным номером, писать можно сразу.
+    aunt = dialogs[3]
+    assert aunt.peer_id == to_peer(ME ^ AUNT) and aunt.kind == "user"
+    assert await side.title_for(aunt.peer_id) == ("Тётя Валя", "user")
+    assert (await side.chat_info(aunt.peer_id))["kind"] == "Личный чат (MAX)"
+    assert await side.history(aunt.peer_id, 10, None, 50) == []
+    await side.send(aunt.peer_id, "привет, тётя")
+    assert fake.sent[-1] == (ME ^ AUNT, "привет, тётя")
+    fake.sent.clear()
     assert len(fake.fetched) >= 2, "список собирается страницами, пока сервер отдаёт новое"
     assert all(d.group_name == "MAX" for d in dialogs)
-    assert [d.kind for d in dialogs] == ["chat", "user", "user"]
+    assert [d.kind for d in dialogs] == ["chat", "user", "user", "user"]
     assert dialogs[1].peer_id == to_peer(DIALOG_ID) and dialogs[1].unread == 2
     assert dialogs[0].photo_id and not dialogs[1].photo_id
     assert dialogs[2].peer_id == to_peer(0), "чат с собой — номер 0"
@@ -211,8 +223,8 @@ async def run_side() -> None:
     # Отправка: возвращается время сообщения — по нему приходит отметка прочтения.
     stamp = await side.send(to_peer(DIALOG_ID), "иду")
     assert fake.sent == [(DIALOG_ID, "иду")]
-    assert stamp == NOW_MS + 101 * 1000
-    await side._on_new_message(message(101, DIALOG_ID, ME, "иду"))
+    assert stamp == NOW_MS + fake.next_id * 1000
+    await side._on_new_message(message(fake.next_id, DIALOG_ID, ME, "иду"))
     assert len(got) == 2, "отправленное мостом не должно вернуться на телефон"
     await side._on_read(NS(chat_id=DIALOG_ID, user_id=MOM, mark=stamp, set_as_unread=False))
     assert reads == [(to_peer(DIALOG_ID), stamp)]
@@ -276,13 +288,13 @@ async def run_bridge() -> None:
 
     # Оба списка в одном контакт-листе; группы MAX — своя.
     titles = {c.title: c for c in bridge.roster()}
-    assert set(titles) == {"Папа", "Работа", "Мама Петровна", "Я"}, titles
+    assert set(titles) == {"Папа", "Работа", "Мама Петровна", "Я", "Тётя Валя"}, titles
     assert titles["Мама Петровна"].group_name == "MAX" and titles["Папа"].group_name == "Личные"
     assert titles["Работа"].position < titles["Папа"].position, "чаты MAX идут перед Telegram"
     # У каждой сети своё ограничение: roster_limit Telegram не трогает MAX и наоборот.
     cfg.roster_limit = 1
     bridge._reload_roster()
-    assert {c.title for c in bridge.roster()} == {"Папа", "Работа", "Мама Петровна", "Я"}
+    assert {c.title for c in bridge.roster()} == {"Папа", "Работа", "Мама Петровна", "Я", "Тётя Валя"}
     cfg.max_roster_limit = 1
     bridge._reload_roster()
     assert {c.title for c in bridge.roster()} == {"Папа", "Работа"}, "самый свежий чат MAX"
