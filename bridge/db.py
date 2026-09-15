@@ -12,6 +12,30 @@ from dataclasses import dataclass
 UIN_BASE = 1000000
 
 
+def limit_contacts(contacts: list["Contact"], limit: int, background: tuple[str, ...] = (),
+                   recent_since: int = 0) -> list["Contact"]:
+    """Оставляет не больше limit чатов: избранные, потом свежие, потом фоновые.
+
+    Список должен быть отсортирован по позиции (свежие первыми); порядок
+    сохраняется. limit <= 0 — без ограничения.
+    """
+    if limit <= 0 or len(contacts) <= limit:
+        return list(contacts)
+
+    def deferred(c: Contact) -> bool:
+        return (c.group_name.strip().lower() in background
+                and not (recent_since and c.last_ts >= recent_since))
+    keep = [c for c in contacts if c.favourite][:limit]
+    for tier in (lambda c: not c.favourite and not deferred(c),
+                 lambda c: not c.favourite and deferred(c)):
+        for contact in contacts:
+            if len(keep) >= limit:
+                break
+            if tier(contact):
+                keep.append(contact)
+    return sorted(keep, key=lambda c: (c.position, c.uin))
+
+
 @dataclass
 class Contact:
     uin: int
@@ -185,20 +209,7 @@ class Storage:
             "SELECT uin, peer_id, topic_id, kind, title, group_name, position, last_ts, gone, hidden, muted, COALESCE(fav_manual, favourite) AS favourite FROM contacts WHERE gone = 0 AND hidden = 0 ORDER BY position, uin"
         ).fetchall()
         contacts = [Contact(**dict(r)) for r in rows]
-        if limit > 0 and len(contacts) > limit:
-            def deferred(c: Contact) -> bool:
-                return (c.group_name.strip().lower() in background
-                        and not (recent_since and c.last_ts >= recent_since))
-            keep = [c for c in contacts if c.favourite][:limit]
-            for tier in (lambda c: not c.favourite and not deferred(c),
-                         lambda c: not c.favourite and deferred(c)):
-                for contact in contacts:
-                    if len(keep) >= limit:
-                        break
-                    if tier(contact):
-                        keep.append(contact)
-            contacts = sorted(keep, key=lambda c: (c.position, c.uin))
-        return contacts
+        return limit_contacts(contacts, limit, background, recent_since)
 
     def toggle_favourite(self, uin: int) -> bool | None:
         """Переключает избранность чата вручную. Возвращает новое значение.

@@ -36,6 +36,7 @@ class Config:
     max_phone: str = ""
     max_session: str = "max.session"
     max_group: str = "MAX"
+    max_roster_limit: int = 0
 
     db: str = "bridge.db"
     grouping: str = "folders"
@@ -155,6 +156,7 @@ class Config:
             max_phone=str(mx.get("phone", "")).strip(),
             max_session=_resolve(base, mx.get("session", cls.max_session)),
             max_group=str(mx.get("group", cls.max_group)).strip() or cls.max_group,
+            max_roster_limit=int(mx.get("roster_limit", cls.max_roster_limit)),
             db=_resolve(base, br.get("db", cls.db)),
             grouping=br.get("grouping", cls.grouping),
             other_group=br.get("other_group", cls.other_group),
