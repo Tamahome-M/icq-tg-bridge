@@ -73,6 +73,10 @@ group = "MAX"
 # roster_limit в [bridge] (тот — для Telegram). 0 — все.
 roster_limit = 0
 
+# Класть ли в список и людей из адресной книги MAX, с которыми переписки
+# ещё нет. Писать им можно сразу — первое сообщение заведёт чат.
+contacts = true
+
 [bridge]
 db = "bridge.db"
 
