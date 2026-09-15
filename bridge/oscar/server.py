@@ -701,7 +701,9 @@ class Session:
                                       struct.pack("<H", C.ICQ_INFO_END) + b"\x32")
             return
 
-        log.info("телефон открыл карточку %s", self.server.name_of(target))
+        log.info("телефон открыл карточку %s%s", self.server.name_of(target),
+                 " (примета аватарки есть)" if self.server.icon_hash(target) else
+                 " (аватарки нет — у чата нет фото или они выключены)")
         empty = blocks.asciiz("", enc)
 
         # Jimm показывает карточку, только собрав не меньше пяти пакетов
