@@ -35,6 +35,9 @@ MAX_BASE = 4_000_000_000_000_000
 
 # Сколько страниц списка чатов запрашивать у сервера, не больше.
 CHATS_PAGES = 20
+# Кадры, в ответе на которые сервер присылает присутствие контактов.
+OP_LOGIN = 19
+OP_SYNC = 21
 START_TIMEOUT = 60
 
 TAGS = {
@@ -117,10 +120,17 @@ def describe_message(msg) -> str:
 
 
 def presence_name(presence) -> str:
-    """«online» / «away» / «offline» по времени последней активности."""
-    seen = _seconds(_attr(presence, "seen", 0))
+    """«online» / «away» / «offline» по времени последней активности.
+
+    Присутствие приходит и объектом (из события), и словарём (из сырого
+    кадра входа) — читаем оба вида."""
+    if isinstance(presence, dict):
+        seen, status = presence.get("seen"), presence.get("status")
+    else:
+        seen, status = _attr(presence, "seen", 0), _attr(presence, "status", None)
+    seen = _seconds(seen)
     if not seen:
-        return "online" if _attr(presence, "status", None) else "offline"
+        return "online" if status else "offline"
     ago = time.time() - seen
     if ago < 60:
         return "online"
@@ -157,6 +167,7 @@ class MaxSide:
         self._chats: dict[int, object] = {}
         self._users: dict[int, object] = {}
         self._own_ids: dict[tuple[int, int], float] = {}
+        self._presence: dict[int, object] = {}     # user_id -> присутствие
         self._http = None
 
     # --- запуск ---------------------------------------------------------
@@ -203,10 +214,35 @@ class MaxSide:
         async def _read(event, *_):
             await self._on_read(event)
 
+        @client.on_raw()
+        async def _raw(frame, *_):
+            self._on_raw(frame)
+
         @client.on_disconnect()
         async def _gone(*args):
             log.warning("соединение с MAX потеряно%s", " — переподключаюсь" if
                         len(args) > 1 and args[1] else "")
+
+    def _on_raw(self, frame) -> None:
+        """Ответ на вход и синхронизацию несёт присутствие всех контактов —
+        модель PyMax его отбрасывает, поэтому берём из сырого кадра."""
+        if getattr(frame, "opcode", None) not in (OP_LOGIN, OP_SYNC):
+            return
+        payload = getattr(frame, "payload", None)
+        got = payload.get("presence") if isinstance(payload, dict) else None
+        if not got:
+            return
+        pairs = got.items() if isinstance(got, dict) else (
+            (p.get("userId") or p.get("contactId"), p) for p in got if isinstance(p, dict))
+        count = 0
+        for user_id, info in pairs:
+            try:
+                self._presence[int(user_id)] = info
+                count += 1
+            except (TypeError, ValueError):
+                continue
+        sample = next(iter(self._presence.values()), None)
+        log.debug("MAX: присутствие получено для %d контактов, например %r", count, sample)
 
     def _on_started(self) -> None:
         me = _attr(self.client, "me", None)
@@ -269,17 +305,25 @@ class MaxSide:
             kind = self._kind(chat)
             title = await self._chat_title(chat, kind)
             photo = _attr(chat, "base_icon_url", "") or ""
+            status = "online"               # у групп и каналов статуса нет
             if kind == "user":
                 user = await self._peer_user(chat)
                 photo = str(_attr(user, "photo_id", 0) or _attr(user, "base_url", "") or "")
+                status = self._status_of(int(_attr(user, "id", 0) or 0))
             out.append(Dialog(
                 to_peer(chat.id), kind, title[:self.cfg.alias_max_chars],
                 self.cfg.max_group, position,
-                status="online", unread=int(_attr(chat, "new_messages", 0) or 0),
+                status=status, unread=int(_attr(chat, "new_messages", 0) or 0),
                 pinned=False, muted=False,
                 photo_id=zlib.crc32(photo.encode()) if photo else 0))
         log.info("MAX: получено %d чатов", len(out))
         return out
+
+    def _status_of(self, user_id: int) -> str:
+        """Статус человека по последнему известному присутствию; без данных —
+        «не в сети», как и у стороны Telegram."""
+        info = self._presence.get(user_id)
+        return presence_name(info) if info is not None else "offline"
 
     async def _all_chats(self) -> list:
         """Все чаты: то, что пришло при входе, плюс список с сервера
@@ -430,8 +474,11 @@ class MaxSide:
         if not user_id or user_id == self.me_id:
             return
         # Присутствие приходит по человеку, а контакт у нас — личный чат с ним.
+        presence = _attr(event, "presence", None)
+        if presence is not None:
+            self._presence[user_id] = presence
         chat_id = user_id ^ self.me_id
-        await self.on_status(to_peer(chat_id), presence_name(_attr(event, "presence", None)))
+        await self.on_status(to_peer(chat_id), presence_name(presence))
 
     async def _on_read(self, event) -> None:
         if self.on_read is None:
