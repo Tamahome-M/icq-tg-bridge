@@ -307,7 +307,7 @@ class Bridge:
             return None
         if contact.peer_id == ASSISTANT_PEER:
             return {"title": contact.title, "kind": "Бот", "username": "", "phone": "",
-                    "members": "", "marks": "",
+                    "members": "", "marks": "", "network": "Claude Code",
                     "about": ("Claude Code с этой машины. Пишите как обычно; "
                               "!reset — начать разговор заново.")}
         try:
@@ -335,6 +335,8 @@ class Bridge:
             if contact.muted:
                 marks.append("Заглушенный")
             info["marks"] = ", ".join(marks)
+            # Поле «организация» в карточке — сеть, откуда чат.
+            info.setdefault("network", self.network_of(contact.peer_id))
         return info
 
     def icon_hash(self, uin: int) -> bytes | None:

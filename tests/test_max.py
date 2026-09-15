@@ -251,7 +251,7 @@ async def run_side() -> None:
     found = await side.search_chats("раб", 5)
     assert found and found[0]["peer_id"] == to_peer(GROUP_ID)
     info = await side.chat_info(to_peer(GROUP_ID))
-    assert info["kind"] == "Группа (MAX)" and info["members"] == "участников: 12"
+    assert info["kind"] == "Группа" and info["members"] == "участников: 12"
     info = await side.chat_info(to_peer(DIALOG_ID))
     assert info["title"] == "Мама Петровна" and info["phone"] == "+79990001122"
     assert await side.title_for(to_peer(DIALOG_ID)) == ("Мама Петровна", "user")
@@ -328,7 +328,7 @@ async def run_bridge() -> None:
 
     # Карточка и статус — через сторону MAX.
     info = await bridge.chat_info(titles["Мама Петровна"].uin)
-    assert info["kind"] == "Личный чат (MAX)"
+    assert info["kind"] == "Личный чат"
 
     # Сторона не ответила — карточка всё равно не пустая.
     async def no_info(peer):
