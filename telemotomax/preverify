@@ -1,0 +1,13 @@
+#!/bin/sh
+# Заглушка: StackMap уже добавил ProGuard (microedition="true"); просто копируем.
+out=""; src=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -classpath) shift;;
+    -d) shift; out="$1";;
+    -cldc) ;;
+    *) src="$1";;
+  esac
+  shift
+done
+mkdir -p "$out" && cp -r "$src"/. "$out"/

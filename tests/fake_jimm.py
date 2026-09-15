@@ -230,6 +230,9 @@ class FakeJimm:
         assert channel == 4, f"после SNAC 17/03 ожидали канал 4, пришёл {channel}"
         return tlvs.get(C.TLV_AUTH_COOKIE)
 
+    # Какой клиент изображаем: () — обычный Jimm, (0, 1) — TeleMotoMax 0.1.
+    tmm_version: tuple[int, int] | None = None
+
     async def bos(self, cookie: bytes, encoding: str = "cp1251",
                   request_offline: bool = True) -> None:
         """Вход на BOS по cookie и вся цепочка запросов, как у Jimm.
@@ -268,6 +271,14 @@ class FakeJimm:
         await self.send_snac(C.SSI, C.SSI_LIST_REQ)
         await self.read_ssi(encoding)
         await self.send_snac(C.SSI, C.SSI_ACTIVATE)
+
+        # Способности, как их объявляет Jimm (02/04, TLV 0x05); TeleMotoMax
+        # добавляет к ним свою.
+        caps = bytes.fromhex("094613494C7F11D18222444553540000") \
+            + bytes.fromhex("563FC8090B6F41BD9F79422609DFA2F3")
+        if self.tmm_version is not None:
+            caps += C.CAP_TMM_PREFIX + bytes(self.tmm_version) + bytes(10)
+        await self.send_snac(C.LOCATE, C.LOCATE_SET_INFO, tlv(C.LOCATE_TLV_CAPS, caps))
 
         await self.send_snac(C.OSERVICE, C.SET_STATUS, tlv(0x0006, b"\x00\x00\x00\x00"))
         await self.send_snac(C.OSERVICE, C.CLI_READY,
