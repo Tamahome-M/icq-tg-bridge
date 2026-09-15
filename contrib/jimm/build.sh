@@ -51,10 +51,14 @@ if [ ! -f wtk/lib/jsr75.jar ]; then
     cp "$HERE/preverify" wtk/bin/preverify && chmod +x wtk/bin/preverify
 fi
 if [ ! -f proguard/lib/proguard.jar ]; then
-    say "ProGuard 6.2.2 (с задачей для Ant)"
+    # Именно 4.11: с ProGuard 6.2 сборка на Motorola V3 падала при запуске
+    # («ошибка приложения») — KVM телефона не принимает его байткод или
+    # преверификацию; с 4.11, версией той же эпохи, что и штатные сборки,
+    # запускается. Проверено на телефоне 2026-09-15.
+    say "ProGuard 4.11 (с задачей для Ant)"
     mkdir -p proguard/lib pg && cd pg
-    curl -sfL $MAVEN/net/sf/proguard/proguard-base/6.2.2/proguard-base-6.2.2.jar -o base.jar
-    curl -sfL $MAVEN/net/sf/proguard/proguard-anttask/6.2.2/proguard-anttask-6.2.2.jar -o ant.jar
+    curl -sfL $MAVEN/net/sf/proguard/proguard-base/4.11/proguard-base-4.11.jar -o base.jar
+    curl -sfL $MAVEN/net/sf/proguard/proguard-anttask/4.11/proguard-anttask-4.11.jar -o ant.jar
     jar xf base.jar && jar xf ant.jar && rm -rf META-INF && jar cf ../proguard/lib/proguard.jar proguard
     cd .. && rm -rf pg
 fi
