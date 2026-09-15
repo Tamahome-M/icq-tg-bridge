@@ -143,6 +143,24 @@ PY
     exit 0
 fi
 
+# служба может не работать — это не повод падать
+if command -v rc-service >/dev/null 2>&1; then
+    say "Останавливаю службу"; rc-service "$SERVICE" stop || true
+    START="rc-service $SERVICE start"
+elif command -v systemctl >/dev/null 2>&1; then
+    say "Останавливаю службу"; systemctl stop "$SERVICE" || true
+    START="systemctl start $SERVICE"
+else
+    say "Менеджер служб не найден — остановите и запустите мост вручную"
+    START=""
+fi
+
+if [ -f "$DIR/bridge.db" ]; then
+    BACKUP="$DIR/bridge.db.backup-$(date +%Y%m%d-%H%M%S)"
+    cp "$DIR/bridge.db" "$BACKUP"
+    say "Копия базы: $BACKUP"
+fi
+
 say "Обновляю файлы"
 "$PYTHON" - "$NEW" "$DIR" "$RULES" <<'PY'
 import pathlib, shutil, sys
