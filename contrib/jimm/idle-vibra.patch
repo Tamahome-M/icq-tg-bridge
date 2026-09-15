@@ -63,7 +63,7 @@
  {
  	private static Vector mainThreadTasks = new Vector();
 +	// Bridge build: how long the keys must stay untouched before a message vibrates.
-+	private static final long VIBRA_IDLE_MS = 30 * 1000L;
++	private static final long VIBRA_IDLE_MS = 60 * 1000L;
  	private static MainThread _this;
  
  	final static private int TYPE_ADD_MSG             = 1;
@@ -96,7 +96,7 @@
  "xstatus_rambler_journal"	"Дневник"
  "wait"						"Пожалуйста, ждите ..."
  "when_locked"				"Если заблокирован"
-+"when_idle"				"Если не трогали 30 с"
++"when_idle"				"Если не трогали 60 с"
  "warning"					"Предупреждение"
  "wantsyourauth"				" хочет авторизироваться. Причина: "
  "was"						"была"
@@ -106,7 +106,7 @@
  "volume"					"Volume"  
  "wait"						"Please wait ..."
  "when_locked"				"When locked"
-+"when_idle"				"If idle for 30 s"
++"when_idle"				"If idle for 60 s"
  "warning"					"Warning"
  "wantsyourauth"				" wants your Authorisation. Reason: "
  "was"						"was"
