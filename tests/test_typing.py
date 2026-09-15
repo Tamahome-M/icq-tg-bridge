@@ -40,7 +40,38 @@ def make_bridge() -> tuple[Bridge, list[tuple[int, bool]]]:
     return bridge, sent
 
 
+async def run_priming() -> None:
+    """После входа каждому контакту уходит «закончил набор»: так Jimm
+    узнаёт, что контакту можно слать «печатает»."""
+    from bridge.db import Storage
+    from bridge.oscar.server import OscarServer
+    from tests.fake_jimm import FakeJimm
+
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", 15770
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    storage = Storage(":memory:")
+    uins = [storage.uin_for_peer(500 + i, kind="user", title=f"Друг {i}", group_name="Личные")
+            for i in range(3)]
+
+    async def on_outgoing(*_):
+        return 1
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts)
+    await server.start()
+    client = FakeJimm("127.0.0.1", cfg.oscar_port, cfg.oscar_uin, cfg.oscar_password)
+    await client.connect()
+    await client.bos(await client.login_md5_jimm())
+    await client.drain_for(0.7)
+
+    assert sorted(client.typing) == sorted((u, False) for u in uins), client.typing
+    await client.close()
+    server._server.close()
+    print("  прививка «печатает»: ок (каждому контакту — «закончил набор» при входе)")
+
+
 async def main() -> None:
+    await run_priming()
     bridge_module.TYPING_TIMEOUT = 0.3      # чтобы не ждать в тесте восемь секунд
     mom = None
 
