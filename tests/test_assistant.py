@@ -199,7 +199,7 @@ async def run_bridge() -> None:
     sent: list[str] = []
     typing: list[bool] = []
 
-    async def deliver(target, text, forced=False, url="", ts=0):
+    async def deliver(target, text, forced=False, url="", ts=0, attach=""):
         sent.append(text)
         return True
 

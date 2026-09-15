@@ -187,7 +187,7 @@ async def run_side() -> None:
     typing: list = []
     reads: list = []
 
-    async def on_message(peer, sender, text, ts, topic):
+    async def on_message(peer, sender, text, ts, topic, attach=""):
         got.append((peer, sender, text, ts, topic))
         return True
 
@@ -334,7 +334,7 @@ async def run_bridge() -> None:
     # Входящее из MAX — в очередь телефону под нужным UIN и отмечено прочитанным.
     queued: list = []
 
-    async def deliver(uin, text, forced=False, url="", ts=0):
+    async def deliver(uin, text, forced=False, url="", ts=0, attach=""):
         queued.append((uin, text))
         return True
 

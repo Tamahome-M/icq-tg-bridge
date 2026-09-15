@@ -49,6 +49,8 @@ class MessData
 
 	private int rowData;
 	private int messId;
+	// TeleMotoMax: token of the picture attached by the bridge, or null
+	byte[] attach;
 
 	public MessData(boolean incoming, long time, int textOffset,
 			boolean contains_url, int messId)
@@ -99,6 +101,8 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	private static final Command cmdMsgReply = new Command(ResourceBundle.getString("reply", ResourceBundle.FLAG_ELLIPSIS), Command.OK, 1);
 	private static final Command cmdCloseChat = new Command(ResourceBundle.getString("close"), Jimm.cmdBack, 2);
 	private static final Command cmdCopyText = new Command(ResourceBundle.getString("copy_text"), Command.ITEM, 4);
+	// TeleMotoMax: show the picture the bridge attached to the current message
+	static final Command cmdShowPhoto = new Command(ResourceBundle.getString("show_photo"), Command.ITEM, 3);
 	private static final Command cmdReplWithQuota = new Command(ResourceBundle.getString("quote", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 3);
 	private static final Command cmdAddUrs = new Command(ResourceBundle.getString("add_user", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 5);
 	private static final Command cmdDenyAuth = new Command(ResourceBundle.getString("deny"), Command.CANCEL, 1);
@@ -182,6 +186,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		textList.addCommandEx(cmdCloseChat, VirtualList.MENU_TYPE_LEFT_BAR);
 		
 		checkTextForURL();
+		checkTextForPhoto();
 		checkForAuthReply();
 		
 		textList.setCommandListener(this);
@@ -224,6 +229,12 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		}
 		
 		/* Write new message */
+		else if (c == cmdShowPhoto)
+		{
+			byte[] token = currentAttach();
+			if (token != null)
+				PhotoViewer.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), token, this);
+		}
 		else if (c == cmdMsgReply)
 		{
 			JimmUI.writeMessage(contact, null);
@@ -358,6 +369,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	public void vlCursorMoved(VirtualList sender)
 	{
 		checkTextForURL();
+		checkTextForPhoto();
 	}
 	
 	public void vlItemClicked(VirtualList sender) {}
@@ -381,6 +393,26 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		catch (Exception e) { /* do nothing */ }		
 	}
 	
+	// TeleMotoMax: «Показать фото» появляется в меню, когда у сообщения
+	// под курсором есть вложение от моста.
+	void checkTextForPhoto()
+	{
+		textList.removeCommandEx(cmdShowPhoto);
+		int messIndex = textList.getCurrTextIndex();
+		if (messIndex != -1)
+		{
+			MessData md = (MessData) getMessData().elementAt(messIndex);
+			if (md.attach != null) textList.addCommandEx(cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
+		}
+	}
+
+	byte[] currentAttach()
+	{
+		int messIndex = textList.getCurrTextIndex();
+		if (messIndex == -1) return null;
+		return ((MessData) getMessData().elementAt(messIndex)).attach;
+	}
+
 	void checkTextForURL()
 	{
 //#sijapp cond.if target != "DEFAULT"#
@@ -423,6 +455,12 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 
 	void addTextToForm(String from, String message, String url, long time,
 			boolean red, boolean offline, int messId)
+	{
+		addTextToForm(from, message, url, time, red, offline, messId, null);
+	}
+
+	void addTextToForm(String from, String message, String url, long time,
+			boolean red, boolean offline, int messId, byte[] attach)
 	{
 		int texOffset = 0;
 		boolean deliveryReqOn = Options.getBoolean(Options.OPTION_DELIV_MES_INFO); 
@@ -485,8 +523,9 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 				textList.addCommandEx(JimmUI.cmdGotoURL, VirtualList.MENU_TYPE_RIGHT);
 		}
 		//#sijapp cond.end#
-		getMessData().addElement(
-				new MessData(red, time, texOffset, contains_url, messId));
+		MessData md = new MessData(red, time, texOffset, contains_url, messId);
+		md.attach = attach;
+		getMessData().addElement(md);
 		messTotalCounter++;
 		lastMsgTime = (shortMsg) ? lastMsgTime : time;
 		lastDirection = red;
@@ -573,7 +612,7 @@ public class ChatHistory
 				addTextToForm(uin, contact
 						.getStringValue(ContactItem.CONTACTITEM_NAME),
 						plainMsg.getText(), "", plainMsg.getNewDate(), true,
-						offline, -1);
+						offline, -1, plainMsg.getAttachToken());
 				
 				//#sijapp cond.if modules_HISTORY is "true" #
 				if (Options.getBoolean(Options.OPTION_HISTORY))
@@ -654,6 +693,7 @@ public class ChatHistory
 				chat.buildMenu();
 			}
 			chat.checkTextForURL();
+			chat.checkTextForPhoto();
 			chat.checkForAuthReply();
 		}
 	}
@@ -667,6 +707,14 @@ public class ChatHistory
 	}
 
 	// Add text to message form
+	static synchronized private void addTextToForm(String uin, String from,
+			String message, String url, long time, boolean red, boolean offline, int messId,
+			byte[] attach)
+	{
+		ChatTextList msgDisplay = (ChatTextList) historyTable.get(uin);
+		msgDisplay.addTextToForm(from, message, url, time, red, offline, messId, attach);
+	}
+
 	static synchronized private void addTextToForm(String uin, String from,
 			String message, String url, long time, boolean red, boolean offline, int messId)
 	{

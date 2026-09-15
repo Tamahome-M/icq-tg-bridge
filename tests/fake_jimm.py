@@ -43,6 +43,7 @@ class FakeJimm:
         self.channels: list[int] = []    # каналы, которыми приходили сообщения
         self.to_ack: list[bytes] = []
         self.typing: list[tuple[int, bool]] = []
+        self.attachments: list[tuple[int, bytes]] = []   # (uin, токен снимка)
         self.errors: list[tuple[int, int]] = []
 
     async def connect(self) -> None:
@@ -112,6 +113,12 @@ class FakeJimm:
         elif (s.family, s.subtype) == (C.ICBM, C.ICBM_INCOMING):
             sender, text, ack = self._parse_incoming(s)
             self.received.append((sender, text))
+            # Вложение TeleMotoMax — TLV после тела; обычный Jimm туда не смотрит.
+            rr = s.reader()
+            rr.read(8); rr.u16(); rr.pstr8(); rr.u16(); rr.tlvs(rr.u16())
+            extra = rr.tlvs().get(C.TLV_TMM_ATTACH)
+            if extra and len(extra) == 17 and extra[0] == C.ATTACH_PHOTO:
+                self.attachments.append((sender, extra[1:]))
             if ack is not None and self.send_acks:
                 self.to_ack.append(ack)
 
@@ -424,6 +431,15 @@ class FakeJimm:
         Сначала спрашивает адрес службы, потом открывает к ней отдельное
         соединение по выданному cookie и уже там просит картинку.
         """
+        return await self._request_bart(uin, C.BART_ICON,
+                                        self.icon_hashes.get(uin, b"\x00" * 16), timeout)
+
+    async def request_photo(self, uin: int, token: bytes, timeout: float = 5.0) -> dict:
+        """Снимок по токену — как TeleMotoMax: та же служба, тип приметы 0x0080."""
+        return await self._request_bart(uin, C.BART_PHOTO, token, timeout)
+
+    async def _request_bart(self, uin: int, bart_type: int, digest: bytes,
+                            timeout: float) -> dict:
         await self.request_service(C.SSBI)
         redirect = await self.expect(C.OSERVICE, C.SERVICE_REDIRECT, timeout)
         tlvs = redirect.reader().tlvs(3)
@@ -439,8 +455,7 @@ class FakeJimm:
             await self.expect(C.OSERVICE, C.SRV_READY, timeout)
             await self.send_snac(C.OSERVICE, C.CLI_READY, b"")
 
-            digest = self.icon_hashes.get(uin, b"\x00" * 16)
-            body = (pstr8(str(uin).encode()) + b"\x01" + struct.pack(">H", 1)
+            body = (pstr8(str(uin).encode()) + b"\x01" + struct.pack(">H", bart_type)
                     + b"\x01" + bytes([len(digest)]) + digest)
             await self.send_snac(C.SSBI, C.SSBI_ICQ_REQ, body)
             reply = await self.expect(C.SSBI, C.SSBI_ICQ_REPLY, timeout)

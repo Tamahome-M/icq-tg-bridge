@@ -813,7 +813,7 @@ public class Icq implements Runnable
 	// TeleMotoMax: own capability so the bridge knows an extended client is
 	// talking to it. "TMM:" then major and minor version, rest zeros.
 	public static final int TMM_VERSION_MAJOR = 0;
-	public static final int TMM_VERSION_MINOR = 1;
+	public static final int TMM_VERSION_MINOR = 2;
 	public static final byte[] CAP_TMM = new byte[] {
 		(byte) 'T', (byte) 'M', (byte) 'M', (byte) ':', (byte) TMM_VERSION_MAJOR, (byte) TMM_VERSION_MINOR,
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };

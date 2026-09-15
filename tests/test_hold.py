@@ -236,7 +236,7 @@ async def main() -> None:
     class Phone:
         ready, closed = True, False
 
-        async def deliver(self, uin, text, wait_ack=False, row_id=None, url=""):
+        async def deliver(self, uin, text, wait_ack=False, row_id=None, url="", attach=""):
             sent.append(text)
             return True
 

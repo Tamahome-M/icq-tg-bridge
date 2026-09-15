@@ -40,13 +40,15 @@ def user_info(screenname: str, *, warning: int = 0, user_class: int | None = Non
     return pstr8(screenname.encode("ascii", "replace")) + struct.pack(">HH", warning, tlv_count) + body
 
 
-def icon_reply(uin: int, icon_hash: bytes, image: bytes) -> bytes:
-    """Тело SNAC 10/07: аватарка контакта.
+def icon_reply(uin: int, icon_hash: bytes, image: bytes,
+               bart_type: int = C.BART_ICON) -> bytes:
+    """Тело SNAC 10/07: аватарка контакта (или снимок по токену — тот же
+    формат с другим типом приметы, расширение TeleMotoMax).
 
     Приметы идут дважды подряд — так устроен ответ настоящего сервера, и клиент
     отсчитывает начало картинки по этой длине, а не по разбору полей.
     """
-    marks = (struct.pack(">HBB", C.BART_ICON, C.BART_ICON_FLAGS, len(icon_hash))
+    marks = (struct.pack(">HBB", bart_type, C.BART_ICON_FLAGS, len(icon_hash))
              + icon_hash)
     return (pstr8(str(uin).encode("ascii"))
             + marks + b"\x00" + marks

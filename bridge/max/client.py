@@ -582,7 +582,8 @@ class MaxSide:
                 sender = "Я"
             elif self.cfg.show_sender_in_groups and not private:
                 sender = self._user_name(await self._user(sender_id)) or ""
-            shown = await self.on_message(to_peer(chat_id), sender, text, ts, 0)
+            attach = f"photo:{_attr(message, 'id', 0)}" if media_kind(message) == "photo" else ""
+            shown = await self.on_message(to_peer(chat_id), sender, text, ts, 0, attach=attach)
             if self.cfg.mark_read and shown and not mine:
                 try:
                     await self.client.read_message(int(message.id), chat_id)
@@ -831,6 +832,19 @@ class MaxSide:
             if raw:
                 out.append((raw, (_attr(msg, "text", "") or "").strip()))
         return out
+
+    async def photo_bytes(self, peer_id: int, message_id: int) -> bytes | None:
+        """Снимок из сообщения MAX по его номеру."""
+        chat_id = from_peer(peer_id)
+        try:
+            msg = await self.client.get_message(chat_id, message_id)
+        except Exception as exc:
+            log.warning("MAX: сообщение %s в чате %s не нашлось: %s", message_id, chat_id, exc)
+            return None
+        attach = self._first_media(msg) if msg is not None else None
+        if attach is None or _enum_value(_attr(attach, "type", "")).upper() != "PHOTO":
+            return None
+        return await self._download(_attr(attach, "base_url", "") or "")
 
     async def avatar(self, peer_id: int) -> bytes | None:
         chat = await self._chat(from_peer(peer_id))

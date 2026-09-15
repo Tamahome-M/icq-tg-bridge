@@ -515,6 +515,25 @@ public class ActionListener
 				} while ((tlvType != 0x0002) && (tlvType != 0x0005));
 				int msgMarker = 0;
 
+				// TeleMotoMax: the bridge may append TLV 0x9001 after the
+				// body — kind (1 byte) and a 16-byte token of an attached
+				// picture. Plain Jimm never looks past the body, so it is
+				// harmless for it.
+				byte[] attachToken = null;
+				int extMarker = marker;
+				while (extMarker + 4 <= buf.length)
+				{
+					int extType = Util.getWord(buf, extMarker);
+					byte[] extData = Util.getTlv(buf, extMarker);
+					if (extData == null) break;
+					if ((extType == 0x9001) && (extData.length == 17) && (extData[0] == 1))
+					{
+						attachToken = new byte[16];
+						System.arraycopy(extData, 1, attachToken, 0, 16);
+					}
+					extMarker += 4 + extData.length;
+				}
+
 				//////////////////////
 				// Message format 1 //
 				//////////////////////
@@ -587,6 +606,7 @@ public class ActionListener
 						PlainMessage plainMsg = new PlainMessage(uin, Options
 								.getString(Options.OPTION_UIN), Util
 								.createCurrentDate(false), text, false);
+						plainMsg.setAttachToken(attachToken);
 						MainThread.addMessageSerially(plainMsg);
 					}
 
@@ -788,6 +808,7 @@ public class ActionListener
 						}
 
 						// Forward message object to contact list
+						if (message instanceof PlainMessage) ((PlainMessage) message).setAttachToken(attachToken);
 						MainThread.addMessageSerially(message);
 
 						// Acknowledge message

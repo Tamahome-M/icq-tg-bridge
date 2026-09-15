@@ -235,7 +235,7 @@ class BrokenSession:
         self.closed = False
 
     async def deliver(self, uin: int, text: str, wait_ack: bool = False,
-                      row_id: int | None = None, url: str = "") -> bool:
+                      row_id: int | None = None, url: str = "", attach: str = "") -> bool:
         if self.sent >= self.fail_after:
             self.closed = True          # телефон отвалился
             return False
