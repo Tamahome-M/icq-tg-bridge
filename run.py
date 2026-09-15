@@ -95,6 +95,8 @@ async def main() -> int:
             "файл %s доступен другим пользователям — сделайте chmod 600", path)
 
     bridge = Bridge(cfg)
+    if not cfg.avatars:
+        logging.getLogger("bridge").info("аватарки выключены ([bridge] avatars = false)")
 
     if len(sys.argv) > 1 and sys.argv[1] == "login":
         if len(sys.argv) > 2 and sys.argv[2] == "max":

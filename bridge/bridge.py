@@ -406,6 +406,10 @@ class Bridge:
             await self.oscar.notify_status(contact.uin, C.STATUS_OFFLINE)
 
         self._reload_roster()
+        if self.avatars is not None:
+            with_photo = sum(1 for c in self._roster if self.avatars.hash_of(c.uin))
+            log.info("аватарки включены: примета есть у %d из %d чатов в списке",
+                     with_photo, len(self._roster))
         total = len(self.storage.contacts())
         if (self.cfg.roster_limit or self.cfg.max_roster_limit) and total > len(self._roster):
             log.info("в контакт-лист телефона идут %d чатов из %d (roster_limit); "
