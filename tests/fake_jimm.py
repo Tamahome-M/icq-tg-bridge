@@ -84,8 +84,12 @@ class FakeJimm:
             r.u16()                      # уровень предупреждений
             tlvs = r.tlvs(r.u16())
             raw = tlvs.get(C.UI_TLV_STATUS) or b"\x00\x00\x00\x00"
-            self.online_uins.append(uin)
             self.statuses[uin] = struct.unpack(">I", raw)[0]
+            if self.statuses[uin] == C.STATUS_WIRE_OFFLINE:
+                # Как Jimm: «не в сети» внутри 03/0B — это офлайн.
+                self.offline_uins.append(uin)
+            else:
+                self.online_uins.append(uin)
             self.capabilities[uin] = tlvs.get(C.UI_TLV_CAPABILITIES) or b""
             bart = tlvs.get(C.UI_TLV_BART)
             if bart and len(bart) >= 4:

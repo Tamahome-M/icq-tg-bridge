@@ -843,13 +843,21 @@ class Session:
                 await asyncio.sleep(0.2)
 
     async def notify_status(self, uin: int, status: int) -> None:
-        if status == C.STATUS_OFFLINE:
+        icon_hash = self.server.icon_hash(uin)
+        if status == C.STATUS_OFFLINE and icon_hash:
+            # У «ушёл» (03/0C) нет ничего, кроме UIN, — примета аватарки в нём
+            # не поместится, и контакт, не в сети с самого входа, картинки в
+            # карточке никогда бы не получил. Поэтому офлайн с фото уходит как
+            # 03/0B со статусом «не в сети»: Jimm показывает его офлайн, звук
+            # «в сети» не играет, а примету запоминает.
+            status = C.STATUS_WIRE_OFFLINE
+        elif status == C.STATUS_OFFLINE:
             await self.send_snac(C.BUDDY, C.BUDDY_DEPARTED, blocks.buddy_departed(uin))
-        else:
-            await self.send_snac(C.BUDDY, C.BUDDY_ARRIVED,
-                                 blocks.user_info(str(uin), status=status,
-                                                  signon_time=self.signon_time,
-                                                  icon_hash=self.server.icon_hash(uin)))
+            return
+        await self.send_snac(C.BUDDY, C.BUDDY_ARRIVED,
+                             blocks.user_info(str(uin), status=status,
+                                              signon_time=self.signon_time,
+                                              icon_hash=icon_hash))
 
     # --- сообщения ------------------------------------------------------
 

@@ -153,6 +153,10 @@ STATUS_NA = 0x00000004
 STATUS_OCCUPIED = 0x00000010
 STATUS_FREE_FOR_CHAT = 0x00000020
 STATUS_OFFLINE = -1            # не код протокола: означает «слать 03/0C»
+# Код «не в сети» внутри 03/0B: Jimm переводит его в свой офлайн
+# (Util.translateStatusReceived), а остальные TLV пакета — в том числе
+# примету аватарки — принимает как обычно.
+STATUS_WIRE_OFFLINE = 0xFFFFFFFF
 
 # Кодировки тела сообщения ICBM
 CHARSET_ASCII = 0x0000

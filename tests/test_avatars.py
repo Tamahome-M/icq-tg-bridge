@@ -91,8 +91,11 @@ async def run_protocol() -> None:
     uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Семья")
     without = storage.uin_for_peer(-4001, kind="chat", title="Дача", group_name="Семья")
 
+    away = storage.uin_for_peer(556, kind="user", title="Папа", group_name="Семья")
+
     store = avatars.AvatarStore(size=64, max_bytes=4096)
     store.remember(uin, 777)
+    store.remember(away, 778)
     raw = big_png()
 
     async def on_outgoing(*_):
@@ -104,7 +107,10 @@ async def run_protocol() -> None:
         ready = store.cached(asked)
         return ready if ready is not None else store.store(asked, raw)
 
-    server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
+    def status_of(asked: int) -> int:
+        return C.STATUS_OFFLINE if asked == away else C.STATUS_ONLINE
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts, status_of,
                          avatar=avatar, icon_hash=store.hash_of)
     await server.start()
 
@@ -115,6 +121,12 @@ async def run_protocol() -> None:
 
     assert client.icon_hashes.get(uin) == store.hash_of(uin), \
         "в блоке контакта должна приехать примета аватарки"
+    # Контакт с фото, но не в сети: примета всё равно приезжает — пакетом
+    # «в сети» со статусом «не в сети», а не пустым «ушёл».
+    assert client.icon_hashes.get(away) == store.hash_of(away), \
+        "офлайн-контакту с фото примета должна приехать"
+    assert away in client.offline_uins and away not in client.online_uins, \
+        "при этом контакт должен остаться офлайн"
     assert without not in client.icon_hashes, \
         "чату без фотографии примету слать не за чем"
 
