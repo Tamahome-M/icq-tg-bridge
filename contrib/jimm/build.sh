@@ -69,8 +69,6 @@ if [ ! -d src/src ]; then
     mkdir -p src && tar xzf jimm.tgz -C src --strip-components=1
     say "Патч: не больше 12 открытых чатов в памяти"
     patch -p1 -d src < "$HERE/chat-cap.patch"
-    say "Патч: вибрация «если скрыт» (крышка закрыта)"
-    patch -p1 -d src < "$HERE/flip-vibra.patch"
     say "Патч: примета аватарки не теряется при уходе контакта в офлайн"
     patch -p1 -d src < "$HERE/avatar-offline.patch"
 fi
