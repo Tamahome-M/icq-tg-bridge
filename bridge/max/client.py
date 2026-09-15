@@ -42,9 +42,19 @@ CHATS_PAGES = 20
 # Чат с самим собой: у него номер 0 (me ^ me). В MAX он зовётся «Избранное»,
 # но в контакт-листе телефона понятнее короткое «Я».
 SAVED_TITLE = "Я"
-# Кадры, в ответе на которые сервер присылает присутствие контактов.
+# Кадры, в ответе на которые сервер присылает присутствие контактов, и
+# кадры с описаниями чатов — в них же лежит признак «не беспокоить»,
+# которого в модели PyMax нет.
 OP_LOGIN = 19
 OP_SYNC = 21
+OP_CHAT_INFO = 48
+OP_CHATS_LIST = 53
+OP_NOTIF_CHAT = 135
+CHAT_FRAMES = (OP_LOGIN, OP_SYNC, OP_CHAT_INFO, OP_CHATS_LIST, OP_NOTIF_CHAT)
+# Где и под какими именами сервер держит «не беспокоить»: срок в
+# миллисекундах (очень далёкий или -1 — навсегда) либо флаг.
+MUTE_UNTIL_KEYS = ("dontDisturbUntil", "dont_disturb_until", "muteUntil", "mutedUntil")
+MUTE_FLAG_KEYS = ("muted", "mute", "notificationsDisabled")
 START_TIMEOUT = 60
 
 TAGS = {
@@ -178,6 +188,7 @@ class MaxSide:
         self._users: dict[int, object] = {}
         self._own_ids: dict[tuple[int, int], float] = {}
         self._presence: dict[int, object] = {}     # user_id -> присутствие
+        self._raw_chats: dict[int, dict] = {}      # chat_id -> чат как прислал сервер
         self._http = None
 
     # --- запуск ---------------------------------------------------------
@@ -234,12 +245,17 @@ class MaxSide:
                         len(args) > 1 and args[1] else "")
 
     def _on_raw(self, frame) -> None:
-        """Ответ на вход и синхронизацию несёт присутствие всех контактов —
-        модель PyMax его отбрасывает, поэтому берём из сырого кадра."""
-        if getattr(frame, "opcode", None) not in (OP_LOGIN, OP_SYNC):
+        """Сырые кадры: присутствие контактов и описания чатов целиком.
+
+        Модель PyMax отбрасывает и то и другое (присутствие — вовсе, у чата —
+        признак «не беспокоить»), поэтому читаем кадр как прислал сервер."""
+        if getattr(frame, "opcode", None) not in CHAT_FRAMES:
             return
         payload = getattr(frame, "payload", None)
-        got = payload.get("presence") if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            return
+        self._remember_raw_chats(payload)
+        got = payload.get("presence")
         if not got:
             return
         pairs = got.items() if isinstance(got, dict) else (
@@ -253,6 +269,45 @@ class MaxSide:
                 continue
         sample = next(iter(self._presence.values()), None)
         log.debug("MAX: присутствие получено для %d контактов, например %r", count, sample)
+
+    def _remember_raw_chats(self, payload: dict) -> None:
+        chats = payload.get("chats")
+        if not isinstance(chats, list):
+            chats = [payload.get("chat")] if isinstance(payload.get("chat"), dict) else []
+        fresh = 0
+        for chat in chats:
+            if not isinstance(chat, dict) or chat.get("id") is None:
+                continue
+            try:
+                self._raw_chats[int(chat["id"])] = chat
+            except (TypeError, ValueError):
+                continue
+            fresh += 1
+        if fresh and log.isEnabledFor(logging.DEBUG):
+            sample = next((c for c in chats if isinstance(c, dict)), {})
+            log.debug("MAX: описаний чатов в кадре: %d; поля: %s; settings=%r options=%r",
+                      fresh, sorted(sample.keys()), sample.get("settings"),
+                      sample.get("options"))
+
+    def is_muted(self, chat_id: int) -> bool:
+        """«Не беспокоить» у чата — по сырому описанию от сервера."""
+        raw = self._raw_chats.get(int(chat_id))
+        if not raw:
+            return False
+        now_ms = int(time.time() * 1000)
+        places = [raw] + [raw[k] for k in ("settings", "options", "notifications")
+                          if isinstance(raw.get(k), dict)]
+        for place in places:
+            for key in MUTE_UNTIL_KEYS:
+                until = place.get(key)
+                if isinstance(until, (int, float)) and until != 0:
+                    return until < 0 or until > now_ms
+            for key in MUTE_FLAG_KEYS:
+                if isinstance(place.get(key), bool):
+                    return place[key]
+            if isinstance(place.get("notifications"), bool):
+                return not place["notifications"]
+        return False
 
     def _on_started(self) -> None:
         me = _attr(self.client, "me", None)
@@ -331,7 +386,7 @@ class MaxSide:
                 peer, kind, title[:self.cfg.alias_max_chars],
                 self.cfg.max_group, position,
                 status=status, unread=int(_attr(chat, "new_messages", 0) or 0),
-                pinned=False, muted=False,
+                pinned=False, muted=self.is_muted(chat.id),
                 photo_id=zlib.crc32(photo.encode()) if photo else 0))
         log.info("MAX: получено %d чатов", len(out))
         return out

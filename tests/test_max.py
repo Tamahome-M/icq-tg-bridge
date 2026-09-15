@@ -99,6 +99,12 @@ class FakeMax:
         await self.handlers["raw"](NS(opcode=19, cmd=1, seq=1, payload={
             "presence": {str(MOM): {"seen": int(time.time() * 1000) - 3_600_000, "status": 1},
                          str(BOSS): {"seen": 0, "status": 1}}}), self)
+        # Список чатов как прислал сервер: у группы «не беспокоить» до 2099 года.
+        await self.handlers["raw"](NS(opcode=53, cmd=1, seq=2, payload={
+            "chats": [{"id": GROUP_ID, "type": "CHAT",
+                       "settings": {"dontDisturbUntil": 4_000_000_000_000}},
+                      {"id": DIALOG_ID, "type": "DIALOG", "settings": {"dontDisturbUntil": 0}}]}),
+            self)
         await self.handlers["start"](self)
         await asyncio.Event().wait()          # живём, пока не отменят
 
@@ -209,6 +215,9 @@ async def run_side() -> None:
     assert dialogs[1].peer_id == to_peer(DIALOG_ID) and dialogs[1].unread == 2
     assert dialogs[0].photo_id and not dialogs[1].photo_id
     assert dialogs[2].peer_id == to_peer(0), "чат с собой — номер 0"
+    # «Не беспокоить» — из сырого описания чата: у группы есть, у личного нет.
+    assert dialogs[0].muted and not dialogs[1].muted, dialogs
+    assert side.is_muted(GROUP_ID) and not side.is_muted(DIALOG_ID) and not side.is_muted(12345)
     # Статусы: у группы «online» по соглашению, у человека — по присутствию из входа.
     assert dialogs[0].status == "online" and dialogs[1].status == "offline", dialogs
 
