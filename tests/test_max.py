@@ -256,11 +256,14 @@ async def run_bridge() -> None:
     assert set(titles) == {"Папа", "Работа", "Мама"}, titles
     assert titles["Мама"].group_name == "MAX" and titles["Папа"].group_name == "Личные"
     assert titles["Работа"].position < titles["Папа"].position, "чаты MAX идут перед Telegram"
-    # roster_limit не отрезает MAX: чатов там мало, и они всегда в списке.
-    cfg.roster_limit = 2
+    # У каждой сети своё ограничение: roster_limit Telegram не трогает MAX и наоборот.
+    cfg.roster_limit = 1
     bridge._reload_roster()
-    assert {c.title for c in bridge.roster()} == {"Работа", "Мама"}
-    cfg.roster_limit = 0
+    assert {c.title for c in bridge.roster()} == {"Папа", "Работа", "Мама"}
+    cfg.max_roster_limit = 1
+    bridge._reload_roster()
+    assert {c.title for c in bridge.roster()} == {"Папа", "Работа"}, "самый свежий чат MAX"
+    cfg.roster_limit = cfg.max_roster_limit = 0
     bridge._reload_roster()
 
     # Сообщение с телефона уходит в нужную сеть.

@@ -17,7 +17,7 @@ from .photos import PhotoStore
 from .render import Item, RenderStore, Transcoder
 from .webserver import PhotoServer
 from .config import Config
-from .db import Contact, Storage
+from .db import Contact, Storage, limit_contacts
 from .oscar import const as C
 from .oscar.server import OscarServer
 from .tg.client import KIND_TITLES, TelegramSide
@@ -155,8 +155,15 @@ class Bridge:
         since = 0
         if self.cfg.background_groups and self.cfg.background_hours > 0:
             since = int(time.time()) - self.cfg.background_hours * 3600
-        self._roster = self.storage.contacts(self.cfg.roster_limit,
-                                             self.cfg.background_groups, since)
+        everyone = self.storage.contacts()
+        # У каждой сети своё ограничение: чатов в MAX обычно мало, и общий
+        # потолок с Telegram их бы просто вытеснил.
+        from_max = [c for c in everyone if self.max is not None and is_max_peer(c.peer_id)]
+        rest = [c for c in everyone if c not in from_max]
+        roster = (limit_contacts(rest, self.cfg.roster_limit, self.cfg.background_groups, since)
+                  + limit_contacts(from_max, self.cfg.max_roster_limit,
+                                   self.cfg.background_groups, since))
+        self._roster = sorted(roster, key=lambda c: (c.position, c.uin))
         self._by_uin = {c.uin: c for c in self._roster}
 
     def status_of(self, uin: int) -> int:
@@ -386,7 +393,7 @@ class Bridge:
 
         self._reload_roster()
         total = len(self.storage.contacts())
-        if self.cfg.roster_limit and total > len(self._roster):
+        if (self.cfg.roster_limit or self.cfg.max_roster_limit) and total > len(self._roster):
             log.info("в контакт-лист телефона идут %d чатов из %d (roster_limit); "
                      "остальные приходят как сообщения и находятся поиском",
                      len(self._roster), total)
