@@ -71,6 +71,8 @@ if [ ! -d src/src ]; then
     patch -p1 -d src < "$HERE/chat-cap.patch"
     say "Патч: вибрация «если скрыт» (крышка закрыта)"
     patch -p1 -d src < "$HERE/flip-vibra.patch"
+    say "Патч: примета аватарки не теряется при уходе контакта в офлайн"
+    patch -p1 -d src < "$HERE/avatar-offline.patch"
 fi
 
 say "Настройки сборки"
