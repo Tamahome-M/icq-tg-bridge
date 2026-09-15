@@ -62,6 +62,7 @@ class FakeMax:
             GROUP_ID: [message(10, GROUP_ID, BOSS, "план на завтра", NOW_MS - 5_000)],
         }
         self.sent: list[tuple[int, str]] = []
+        self.fetched: list = []
         self.read: list[tuple[int, int]] = []
         self.handlers: dict[str, object] = {}
         self.next_id = 100
@@ -91,7 +92,12 @@ class FakeMax:
 
     async def close(self): pass
 
-    async def fetch_chats(self, marker=None): return list(self.chats)
+    async def fetch_chats(self, marker=None):
+        self.fetched.append(marker)
+        # Страницами по одному чату, как сервер: маркер — старше самого старого.
+        older = [c for c in self.chats if marker is None or c.last_event_time <= marker]
+        older.sort(key=lambda c: -c.last_event_time)
+        return older[:1]
     async def get_chat(self, chat_id):
         for c in self.chats:
             if c.id == chat_id:
@@ -162,8 +168,10 @@ async def run_side() -> None:
     assert side.me_id == ME
 
     # Список чатов: одна группа, личный чат назван по собеседнику, свежие первыми.
+    fake.chats_on_login = None
     dialogs = await side.dialogs()
     assert [d.title for d in dialogs] == ["Работа", "Мама"], dialogs
+    assert len(fake.fetched) >= 2, "список собирается страницами, пока сервер отдаёт новое"
     assert all(d.group_name == "MAX" for d in dialogs)
     assert [d.kind for d in dialogs] == ["chat", "user"]
     assert dialogs[1].peer_id == to_peer(DIALOG_ID) and dialogs[1].unread == 2
@@ -247,7 +255,13 @@ async def run_bridge() -> None:
     titles = {c.title: c for c in bridge.roster()}
     assert set(titles) == {"Папа", "Работа", "Мама"}, titles
     assert titles["Мама"].group_name == "MAX" and titles["Папа"].group_name == "Личные"
-    assert titles["Работа"].position > titles["Папа"].position, "чаты MAX идут после Telegram"
+    assert titles["Работа"].position < titles["Папа"].position, "чаты MAX идут перед Telegram"
+    # roster_limit не отрезает MAX: чатов там мало, и они всегда в списке.
+    cfg.roster_limit = 2
+    bridge._reload_roster()
+    assert {c.title for c in bridge.roster()} == {"Работа", "Мама"}
+    cfg.roster_limit = 0
+    bridge._reload_roster()
 
     # Сообщение с телефона уходит в нужную сеть.
     await bridge.on_phone_message(titles["Мама"].uin, "привет, мам")

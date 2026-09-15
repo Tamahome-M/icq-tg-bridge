@@ -102,7 +102,13 @@ async def main() -> int:
                 print("MAX выключен: включите [max] enabled = true и укажите phone",
                       file=sys.stderr)
                 return 1
-            await bridge.max.login()
+            try:
+                await bridge.max.login()
+            except Exception as exc:
+                # Сервер отвечает по-русски и по делу («Требуется установить
+                # 2FA») — этого достаточно, трассировка тут ни к чему.
+                print(f"Вход в MAX не удался: {exc}", file=sys.stderr)
+                return 1
             return 0
         await bridge.telegram.login()
         await bridge.telegram.stop()

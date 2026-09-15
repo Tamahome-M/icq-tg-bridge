@@ -35,6 +35,7 @@ DEAD_SESSION = (
 )
 
 ROSTER_REFRESH_SECONDS = 600
+MAX_ROSTER_SLOTS = 100_000       # чаты MAX стоят в списке раньше любого чата Telegram
 SEARCH_LIMIT = 10                # столько результатов отдаём телефону
 # Telegram повторяет «печатает» каждые несколько секунд, а Jimm сам индикатор
 # не гасит — снимаем его по молчанию.
@@ -348,11 +349,10 @@ class Bridge:
             except Exception:
                 log.exception("список чатов MAX не получен — оставляю прежний")
                 extra, keep_max = [], True
-            # Позиции продолжаем после Telegram: свежесть внутри MAX своя,
-            # а roster_limit пусть ставит их после чатов Telegram.
-            shift = len(dialogs)
+            # Чаты MAX — перед чатами Telegram: их немного, и roster_limit
+            # не должен их отрезать; свой порядок по свежести у них остаётся.
             for d in extra:
-                d.position += shift
+                d.position -= MAX_ROSTER_SLOTS
             dialogs += extra
         for d in dialogs:
             favourite = int(d.pinned or d.title.strip().lower() in self.cfg.favourites)
