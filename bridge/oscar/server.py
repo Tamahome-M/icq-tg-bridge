@@ -836,8 +836,9 @@ class Session:
             if self.closed:
                 return
             await self.notify_status(contact.uin, self.server.status_of(contact.uin))
-            await self.send_snac(C.ICBM, C.ICBM_CLIENT_EVENT,
-                                 blocks.typing_packet(contact.uin, False))
+            if self.server.typing_prime:
+                await self.send_snac(C.ICBM, C.ICBM_CLIENT_EVENT,
+                                     blocks.typing_packet(contact.uin, False))
             sent += 1
             if sent % BUDDY_BURST == 0:
                 await asyncio.sleep(0.2)
@@ -1115,6 +1116,7 @@ class OscarServer:
         self.alias_max_chars = getattr(cfg, "alias_max_chars", 40)
         self.idle_timeout = getattr(cfg, "idle_timeout", 360)
         self.use_ack = getattr(cfg, "delivery_ack", True)
+        self.typing_prime = getattr(cfg, "typing_prime", True)
         self.ack_timeout = getattr(cfg, "ack_timeout", 30)
         self.ack_works: bool | None = None    # None — ещё не знаем, умеет ли клиент
         self.awaiting: dict[bytes, int] = {}  # cookie -> запись очереди

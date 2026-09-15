@@ -67,6 +67,19 @@ async def run_priming() -> None:
     assert sorted(client.typing) == sorted((u, False) for u in uins), client.typing
     await client.close()
     server._server.close()
+
+    # Выключенная прививка: статусы идут, «закончил набор» — нет.
+    cfg.oscar_port += 1
+    cfg.typing_prime = False
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts)
+    await server.start()
+    client = FakeJimm("127.0.0.1", cfg.oscar_port, cfg.oscar_uin, cfg.oscar_password)
+    await client.connect()
+    await client.bos(await client.login_md5_jimm())
+    await client.drain_for(0.7)
+    assert client.typing == [] and len(client.online_uins) == 3, (client.typing, client.online_uins)
+    await client.close()
+    server._server.close()
     print("  прививка «печатает»: ок (каждому контакту — «закончил набор» при входе)")
 
 

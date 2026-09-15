@@ -49,6 +49,7 @@ class Config:
     history_limit: int = 100
     idle_timeout: int = 360
     delivery_ack: bool = True
+    typing_prime: bool = True
     ack_on: str = "read"
     ack_timeout: int = 30
     catch_up: bool = True
@@ -169,6 +170,7 @@ class Config:
             history_limit=int(br.get("history_limit", cls.history_limit)),
             idle_timeout=int(br.get("idle_timeout", cls.idle_timeout)),
             delivery_ack=bool(br.get("delivery_ack", True)),
+            typing_prime=bool(br.get("typing_prime", cls.typing_prime)),
             ack_on=str(br.get("ack_on", cls.ack_on)),
             ack_timeout=int(br.get("ack_timeout", cls.ack_timeout)),
             catch_up=bool(br.get("catch_up", True)),
@@ -288,6 +290,7 @@ def describe(cfg: "Config") -> list[str]:
         + (f" ({cfg.avatar_size}×{cfg.avatar_size}, до {cfg.avatar_max_kb} КБ)" if cfg.avatars else
            " ([bridge] avatars = false)"),
         f"подтверждения доставки: {onoff(cfg.delivery_ack, 'канал 2, галочка по ' + cfg.ack_on, 'канал 1, без галочек')}"
+        + f"; прививка «печатает» при входе — {onoff(cfg.typing_prime, 'да', 'нет')}"
         + f"; догрузка при старте — {onoff(cfg.catch_up, 'да', 'нет')}"
         + f"; удаление чатов с телефона — {onoff(cfg.allow_delete, 'да', 'нет')}",
         "фотографии: " + (f"раздача на {cfg.photos_host}:{cfg.photos_port}"
