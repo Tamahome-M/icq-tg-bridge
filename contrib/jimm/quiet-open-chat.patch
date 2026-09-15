@@ -5,7 +5,7 @@
  	/* Adds the given message to the message queue of the contact item
  	 identified by the given UIN */
 +	// Bridge build: the user is reading this very chat right now - it is on
-+	// screen and the keys were touched within the last minute. No point in
++	// screen and the keys were touched within the last 20 seconds. No point in
 +	// a sound or a buzz for a message that is being read as it arrives.
 +	// (Screen alone is not enough: with the flip closed the chat stays
 +	// "shown", so the idle check tells the two cases apart.)
@@ -13,7 +13,7 @@
 +	{
 +		return ChatHistory.chatHistoryShown(uin) && VirtualList.idleMillis() < READING_IDLE_MS;
 +	}
-+	private static final long READING_IDLE_MS = 60 * 1000L;
++	private static final long READING_IDLE_MS = 20 * 1000L;
 +
  	static public boolean addMessage(Message message)
  	{
