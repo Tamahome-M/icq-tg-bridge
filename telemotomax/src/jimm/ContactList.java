@@ -40,6 +40,8 @@ import java.io.IOException;
 import java.util.Enumeration;
 import java.util.Random;
 import java.util.Vector;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import javax.microedition.lcdui.*;
 
@@ -1083,6 +1085,38 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		cItem.setImage(ContactItem.CONTACTITEM_BUDDYICON, image);
 		cItem.setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH_READY, biHashOfDone);
 
+		// TeleMotoMax: a decoded avatar costs width*height*4 bytes of heap
+		// (160x160 is ~100 KB) and Jimm kept every one until re-login.
+		// Keep only the latest one, and drop even that after a while; the
+		// contact forgets the "got it" mark, so opening the card again
+		// simply re-requests the picture.
+		iconOwners.removeElement(uin);
+		iconOwners.addElement(uin);
+		dropIcons(MAX_ICONS);
+		if (iconDropTask != null) iconDropTask.cancel();
+		iconDropTask = new TimerTask() {
+			public void run() { dropIcons(0); }
+		};
+		iconTimer.schedule(iconDropTask, ICON_TTL_MS);
+	}
+	private static final int MAX_ICONS = 1;
+	private static final long ICON_TTL_MS = 30 * 1000L;
+	private static final Vector iconOwners = new Vector();
+	private static final Timer iconTimer = new Timer();
+	private static TimerTask iconDropTask;
+
+	// Drops avatars until at most `keep` remain in memory (oldest first).
+	static private synchronized void dropIcons(int keep)
+	{
+		while (iconOwners.size() > keep)
+		{
+			String old = (String) iconOwners.elementAt(0);
+			iconOwners.removeElementAt(0);
+			ContactItem victim = getItembyUIN(old);
+			if (victim == null) continue;
+			victim.setImage(ContactItem.CONTACTITEM_BUDDYICON, null);
+			victim.setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH_READY, new byte[16]);
+		}
 	}
 	//#sijapp cond.end#
 
