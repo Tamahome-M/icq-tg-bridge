@@ -84,4 +84,35 @@ sed -i 's|^MIDlet-1: Jimm,|MIDlet-1: ###MIDLET-NAME###,|' res/MANIFEST.MF
 say "Сборка"
 ant -q clean dist 2>&1 | grep -v '\[langs\]' || true
 mkdir -p "$WORK/out" && cp dist/bin/Jimm.jar dist/bin/Jimm.jad "$WORK/out/"
-say "Готово: $WORK/out/Jimm.jar ($(wc -c < dist/bin/Jimm.jar) байт), Jimm.jad"
+
+# Картинки, которые с мостом не нужны, а память телефона едят: каждая
+# полоска 576x16 после распаковки — около 36 КБ в куче. Все загрузки
+# обёрнуты в try/catch, а ImageList.elementAt без картинки отдаёт null,
+# так что без них клиент работает, только без этих значков.
+#   xstatus.png — X-статусы ICQ (сервер их не шлёт)
+#   micons.png  — значки пунктов главного меню
+#   clicons.png — значки клиентов собеседников (Miranda, QIP…)
+#   logo.png    — логотип на заставке
+# JIMM_KEEP_ICONS=1 оставляет всё как есть.
+if [ -z "${JIMM_KEEP_ICONS:-}" ]; then
+    say "Убираю ненужные с мостом картинки"
+    python3 - "$WORK/out/Jimm.jar" "$WORK/out/Jimm.jad" <<'PY'
+import os, sys, zipfile
+jar, jad = sys.argv[1], sys.argv[2]
+strip = {"xstatus.png", "micons.png", "clicons.png", "logo.png"}
+tmp = jar + ".tmp"
+with zipfile.ZipFile(jar) as src, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
+    for item in src.infolist():
+        if item.filename in strip:
+            continue
+        dst.writestr(item, src.read(item.filename))
+os.replace(tmp, jar)
+size = os.path.getsize(jar)
+lines = open(jad, encoding="utf-8").read().splitlines()
+lines = [f"MIDlet-Jar-Size: {size}" if l.startswith("MIDlet-Jar-Size:") else l for l in lines]
+open(jad, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+# Размер в манифесте внутри jar менять не надо: телефон смотрит в jad.
+print(f"  jar теперь {size} байт")
+PY
+fi
+say "Готово: $WORK/out/Jimm.jar ($(wc -c < "$WORK/out/Jimm.jar") байт), Jimm.jad"
