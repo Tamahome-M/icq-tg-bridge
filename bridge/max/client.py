@@ -33,8 +33,8 @@ log = logging.getLogger("max")
 # обычные целые; всё, что не меньше MAX_BASE, — из MAX.
 MAX_BASE = 4_000_000_000_000_000
 
-# Сколько чатов просить у сервера за раз и сколько всего держать.
-CHATS_PAGE = 100
+# Сколько страниц списка чатов запрашивать у сервера, не больше.
+CHATS_PAGES = 20
 START_TIMEOUT = 60
 
 TAGS = {
@@ -171,7 +171,11 @@ class MaxSide:
         work_dir = os.path.dirname(os.path.abspath(self.cfg.max_session)) or "."
         # Телеметрию в MAX не шлём: мосту она ни к чему, а лишний след — тем
         # более. Журнал библиотеки — своим уровнем, как у Telethon.
-        extra = ExtraConfig(telemetry=False, log_level=self.cfg.log_max_level)
+        # chats_sync=-1 — полная синхронизация при каждом входе: иначе сервер
+        # отдаёт лишь чаты, изменившиеся с прошлого раза, и список пуст.
+        from pymax.types.domain.sync import SyncOverrides
+        extra = ExtraConfig(telemetry=False, log_level=self.cfg.log_max_level,
+                            sync=SyncOverrides(chats_sync=-1))
         return Client(phone=self.cfg.max_phone, work_dir=work_dir,
                       session_name=os.path.basename(self.cfg.max_session),
                       extra_config=extra, **kwargs)
@@ -278,14 +282,32 @@ class MaxSide:
         return out
 
     async def _all_chats(self) -> list:
-        chats = list(_attr(self.client, "chats", None) or [])
-        if not chats:
+        """Все чаты: то, что пришло при входе, плюс список с сервера
+        страницами — маркер каждой следующей страницы старше самой старой
+        полученной."""
+        found: dict[int, object] = {}
+        for chat in _attr(self.client, "chats", None) or []:
+            if _attr(chat, "id", None) is not None:
+                found[int(chat.id)] = chat
+        marker = None
+        for _ in range(CHATS_PAGES):
             try:
-                chats = list(await self.client.fetch_chats() or [])
+                page = list(await self.client.fetch_chats(marker) or [])
             except Exception as exc:
                 log.warning("MAX: список чатов не получен: %s", exc)
-        chats = [c for c in chats if _attr(c, "id", None) is not None]
-        chats.sort(key=lambda c: -int(_attr(c, "last_event_time", 0) or 0))
+                break
+            page = [c for c in page if _attr(c, "id", None) is not None]
+            if not page:
+                break
+            for chat in page:
+                found[int(chat.id)] = chat
+            # Страница целиком из уже известных — дальше только старьё, которое
+            # мы тоже хотим; останавливаемся, лишь когда маркер перестал сдвигаться.
+            oldest = min(int(_attr(c, "last_event_time", 0) or 0) for c in page)
+            if oldest <= 0 or (marker is not None and oldest >= marker):
+                break
+            marker = oldest - 1
+        chats = sorted(found.values(), key=lambda c: -int(_attr(c, "last_event_time", 0) or 0))
         self._chats = {int(c.id): c for c in chats}
         return chats
 
