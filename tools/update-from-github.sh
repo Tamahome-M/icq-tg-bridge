@@ -74,90 +74,96 @@ NEW=$(find "$WORK/unpacked" -mindepth 1 -maxdepth 1 -type d | head -1)
 [ -n "$NEW" ] || die "в архиве не нашлось каталога с исходниками"
 [ -f "$NEW/run.py" ] || die "в архиве нет run.py — похоже, скачалось не то"
 
+# Общие правила для показа и для обновления — один текст, чтобы -n не врал.
+RULES=$(cat <<'PY'
+import pathlib
+
+# Куда не заглядываем вовсе: рабочие данные и всё, что начинается с точки —
+# каталог установки служит пользователю моста домом (.venv, .claude, …).
+SKIP_PARTS = {"photos", "render", "downloads", "claude", "__pycache__"}
+KEEP_NAMES = {"config.toml"}
+
+def skip(rel: pathlib.Path) -> bool:
+    name = rel.name
+    return (rel.parts[0].startswith(".")
+            or bool(SKIP_PARTS & set(rel.parts))
+            or name in KEEP_NAMES
+            or ".session" in name          # tg.session, max.session и их журналы
+            or name.startswith("bridge.db")  # база, WAL и копии
+            or name.endswith(".log"))
+
+def stale(cur: pathlib.Path, new: pathlib.Path, wanted: set) -> list:
+    """Файлы, которых в новой версии нет, — только внутри каталогов, которые
+    есть в самом архиве (bridge/, tests/, tools/, …). Корень установки и чужие
+    каталоги не чистим никогда: там лежат сессии, база и то, о чём скрипт не
+    знает."""
+    owned = {p.relative_to(new).parts[0] for p in new.iterdir() if p.is_dir()}
+    out = []
+    for dst in sorted(cur.rglob("*"), reverse=True):
+        rel = dst.relative_to(cur)
+        if len(rel.parts) < 2 or rel.parts[0] not in owned:
+            continue
+        if skip(rel) or rel in wanted:
+            continue
+        out.append(dst)
+    return out
+
+def planned(new: pathlib.Path):
+    """Что копируем: (относительный путь, это каталог)."""
+    for src in sorted(new.rglob("*")):
+        rel = src.relative_to(new)
+        if skip(rel):
+            continue
+        yield rel, src.is_dir()
+PY
+)
+
 if [ -n "$DRY" ]; then
     say "Что изменится (ничего не трогаю)"
-    "$PYTHON" - "$NEW" "$DIR" <<'PY'
+    "$PYTHON" - "$NEW" "$DIR" "$RULES" <<'PY'
 import filecmp, pathlib, sys
 new, cur = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-SKIP = {"photos", "render", "downloads", "claude", "__pycache__"}
-KEEP = {"config.toml", "bridge.db"}
+exec(sys.argv[3])
 changed = added = 0
-for src in sorted(new.rglob("*")):
-    rel = src.relative_to(new)
-    if (src.is_dir() or rel.parts[0].startswith(".") or SKIP & set(rel.parts)
-            or rel.name in KEEP):
+wanted = set()
+for rel, is_dir in planned(new):
+    wanted.add(rel)
+    if is_dir:
         continue
     dst = cur / rel
     if not dst.exists():
         print("  новый    ", rel); added += 1
-    elif not filecmp.cmp(src, dst, shallow=False):
+    elif not filecmp.cmp(new / rel, dst, shallow=False):
         print("  изменён  ", rel); changed += 1
-print(f"итого: изменится {changed}, добавится {added}")
+gone = [p for p in stale(cur, new, wanted) if p.is_file()]
+for p in gone:
+    print("  удалится ", p.relative_to(cur))
+print(f"итого: изменится {changed}, добавится {added}, удалится {len(gone)}")
 PY
     exit 0
 fi
 
-# служба может не работать — это не повод падать
-if command -v rc-service >/dev/null 2>&1; then
-    say "Останавливаю службу"; rc-service "$SERVICE" stop || true
-    START="rc-service $SERVICE start"
-elif command -v systemctl >/dev/null 2>&1; then
-    say "Останавливаю службу"; systemctl stop "$SERVICE" || true
-    START="systemctl start $SERVICE"
-else
-    say "Менеджер служб не найден — остановите и запустите мост вручную"
-    START=""
-fi
-
-if [ -f "$DIR/bridge.db" ]; then
-    BACKUP="$DIR/bridge.db.backup-$(date +%Y%m%d-%H%M%S)"
-    cp "$DIR/bridge.db" "$BACKUP"
-    say "Копия базы: $BACKUP"
-fi
-
 say "Обновляю файлы"
-"$PYTHON" - "$NEW" "$DIR" <<'PY'
+"$PYTHON" - "$NEW" "$DIR" "$RULES" <<'PY'
 import pathlib, shutil, sys
 new, cur = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-
-# Чего не касаемся вовсе: рабочие данные и локальное окружение. Каталоги
-# снимков, страниц, загрузок и сеансов Claude в архиве не лежат — без этого
-# списка чистка «устаревших» файлов вымела бы их. Всё с точкой в начале —
-# тоже: каталог установки служит пользователю моста домом, и там лежат
-# .venv, .claude со входом в Claude Code и прочие его файлы.
-SKIP_PARTS = {"photos", "render", "downloads", "claude", "__pycache__"}
-KEEP_NAMES = {"config.toml", "bridge.db", "bridge.db-wal", "bridge.db-shm"}
-
-def skip(rel: pathlib.Path) -> bool:
-    return (rel.parts[0].startswith(".")
-            or bool(SKIP_PARTS & set(rel.parts))
-            or rel.name in KEEP_NAMES
-            or rel.name.startswith("tg.session")
-            or rel.name.startswith("bridge.db.backup")
-            or rel.suffix == ".log")
+exec(sys.argv[3])
 
 wanted = set()
 copied = 0
-for src in sorted(new.rglob("*")):
-    rel = src.relative_to(new)
-    if skip(rel):
-        continue
+for rel, is_dir in planned(new):
+    wanted.add(rel)
     dst = cur / rel
-    if src.is_dir():
+    if is_dir:
         dst.mkdir(parents=True, exist_ok=True)
-        wanted.add(rel)
         continue
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
-    wanted.add(rel)
+    shutil.copy2(new / rel, dst)
     copied += 1
 
-# Убираем файлы, которых в новой версии больше нет.
+# Убираем файлы, которых в новой версии больше нет, — по правилам stale().
 removed = 0
-for dst in sorted(cur.rglob("*"), reverse=True):
-    rel = dst.relative_to(cur)
-    if skip(rel) or rel in wanted:
-        continue
+for dst in stale(cur, new, wanted):
     if dst.is_file():
         dst.unlink(); removed += 1
     elif dst.is_dir() and not any(dst.iterdir()):
