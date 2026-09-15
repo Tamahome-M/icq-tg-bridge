@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bridge.bridge import Bridge
 from bridge.config import Config
 from bridge.max import client as maxside
-from bridge.max.client import MAX_BASE, MaxSide, describe_message, from_peer, to_peer
+from bridge.max.client import MaxSide, describe_message, from_peer, is_max_peer, to_peer
 from bridge.oscar import const as C
 from bridge.tg.client import Dialog
 
@@ -23,12 +23,15 @@ ME = 1001
 MOM = 2002
 BOSS = 3003
 DIALOG_ID = ME ^ MOM
-GROUP_ID = 777_777
+GROUP_ID = -72_056_572_839_294       # группы в MAX нумеруются отрицательными числами
 NOW_MS = 1_800_000_000_000
 
 
 def user(uid: int, name: str, **extra):
-    return NS(id=uid, names=[NS(name=name, first_name=None, last_name=None)],
+    # Как у MAX: первое имя — короткое, из профиля; второе — из адресной книги.
+    names = [NS(name=name.split()[0], first_name=None, last_name=None),
+             NS(name=None, first_name=name.split()[0], last_name=" ".join(name.split()[1:]) or None)]
+    return NS(id=uid, names=names,
               photo_id=extra.get("photo_id", 0), base_url=extra.get("base_url", ""),
               phone=extra.get("phone"), description=extra.get("about", ""))
 
@@ -44,9 +47,12 @@ class FakeMax:
 
     def __init__(self):
         self.me = NS(contact=user(ME, "Я сам"))
-        self.users = {MOM: user(MOM, "Мама", phone=79990001122, about="мама"),
+        self.users = {MOM: user(MOM, "Мама Петровна", phone=79990001122, about="мама"),
                       BOSS: user(BOSS, "Шеф")}
         self.chats = [
+            NS(id=0, type="DIALOG", participants={ME: 1}, title=None,
+               last_event_time=NOW_MS - 5000, new_messages=0, base_icon_url="",
+               description="", participants_count=1, link=None),
             NS(id=DIALOG_ID, type="DIALOG", participants={ME: 1, MOM: 1}, title=None,
                last_event_time=NOW_MS - 1000, new_messages=2, base_icon_url="",
                description="", participants_count=2, link=None),
@@ -137,7 +143,15 @@ def make_cfg(work: str) -> Config:
 
 
 def run_pure() -> None:
-    assert from_peer(to_peer(5)) == 5 and to_peer(5) >= MAX_BASE
+    assert from_peer(to_peer(5)) == 5 and is_max_peer(to_peer(5))
+    assert from_peer(to_peer(GROUP_ID)) == GROUP_ID and is_max_peer(to_peer(GROUP_ID))
+    assert not is_max_peer(555) and not is_max_peer(-1001234567890) and not is_max_peer(-999_999_999_999_999)
+    try:
+        to_peer(10 ** 16)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("слишком большой номер должен отвергаться")
     assert describe_message(message(1, 1, 1, "текст")) == "текст"
     photo = NS(type="PHOTO")
     assert describe_message(message(1, 1, 1, "", attaches=[photo])) == "[фото]"
@@ -176,12 +190,13 @@ async def run_side() -> None:
     # Список чатов: одна группа, личный чат назван по собеседнику, свежие первыми.
     fake.chats_on_login = None
     dialogs = await side.dialogs()
-    assert [d.title for d in dialogs] == ["Работа", "Мама"], dialogs
+    assert [d.title for d in dialogs] == ["Работа", "Мама Петровна", "Избранное"], dialogs
     assert len(fake.fetched) >= 2, "список собирается страницами, пока сервер отдаёт новое"
     assert all(d.group_name == "MAX" for d in dialogs)
-    assert [d.kind for d in dialogs] == ["chat", "user"]
+    assert [d.kind for d in dialogs] == ["chat", "user", "user"]
     assert dialogs[1].peer_id == to_peer(DIALOG_ID) and dialogs[1].unread == 2
     assert dialogs[0].photo_id and not dialogs[1].photo_id
+    assert dialogs[2].peer_id == to_peer(0), "чат с собой — номер 0"
     # Статусы: у группы «online» по соглашению, у человека — по присутствию из входа.
     assert dialogs[0].status == "online" and dialogs[1].status == "offline", dialogs
 
@@ -211,7 +226,7 @@ async def run_side() -> None:
 
     # История и пропущенное.
     items = await side.history(to_peer(DIALOG_ID), 10, None, 50)
-    assert [(i.who, i.text) for i in items] == [("Мама", "привет"), ("Я", "и тебе"), ("Мама", "[фото]")], items
+    assert [(i.who, i.text) for i in items] == [("Мама Петровна", "привет"), ("Я", "и тебе"), ("Мама Петровна", "[фото]")], items
     missed = await side.missed(to_peer(DIALOG_ID), (NOW_MS - 25_000) // 1000, 50)
     assert [(s, t) for _, s, t in missed] == [("", "[фото]")], missed
 
@@ -226,8 +241,8 @@ async def run_side() -> None:
     info = await side.chat_info(to_peer(GROUP_ID))
     assert info["kind"] == "Группа (MAX)" and info["members"] == "участников: 12"
     info = await side.chat_info(to_peer(DIALOG_ID))
-    assert info["title"] == "Мама" and info["phone"] == "+79990001122"
-    assert await side.title_for(to_peer(DIALOG_ID)) == ("Мама", "user")
+    assert info["title"] == "Мама Петровна" and info["phone"] == "+79990001122"
+    assert await side.title_for(to_peer(DIALOG_ID)) == ("Мама Петровна", "user")
 
     # Заглушение не поддерживается — честный отказ, а не исключение.
     assert await side.set_muted(to_peer(GROUP_ID), True) is False
@@ -261,13 +276,13 @@ async def run_bridge() -> None:
 
     # Оба списка в одном контакт-листе; группы MAX — своя.
     titles = {c.title: c for c in bridge.roster()}
-    assert set(titles) == {"Папа", "Работа", "Мама"}, titles
-    assert titles["Мама"].group_name == "MAX" and titles["Папа"].group_name == "Личные"
+    assert set(titles) == {"Папа", "Работа", "Мама Петровна", "Избранное"}, titles
+    assert titles["Мама Петровна"].group_name == "MAX" and titles["Папа"].group_name == "Личные"
     assert titles["Работа"].position < titles["Папа"].position, "чаты MAX идут перед Telegram"
     # У каждой сети своё ограничение: roster_limit Telegram не трогает MAX и наоборот.
     cfg.roster_limit = 1
     bridge._reload_roster()
-    assert {c.title for c in bridge.roster()} == {"Папа", "Работа", "Мама"}
+    assert {c.title for c in bridge.roster()} == {"Папа", "Работа", "Мама Петровна", "Избранное"}
     cfg.max_roster_limit = 1
     bridge._reload_roster()
     assert {c.title for c in bridge.roster()} == {"Папа", "Работа"}, "самый свежий чат MAX"
@@ -275,7 +290,7 @@ async def run_bridge() -> None:
     bridge._reload_roster()
 
     # Сообщение с телефона уходит в нужную сеть.
-    await bridge.on_phone_message(titles["Мама"].uin, "привет, мам")
+    await bridge.on_phone_message(titles["Мама Петровна"].uin, "привет, мам")
     await bridge.on_phone_message(titles["Папа"].uin, "привет, пап")
     assert fake.sent == [(DIALOG_ID, "привет, мам")] and tg_sent == [(555, "привет, пап")]
 
@@ -288,7 +303,7 @@ async def run_bridge() -> None:
 
     bridge.oscar.deliver = deliver
     await fake.handlers["message"](message(60, DIALOG_ID, MOM, "ужин в семь"), fake)
-    assert queued == [(titles["Мама"].uin, "ужин в семь")], queued
+    assert queued == [(titles["Мама Петровна"].uin, "ужин в семь")], queued
     assert fake.read == [(DIALOG_ID, 60)]
 
     # Новый чат MAX, которого не было в списке, заводится в группе MAX.
@@ -300,10 +315,17 @@ async def run_bridge() -> None:
     assert fresh is not None and fresh.group_name == "MAX" and fresh.kind == "channel"
 
     # Карточка и статус — через сторону MAX.
-    info = await bridge.chat_info(titles["Мама"].uin)
+    info = await bridge.chat_info(titles["Мама Петровна"].uin)
     assert info["kind"] == "Личный чат (MAX)"
+
+    # Сторона не ответила — карточка всё равно не пустая.
+    async def no_info(peer):
+        raise RuntimeError("поле пропало")
+    bridge.max.chat_info = no_info
+    info = await bridge.chat_info(titles["Мама Петровна"].uin)
+    assert info["title"] == "Мама Петровна" and info["kind"] == "Личные", info
     await bridge.on_telegram_status(to_peer(DIALOG_ID), "offline")
-    assert bridge.status_of(titles["Мама"].uin) == C.STATUS_OFFLINE
+    assert bridge.status_of(titles["Мама Петровна"].uin) == C.STATUS_OFFLINE
 
     # MAX не ответил на обновление списка — его чаты не считаются пропавшими.
     async def broken():
