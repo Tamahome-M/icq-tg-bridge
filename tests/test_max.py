@@ -7,6 +7,7 @@ import datetime as dt
 import os
 import sys
 import tempfile
+import time
 from types import SimpleNamespace as NS
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -82,8 +83,13 @@ class FakeMax:
     def on_presence(self, *f): return self._reg("presence")()
     def on_message_read(self, *f): return self._reg("read")()
     def on_disconnect(self): return self._reg("disconnect")()
+    def on_raw(self, *f): return self._reg("raw")()
 
     async def start(self):
+        # Ответ на вход: сервер прикладывает присутствие контактов.
+        await self.handlers["raw"](NS(opcode=19, cmd=1, seq=1, payload={
+            "presence": {str(MOM): {"seen": int(time.time() * 1000) - 3_600_000, "status": 1},
+                         str(BOSS): {"seen": 0, "status": 1}}}), self)
         await self.handlers["start"](self)
         await asyncio.Event().wait()          # живём, пока не отменят
 
@@ -176,6 +182,8 @@ async def run_side() -> None:
     assert [d.kind for d in dialogs] == ["chat", "user"]
     assert dialogs[1].peer_id == to_peer(DIALOG_ID) and dialogs[1].unread == 2
     assert dialogs[0].photo_id and not dialogs[1].photo_id
+    # Статусы: у группы «online» по соглашению, у человека — по присутствию из входа.
+    assert dialogs[0].status == "online" and dialogs[1].status == "offline", dialogs
 
     # Входящее: личное — без отправителя, групповое — с именем; своё — не возвращается.
     await side._on_new_message(message(50, DIALOG_ID, MOM, "ты где?"))
