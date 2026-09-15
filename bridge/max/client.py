@@ -45,16 +45,22 @@ SAVED_TITLE = "Я"
 # Кадры, в ответе на которые сервер присылает присутствие контактов, и
 # кадры с описаниями чатов — в них же лежит признак «не беспокоить»,
 # которого в модели PyMax нет.
+OP_LOGIN2 = 8
 OP_LOGIN = 19
 OP_SYNC = 21
+OP_CONFIG = 22
 OP_CHAT_INFO = 48
 OP_CHATS_LIST = 53
+OP_NOTIF_CONFIG = 134
 OP_NOTIF_CHAT = 135
-CHAT_FRAMES = (OP_LOGIN, OP_SYNC, OP_CHAT_INFO, OP_CHATS_LIST, OP_NOTIF_CHAT)
-# Где и под какими именами сервер держит «не беспокоить»: срок в
-# миллисекундах (очень далёкий или -1 — навсегда) либо флаг.
-MUTE_UNTIL_KEYS = ("dontDisturbUntil", "dont_disturb_until", "muteUntil", "mutedUntil")
-MUTE_FLAG_KEYS = ("muted", "mute", "notificationsDisabled")
+CHAT_FRAMES = (OP_LOGIN2, OP_LOGIN, OP_SYNC, OP_CONFIG, OP_CHAT_INFO, OP_CHATS_LIST,
+               OP_NOTIF_CONFIG, OP_NOTIF_CHAT)
+# «Не беспокоить» — не свойство чата, а настройка профиля: в ответе на
+# вход она лежит в config.chats[<id>].dontDisturbUntil (-1 — навсегда,
+# иначе срок в миллисекундах), меняется опкодом CONFIG с тем же путём,
+# а с других устройств приходит кадром NOTIF_CONFIG.
+MUTE_KEY = "dontDisturbUntil"
+MUTE_FOREVER = -1
 START_TIMEOUT = 60
 
 TAGS = {
@@ -189,6 +195,7 @@ class MaxSide:
         self._own_ids: dict[tuple[int, int], float] = {}
         self._presence: dict[int, object] = {}     # user_id -> присутствие
         self._raw_chats: dict[int, dict] = {}      # chat_id -> чат как прислал сервер
+        self._chat_config: dict[int, dict] = {}    # chat_id -> настройки профиля по чату
         self._http = None
 
     # --- запуск ---------------------------------------------------------
@@ -255,6 +262,7 @@ class MaxSide:
         if not isinstance(payload, dict):
             return
         self._remember_raw_chats(payload)
+        self._remember_chat_config(payload)
         got = payload.get("presence")
         if not got:
             return
@@ -289,25 +297,38 @@ class MaxSide:
                       fresh, sorted(sample.keys()), sample.get("settings"),
                       sample.get("options"))
 
+    def _remember_chat_config(self, payload: dict) -> None:
+        """Настройки профиля по чатам: config.chats при входе, settings.chats
+        в ответе на своё изменение и в уведомлении с другого устройства."""
+        chats = None
+        for outer in ("config", "settings"):
+            inner = payload.get(outer)
+            if isinstance(inner, dict) and isinstance(inner.get("chats"), dict):
+                chats = inner["chats"]
+                break
+        if chats is None and isinstance(payload.get("chats"), dict):
+            chats = payload["chats"]
+        if not chats:
+            return
+        fresh = 0
+        for chat_id, settings in chats.items():
+            if not isinstance(settings, dict):
+                continue
+            try:
+                self._chat_config.setdefault(int(chat_id), {}).update(settings)
+            except (TypeError, ValueError):
+                continue
+            fresh += 1
+        if fresh:
+            log.debug("MAX: настроек по чатам в кадре: %d, например %r",
+                      fresh, next(iter(chats.values()), None))
+
     def is_muted(self, chat_id: int) -> bool:
-        """«Не беспокоить» у чата — по сырому описанию от сервера."""
-        raw = self._raw_chats.get(int(chat_id))
-        if not raw:
+        """«Не беспокоить» у чата: -1 — навсегда, иначе срок в миллисекундах."""
+        until = self._chat_config.get(int(chat_id), {}).get(MUTE_KEY)
+        if not isinstance(until, (int, float)) or until == 0:
             return False
-        now_ms = int(time.time() * 1000)
-        places = [raw] + [raw[k] for k in ("settings", "options", "notifications")
-                          if isinstance(raw.get(k), dict)]
-        for place in places:
-            for key in MUTE_UNTIL_KEYS:
-                until = place.get(key)
-                if isinstance(until, (int, float)) and until != 0:
-                    return until < 0 or until > now_ms
-            for key in MUTE_FLAG_KEYS:
-                if isinstance(place.get(key), bool):
-                    return place[key]
-            if isinstance(place.get("notifications"), bool):
-                return not place["notifications"]
-        return False
+        return until < 0 or until > int(time.time() * 1000)
 
     def _on_started(self) -> None:
         me = _attr(self.client, "me", None)
@@ -621,8 +642,19 @@ class MaxSide:
         return None                        # PyMax этого не умеет
 
     async def set_muted(self, peer_id: int, muted: bool) -> bool:
-        log.info("MAX: заглушение чатов через мост не поддерживается")
-        return False
+        """Заглушает чат в MAX или возвращает ему голос — той же настройкой
+        профиля, которой это делает приложение."""
+        chat_id = from_peer(peer_id)
+        until = MUTE_FOREVER if muted else 0
+        payload = {"settings": {"chats": {str(chat_id): {MUTE_KEY: until}}}}
+        try:
+            await self.client._app.invoke(OP_CONFIG, payload)
+        except Exception:
+            log.exception("MAX: не удалось изменить уведомления чата %s", chat_id)
+            return False
+        self._chat_config.setdefault(chat_id, {})[MUTE_KEY] = until
+        log.debug("MAX: уведомления чата %s %s", chat_id, "выключены" if muted else "включены")
+        return True
 
     async def delete_chat(self, peer_id: int, revoke: bool = False) -> bool:
         chat_id = from_peer(peer_id)

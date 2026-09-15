@@ -73,6 +73,8 @@ class FakeMax:
         }
         self.sent: list[tuple[int, str]] = []
         self.fetched: list = []
+        self.invoked: list = []
+        self._app = self                      # client._app.invoke — как у PyMax
         self.read: list[tuple[int, int]] = []
         self.handlers: dict[str, object] = {}
         self.next_id = 100
@@ -99,12 +101,10 @@ class FakeMax:
         await self.handlers["raw"](NS(opcode=19, cmd=1, seq=1, payload={
             "presence": {str(MOM): {"seen": int(time.time() * 1000) - 3_600_000, "status": 1},
                          str(BOSS): {"seen": 0, "status": 1}}}), self)
-        # Список чатов как прислал сервер: у группы «не беспокоить» до 2099 года.
-        await self.handlers["raw"](NS(opcode=53, cmd=1, seq=2, payload={
-            "chats": [{"id": GROUP_ID, "type": "CHAT",
-                       "settings": {"dontDisturbUntil": 4_000_000_000_000}},
-                      {"id": DIALOG_ID, "type": "DIALOG", "settings": {"dontDisturbUntil": 0}}]}),
-            self)
+        # Настройки профиля по чатам в ответе на вход: группа заглушена навсегда.
+        await self.handlers["raw"](NS(opcode=19, cmd=1, seq=2, payload={
+            "config": {"hash": "x", "chats": {str(GROUP_ID): {"dontDisturbUntil": -1, "favIndex": 0},
+                                              str(DIALOG_ID): {"dontDisturbUntil": 0}}}}), self)
         await self.handlers["start"](self)
         await asyncio.Event().wait()          # живём, пока не отменят
 
@@ -134,6 +134,10 @@ class FakeMax:
         self.sent.append((chat_id, text))
         self.next_id += 1
         return message(self.next_id, chat_id, ME, text, NOW_MS + self.next_id * 1000)
+
+    async def invoke(self, opcode, payload, **kw):
+        self.invoked.append((opcode, payload))
+        return NS(opcode=opcode, payload={"hash": "y"})
 
     async def read_message(self, message_id, chat_id):
         self.read.append((chat_id, message_id))
@@ -204,7 +208,7 @@ async def run_side() -> None:
     aunt = dialogs[3]
     assert aunt.peer_id == to_peer(ME ^ AUNT) and aunt.kind == "user"
     assert await side.title_for(aunt.peer_id) == ("Тётя Валя", "user")
-    assert (await side.chat_info(aunt.peer_id))["kind"] == "Личный чат (MAX)"
+    assert (await side.chat_info(aunt.peer_id))["kind"] == "Личный чат"
     assert await side.history(aunt.peer_id, 10, None, 50) == []
     await side.send(aunt.peer_id, "привет, тётя")
     assert fake.sent[-1] == (ME ^ AUNT, "привет, тётя")
@@ -265,8 +269,20 @@ async def run_side() -> None:
     assert info["title"] == "Мама Петровна" and info["phone"] == "+79990001122"
     assert await side.title_for(to_peer(DIALOG_ID)) == ("Мама Петровна", "user")
 
-    # Заглушение не поддерживается — честный отказ, а не исключение.
-    assert await side.set_muted(to_peer(GROUP_ID), True) is False
+    # Заглушение: настройка профиля опкодом CONFIG, -1 — навсегда, 0 — снять.
+    assert await side.set_muted(to_peer(DIALOG_ID), True) is True
+    assert fake.invoked[-1] == (22, {"settings": {"chats": {str(DIALOG_ID): {"dontDisturbUntil": -1}}}})
+    assert side.is_muted(DIALOG_ID)
+    assert await side.set_muted(to_peer(DIALOG_ID), False) is True
+    assert fake.invoked[-1][1]["settings"]["chats"][str(DIALOG_ID)]["dontDisturbUntil"] == 0
+    assert not side.is_muted(DIALOG_ID)
+    # Заглушили на десктопе — уведомление с настройкой, срок истёк — не заглушён.
+    await fake.handlers["raw"](NS(opcode=134, cmd=0, seq=0, payload={
+        "settings": {"chats": {str(DIALOG_ID): {"dontDisturbUntil": 1}}}}), fake)
+    assert not side.is_muted(DIALOG_ID), "истёкший срок — уже не заглушён"
+    await fake.handlers["raw"](NS(opcode=134, cmd=0, seq=0, payload={
+        "settings": {"chats": {str(DIALOG_ID): {"dontDisturbUntil": int(time.time() * 1000) + 3_600_000}}}}), fake)
+    assert side.is_muted(DIALOG_ID), "срок в будущем — заглушён"
 
     await side.stop()
     print("  сторона MAX: ок (список, сообщения, отправка, события, история, карточка)")
