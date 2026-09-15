@@ -579,8 +579,8 @@ class MaxSide:
         kind = self._kind(chat)
         info = {
             "title": await self._chat_title(chat, kind),
-            "kind": {"user": "Личный чат (MAX)", "chat": "Группа (MAX)",
-                     "channel": "Канал (MAX)"}.get(kind, "Чат (MAX)"),
+            "kind": {"user": "Личный чат", "chat": "Группа",
+                     "channel": "Канал"}.get(kind, "Чат"),
             "username": "", "phone": "", "members": "",
             "about": (_attr(chat, "description", "") or "").strip(),
         }

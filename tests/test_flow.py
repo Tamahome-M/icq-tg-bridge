@@ -562,7 +562,7 @@ async def run_contact_info() -> None:
         return {"title": "Новости дня", "kind": "Канал", "username": "@news",
                 "phone": "", "members": "участников: 1234",
                 "about": "Всё самое важное", "bday": (15, 3, 1985),
-                "marks": "Избранный, Заглушенный"}
+                "marks": "Избранный, Заглушенный", "network": "Telegram"}
 
     server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
                          None, chat_info)
@@ -583,7 +583,7 @@ async def run_contact_info() -> None:
     assert info["city"] == "участников: 1234", info
     assert info["about"] == "Всё самое важное", info
     assert info["homepage"] == "t.me/news", info
-    assert info["company"] == "Telegram", info
+    assert info["company"] == "Telegram", "организация — сеть, откуда чат"
     assert info["bday"] == "15.3.1985", info
     assert info["position"] == "Избранный, Заглушенный", \
         f"пометки чата должны приехать в «Должность», пришло {info.get('position')!r}"

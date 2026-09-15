@@ -739,7 +739,7 @@ class Session:
             empty * 5                             # город, область, телефон, факс, адрес
             + empty                               # индекс
             + struct.pack("<H", 0)                # код страны
-            + blocks.asciiz("Telegram", enc)      # организация
+            + blocks.asciiz(info.get("network", ""), enc)   # организация: сеть чата
             + blocks.asciiz(info.get("kind", ""), enc)   # отдел
             + blocks.asciiz(info.get("marks", ""), enc)  # должность: пометки чата
         )
