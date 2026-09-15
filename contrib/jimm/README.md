@@ -5,7 +5,8 @@
 JDK 8, Ant, ProGuard и заглушки MIDP скачиваются в рабочий каталог.
 
 ```sh
-contrib/jimm/build.sh ~/jimm-build     # результат в ~/jimm-build/out/
+contrib/jimm/build.sh ~/jimm-build              # результат в ~/jimm-build/out/
+contrib/jimm/build.sh ~/jimm-build "Jimm test"  # под другим именем — встанет рядом с обычным
 ```
 
 Чем отличается от готовых сборок с jimm.org:

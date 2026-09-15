@@ -11,11 +11,15 @@
 # Ничего в систему не ставится: JDK 8, Ant, ProGuard и заглушки MIDP
 # скачиваются в рабочий каталог. Нужны только curl и tar.
 #
-#   ./build.sh [рабочий каталог]      # результат: <каталог>/out/Jimm.jar, Jimm.jad
+#   ./build.sh [рабочий каталог] [имя]   # результат: <каталог>/out/Jimm.jar, Jimm.jad
+#
+# Имя — это MIDlet-Name, по нему телефон различает установленные программы:
+# «Jimm test» встанет рядом с обычным Jimm, со своими настройками и данными.
 
 set -eu
 
 WORK=${1:-$PWD/jimm-build}
+NAME=${2:-Jimm}
 HERE=$(cd "$(dirname "$0")" && pwd)
 MAVEN=https://repo1.maven.org/maven2
 mkdir -p "$WORK" && cd "$WORK"
@@ -69,7 +73,9 @@ sed -i "s|^MIDP2/midp=.*|MIDP2/midp=$WORK/wtk|; s|^MOTOROLA/midp=.*|MOTOROLA/mid
         s|^proguard=.*|proguard=$WORK/proguard|; s|^target=.*|target=MOTOROLA|; \
         s|^modules=.*|modules=FILES,SMILES_STD,AVATARS|; s|^lang=.*|lang=RU|; \
         s|^version/jimm=.*|version/jimm=0.6.$(date +%y%m%d)-bridge|; s|^version/java=.*|version/java=1.0|; \
-        s|^midlet/name=.*|midlet/name=Jimm|" build.properties
+        s|^midlet/name=.*|midlet/name=$NAME|" build.properties
+# Имя в меню телефона (MIDlet-1) в шаблоне манифеста прибито — пусть совпадает.
+sed -i 's|^MIDlet-1: Jimm,|MIDlet-1: ###MIDLET-NAME###,|' res/MANIFEST.MF
 
 say "Сборка"
 ant -q clean dist 2>&1 | grep -v '\[langs\]' || true
