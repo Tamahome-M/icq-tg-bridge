@@ -94,6 +94,10 @@ async def main() -> int:
         logging.getLogger("bridge").warning(
             "файл %s доступен другим пользователям — сделайте chmod 600", path)
 
+    from bridge.config import describe
+    for line in describe(cfg):
+        logging.getLogger("bridge").info("настройки: %s", line)
+
     bridge = Bridge(cfg)
 
     if len(sys.argv) > 1 and sys.argv[1] == "login":

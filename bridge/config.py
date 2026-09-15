@@ -264,5 +264,51 @@ def warn_about_permissions(paths: list[str]) -> list[str]:
     return loose
 
 
+def describe(cfg: "Config") -> list[str]:
+    """Что включено, а что нет — одной строкой на функцию, для журнала при
+    старте. Иначе по журналу не понять, почему чего-то не происходит:
+    выключено в настройках или не сработало."""
+    def onoff(flag: bool, on: str = "включено", off: str = "выключено") -> str:
+        return on if flag else off
+
+    lines = [
+        f"Telegram: сессия {cfg.tg_session}, группы по "
+        + ("папкам" if cfg.grouping == "folders" else "типам чатов")
+        + f", помечать прочитанным — {onoff(cfg.mark_read, 'да', 'нет')}, "
+        + f"свои сообщения с других устройств — {onoff(cfg.mirror_outgoing, 'показывать', 'нет')}",
+        "MAX: " + (f"включён, телефон {cfg.max_phone}, группа «{cfg.max_group}», "
+                   f"контакты без переписки — {onoff(cfg.max_contacts, 'да', 'нет')}, "
+                   f"roster_limit {cfg.max_roster_limit or 'без ограничения'}"
+                   if cfg.max_enabled else "выключен ([max] enabled = false)"),
+        f"контакт-лист: roster_limit {cfg.roster_limit or 'без ограничения'}, "
+        + (f"фоновые группы: {', '.join(cfg.background_groups)} (давность {cfg.background_hours} ч)"
+           if cfg.background_groups else "фоновых групп нет")
+        + (f", избранные по названию: {', '.join(cfg.favourites)}" if cfg.favourites else ""),
+        f"аватарки: {onoff(cfg.avatars, 'включены', 'выключены')}"
+        + (f" ({cfg.avatar_size}×{cfg.avatar_size}, до {cfg.avatar_max_kb} КБ)" if cfg.avatars else
+           " ([bridge] avatars = false)"),
+        f"подтверждения доставки: {onoff(cfg.delivery_ack, 'канал 2, галочка по ' + cfg.ack_on, 'канал 1, без галочек')}"
+        + f"; догрузка при старте — {onoff(cfg.catch_up, 'да', 'нет')}"
+        + f"; удаление чатов с телефона — {onoff(cfg.allow_delete, 'да', 'нет')}",
+        "фотографии: " + (f"раздача на {cfg.photos_host}:{cfg.photos_port}"
+                          + (f", наружу как {cfg.photos_public_url}" if cfg.photos_public_url else "")
+                          + (", с паролем" if cfg.photos_password else ", без пароля")
+                          if cfg.photos_enabled else "выключены ([photos] enabled = false)"),
+        "страница !render: " + (f"включена, {cfg.render_messages} сообщений, ffmpeg «{cfg.render_ffmpeg}», "
+                                f"видео {cfg.render_video_codec} {cfg.render_video_kbps} кбит/с"
+                                if cfg.render_enabled and cfg.photos_enabled else
+                                "выключена" + ("" if cfg.render_enabled else " ([render] enabled = false)")),
+        "загрузки: " + (f"каталог {cfg.downloads_dir}" + (", с паролем" if cfg.downloads_protected else "")
+                        if cfg.downloads_dir else "раздела нет ([downloads] dir пуст)"),
+        "контакт «Claude»: " + (f"включён, команда «{cfg.assistant_command}», инструменты "
+                                f"{cfg.assistant_tools or 'никаких'}" if cfg.assistant_enabled
+                                else "выключен ([assistant] enabled = false)"),
+        f"журнал: {cfg.log_level}, telethon {cfg.log_telethon_level}, pymax {cfg.log_max_level}"
+        + (f", файл {cfg.log_file}" if cfg.log_file else ", только консоль")
+        + (", отсеянные на INFO" if cfg.log_filtered else ", отсеянные на DEBUG"),
+    ]
+    return lines
+
+
 def _resolve(base: str, path: str) -> str:
     return path if os.path.isabs(path) else os.path.join(base, path)
