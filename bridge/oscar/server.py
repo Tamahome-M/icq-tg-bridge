@@ -819,12 +819,23 @@ class Session:
         self.offline_ids.clear()
 
     async def announce_buddies(self) -> None:
-        """Сообщает клиенту, кто из контактов в сети и с каким статусом."""
+        """Сообщает клиенту, кто из контактов в сети и с каким статусом.
+
+        Следом каждому контакту уходит «закончил набор» (04/14, флаг 0).
+        На экране от него ничего нет, но Jimm по любому уведомлению о наборе
+        помечает контакт умеющим их принимать (ContactList.BeginTyping) — а
+        свои «печатает» он шлёт только таким. Способности из TLV 0x0D
+        сборка «light» не разбирает вовсе (разбор лежит под
+        modules_FILES), так что без этого телефон молчал бы, пока
+        собеседник не напечатает первым.
+        """
         sent = 0
         for contact in self.server.roster():
             if self.closed:
                 return
             await self.notify_status(contact.uin, self.server.status_of(contact.uin))
+            await self.send_snac(C.ICBM, C.ICBM_CLIENT_EVENT,
+                                 blocks.typing_packet(contact.uin, False))
             sent += 1
             if sent % BUDDY_BURST == 0:
                 await asyncio.sleep(0.2)
