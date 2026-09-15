@@ -64,8 +64,91 @@ async def run_detection() -> None:
     print("  опознание: ок (Jimm — обычная сессия, TeleMotoMax 0.1 — расширенная)")
 
 
+def small_jpeg() -> bytes:
+    """Снимок «из Telegram»: большой, чтобы мосту было что ужимать."""
+    import io
+    from PIL import Image
+    out = io.BytesIO()
+    img = Image.new("RGB", (800, 600))
+    for x in range(0, 800, 4):
+        for y in range(0, 600, 4):
+            img.putpixel((x, y), (x % 256, y % 256, 128))
+    img.save(out, format="JPEG", quality=90)
+    return out.getvalue()
+
+
+async def run_photos() -> None:
+    """Снимок из сообщения: обычному Jimm — только пометка, TeleMotoMax —
+    токен, по которому он забирает картинку через службу 0x10."""
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 1
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    cfg.avatars = True                      # служба 0x10 включается вместе с аватарками
+    cfg.tmm_photo_width, cfg.tmm_photo_height, cfg.tmm_photo_max_kb = 176, 176, 12
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+    asked: list[tuple[int, str]] = []
+
+    async def on_outgoing(*_):
+        return 1
+
+    async def fetch_attachment(target: int, attach: str):
+        asked.append((target, attach))
+        from bridge import photos
+        got = photos.shrink(small_jpeg(), cfg.tmm_photo_width, cfg.tmm_photo_height,
+                            cfg.tmm_photo_max_kb * 1024)
+        return got[0] if got else None
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
+                         fetch_attachment=fetch_attachment)
+    await server.start()
+
+    # Обычный Jimm: сообщение с фото приходит текстом, TLV вложения нет.
+    client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+    await client.connect()
+    await client.bos(await client.login_md5_jimm())
+    await client.drain_for(0.3)
+    await server.deliver(uin, "[фото] закат", attach="photo:4242")
+    await client.drain_for(0.5)
+    assert client.received and "[фото] закат" in client.received[-1][1], client.received
+    assert client.attachments == [], "обычному Jimm вложение слать нельзя"
+    await client.close()
+    await asyncio.sleep(0.2)
+
+    # TeleMotoMax: тот же текст плюс токен; по токену — снимок.
+    client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+    client.tmm_version = (0, 1)
+    await client.connect()
+    await client.bos(await client.login_md5_jimm())
+    await client.drain_for(0.3)
+    await server.deliver(uin, "[фото] закат", attach="photo:4242")
+    await client.drain_for(0.5)
+    assert client.attachments and client.attachments[-1][0] == uin, client.attachments
+    token = client.attachments[-1][1]
+    assert len(token) == 16
+    assert asked == [], "снимок не должен тянуться заранее"
+
+    got = await client.request_photo(uin, token)
+    assert asked == [(uin, "photo:4242")], asked
+    assert got["image"][:3] == b"\xff\xd8\xff", "ждали JPEG"
+    assert len(got["image"]) <= 12 * 1024, len(got["image"])
+    from PIL import Image
+    import io
+    with Image.open(io.BytesIO(got["image"])) as img:
+        assert max(img.size) <= 176, img.size
+
+    # Чужой или протухший токен — отказ службы, а не тишина.
+    await client.request_service(C.SSBI)
+    redirect = await client.expect(C.OSERVICE, C.SERVICE_REDIRECT)
+    assert redirect.data
+    await client.close()
+    server._server.close()
+    print("  снимки: ок (Jimm — без вложения, TeleMotoMax — токен и картинка по запросу)")
+
+
 async def main() -> None:
     await run_detection()
+    await run_photos()
     print("TELEMOTOMAX ПРОВЕРЕН")
 
 

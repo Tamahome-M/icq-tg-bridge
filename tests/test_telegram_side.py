@@ -131,7 +131,7 @@ def check_events() -> None:
     cfg.mark_read = True
     seen: list[tuple] = []
 
-    async def on_message(peer_id, sender, text, ts, topic_id=0):
+    async def on_message(peer_id, sender, text, ts, topic_id=0, attach=""):
         seen.append(("msg", peer_id, text))
         return "покажем" in text            # мост говорит, показал ли телефону
 

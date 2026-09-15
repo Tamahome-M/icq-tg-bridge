@@ -13,6 +13,7 @@ from . import avatars as avatar_lib
 from .assistant import ASSISTANT_PEER, Assistant, AssistantError
 from . import emoji, history, policy
 from .access import AccessControl
+from . import photos
 from .photos import PhotoStore
 from .render import Item, RenderStore, Transcoder
 from .webserver import PhotoServer
@@ -73,7 +74,7 @@ class Bridge:
                                  self.roster, self.status_of, self.chat_info,
                                  self.search_chats, self.verdict_for,
                                  self.on_phone_remove, self.on_phone_privacy,
-                                 self.avatar, self.icon_hash)
+                                 self.avatar, self.icon_hash, self.fetch_attachment)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
@@ -339,6 +340,26 @@ class Bridge:
             info.setdefault("network", self.network_of(contact.peer_id))
         return info
 
+    async def fetch_attachment(self, uin: int, attach: str) -> bytes | None:
+        """Снимок из сообщения для TeleMotoMax — ужатый под экран телефона.
+
+        Достаётся только когда клиент за ним пришёл: пометка [фото] в тексте
+        ничего не стоит, а сам снимок — трафик на GPRS."""
+        contact = self.storage.contact_by_uin(uin)
+        kind, _, ident = attach.partition(":")
+        if contact is None or kind != "photo" or not ident.isdigit():
+            return None
+        raw = await self.side_for(contact.peer_id).photo_bytes(contact.peer_id, int(ident))
+        if not raw:
+            return None
+        got = photos.shrink(raw, self.cfg.tmm_photo_width, self.cfg.tmm_photo_height,
+                            self.cfg.tmm_photo_max_kb * 1024)
+        if got is None:
+            return None
+        data, width, height = got
+        log.info("снимок для «%s» ужат до %d×%d, %d байт", contact.title, width, height, len(data))
+        return data
+
     def icon_hash(self, uin: int) -> bytes | None:
         """Примета аватарки для блока сведений о контакте."""
         return self.avatars.hash_of(uin) if self.avatars else None
@@ -445,7 +466,7 @@ class Bridge:
     # --- маршрутизация --------------------------------------------------
 
     async def on_telegram_message(self, peer_id: int, sender: str, text: str,
-                                  ts: int = 0, topic_id: int = 0) -> bool:
+                                  ts: int = 0, topic_id: int = 0, attach: str = "") -> bool:
         """Возвращает True, если сообщение ушло телефону (или встало в очередь).
 
         По этому Telegram-сторона решает, помечать ли его прочитанным:
@@ -509,7 +530,7 @@ class Bridge:
         log.info("из %s: %s → в очередь телефону, %d симв.%s", net, name, len(text),
                  "" if self.oscar.online else " (телефон не в сети)")
         log.debug("из %s: %s: %s", net, name, text[:300])
-        await self.oscar.deliver(uin, text, ts=ts)
+        await self.oscar.deliver(uin, text, ts=ts, attach=attach)
         # Отмечаем даже то, что легло в очередь: оно уже сохранено в базе,
         # и при следующем запуске догружать его повторно не нужно.
         if ts:

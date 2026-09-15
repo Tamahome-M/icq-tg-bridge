@@ -30,6 +30,8 @@ BUDDY_BURST = 20                 # по столько уведомлений о
 SENDER_IDLE_POLL = 10            # как часто отправитель просыпается сам, секунды
 SENT_MEMORY = 200                # столько отправленных помним ради галочек
 AWAITING_LIMIT = 500             # потолок неподтверждённых сообщений в памяти
+ATTACH_TTL = 24 * 3600           # сколько живёт токен вложения для TeleMotoMax
+ATTACH_LIMIT = 500               # и сколько их держим
 ACK_GRACE = 600                  # столько ждём подтверждения, потом шлём заново
 STALE_SECONDS = 60               # с какого возраста сообщению ставится метка времени
 # Сколько ждать после «клиент готов» запроса офлайн-сообщений, прежде чем
@@ -815,9 +817,13 @@ class Session:
         """
         rows = self.server.sift_pending()
         count = 0
-        for row_id, sender, text, ts, _url in rows:
+        for row_id, sender, text, ts, _url, attach in rows:
             if self.closed:
                 return
+            if attach and self.extended:
+                # Офлайн-сообщение вложение не несёт — такое пусть уйдёт
+                # обычным потоком после пачки, со всеми расширениями.
+                continue
             for part in _split_text(text, self.server.max_message_chars):
                 await self.send_icq_reply(uin, C.ICQ_OFFLINE_MSG, seq,
                                           blocks.offline_message(sender, ts, part))
@@ -931,7 +937,7 @@ class Session:
                              + pstr8(str(uin).encode("ascii")))
 
     async def deliver(self, uin: int, text: str, wait_ack: bool = False,
-                      row_id: int | None = None, url: str = "") -> bool:
+                      row_id: int | None = None, url: str = "", attach: str = "") -> bool:
         """Отправляет текст телефону. True — кадры ушли в сокет.
 
         В режиме подтверждений сообщение уходит расширенным форматом (канал 2),
@@ -948,20 +954,32 @@ class Session:
                  2 if wait_ack else 1, ", со ссылкой" if url else "",
                  "ждём подтверждения" if wait_ack else "без подтверждения")
         log.debug("телефону ← %s: %s", self.server.name_of(uin), text[:300])
+        # Вложение — только расширенному клиенту: TLV после тела сообщения с
+        # токеном, по которому он потом попросит снимок. Обычному Jimm
+        # ничего не добавляем — он получит пометку [фото] в тексте, как и было.
+        extra = b""
+        if attach and self.extended:
+            token = self.server.register_attachment(uin, attach)
+            if token:
+                extra = tlv(C.TLV_TMM_ATTACH, bytes([C.ATTACH_PHOTO]) + token)
+                log.info("телефону ← %s: вложение %s, токен %s",
+                         self.server.name_of(uin), attach, token[:4].hex())
         for index, part in enumerate(parts):
             cookie = blocks.new_cookie()
             sender = blocks.user_info(str(uin), signon_time=self.signon_time)
+            tail = extra if index == len(parts) - 1 else b""
 
             if wait_ack:
                 # Ссылку отдаём только с последней частью: клиент показывает
                 # её отдельной строкой, и двоить её ни к чему.
                 part_url = url if index == len(parts) - 1 else ""
                 body = (cookie + struct.pack(">H", 2) + sender
-                        + tlv(0x0005, blocks.channel2_message(cookie, part, part_url)))
+                        + tlv(0x0005, blocks.channel2_message(cookie, part, part_url))
+                        + tail)
             else:
                 body = (cookie + struct.pack(">H", 1) + sender
                         + tlv(0x0002, blocks.message_fragments(part))
-                        + tlv(0x0006, b""))
+                        + tlv(0x0006, b"") + tail)
 
             # Запись считаем доставленной по подтверждению последней части.
             if wait_ack and row_id is not None and index == len(parts) - 1:
@@ -1001,7 +1019,9 @@ class Session:
         Остальные сервисы отвечаем отказом, иначе клиент будет ждать впустую.
         """
         family = struct.unpack(">H", s.data[:2])[0] if len(s.data) >= 2 else 0
-        if family != C.SSBI or not self.server.avatars_enabled:
+        # Служба 0x10 нужна и без аватарок, если подключился TeleMotoMax:
+        # по ней он забирает снимки из сообщений.
+        if family != C.SSBI or not (self.server.avatars_enabled or self.extended):
             log.debug("запрошен сервис 0x%04x — отвечаю отказом", family)
             await self.send_error(C.OSERVICE, 0x0001, s.request_id)
             return
@@ -1017,13 +1037,29 @@ class Session:
                              request_id=s.request_id)
 
     async def on_icon_request(self, s: Snac) -> None:
-        """SNAC 10/06 — клиент просит аватарку контакта."""
+        """SNAC 10/06 — клиент просит аватарку контакта или, по токену,
+        снимок из сообщения (расширение TeleMotoMax, тип приметы 0x0080)."""
         r = Reader(s.data)
         try:
             target = r.pstr8().decode("latin-1")
+            r.u8()                                   # число примет, у Jimm всегда одна
+            bart_type = r.u16()
+            r.u8()                                   # флаги
+            token = r.read(r.u8())
         except Exception:
-            return
+            bart_type, token = C.BART_ICON, b""
         if not target.isdigit():
+            return
+        if bart_type == C.BART_PHOTO:
+            got = await self.server.attachment(token)
+            if got is None:
+                log.info("снимок по токену %s не найден или не скачался", token[:4].hex())
+                await self.send_error(C.SSBI, 0x0001, s.request_id)
+                return
+            log.info("снимок для %s отдан: %d байт", self.server.name_of(target), len(got))
+            await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
+                                 blocks.icon_reply(int(target), token, got, C.BART_PHOTO),
+                                 request_id=s.request_id)
             return
         got = await self.server.avatar(int(target))
         if got is None:
@@ -1113,7 +1149,8 @@ class OscarServer:
                  on_remove: Callable[[int, bool], Awaitable[None]] | None = None,
                  on_privacy: Callable[[int, bool], Awaitable[None]] | None = None,
                  avatar: Callable[[int], Awaitable[tuple[bytes, bytes] | None]] | None = None,
-                 icon_hash: Callable[[int], bytes | None] | None = None):
+                 icon_hash: Callable[[int], bytes | None] | None = None,
+                 fetch_attachment: Callable[[int, str], Awaitable[bytes | None]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -1131,6 +1168,10 @@ class OscarServer:
         self.avatar = (avatar or self._no_avatar) if self.avatars_enabled else self._no_avatar
         self.icon_hash = ((icon_hash or (lambda uin: None))
                           if self.avatars_enabled else (lambda uin: None))
+        # Снимки для расширенного клиента: токен → (uin, вложение), а сам
+        # снимок достаёт мост, когда клиент за ним пришёл.
+        self.fetch_attachment = fetch_attachment
+        self.attachments: dict[bytes, tuple[int, str, float]] = {}
         self.uin = str(cfg.oscar_uin)
         self.password = cfg.oscar_password
         self.ssi_encoding = cfg.ssi_encoding
@@ -1207,6 +1248,36 @@ class OscarServer:
             await session.run()
         finally:
             self.access.free_slot()
+
+    def register_attachment(self, uin: int, attach: str) -> bytes | None:
+        """Токен для вложения: 16 случайных байт, живут ATTACH_TTL."""
+        if self.fetch_attachment is None:
+            return None
+        now = time.time()
+        if len(self.attachments) > ATTACH_LIMIT:
+            for old in [t for t, (_, _, made) in self.attachments.items()
+                        if now - made > ATTACH_TTL]:
+                self.attachments.pop(old, None)
+            while len(self.attachments) > ATTACH_LIMIT:
+                self.attachments.pop(next(iter(self.attachments)))
+        token = os.urandom(16)
+        self.attachments[token] = (uin, attach, now)
+        return token
+
+    async def attachment(self, token: bytes) -> bytes | None:
+        """Снимок по токену — готовый под экран телефона, или None."""
+        got = self.attachments.get(token)
+        if got is None or self.fetch_attachment is None:
+            return None
+        uin, attach, made = got
+        if time.time() - made > ATTACH_TTL:
+            self.attachments.pop(token, None)
+            return None
+        try:
+            return await self.fetch_attachment(uin, attach)
+        except Exception:
+            log.exception("снимок %s для %s не достался", attach, self.name_of(uin))
+            return None
 
     def new_cookie(self, kind: str = "bos", client: str = "") -> bytes:
         cookie = os.urandom(16)
@@ -1291,14 +1362,14 @@ class OscarServer:
     # --- доставка -------------------------------------------------------
 
     async def push(self, uin: int, text: str, row_id: int | None = None,
-                   url: str = "") -> bool:
+                   url: str = "", attach: str = "") -> bool:
         """Отправляет одну запись очереди телефону."""
         if not self.online:
             return False
 
         with_ack = self.use_ack and self.ack_works is not False
         if not await self.session.deliver(uin, text, wait_ack=with_ack, row_id=row_id,
-                                          url=url):
+                                          url=url, attach=attach):
             return False
 
         if row_id is not None:
@@ -1312,7 +1383,7 @@ class OscarServer:
         return True
 
     async def deliver(self, uin: int, text: str, forced: bool = False,
-                      url: str = "", ts: int = 0) -> bool:
+                      url: str = "", ts: int = 0, attach: str = "") -> bool:
         """Принимает сообщение к доставке.
 
         Пишем в очередь и будим отправителя. Ждать подтверждения прямо здесь
@@ -1321,7 +1392,7 @@ class OscarServer:
         forced — ответ на команду с телефона: доставляется при любом статусе,
         ведь его запросили руками.
         """
-        self.storage.queue(uin, text, self.cfg.offline_queue_per_chat, forced, url, ts)
+        self.storage.queue(uin, text, self.cfg.offline_queue_per_chat, forced, url, ts, attach)
         self.wake_sender()
         return True
 
@@ -1468,7 +1539,7 @@ class OscarServer:
                         stale, ACK_GRACE)
             self.wake_sender()
 
-    def sift_pending(self) -> list[tuple[int, int, str, int, str]]:
+    def sift_pending(self) -> list[tuple[int, int, str, int, str, str]]:
         """Разбирает очередь по текущему статусу.
 
         Возвращает то, что можно слать. Статус мог смениться, пока сообщения
@@ -1476,9 +1547,9 @@ class OscarServer:
         выбрасывается. Ответы на команды идут мимо фильтра — их запросили
         с телефона.
         """
-        keep: list[tuple[int, int, str, int, str]] = []
+        keep: list[tuple[int, int, str, int, str, str]] = []
         skipped = 0
-        for row_id, uin, text, ts, forced, url in self.storage.peek_pending():
+        for row_id, uin, text, ts, forced, url, attach in self.storage.peek_pending():
             verdict = "send" if forced else self.verdict_for(uin)
             if verdict != "send":
                 self.storage.drop_pending(row_id)
@@ -1486,7 +1557,7 @@ class OscarServer:
                     self.storage.hold(uin, text, ts, self.cfg.offline_queue_per_chat)
                 skipped += 1
                 continue
-            keep.append((row_id, uin, text, ts, url))
+            keep.append((row_id, uin, text, ts, url, attach))
         if skipped:
             log.info("по текущему статусу пропущено %d накопленных сообщений", skipped)
         return keep
@@ -1500,14 +1571,14 @@ class OscarServer:
         if not rows:
             return
         sent = 0
-        for row_id, uin, text, ts, url in rows:
+        for row_id, uin, text, ts, url, attach in rows:
             if not self.online:
                 break
             # Метку времени получает только то, что успело полежать в очереди.
             if time.time() - ts > STALE_SECONDS:
                 stamp = time.strftime("%d.%m %H:%M", time.localtime(ts))
                 text = f"[{stamp}] {text}"
-            if not await self.push(uin, text, row_id, url):
+            if not await self.push(uin, text, row_id, url, attach):
                 break
             sent += 1
         if sent < len(rows):
