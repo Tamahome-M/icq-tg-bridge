@@ -73,6 +73,8 @@ if [ ! -d src/src ]; then
     patch -p1 -d src < "$HERE/avatar-offline.patch"
     say "Патч: вибрация «если не трогали 60 с»"
     patch -p1 -d src < "$HERE/idle-vibra.patch"
+    say "Патч: без звука и вибрации в открытом чате"
+    patch -p1 -d src < "$HERE/quiet-open-chat.patch"
 fi
 
 say "Настройки сборки"
