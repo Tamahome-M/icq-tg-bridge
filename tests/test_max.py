@@ -190,7 +190,7 @@ async def run_side() -> None:
     # Список чатов: одна группа, личный чат назван по собеседнику, свежие первыми.
     fake.chats_on_login = None
     dialogs = await side.dialogs()
-    assert [d.title for d in dialogs] == ["Работа", "Мама Петровна", "Избранное"], dialogs
+    assert [d.title for d in dialogs] == ["Работа", "Мама Петровна", "Я"], dialogs
     assert len(fake.fetched) >= 2, "список собирается страницами, пока сервер отдаёт новое"
     assert all(d.group_name == "MAX" for d in dialogs)
     assert [d.kind for d in dialogs] == ["chat", "user", "user"]
@@ -276,13 +276,13 @@ async def run_bridge() -> None:
 
     # Оба списка в одном контакт-листе; группы MAX — своя.
     titles = {c.title: c for c in bridge.roster()}
-    assert set(titles) == {"Папа", "Работа", "Мама Петровна", "Избранное"}, titles
+    assert set(titles) == {"Папа", "Работа", "Мама Петровна", "Я"}, titles
     assert titles["Мама Петровна"].group_name == "MAX" and titles["Папа"].group_name == "Личные"
     assert titles["Работа"].position < titles["Папа"].position, "чаты MAX идут перед Telegram"
     # У каждой сети своё ограничение: roster_limit Telegram не трогает MAX и наоборот.
     cfg.roster_limit = 1
     bridge._reload_roster()
-    assert {c.title for c in bridge.roster()} == {"Папа", "Работа", "Мама Петровна", "Избранное"}
+    assert {c.title for c in bridge.roster()} == {"Папа", "Работа", "Мама Петровна", "Я"}
     cfg.max_roster_limit = 1
     bridge._reload_roster()
     assert {c.title for c in bridge.roster()} == {"Папа", "Работа"}, "самый свежий чат MAX"
