@@ -1,2 +1,4 @@
 telethon>=1.36,<2
 pillow>=10
+# Сторона MAX (секция [max]); без неё мост работает только с Telegram.
+maxapi-python>=2.4

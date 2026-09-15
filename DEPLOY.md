@@ -123,6 +123,20 @@ sudo -u icqbridge chmod 600 tg.session
 Файл `tg.session` равнозначен полному доступу к аккаунту Telegram. Он должен
 принадлежать `icqbridge` и иметь права `600`.
 
+### Вход в MAX (если включён)
+
+Секция `[max]` в `config.toml` с `enabled = true` и `phone`, затем от
+пользователя моста:
+
+```bash
+cd /opt/icq-tg-bridge
+sudo -u icqbridge .venv/bin/python run.py login max
+sudo -u icqbridge chmod 600 max.session
+```
+
+Код придёт в SMS или в приложение MAX. Файл `max.session` — доступ к аккаунту,
+права `600`.
+
 ## 6. Автозапуск (OpenRC)
 
 ```bash

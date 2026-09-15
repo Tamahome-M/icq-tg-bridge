@@ -21,6 +21,7 @@ from .db import Contact, Storage
 from .oscar import const as C
 from .oscar.server import OscarServer
 from .tg.client import KIND_TITLES, TelegramSide
+from .max.client import MaxSide, is_max_peer
 
 log = logging.getLogger("bridge")
 
@@ -53,6 +54,20 @@ class Bridge:
         self.storage = Storage(cfg.db)
         self.telegram = TelegramSide(cfg, self.on_telegram_message, self.on_telegram_status,
                                      self.on_telegram_typing, self.on_telegram_read)
+        # Вторая сеть: чаты MAX живут в той же базе под своими номерами и
+        # ходят через те же обработчики — по номеру видно, чьё сообщение.
+        self.max: MaxSide | None = None
+        if cfg.max_enabled:
+            try:
+                import pymax  # noqa: F401
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Для MAX нужна библиотека maxapi-python: "
+                    ".venv/bin/python -m pip install -r requirements.txt") from exc
+            if not cfg.max_phone:
+                raise RuntimeError("Для MAX укажите phone в секции [max]")
+            self.max = MaxSide(cfg, self.on_telegram_message, self.on_telegram_status,
+                               self.on_telegram_typing, self.on_telegram_read)
         self.oscar = OscarServer(cfg, self.storage, self.on_phone_message,
                                  self.roster, self.status_of, self.chat_info,
                                  self.search_chats, self.verdict_for,
@@ -114,6 +129,21 @@ class Bridge:
 
     def roster(self) -> list[Contact]:
         return self._roster
+
+    def side_for(self, peer_id: int):
+        """Сеть, которой принадлежит чат: по номеру видно, MAX это или Telegram."""
+        if self.max is not None and is_max_peer(peer_id):
+            return self.max
+        return self.telegram
+
+    def network_of(self, peer_id: int) -> str:
+        return "MAX" if self.max is not None and is_max_peer(peer_id) else "Telegram"
+
+    def group_for(self, peer_id: int, kind: str) -> str:
+        """Группа для чата, впервые пришедшего сообщением или найденного поиском."""
+        if self.max is not None and is_max_peer(peer_id):
+            return self.cfg.max_group
+        return KIND_TITLES.get(kind, "Чаты")
 
     def _reload_roster(self) -> None:
         """Перечитывает контакт-лист из базы — всегда с roster_limit.
@@ -185,7 +215,10 @@ class Bridge:
             self._reload_roster()
             return found[:SEARCH_LIMIT]
 
-        for item in await self.telegram.search_chats(query, SEARCH_LIMIT):
+        items = await self.telegram.search_chats(query, SEARCH_LIMIT)
+        if self.max is not None:
+            items += await self.max.search_chats(query, SEARCH_LIMIT)
+        for item in items[:SEARCH_LIMIT]:
             known = self.storage.contact_by_peer(item["peer_id"])
             if known is not None:
                 # Чат уже есть — его группу, позицию и мьют трогать нельзя.
@@ -193,7 +226,7 @@ class Bridge:
             else:
                 uin = self.storage.uin_for_peer(
                     item["peer_id"], kind=item["kind"], title=item["title"],
-                    group_name=KIND_TITLES.get(item["kind"], "Чаты"), position=9999)
+                    group_name=self.group_for(item["peer_id"], item["kind"]), position=9999)
             found.append({"uin": uin, "title": item["title"],
                           "kind": KIND_TITLES.get(item["kind"], "Чат"),
                           "username": item["username"]})
@@ -269,7 +302,7 @@ class Bridge:
                     "members": "", "marks": "",
                     "about": ("Claude Code с этой машины. Пишите как обычно; "
                               "!reset — начать разговор заново.")}
-        info = await self.telegram.chat_info(contact.peer_id)
+        info = await self.side_for(contact.peer_id).chat_info(contact.peer_id)
         if info and self.cfg.emoji_to_text:
             info = {k: emoji.to_text(v) if isinstance(v, str) else v
                     for k, v in info.items()}
@@ -298,7 +331,7 @@ class Bridge:
         contact = self.storage.contact_by_uin(uin)
         if contact is None or self.avatars.hash_of(uin) is None:
             return None
-        raw = await self.telegram.avatar(contact.peer_id)
+        raw = await self.side_for(contact.peer_id).avatar(contact.peer_id)
         if raw is None:
             return None
         got = self.avatars.store(uin, raw)
@@ -308,6 +341,19 @@ class Bridge:
 
     async def refresh_roster(self) -> None:
         dialogs = await self.telegram.dialogs()
+        keep_max = False
+        if self.max is not None:
+            try:
+                extra = await self.max.dialogs()
+            except Exception:
+                log.exception("список чатов MAX не получен — оставляю прежний")
+                extra, keep_max = [], True
+            # Позиции продолжаем после Telegram: свежесть внутри MAX своя,
+            # а roster_limit пусть ставит их после чатов Telegram.
+            shift = len(dialogs)
+            for d in extra:
+                d.position += shift
+            dialogs += extra
         for d in dialogs:
             favourite = int(d.pinned or d.title.strip().lower() in self.cfg.favourites)
             uin = self.storage.uin_for_peer(d.peer_id, kind=d.kind, title=d.title,
@@ -319,6 +365,9 @@ class Bridge:
                 self.avatars.remember(uin, d.photo_id)
             self._statuses[uin] = STATUS_CODES.get(d.status, C.STATUS_ONLINE)
         present = [d.peer_id for d in dialogs]
+        if keep_max:
+            # MAX не ответил — его чаты не пропали, просто не проверены.
+            present += [c.peer_id for c in self.storage.contacts_all() if is_max_peer(c.peer_id)]
         if self.assistant is not None:
             # Контакт Claude — не из Telegram, но в списке наравне со всеми:
             # избранный, чтобы roster_limit его не вытеснил.
@@ -386,14 +435,14 @@ class Bridge:
                 self.storage.note_delivered(peer_id, ts, topic_id)
             return False
         if contact is None:
-            title, kind = await self.telegram.title_for(peer_id)
+            title, kind = await self.side_for(peer_id).title_for(peer_id)
             if topic_id:
                 # Новая тема форума: сам форум становится группой контактов.
                 group = title[:self.cfg.alias_max_chars]
                 title = f"Тема {topic_id}"
                 kind = "chat"
             else:
-                group = KIND_TITLES.get(kind, "Чаты")
+                group = self.group_for(peer_id, kind)
             uin = self.storage.uin_for_peer(
                 peer_id, kind=kind, title=title, group_name=group,
                 position=9999, topic_id=topic_id)
@@ -413,10 +462,11 @@ class Bridge:
         await self.stop_typing(uin)
 
         # Статус в Jimm решает, что доставлять, а что придержать или пропустить.
+        net = self.network_of(peer_id)
         if contact is not None and not policy.allows(self.mode, contact.kind,
                                                      bool(contact.favourite),
                                                      bool(contact.muted)):
-            why = (f"заглушён в Telegram" if contact.muted
+            why = (f"заглушён в {net}" if contact.muted
                    else f"режим «{policy.MODE_NAMES[self.mode]}»")
             # Отсеянных бывает много (заглушённые каналы шумят), поэтому
             # уровень этих строк выбирается настройкой.
@@ -424,16 +474,16 @@ class Bridge:
             if policy.holds(self.mode):
                 self.storage.hold(uin, text, ts or int(time.time()),
                                   self.cfg.offline_queue_per_chat)
-                log.log(level, "из Telegram: %s — придержано до смены статуса (%s)", name, why)
+                log.log(level, "из %s: %s — придержано до смены статуса (%s)", net, name, why)
             else:
-                log.log(level, "из Telegram: %s — не доставляю (%s)", name, why)
-            log.debug("из Telegram: %s: %s", name, text[:300])
+                log.log(level, "из %s: %s — не доставляю (%s)", net, name, why)
+            log.debug("из %s: %s: %s", net, name, text[:300])
             if ts:
                 self.storage.note_delivered(peer_id, ts, topic_id)
             return False
-        log.info("из Telegram: %s → в очередь телефону, %d симв.%s", name, len(text),
+        log.info("из %s: %s → в очередь телефону, %d симв.%s", net, name, len(text),
                  "" if self.oscar.online else " (телефон не в сети)")
-        log.debug("из Telegram: %s: %s", name, text[:300])
+        log.debug("из %s: %s: %s", net, name, text[:300])
         await self.oscar.deliver(uin, text, ts=ts)
         # Отмечаем даже то, что легло в очередь: оно уже сохранено в базе,
         # и при следующем запуске догружать его повторно не нужно.
@@ -527,14 +577,14 @@ class Bridge:
         if contact.peer_id == ASSISTANT_PEER or bool(contact.muted) == muted:
             return
 
-        if not await self.telegram.set_muted(contact.peer_id, muted):
-            await self.reply(contact, "Не получилось изменить уведомления в Telegram")
+        if not await self.side_for(contact.peer_id).set_muted(contact.peer_id, muted):
+            await self.reply(contact, f"Не получилось изменить уведомления в {self.network_of(contact.peer_id)}")
             return
 
         self.storage.set_muted(contact.uin, muted)
         self._reload_roster()
-        log.info("чат %r %s в Telegram", contact.title,
-                 "заглушён" if muted else "снова со звуком")
+        log.info("чат %r %s в %s", contact.title,
+                 "заглушён" if muted else "снова со звуком", self.network_of(contact.peer_id))
 
         shown = self.status_of(contact.uin)
         if self._shown.get(contact.uin) != shown:
@@ -581,8 +631,8 @@ class Bridge:
 
         log.warning("удаляю чат %r%s", contact.title,
                     " у обеих сторон" if revoke else "")
-        if not await self.telegram.delete_chat(contact.peer_id, revoke):
-            await self.reply(contact, "Не получилось удалить чат в Telegram")
+        if not await self.side_for(contact.peer_id).delete_chat(contact.peer_id, revoke):
+            await self.reply(contact, f"Не получилось удалить чат в {self.network_of(contact.peer_id)}")
             return
 
         # Из контакт-листа чат уходит при следующем входе; запись остаётся,
@@ -599,7 +649,7 @@ class Bridge:
         if contact is not None and contact.peer_id != ASSISTANT_PEER:
             log.info("телефон %s в чате «%s»", "печатает" if active else "перестал печатать",
                      contact.title)
-            await self.telegram.set_typing(contact.peer_id, active)
+            await self.side_for(contact.peer_id).set_typing(contact.peer_id, active)
 
     async def on_phone_message(self, uin: int, text: str) -> int | None:
         """Возвращает номер отправленного сообщения в Telegram либо None."""
@@ -623,7 +673,7 @@ class Bridge:
         if self.cfg.text_to_emoji:
             text = emoji.to_emoji(text)
         try:
-            message_id = await self.telegram.send(contact.peer_id, text, contact.topic_id)
+            message_id = await self.side_for(contact.peer_id).send(contact.peer_id, text, contact.topic_id)
             log.info("-> %s: %d симв.", contact.title, len(text))
             log.debug("-> %s: %s", contact.title, text[:200])
             return message_id
@@ -633,7 +683,7 @@ class Bridge:
             return None
         except Exception as exc:
             log.exception("не удалось отправить в чат %r", contact.title)
-            await self.reply(contact, f"Не отправлено в Telegram: {type(exc).__name__}")
+            await self.reply(contact, f"Не отправлено в {self.network_of(contact.peer_id)}: {type(exc).__name__}")
             return None
 
     async def ask_assistant(self, contact: Contact, text: str) -> None:
@@ -689,7 +739,7 @@ class Bridge:
                     or self._unread.get((contact.peer_id, contact.topic_id), 0) <= 0):
                 continue
             try:
-                missed = await self.telegram.missed(contact.peer_id, contact.last_ts,
+                missed = await self.side_for(contact.peer_id).missed(contact.peer_id, contact.last_ts,
                                                     self.cfg.offline_queue_per_chat,
                                                     contact.topic_id)
             except Exception:
@@ -733,7 +783,7 @@ class Bridge:
         since = None if command.count else history.since_midnight()
         cap = self.cfg.history_limit
         try:
-            items = await self.telegram.history(contact.peer_id, command.count, since, cap,
+            items = await self.side_for(contact.peer_id).history(contact.peer_id, command.count, since, cap,
                                                 contact.topic_id)
         except Exception:
             log.exception("не удалось получить историю чата %r", contact.title)
@@ -781,7 +831,7 @@ class Bridge:
             return
 
         count = min(count, self.cfg.photos_per_request)
-        photos = await self.telegram.last_photos(contact.peer_id, count, contact.topic_id)
+        photos = await self.side_for(contact.peer_id).last_photos(contact.peer_id, count, contact.topic_id)
         if not photos:
             await self.reply(contact, "Фотографий в этом чате нет")
             return
@@ -817,7 +867,7 @@ class Bridge:
             count = cap
         since = None if count else history.since_midnight()
         try:
-            rows = await self.telegram.render_items(
+            rows = await self.side_for(contact.peer_id).render_items(
                 contact.peer_id, count, since, cap, contact.topic_id,
                 self.cfg.render_source_max_mb * 1024 * 1024)
         except Exception:
@@ -905,6 +955,8 @@ class Bridge:
 
     async def run(self) -> None:
         await self.telegram.start()
+        if self.max is not None:
+            await self.max.start()
         await self.refresh_roster()
         await self.catch_up()
         await self.oscar.start()
@@ -944,5 +996,7 @@ class Bridge:
         if self.photo_server is not None:
             await self.photo_server.stop()
         await self.oscar.stop()
+        if self.max is not None:
+            await self.max.stop()
         await self.telegram.stop()
         self.storage.close()
