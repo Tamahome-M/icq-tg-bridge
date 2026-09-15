@@ -1,0 +1,40 @@
+--- a/src/jimm/ContactList.java	2026-09-15 17:33:52.123826212 +0000
++++ b/src/jimm/ContactList.java	2026-09-15 17:33:52.149590854 +0000
+@@ -1285,6 +1285,17 @@
+ 
+ 	/* Adds the given message to the message queue of the contact item
+ 	 identified by the given UIN */
++	// Bridge build: the user is reading this very chat right now - it is on
++	// screen and the keys were touched within the last minute. No point in
++	// a sound or a buzz for a message that is being read as it arrives.
++	// (Screen alone is not enough: with the flip closed the chat stays
++	// "shown", so the idle check tells the two cases apart.)
++	static public boolean readingChat(String uin)
++	{
++		return ChatHistory.chatHistoryShown(uin) && VirtualList.idleMillis() < READING_IDLE_MS;
++	}
++	private static final long READING_IDLE_MS = 60 * 1000L;
++
+ 	static public boolean addMessage(Message message)
+ 	{
+ 		synchronized (_this)
+@@ -1320,7 +1331,7 @@
+ 			/* Notify user */
+ 			if (!treeBuilt) needPlayMessNotif |= true;
+ //#sijapp cond.if target isnot "DEFAULT" #
+-			else playSoundNotification(SOUND_TYPE_MESSAGE);
++			else if (!readingChat(uin)) playSoundNotification(SOUND_TYPE_MESSAGE);
+ //#sijapp cond.end #
+ 
+ 			/* Flag contact as having chat */
+--- a/src/jimm/MainThread.java	2026-09-15 17:33:52.125090391 +0000
++++ b/src/jimm/MainThread.java	2026-09-15 17:33:52.149642477 +0000
+@@ -126,7 +126,7 @@
+ 		case TYPE_ADD_MSG:
+ 			boolean isChecked = ContactList.addMessage((Message) data[0]);
+ //#sijapp cond.if target isnot "DEFAULT"#
+-			if (isChecked) {
++			if (isChecked && !ContactList.readingChat(((Message) data[0]).getSndrUin())) {
+ 				int vibraKind = Options.getInt(Options.OPTION_VIBRATOR);
+ 				if (vibraKind == 2) {
+ 					vibraKind = SplashCanvas.locked() ? 1 : 0;

@@ -1,0 +1,112 @@
+--- a/src/DrawControls/VirtualList.java	2026-09-15 17:11:00.025853276 +0000
++++ b/src/DrawControls/VirtualList.java	2026-09-15 17:11:28.236948040 +0000
+@@ -40,6 +40,10 @@
+ 
+ class VirtualCanvas extends Canvas implements Runnable
+ {
++	// Bridge build: when the user last touched the keys of any Jimm screen.
++	// Used to vibrate only when the phone has been left alone for a while.
++	public static long lastKeyTime = System.currentTimeMillis();
++
+ 	VirtualList currentControl;
+ 	private Timer repeatTimer = new Timer();
+ 	private TimerTask timerTask;
+@@ -99,6 +103,7 @@
+ 
+ 	protected void keyPressed(int keyCode)
+ 	{
++		lastKeyTime = System.currentTimeMillis();
+ 		cancelKeyRepeatTask();
+ 		if (currentControl != null) currentControl.keyPressed(keyCode);
+ 		lastKeyKode = keyCode;
+@@ -132,6 +137,7 @@
+ 	
+ 	protected void pointerPressed(int x, int y)
+ 	{
++		lastKeyTime = System.currentTimeMillis();
+ 		if (currentControl != null) currentControl.pointerPressed(x, y); 
+ 	}
+ 	
+@@ -154,6 +160,18 @@
+ 	public final static int CURSOR_MODE_DISABLED = 3;
+ 
+ 	/*! Constant for medium sized font of caption and item text */
++	// Bridge build: a key was pressed on a screen that is not a VirtualCanvas.
++	public static void touch()
++	{
++		VirtualCanvas.lastKeyTime = System.currentTimeMillis();
++	}
++
++	// Bridge build: milliseconds since the user last pressed a key in Jimm.
++	public static long idleMillis()
++	{
++		return System.currentTimeMillis() - VirtualCanvas.lastKeyTime;
++	}
++
+ 	public final static int MEDIUM_FONT = Font.SIZE_MEDIUM;
+ 
+ 	/*! Constant for large sized font of caption and item text */
+--- a/src/jimm/SplashCanvas.java	2026-09-15 17:11:00.038819427 +0000
++++ b/src/jimm/SplashCanvas.java	2026-09-15 17:11:28.237008923 +0000
+@@ -311,6 +311,7 @@
+ 	// Called when a key is pressed
+ 	protected void keyPressed(int keyCode)
+ 	{
++		VirtualList.touch();
+ //#sijapp cond.if target="MOTOROLA"#
+ 		Jimm.display.flashBacklight(1000*Options.getInt(Options.OPTION_LIGHT_TIMEOUT));
+ //#sijapp cond.end #		
+--- a/src/jimm/MainThread.java	2026-09-15 17:11:00.049782418 +0000
++++ b/src/jimm/MainThread.java	2026-09-15 17:11:28.237112824 +0000
+@@ -34,6 +34,8 @@
+ public class MainThread implements Runnable
+ {
+ 	private static Vector mainThreadTasks = new Vector();
++	// Bridge build: how long the keys must stay untouched before a message vibrates.
++	private static final long VIBRA_IDLE_MS = 60 * 1000L;
+ 	private static MainThread _this;
+ 
+ 	final static private int TYPE_ADD_MSG             = 1;
+@@ -128,6 +130,11 @@
+ 				int vibraKind = Options.getInt(Options.OPTION_VIBRATOR);
+ 				if (vibraKind == 2) {
+ 					vibraKind = SplashCanvas.locked() ? 1 : 0;
++				} else if (vibraKind == 3) {
++					// Bridge build: vibrate only if the keys have not been
++					// touched for a while - the phone is closed or put aside,
++					// not in the hands with Jimm on screen.
++					vibraKind = (VirtualList.idleMillis() > VIBRA_IDLE_MS) ? 1 : 0;
+ 				}
+ 				if (vibraKind > 0) {
+ 					Jimm.display.vibrate(500);
+--- a/src/jimm/Options.java	2026-09-15 17:11:00.060953111 +0000
++++ b/src/jimm/Options.java	2026-09-15 17:11:28.237366526 +0000
+@@ -2397,7 +2397,7 @@
+ 				Options.OPTION_TYPING_MODE);
+ 
+ 		vibratorChoiceGroup = createSelector("vibration", "no" + "|"
+-				+ "yes" + "|" + "when_locked", Options.OPTION_VIBRATOR);
++				+ "yes" + "|" + "when_locked" + "|" + "when_idle", Options.OPTION_VIBRATOR);
+ 
+ 		//#sijapp cond.end#
+ 
+--- a/src/lng/RU.lang	2026-09-15 17:11:00.078331429 +0000
++++ b/src/lng/RU.lang	2026-09-15 17:11:28.237552316 +0000
+@@ -469,6 +469,7 @@
+ "xstatus_rambler_journal"	"Дневник"
+ "wait"						"Пожалуйста, ждите ..."
+ "when_locked"				"Если заблокирован"
++"when_idle"				"Если не трогали 60 с"
+ "warning"					"Предупреждение"
+ "wantsyourauth"				" хочет авторизироваться. Причина: "
+ "was"						"была"
+--- a/src/lng/EN.lang	2026-09-15 17:11:00.095994319 +0000
++++ b/src/lng/EN.lang	2026-09-15 17:11:28.237652963 +0000
+@@ -324,6 +324,7 @@
+ "volume"					"Volume"  
+ "wait"						"Please wait ..."
+ "when_locked"				"When locked"
++"when_idle"				"If idle for 60 s"
+ "warning"					"Warning"
+ "wantsyourauth"				" wants your Authorisation. Reason: "
+ "was"						"was"

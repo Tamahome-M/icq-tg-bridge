@@ -1,0 +1,16 @@
+--- a/src/jimm/ContactList.java	2026-09-15 16:42:16.966337347 +0000
++++ b/src/jimm/ContactList.java	2026-09-15 16:43:17.052299934 +0000
+@@ -997,7 +997,12 @@
+ 		cItem.setStringValue (ContactItem.CONTACTITEM_XSTATUSMSG, xStatusMessage);
+ 
+ 		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
+-		cItem.setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH, biHash);
++		// Bridge build: the short update(uin, status) used for "user offline"
++		// passes null here and wiped the icon hash, so the card of an offline
++		// contact never asked for the avatar. Keep the last hash until the
++		// server sends a new one.
++		if (biHash != null)
++			cItem.setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH, biHash);
+ 		//#sijapp cond.end#
+ 
+ 		// Update DC values

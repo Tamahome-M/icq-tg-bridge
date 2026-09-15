@@ -1,0 +1,33 @@
+--- a/src/jimm/ChatHistory.java	2026-09-15 14:22:24.512376632 +0000
++++ b/src/jimm/ChatHistory.java	2026-09-15 14:22:24.525542667 +0000
+@@ -768,9 +768,30 @@
+ 		return historyTable.containsKey(uin);
+ 	}
+ 
++	// Bridge build: cap on chats kept in memory. Every incoming message opens
++	// a chat that lives until closed by hand; with many channels this fills
++	// the heap of a small phone. Oldest chat without unread messages and not
++	// on screen is closed to make room.
++	final static private int MAX_OPEN_CHATS = 12;
++
++	static private void closeOldestIdleChat()
++	{
++		for (int i = 0; i < historyUins.size(); i++)
++		{
++			String uin = (String) historyUins.elementAt(i);
++			ChatTextList chat = (ChatTextList) historyTable.get(uin);
++			ContactItem item = ContactList.getItembyUIN(uin);
++			if (chat == null || item == null) continue;
++			if (chat.isVisible() || item.isContainingUnreadMessages()) continue;
++			chatHistoryDelete(uin);
++			return;
++		}
++	}
++
+ 	// Creates a new chat form
+ 	static private void newChatForm(ContactItem contact, String name)
+ 	{
++		if (historyUins.size() >= MAX_OPEN_CHATS) closeOldestIdleChat();
+ 		ChatTextList chatForm = new ChatTextList(name, contact);
+ 		String uin = contact.getStringValue(ContactItem.CONTACTITEM_UIN);
+ 		historyTable.put(uin, chatForm);
