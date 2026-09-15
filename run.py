@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Мост ICQ (OSCAR) <-> Telegram.
 
-  python3 run.py login   — один раз войти в аккаунт Telegram
-  python3 run.py         — запустить мост
+  python3 run.py login       — один раз войти в аккаунт Telegram
+  python3 run.py login max   — один раз войти в аккаунт MAX (если включён)
+  python3 run.py             — запустить мост
 """
 
 from __future__ import annotations
@@ -74,6 +75,7 @@ def setup_logging(cfg=None) -> None:
     # Telethon многословен: в отладочном режиме моста его записи о пакетах
     # забивают журнал. Держим его отдельно, по умолчанию тише.
     logging.getLogger("telethon").setLevel(telethon.upper())
+    logging.getLogger("pymax").setLevel((cfg.log_max_level if cfg else "WARNING").upper())
 
 
 async def main() -> int:
@@ -86,7 +88,8 @@ async def main() -> int:
     setup_logging(cfg)
 
     from bridge.config import warn_about_permissions
-    loose = warn_about_permissions([CONFIG, cfg.tg_session, cfg.db])
+    loose = warn_about_permissions([CONFIG, cfg.tg_session, cfg.db]
+                                   + ([cfg.max_session] if cfg.max_enabled else []))
     for path in loose:
         logging.getLogger("bridge").warning(
             "файл %s доступен другим пользователям — сделайте chmod 600", path)
@@ -94,6 +97,13 @@ async def main() -> int:
     bridge = Bridge(cfg)
 
     if len(sys.argv) > 1 and sys.argv[1] == "login":
+        if len(sys.argv) > 2 and sys.argv[2] == "max":
+            if bridge.max is None:
+                print("MAX выключен: включите [max] enabled = true и укажите phone",
+                      file=sys.stderr)
+                return 1
+            await bridge.max.login()
+            return 0
         await bridge.telegram.login()
         await bridge.telegram.stop()
         return 0

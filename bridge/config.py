@@ -32,6 +32,11 @@ class Config:
     tg_app_version: str = "4.16.8"
     tg_lang_code: str = "en"
 
+    max_enabled: bool = False
+    max_phone: str = ""
+    max_session: str = "max.session"
+    max_group: str = "MAX"
+
     db: str = "bridge.db"
     grouping: str = "folders"
     other_group: str = "Прочее"
@@ -93,6 +98,7 @@ class Config:
     offline_queue_per_chat: int = 30
     log_level: str = "INFO"
     log_telethon_level: str = "WARNING"
+    log_max_level: str = "WARNING"
     log_file: str = ""
     log_file_max_mb: int = 5
     log_file_keep: int = 3
@@ -121,6 +127,7 @@ class Config:
         dl = raw.get("downloads", {})
         ai = raw.get("assistant", {})
         tg = raw.get("telegram", {})
+        mx = raw.get("max", {})
         br = raw.get("bridge", {})
         base = os.path.dirname(os.path.abspath(path))
 
@@ -144,6 +151,10 @@ class Config:
             tg_system_version=tg.get("system_version", cls.tg_system_version),
             tg_app_version=tg.get("app_version", cls.tg_app_version),
             tg_lang_code=tg.get("lang_code", cls.tg_lang_code),
+            max_enabled=bool(mx.get("enabled", cls.max_enabled)),
+            max_phone=str(mx.get("phone", "")).strip(),
+            max_session=_resolve(base, mx.get("session", cls.max_session)),
+            max_group=str(mx.get("group", cls.max_group)).strip() or cls.max_group,
             db=_resolve(base, br.get("db", cls.db)),
             grouping=br.get("grouping", cls.grouping),
             other_group=br.get("other_group", cls.other_group),
@@ -203,6 +214,7 @@ class Config:
             downloads_protected=bool(dl.get("protected", cls.downloads_protected)),
             log_level=str(lg.get("level", cls.log_level)).upper(),
             log_telethon_level=str(lg.get("telethon_level", cls.log_telethon_level)).upper(),
+            log_max_level=str(lg.get("max_level", cls.log_max_level)).upper(),
             log_file=_resolve(base, lg["file"]) if lg.get("file") else "",
             log_file_max_mb=int(lg.get("file_max_mb", cls.log_file_max_mb)),
             log_file_keep=int(lg.get("file_keep", cls.log_file_keep)),
