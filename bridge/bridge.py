@@ -310,7 +310,19 @@ class Bridge:
                     "members": "", "marks": "",
                     "about": ("Claude Code с этой машины. Пишите как обычно; "
                               "!reset — начать разговор заново.")}
-        info = await self.side_for(contact.peer_id).chat_info(contact.peer_id)
+        try:
+            info = await self.side_for(contact.peer_id).chat_info(contact.peer_id)
+        except Exception:
+            log.exception("карточка «%s»: сторона %s не ответила", contact.title,
+                          self.network_of(contact.peer_id))
+            info = None
+        if info is None:
+            # Подробностей нет — покажем хотя бы то, что знаем сами.
+            log.info("карточка «%s»: подробностей от %s нет, отдаю своё",
+                     contact.title, self.network_of(contact.peer_id))
+            info = {"title": contact.title,
+                    "kind": KIND_TITLES.get(contact.kind, "Чат"),
+                    "username": "", "phone": "", "members": "", "about": ""}
         if info and self.cfg.emoji_to_text:
             info = {k: emoji.to_text(v) if isinstance(v, str) else v
                     for k, v in info.items()}

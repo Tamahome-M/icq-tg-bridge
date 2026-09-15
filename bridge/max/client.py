@@ -29,12 +29,17 @@ from ..tg.client import Dialog, RECENTLY_SECONDS
 log = logging.getLogger("max")
 
 # Сдвиг номеров чатов MAX в общей базе. У Telegram номера не длиннее
-# четырнадцати знаков (каналы — -100 и десять-одиннадцать цифр), у MAX —
-# обычные целые; всё, что не меньше MAX_BASE, — из MAX.
+# четырнадцати знаков (каналы — -100 и десять-одиннадцать цифр). У MAX
+# личные чаты нумеруются положительными числами, группы и каналы —
+# отрицательными (порядка -2^46), поэтому сеть узнаётся по окну вокруг
+# сдвига: всё в пределах MAX_BASE ± MAX_SPAN — из MAX.
 MAX_BASE = 4_000_000_000_000_000
+MAX_SPAN = 1_000_000_000_000_000
 
 # Сколько страниц списка чатов запрашивать у сервера, не больше.
 CHATS_PAGES = 20
+# Чат с самим собой: у него номер 0 (me ^ me), а в MAX он зовётся «Избранное».
+SAVED_TITLE = "Избранное"
 # Кадры, в ответе на которые сервер присылает присутствие контактов.
 OP_LOGIN = 19
 OP_SYNC = 21
@@ -55,7 +60,10 @@ TAGS = {
 
 
 def to_peer(chat_id: int) -> int:
-    return MAX_BASE + int(chat_id)
+    chat_id = int(chat_id)
+    if abs(chat_id) >= MAX_SPAN:
+        raise ValueError(f"номер чата MAX {chat_id} не помещается в окно сети")
+    return MAX_BASE + chat_id
 
 
 def from_peer(peer_id: int) -> int:
@@ -63,7 +71,7 @@ def from_peer(peer_id: int) -> int:
 
 
 def is_max_peer(peer_id: int) -> bool:
-    return peer_id >= MAX_BASE
+    return abs(int(peer_id) - MAX_BASE) < MAX_SPAN
 
 
 def _seconds(value: int | None) -> int:
@@ -302,6 +310,11 @@ class MaxSide:
         chats = await self._all_chats()
         out: list[Dialog] = []
         for position, chat in enumerate(chats):
+            try:
+                peer = to_peer(chat.id)
+            except ValueError as exc:
+                log.warning("MAX: пропускаю чат %r: %s", _attr(chat, "title", chat.id), exc)
+                continue
             kind = self._kind(chat)
             title = await self._chat_title(chat, kind)
             photo = _attr(chat, "base_icon_url", "") or ""
@@ -311,7 +324,7 @@ class MaxSide:
                 photo = str(_attr(user, "photo_id", 0) or _attr(user, "base_url", "") or "")
                 status = self._status_of(int(_attr(user, "id", 0) or 0))
             out.append(Dialog(
-                to_peer(chat.id), kind, title[:self.cfg.alias_max_chars],
+                peer, kind, title[:self.cfg.alias_max_chars],
                 self.cfg.max_group, position,
                 status=status, unread=int(_attr(chat, "new_messages", 0) or 0),
                 pinned=False, muted=False,
@@ -364,7 +377,8 @@ class MaxSide:
         if chat is None:
             try:
                 chat = await self.client.get_chat(chat_id)
-            except Exception:
+            except Exception as exc:
+                log.debug("MAX: get_chat(%s) не удался: %s", chat_id, exc)
                 chat = None
             if chat is not None:
                 self._chats[chat_id] = chat
@@ -399,17 +413,27 @@ class MaxSide:
 
     @staticmethod
     def _user_name(user) -> str:
+        """Самое полное из имён контакта: у MAX их несколько (из профиля,
+        из адресной книги), и первое бывает без фамилии — тогда две Татьяны
+        в списке неотличимы."""
         if user is None:
             return ""
+        best = ""
         for name in _attr(user, "names", []) or []:
-            full = _attr(name, "name", "") or " ".join(
-                x for x in (_attr(name, "first_name", ""), _attr(name, "last_name", "")) if x)
-            if full:
-                return full
-        return ""
+            candidates = [
+                (_attr(name, "name", "") or "").strip(),
+                " ".join(x.strip() for x in (_attr(name, "first_name", "") or "",
+                                             _attr(name, "last_name", "") or "") if x.strip()),
+            ]
+            for full in candidates:
+                if len(full) > len(best):
+                    best = full
+        return best
 
     async def _chat_title(self, chat, kind: str) -> str:
         if kind == "user":
+            if int(_attr(chat, "id", 0) or 0) == 0:
+                return SAVED_TITLE        # чат с самим собой
             user = await self._peer_user(chat)
             name = self._user_name(user)
             if name:
@@ -550,6 +574,7 @@ class MaxSide:
     async def chat_info(self, peer_id: int) -> dict | None:
         chat = await self._chat(from_peer(peer_id))
         if chat is None:
+            log.info("MAX: чат %s не нашёлся ни в кэше, ни на сервере", from_peer(peer_id))
             return None
         kind = self._kind(chat)
         info = {
