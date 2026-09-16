@@ -82,6 +82,27 @@ def history_records(rows: list[tuple[str, str]], max_bytes: int, token_for) -> b
     return b"".join(encoded)
 
 
+def chat_records(rows: list[tuple[int, str, bool, int, bool]], max_bytes: int) -> bytes:
+    """Список всех чатов для TeleMotoMax: UIN (4 байта), флаги, сколько дней
+    молчит (2 байта, 0xFFFF — не писали никогда), длина названия и оно само
+    в UTF-8. Во флагах: бит 1 — чат из MAX, бит 2 — он есть в контакт-листе
+    телефона. Не влезло — обрезаем хвост: список отсортирован, и начало
+    важнее."""
+    out: list[bytes] = []
+    size = 0
+    for uin, title, is_max, days, in_list in rows:
+        raw = title.encode("utf-8")[:120]
+        flags = (0x01 if is_max else 0) | (0x02 if in_list else 0)
+        quiet = 0xFFFF if days < 0 else min(days, 0xFFFE)
+        rec = (struct.pack(">IBH", uin, flags, quiet)
+               + struct.pack(">H", len(raw)) + raw)
+        if size + len(rec) > max_bytes:
+            break
+        out.append(rec)
+        size += len(rec)
+    return b"".join(out)
+
+
 def buddy_departed(uin: int) -> bytes:
     """Короткий блок для SNAC 03/0C — контакт больше не в сети."""
     return pstr8(str(uin).encode("ascii")) + struct.pack(">HH", 0, 0)

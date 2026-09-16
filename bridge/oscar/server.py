@@ -703,15 +703,11 @@ class Session:
 
     async def send_search(self, uin: int, seq: int, query_data: bytes) -> None:
         """Поиск: клиент ищет анкету, а мы отдаём подходящие чаты Telegram."""
+        # Пустая форма поиска — это «покажи всё»: мост отдаёт список чатов,
+        # включая те, что не влезли в контакт-лист телефона.
         query = blocks.parse_search_query(query_data, self.server.ssi_encoding)
-        if not query:
-            await self.send_icq_reply(uin, C.ICQ_META_RESP_TYPE, seq,
-                                      struct.pack("<H", C.ICQ_SEARCH_LAST)
-                                      + bytes([C.ICQ_NOT_FOUND]))
-            return
-
         found = await self.server.search(query)
-        log.info("поиск «%s»: нашлось %d чатов", query, len(found))
+        log.info("поиск «%s»: нашлось %d чатов", query or "(весь список)", len(found))
         if not found:
             await self.send_icq_reply(uin, C.ICQ_META_RESP_TYPE, seq,
                                       struct.pack("<H", C.ICQ_SEARCH_LAST)
@@ -1168,6 +1164,34 @@ class Session:
                                  blocks.icon_reply(int(target), token, data, C.BART_HISTORY),
                                  request_id=s.request_id)
             return
+        if bart_type == C.BART_CHATS and self.extended:
+            # Весь список чатов: и те, что в контакт-листе, и те, что в него
+            # не влезли, — иначе написать давнему собеседнику не с чего.
+            rows = await self.server.chat_list()
+            data = blocks.chat_records(rows, C.CHATS_MAX_BYTES)
+            log.info("список чатов отдан телефону: %d чатов, %d байт",
+                     len(rows), len(data))
+            parts = [data[i:i + C.VIDEO_PART_BYTES]
+                     for i in range(0, len(data), C.VIDEO_PART_BYTES)] or [b""]
+            for index, chunk in enumerate(parts, start=1):
+                if not await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
+                                            blocks.icon_reply(int(target), token, chunk,
+                                                              C.BART_CHATS, index, len(parts)),
+                                            request_id=s.request_id):
+                    return
+            return
+        if bart_type == C.BART_OPEN and self.extended:
+            # Телефон просит вернуть чат в список: снимаем скрытие и шлём
+            # последнее сообщение, чтобы в клиенте появилась переписка.
+            wanted = struct.unpack(">I", token[:4])[0] if len(token) >= 4 else 0
+            ok = await self.server.open_chat(wanted)
+            log.info("телефон просит открыть чат %s: %s",
+                     self.server.name_of(wanted), "открыт" if ok else "не вышло")
+            await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
+                                 blocks.icon_reply(int(target), token,
+                                                   b"\x00" if ok else b"\x01", C.BART_OPEN),
+                                 request_id=s.request_id)
+            return
         if bart_type in (C.BART_VIDEO, C.BART_VOICE) and self.extended:
             voice = bart_type == C.BART_VOICE
             got = await (self.server.voice(token) if voice else self.server.video(token))
@@ -1293,7 +1317,9 @@ class OscarServer:
                  fetch_video: Callable[[int, str], Awaitable[bytes | None]] | None = None,
                  on_photo: Callable[[int, bytes], Awaitable[bool]] | None = None,
                  fetch_voice: Callable[[int, str], Awaitable[bytes | None]] | None = None,
-                 on_voice: Callable[[int, bytes, int], Awaitable[bool]] | None = None):
+                 on_voice: Callable[[int, bytes, int], Awaitable[bool]] | None = None,
+                 chat_list: Callable[[], Awaitable[list]] | None = None,
+                 open_chat: Callable[[int], Awaitable[bool]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -1325,6 +1351,8 @@ class OscarServer:
         self.fetch_voice = fetch_voice
         # Записанное на телефоне голосовое — отправить в чат.
         self.on_voice = on_voice or self._no_voice
+        self.chat_list = chat_list or self._no_chats
+        self.open_chat = open_chat or self._no_open
         self.uin = str(cfg.oscar_uin)
         self.password = cfg.oscar_password
         self.ssi_encoding = cfg.ssi_encoding
@@ -1351,6 +1379,7 @@ class OscarServer:
         )
         self._wake = asyncio.Event()
         self.session: Session | None = None
+        self._active: dict[str, float] = {}     # кто сейчас держит соединения
         self.last_auth_key = b""
         self._cookies: dict[bytes, float] = {}
         self._server: asyncio.AbstractServer | None = None
@@ -1389,17 +1418,25 @@ class OscarServer:
             writer.close()
             return
         if not self.access.take_slot():
-            log.warning("отказано %s: занято все %d соединений", host,
-                        self.access.max_connections)
+            # Не молча: видно и сколько соединений занято, и кем — иначе
+            # телефон просто «не подключается», а в журнале пусто.
+            now = time.time()
+            busy = ", ".join(f"{peer} ({now - since:.0f} с)"
+                             for peer, since in sorted(self._active.items(),
+                                                       key=lambda item: item[1]))
+            log.warning("отказано %s: занято все %d соединений; сейчас держат: %s",
+                        host, self.access.max_connections, busy or "(некому)")
             writer.close()
             return
 
         session = Session(self, reader, writer)
+        self._active[session.peer] = time.time()
         log.info("соединение с %s (занято %d из %d)", session.peer,
                  self.access.connections, self.access.max_connections)
         try:
             await session.run()
         finally:
+            self._active.pop(session.peer, None)
             self.access.free_slot()
 
     def register_attachment(self, uin: int, attach: str) -> bytes | None:
@@ -1518,6 +1555,8 @@ class OscarServer:
             # оно не попадёт в офлайн-пачку и будет ждать срока повтора.
             old = self.session
             self.session = None
+            log.info("телефон подключился заново (%s) — прежнее соединение %s закрываю",
+                     session.peer, old.peer)
             asyncio.create_task(old.close())
             self.awaiting.clear()
             returned = self.storage.reset_sent()
@@ -1586,6 +1625,15 @@ class OscarServer:
 
     @staticmethod
     async def _no_photo(uin: int, data: bytes) -> bool:
+        return False
+
+    @staticmethod
+    @staticmethod
+    async def _no_chats() -> list:
+        return []
+
+    @staticmethod
+    async def _no_open(uin: int) -> bool:
         return False
 
     @staticmethod

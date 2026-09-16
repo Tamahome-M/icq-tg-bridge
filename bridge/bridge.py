@@ -38,6 +38,7 @@ DEAD_SESSION = (
 ROSTER_REFRESH_SECONDS = 600
 MAX_ROSTER_SLOTS = 100_000       # чаты MAX стоят в списке раньше любого чата Telegram
 SEARCH_LIMIT = 10                # столько результатов отдаём телефону
+SEARCH_ALL_LIMIT = 50            # а столько — на поиск без запроса, «покажи всё»
 # Telegram повторяет «печатает» каждые несколько секунд, а Jimm сам индикатор
 # не гасит — снимаем его по молчанию.
 TYPING_TIMEOUT = 8
@@ -76,7 +77,8 @@ class Bridge:
                                  self.on_phone_remove, self.on_phone_privacy,
                                  self.avatar, self.icon_hash, self.fetch_attachment,
                                  self.fetch_history, self.fetch_video, self.send_camera_photo,
-                                 self.fetch_voice, self.send_voice_message)
+                                 self.fetch_voice, self.send_voice_message,
+                                 self.chat_list, self.open_chat)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
@@ -204,11 +206,74 @@ class Bridge:
         if sent:
             log.info("обновлено статусов контактов: %d", sent)
 
+    def _mark(self, contact: Contact) -> str:
+        """Название с пометкой сети: [T] — Telegram, [M] — MAX."""
+        return ("[M] " if self.network_of(contact.peer_id) == "MAX" else "[T] ") + contact.title
+
+    def _quiet_days(self, contact: Contact) -> int:
+        """Сколько дней в чате тихо; -1 — сообщений не было вовсе."""
+        if not contact.last_ts:
+            return -1
+        return max(0, int((time.time() - contact.last_ts) // 86400))
+
+    async def chat_list(self) -> list[tuple[int, str, bool, int, bool]]:
+        """Все чаты для отдельного экрана TeleMotoMax — и те, что в
+        контакт-листе, и те, что в него не влезли или были убраны.
+
+        Ради этого экрана список и заводился: чат, в который давно не
+        писали, с телефона иначе не открыть."""
+        in_list = {c.uin for c in self._roster}
+        rows = []
+        for contact in self.storage.contacts_all():
+            if contact.peer_id == ASSISTANT_PEER:
+                continue
+            rows.append((contact.uin, contact.title,
+                         self.network_of(contact.peer_id) == "MAX",
+                         self._quiet_days(contact), contact.uin in in_list))
+        rows.sort(key=lambda row: row[1].lower())
+        log.info("список чатов для телефона: %d, из них в контакт-листе %d",
+                 len(rows), sum(1 for row in rows if row[4]))
+        return rows
+
+    async def open_chat(self, uin: int) -> bool:
+        """Вернуть чат на телефон: снять скрытие и показать последнее
+        сообщение — тогда переписка появится в клиенте и в неё можно писать."""
+        contact = self.storage.contact_by_uin(uin)
+        if contact is None:
+            return False
+        if contact.hidden:
+            self.storage.set_hidden(uin, False)
+        # Мало снять скрытие: чат, в который давно не писали, стоит в конце
+        # списка и в roster_limit не влезет — поднимаем его наверх.
+        self.storage.raise_contact(uin)
+        self._reload_roster()
+        await self.refresh_shown_statuses()
+        rows = await self.fetch_history(uin, 1)
+        last = rows[0][0] if rows else ""
+        contact = self.storage.contact_by_uin(uin) or contact
+        await self.reply(contact, last or "— чат открыт, сообщений пока не было —")
+        log.info("чат «%s» открыт с телефона", contact.title)
+        return True
+
     async def search_chats(self, query: str) -> list[dict]:
-        """Поиск из Jimm: сначала по уже известным чатам, потом по Telegram."""
+        """Поиск из Jimm: сначала по уже известным чатам, потом по Telegram.
+
+        Пустой запрос (или «*») — это «покажи всё»: обычный Jimm листает
+        выдачу по одной карточке, но иначе до забытого чата с него не
+        добраться. У TeleMotoMax для этого есть отдельный экран списком."""
         needle = query.strip().lower()
+        if needle in ("", "*", "все", "all"):
+            rows = await self.chat_list()
+            found = [{"uin": uin, "title": ("[M] " if is_max else "[T] ") + title,
+                      "kind": ("молчит %d дн." % days) if days > 0 else
+                              ("сегодня" if days == 0 else "без сообщений"),
+                      "username": ""}
+                     for uin, title, is_max, days, _ in rows]
+            log.info("поиск без запроса: отдаю %d чатов из %d",
+                     min(len(found), SEARCH_ALL_LIMIT), len(found))
+            return found[:SEARCH_ALL_LIMIT]
         found = [
-            {"uin": c.uin, "title": c.title,
+            {"uin": c.uin, "title": self._mark(c),
              "kind": KIND_TITLES.get(c.kind, "Чат"), "username": ""}
             for c in self.storage.contacts() if needle in c.title.lower()
         ][:SEARCH_LIMIT]
@@ -219,7 +284,7 @@ class Bridge:
         for contact in self.storage.contacts_all():
             if contact.hidden and needle in contact.title.lower():
                 self.storage.set_hidden(contact.uin, False)
-                found.append({"uin": contact.uin, "title": contact.title,
+                found.append({"uin": contact.uin, "title": self._mark(contact),
                               "kind": KIND_TITLES.get(contact.kind, "Чат"),
                               "username": ""})
         if found:
@@ -238,7 +303,8 @@ class Bridge:
                 uin = self.storage.uin_for_peer(
                     item["peer_id"], kind=item["kind"], title=item["title"],
                     group_name=self.group_for(item["peer_id"], item["kind"]), position=9999)
-            found.append({"uin": uin, "title": item["title"],
+            mark = "[M] " if self.network_of(item["peer_id"]) == "MAX" else "[T] "
+            found.append({"uin": uin, "title": mark + item["title"],
                           "kind": KIND_TITLES.get(item["kind"], "Чат"),
                           "username": item["username"]})
         if found:
@@ -415,6 +481,10 @@ class Bridge:
             return False
         log.info("голосовое с телефона → «%s»: %d с, %d КБ, номер %s",
                  contact.title, seconds, len(ogg or data) // 1024, message_id)
+        # Своё голосовое телефон в переписке не показывает — скажем сами,
+        # иначе после отправки в окне чата пусто и непонятно, ушло ли.
+        await self.reply(contact, f"[голосовое {seconds // 60}:{seconds % 60:02d}] отправлено"
+                                  + ("" if ogg else " (файлом)"))
         return True
 
     async def send_camera_photo(self, uin: int, data: bytes) -> bool:
@@ -431,6 +501,7 @@ class Bridge:
             return False
         log.info("снимок с камеры → «%s»: %d КБ, номер %s",
                  contact.title, len(data) // 1024, message_id)
+        await self.reply(contact, "[фото] отправлено")
         return True
 
     async def fetch_video(self, uin: int, attach: str) -> bytes | None:

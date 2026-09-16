@@ -238,6 +238,17 @@ class Storage:
         self.conn.execute("UPDATE contacts SET hidden = ? WHERE uin = ?",
                           (int(hidden), uin))
 
+    def raise_contact(self, uin: int) -> None:
+        """Поднимает чат в начало списка — чтобы он влез в roster_limit.
+
+        Нужно, когда чат возвращают на телефон вручную: сам по себе он
+        стоит там, куда его поставила свежесть переписки, а она у забытого
+        чата как раз никакая."""
+        row = self.conn.execute(
+            "SELECT MIN(position) FROM contacts WHERE gone = 0").fetchone()
+        top = (row[0] if row and row[0] is not None else 0) - 1
+        self.conn.execute("UPDATE contacts SET position = ? WHERE uin = ?", (top, uin))
+
     def contacts_all(self) -> list[Contact]:
         """Все живые чаты, включая убранные с телефона."""
         rows = self.conn.execute(

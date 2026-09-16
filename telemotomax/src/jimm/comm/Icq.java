@@ -369,7 +369,11 @@ public class Icq implements Runnable
 	// TeleMotoMax: sends a camera snapshot to the bridge over the main
 	// connection, in parts of PHOTO_PART bytes: SNAC 10/02 with the target
 	// uin, the part number and the chunk. The bridge answers 10/03.
-	public static final int PHOTO_PART = 30000;
+	// Часть небольшая нарочно: отправка держит замок на потоке вывода, и
+	// пока уходят 30 КБ по GPRS (это добрых полминуты), поток связи не может
+	// ни подтвердить входящее, ни отправить сообщение — клиент выглядит
+	// повисшим. 8 КБ уходят за пару секунд, между частями остальные успевают.
+	public static final int PHOTO_PART = 8000;
 
 	public static void sendPhoto(String uin, byte[] photo) throws JimmException
 	{
@@ -390,13 +394,35 @@ public class Icq implements Runnable
 			Util.putWord(buf, marker, size); marker += 2;
 			System.arraycopy(photo, from, buf, marker, size);
 			sendPacket(new SnacPacket(0x0010, 0x0002, 0x00000000, new byte[0], buf));
+			if (part < total) breathe();
 		}
 	}
 
 	// TeleMotoMax: a voice message recorded on the phone, SNAC 10/04 — same
 	// as a snapshot but with the length in seconds before the chunk.
+	/** Кому сообщать, сколько частей загрузки уже ушло. */
+	public interface UploadProgress
+	{
+		void onPart(int part, int total);
+	}
+
+	// Между частями — короткая пауза: отправка держит замок на потоке вывода,
+	// и без передышки поток связи не смог бы вклиниться со своими пакетами
+	// (подтверждениями, «печатает», сообщениями), а клиент выглядел бы
+	// повисшим на всё время заливки.
+	private static void breathe()
+	{
+		try { Thread.sleep(200); } catch (Exception ignore) {}
+	}
+
 	public static void sendVoice(String uin, byte[] voice, int seconds, String type)
 			throws JimmException
+	{
+		sendVoice(uin, voice, seconds, type, null);
+	}
+
+	public static void sendVoice(String uin, byte[] voice, int seconds, String type,
+			UploadProgress progress) throws JimmException
 	{
 		byte[] uinRaw = Util.stringToByteArray(uin);
 		// Тип записи («audio/amr») идёт хвостом первой части: мосту он
@@ -426,6 +452,8 @@ public class Icq implements Runnable
 				System.arraycopy(typeRaw, 0, buf, marker, typeRaw.length);
 			}
 			sendPacket(new SnacPacket(0x0010, 0x0004, 0x00000000, new byte[0], buf));
+			if (progress != null) progress.onPart(part, total);
+			if (part < total) breathe();
 		}
 	}
 

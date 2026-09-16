@@ -363,12 +363,74 @@ async def run_voice() -> None:
     print("  голосовые: ок (слушаем частями, шлём записанное, обычному Jimm нельзя)")
 
 
+async def run_chats() -> None:
+    """Весь список чатов на отдельный экран и возвращение забытого чата."""
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 5
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    storage = Storage(":memory:")
+    mom = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+    old = storage.uin_for_peer(777, kind="user", title="Давний", group_name="Личные")
+
+    async def on_outgoing(*_):
+        return 1
+
+    chats = [(mom, "Мама", False, 0, True), (old, "Давний", True, 400, False)]
+    opened: list[int] = []
+
+    async def chat_list():
+        return chats
+
+    async def open_chat(uin: int) -> bool:
+        opened.append(uin)
+        return uin == old
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
+                         chat_list=chat_list, open_chat=open_chat)
+    await server.start()
+
+    client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+    client.tmm_version = (0, 6)
+    await client.connect()
+    await client.bos(await client.login_md5_jimm())
+    await client.drain_for(0.3)
+
+    got = await client.request_chats(mom)
+    assert got == chats, got
+    assert got[1][2] is True, "чат из MAX помечен своим флагом"
+    assert got[1][4] is False, "чат вне контакт-листа помечен тоже"
+
+    # Выбор чата в списке возвращает его на телефон.
+    assert await client.open_chat(mom, old) is True
+    assert opened == [old], opened
+    assert await client.open_chat(mom, 12345) is False, "чужой UIN — отказ, а не тишина"
+    await client.close()
+    await asyncio.sleep(0.2)
+
+    # Обычному Jimm список не отдаём — он про эту службу не знает.
+    plain = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+    await plain.connect()
+    await plain.bos(await plain.login_md5_jimm())
+    await plain.drain_for(0.3)
+    try:
+        await plain.request_chats(mom, timeout=1.5)
+        raise AssertionError("обычный Jimm не должен получить список чатов")
+    except AssertionError:
+        raise
+    except Exception:
+        pass
+    await plain.close()
+    server._server.close()
+    print("  список чатов: ок (все чаты с пометками, возвращение забытого)")
+
+
 async def main() -> None:
     await run_detection()
     await run_photos()
     await run_history()
     await run_camera()
     await run_voice()
+    await run_chats()
     print("TELEMOTOMAX ПРОВЕРЕН")
 
 
