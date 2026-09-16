@@ -86,6 +86,69 @@ async def run_transcoder() -> None:
     print("  перекодирование: ок (ключи, результат, отсутствие ffmpeg)")
 
 
+def fake_ffmpeg_audio(directory: str, encoders: list[str]) -> str:
+    """Поддельный ffmpeg, который знает только перечисленные кодировщики и
+    отказывается разбирать вход без приметы AMR — как настоящий."""
+    path = os.path.join(directory, "ffmpeg-audio")
+    listing = "".join(f'  echo " A..... {name} {name}"\n' for name in encoders)
+    with open(path, "w") as fh:
+        fh.write(
+            "#!/bin/sh\n"
+            "for arg in \"$@\"; do\n"
+            "  [ \"$arg\" = -encoders ] || continue\n"
+            "  echo 'Encoders:'\n"
+            + listing +
+            "  exit 0\n"
+            "done\n"
+            "src=\"\"; out=\"\"; prev=\"\"\n"
+            "for arg in \"$@\"; do\n"
+            "  [ \"$prev\" = -i ] && src=\"$arg\"\n"
+            "  out=\"$arg\"; prev=\"$arg\"\n"
+            "done\n"
+            "echo \"$@\" > \"$0.args\"\n"
+            "[ \"$(head -c 5 \"$src\")\" = '#!AMR' ] || exit 1\n"
+            "printf 'FAKEOGG' > \"$out\"\n"
+        )
+    os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return path
+
+
+async def run_voice_ogg() -> None:
+    """Голосовое с телефона в OGG: кодек по тому, что есть в сборке ffmpeg."""
+    # Сборка с opus — берём его, битрейт как для голоса.
+    work = tempfile.mkdtemp()
+    coder = render.Transcoder(fake_ffmpeg_audio(work, ["libopus", "libvorbis"]), workdir=work)
+    assert await coder.ogg_codec() == "libopus"
+    args = coder.ogg_args("in", "out", "libopus")
+    assert args[args.index("-b:a") + 1] == "24k", args
+
+    got = await coder.to_ogg(b"#!AMR\n" + b"\x3c" * 100)
+    assert got == b"FAKEOGG", got
+
+    # Запись без приметы: ffmpeg её не опознал — приписываем заголовок AMR
+    # и пробуем ещё раз, иначе голосовое ушло бы файлом.
+    got = await coder.to_ogg(b"\x3c" * 100)
+    assert got == b"FAKEOGG", "запись без заголовка должна уйти со второй попытки"
+
+    # Сборка без opus: vorbis всё же лучше, чем ничего.
+    work = tempfile.mkdtemp()
+    vorbis = render.Transcoder(fake_ffmpeg_audio(work, ["libvorbis"]), workdir=work)
+    assert await vorbis.ogg_codec() == "libvorbis"
+    assert "-q:a" in vorbis.ogg_args("in", "out", "libvorbis")
+    assert await vorbis.to_ogg(b"#!AMR\n" + b"\x3c" * 100) == b"FAKEOGG"
+
+    # Сборка вовсе без кодеков для OGG: честно ничего не отдаём.
+    work = tempfile.mkdtemp()
+    naked = render.Transcoder(fake_ffmpeg_audio(work, ["libopencore_amrnb"]), workdir=work)
+    assert await naked.ogg_codec() is None
+    assert await naked.to_ogg(b"#!AMR\n" + b"\x3c" * 100) is None
+
+    # Приметы форматов, которые ffmpeg разбирает сам.
+    assert render._known_audio(b"#!AMR\n\x3c") and not render._known_audio(b"\x3c\x3c")
+    assert render._known_audio(b"\x00\x00\x00\x18ftyp3gp4\x00\x00")
+    print("  голосовое в OGG: ок (кодек по сборке, запись без заголовка, отказ без кодеков)")
+
+
 async def run_page() -> None:
     work = tempfile.mkdtemp()
     store = render.RenderStore(os.path.join(work, "render"),
@@ -695,6 +758,7 @@ async def run_command() -> None:
 
 async def main() -> None:
     await run_transcoder()
+    await run_voice_ogg()
     await run_page()
     await run_lazy_and_progress()
     await run_expiry()

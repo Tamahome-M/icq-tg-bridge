@@ -50,6 +50,20 @@ COLOR_TIME = "#8397a8"
 # просто не откроет.
 VIDEO_WIDTH = 176
 VIDEO_HEIGHT = 144
+# Кодировщики каждой сборки ffmpeg — спрашиваем по одному разу на путь.
+_ENCODERS: dict[str, set[str]] = {}
+
+# Приметы звуковых форматов, которые ffmpeg опознаёт сам.
+AUDIO_MAGIC = (b"#!AMR", b"RIFF", b"OggS", b"ID3", b"fLaC", b"\xff\xfb", b"\xff\xf1")
+
+
+def _known_audio(raw: bytes) -> bool:
+    """Похоже ли начало записи на формат, который ffmpeg опознает сам."""
+    if len(raw) >= 12 and raw[4:8] == b"ftyp":
+        return True                       # 3GP, MP4 и родня
+    return any(raw.startswith(magic) for magic in AUDIO_MAGIC)
+
+
 VIDEO_KBPS = 64
 VIDEO_FPS = 15
 VIDEO_CODECS = {
@@ -160,6 +174,41 @@ class Transcoder:
         from shutil import which
         return bool(self.ffmpeg) and which(self.ffmpeg) is not None
 
+    async def encoders(self) -> set[str]:
+        """Кодировщики этой сборки ffmpeg — спрашиваем один раз на путь.
+
+        Сборки разнятся: без USE=opus в ffmpeg нет libopus, и голосовое,
+        которое мы честно записали, некуда было бы уложить."""
+        known = _ENCODERS.get(self.ffmpeg)
+        if known is not None:
+            return known
+        names: set[str] = set()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                self.ffmpeg, "-hide_banner", "-encoders",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+            for line in out.decode("utf-8", "replace").splitlines():
+                parts = line.split()
+                # Строка вида « A..... libopus  libopus Opus»
+                if len(parts) >= 2 and len(parts[0]) == 6 and parts[0][0] in "VAS":
+                    names.add(parts[1])
+        except Exception as exc:
+            log.warning("не смог спросить у ffmpeg список кодировщиков: %s", exc)
+        _ENCODERS[self.ffmpeg] = names
+        return names
+
+    async def ogg_codec(self) -> str | None:
+        """Чем кодировать голосовое: opus (как ждут Telegram и MAX) или,
+        если его в сборке нет, vorbis — он хотя бы проиграется."""
+        names = await self.encoders()
+        if not names:
+            return "libopus"           # список не дался — пробуем как раньше
+        for codec in ("libopus", "opus", "libvorbis", "vorbis"):
+            if codec in names:
+                return codec
+        return None
+
     def video_args(self, src: str, dst: str) -> list[str]:
         # Кадр дополняем полями до ровного QCIF: H.263 других размеров не знает.
         scale = (f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,"
@@ -181,13 +230,44 @@ class Transcoder:
                 "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1", "-b:a", "12.2k",
                 "-f", "amr", dst]
 
-    def ogg_args(self, src: str, dst: str) -> list[str]:
+    def ogg_args(self, src: str, dst: str, codec: str = "libopus") -> list[str]:
         """OGG для Telegram и MAX: голосовое там именно в нём. Кодек берём
         какой есть — opus предпочтительнее, vorbis тоже принимается."""
-        return [self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
-                "-t", str(self.audio_seconds), "-vn",
-                "-c:a", "libopus", "-ar", "48000", "-ac", "1", "-b:a", "24k",
-                "-f", "ogg", dst]
+        rate = ["-ar", "48000", "-ac", "1"]
+        if codec in ("libopus", "opus"):
+            quality = ["-b:a", "24k"]
+        else:
+            quality = ["-q:a", "3"]
+        extra = ["-strict", "-2"] if codec == "opus" else []
+        return ([self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
+                 "-t", str(self.audio_seconds), "-vn", "-c:a", codec]
+                + rate + quality + extra + ["-f", "ogg", dst])
+
+    async def to_ogg(self, raw: bytes) -> bytes | None:
+        """Запись с телефона — в OGG для Telegram и MAX.
+
+        Телефон отдаёт то, что записал сам (обычно AMR, иногда 3GP и без
+        всякой приметы в начале). Если ffmpeg не опознал поток, пробуем ещё
+        раз, приписав заголовок AMR: без него разбирать голый AMR он не
+        берётся."""
+        if not raw:
+            return None
+        log.info("голосовое с телефона: %d байт, начало %s",
+                 len(raw), raw[:8].hex())
+        codec = await self.ogg_codec()
+        if codec is None:
+            log.warning("в ffmpeg %r нет ни libopus, ни libvorbis — голосовое "
+                        "уйдёт файлом; пересоберите ffmpeg с поддержкой opus",
+                        self.ffmpeg)
+            return None
+        out = await self.convert(raw, "ogg", codec=codec)
+        if out is None and not _known_audio(raw):
+            log.info("ffmpeg не опознал запись — пробую ещё раз как голый AMR")
+            out = await self.convert(b"#!AMR\n" + raw, "ogg", codec=codec)
+        if out is not None and codec not in ("libopus", "opus"):
+            log.warning("голосовое закодировано в %s: без libopus Telegram "
+                        "может показать его не голосовым, а звуковым файлом", codec)
+        return out
 
     def voice_args(self, src: str, dst: str) -> list[str]:
         """AMR в контейнере 3GP: голый .amr плеер телефона не опознаёт,
@@ -197,7 +277,7 @@ class Transcoder:
                 "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1", "-b:a", "12.2k",
                 "-movflags", "+faststart", "-f", "3gp", dst]
 
-    async def convert(self, raw: bytes, kind: str) -> bytes | None:
+    async def convert(self, raw: bytes, kind: str, codec: str = "libopus") -> bytes | None:
         """Перегоняет видео в 3GP, звук — в AMR."""
         if not raw or not self.available:
             if raw and not self.available:
@@ -213,10 +293,11 @@ class Transcoder:
         elif kind == "voice":
             args = self.voice_args(src, dst)
         elif kind == "ogg":
-            args = self.ogg_args(src, dst)
+            args = self.ogg_args(src, dst, codec)
         else:
             args = self.audio_args(src, dst)
         try:
+            os.makedirs(self.workdir, exist_ok=True)
             with open(src, "wb") as fh:
                 fh.write(raw)
             proc = await asyncio.create_subprocess_exec(

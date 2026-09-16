@@ -137,6 +137,7 @@ class Session:
         # Снимок или голосовое, которые телефон шлёт по частям.
         self.upload: bytearray | None = None
         self.upload_seconds = 0
+        self.upload_kind = ""           # чем телефон записал голосовое
         self.close_reason = ""
         self.sent_messages = 0        # телефону
         self.got_messages = 0         # от телефона
@@ -1105,6 +1106,9 @@ class Session:
             part, total = r.u16(), r.u16()
             seconds = r.u16()
             chunk = r.read(r.u16())
+            # Хвостом первой части клиент говорит, в чём он записал; старый
+            # клиент ничего не приписывает — тогда тип остаётся пустым.
+            kind = r.pstr8().decode("latin-1") if r.left else ""
         except Exception:
             log.warning("негодная часть голосового от телефона")
             return
@@ -1113,6 +1117,7 @@ class Session:
         if part == 1:
             self.upload = bytearray()
             self.upload_seconds = seconds
+            self.upload_kind = kind
         if self.upload is None:
             return
         self.upload += chunk
@@ -1125,8 +1130,9 @@ class Session:
         if part < total:
             return
         data, self.upload = bytes(self.upload), None
-        log.info("голосовое с телефона для %s: %d с, %d КБ — отправляю",
-                 self.server.name_of(int(target)), self.upload_seconds, len(data) // 1024)
+        log.info("голосовое с телефона для %s: %d с, %d КБ%s — отправляю",
+                 self.server.name_of(int(target)), self.upload_seconds, len(data) // 1024,
+                 f", запись {self.upload_kind}" if self.upload_kind else "")
         ok = await self.server.on_voice(int(target), data, self.upload_seconds)
         await self.send_snac(C.SSBI, C.SSBI_UPLOAD_ACK,
                              pstr8(target.encode()) + (b"\x00" if ok else b"\x01"),

@@ -85,8 +85,7 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 			{
 				try
 				{
-					Player p = Manager.createPlayer("capture://audio");
-					p.realize();
+					Player p = openMicrophone();
 					RecordControl rc = (RecordControl) p.getControl("RecordControl");
 					if (rc == null) throw new Exception("no RecordControl");
 					sink = new ByteArrayOutputStream();
@@ -106,6 +105,31 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 				}
 			}
 		}.start();
+	}
+
+	// AMR is what the bridge expects and what the phone records anyway, but
+	// asking for it by name costs nothing and saves guessing later; if the
+	// phone does not take the locator, the plain one is tried next.
+	private static final String[] LOCATORS = {
+		"capture://audio?encoding=audio/amr",
+		"capture://audio?encoding=amr",
+		"capture://audio",
+	};
+
+	private Player openMicrophone() throws Exception
+	{
+		Exception last = null;
+		for (int i = 0; i < LOCATORS.length; i++)
+		{
+			try
+			{
+				Player p = Manager.createPlayer(LOCATORS[i]);
+				p.realize();
+				return p;
+			}
+			catch (Exception e) { last = e; }
+		}
+		throw last != null ? last : new Exception("no microphone");
 	}
 
 	// Redraws the running time once a second while recording.
@@ -151,6 +175,10 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 					data = sink.toByteArray();
 				}
 				catch (Exception e) { err = e; }
+				// Тип записи спрашиваем, пока плеер ещё жив.
+				String type = "";
+				try { if (player != null) type = String.valueOf(player.getContentType()); }
+				catch (Exception ignore) {}
 				stopRecorder();
 				if (data == null || data.length == 0)
 				{
@@ -160,7 +188,7 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 				}
 				try
 				{
-					Icq.sendVoice(uin, data, secs);
+					Icq.sendVoice(uin, data, secs, type);
 					status = ResourceBundle.getString("camera_sending")
 							+ " " + (data.length / 1024) + " КБ";
 				}

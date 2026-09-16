@@ -337,6 +337,13 @@ async def run_voice() -> None:
     mine = b"#!AMR\n" + bytes(range(256)) * 200        # 51 206 байт — две части
     assert await client.send_voice(uin, mine, 7) is True
     assert sent == [(uin, len(mine), 7)], sent
+    assert server.session.upload_kind == "audio/amr", "тип записи мост должен запомнить"
+
+    # Клиент постарше типа не приписывает — приём от этого не ломается.
+    sent.clear()
+    assert await client.send_voice(uin, mine, 5, kind=None) is True
+    assert sent == [(uin, len(mine), 5)], sent
+    assert server.session.upload_kind == "", "без хвоста тип пустой"
     assert await client.send_voice(uin, b"not amr" * 100, 3) is False
     await client.close()
     await asyncio.sleep(0.2)
