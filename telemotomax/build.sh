@@ -61,8 +61,19 @@ fi
 
 say "Настройки сборки"
 rm -rf src && mkdir src && cp -r "$HERE/src" "$HERE/res" "$HERE/util" "$HERE/build.xml" "$HERE/COPYING" src/
-sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION###|$VERSION|; \
+# Версия одна на всё: номер из VERSION и дата сборки. Номер идёт в
+# MIDlet-Version (телефон различает сборки по нему), «номер.дата» — в
+# TeleMotoMax-Version и на экран «О программе», а старший и младший номера —
+# в способность, которой клиент представляется мосту, чтобы в журнале моста
+# была ровно та же версия, что стоит на телефоне.
+STAMP="$VERSION.$(date +%y%m%d)"
+MAJOR=${VERSION%%.*}
+MINOR=${VERSION#*.}; MINOR=${MINOR%%.*}
+sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION###|$STAMP|; \
      s|###TMM-VERSION-JAVA###|$VERSION|; s|###TMM-NAME###|$NAME|" "$HERE/build.properties" > src/build.properties
+sed -i "s|TMM_VERSION_MAJOR = .*;|TMM_VERSION_MAJOR = $MAJOR;|; \
+        s|TMM_VERSION_MINOR = .*;|TMM_VERSION_MINOR = $MINOR;|" src/src/jimm/comm/Icq.java
+say "Версия: $STAMP (способность TMM:$MAJOR.$MINOR, имя «$NAME»)"
 cd src
 
 say "Сборка"
