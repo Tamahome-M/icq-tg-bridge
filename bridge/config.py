@@ -118,6 +118,9 @@ class Config:
     assistant_session_hours: int = 0
     assistant_title: str = "Claude"
     assistant_group: str = "Боты"
+    tmm_photo_width: int = 176
+    tmm_photo_height: int = 176
+    tmm_photo_max_kb: int = 20
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -129,6 +132,7 @@ class Config:
         lg = raw.get("log", {})
         dl = raw.get("downloads", {})
         ai = raw.get("assistant", {})
+        tm = raw.get("telemotomax", {})
         tg = raw.get("telegram", {})
         mx = raw.get("max", {})
         br = raw.get("bridge", {})
@@ -237,6 +241,9 @@ class Config:
             assistant_session_hours=int(ai.get("session_hours", cls.assistant_session_hours)),
             assistant_title=str(ai.get("title", cls.assistant_title)),
             assistant_group=str(ai.get("group", cls.assistant_group)),
+            tmm_photo_width=int(tm.get("photo_width", cls.tmm_photo_width)),
+            tmm_photo_height=int(tm.get("photo_height", cls.tmm_photo_height)),
+            tmm_photo_max_kb=int(tm.get("photo_max_kb", cls.tmm_photo_max_kb)),
             emoji_to_text=bool(br.get("emoji_to_text", True)),
             text_to_emoji=bool(br.get("text_to_emoji", True)),
             offline_queue_per_chat=int(br.get("offline_queue_per_chat", cls.offline_queue_per_chat)),
@@ -303,6 +310,8 @@ def describe(cfg: "Config") -> list[str]:
                                 "выключена" + ("" if cfg.render_enabled else " ([render] enabled = false)")),
         "загрузки: " + (f"каталог {cfg.downloads_dir}" + (", с паролем" if cfg.downloads_protected else "")
                         if cfg.downloads_dir else "раздела нет ([downloads] dir пуст)"),
+        f"TeleMotoMax: снимки в чате {cfg.tmm_photo_width}×{cfg.tmm_photo_height}, "
+        f"до {cfg.tmm_photo_max_kb} КБ (только для этого клиента)",
         "контакт «Claude»: " + (f"включён, команда «{cfg.assistant_command}», инструменты "
                                 f"{cfg.assistant_tools or 'никаких'}" if cfg.assistant_enabled
                                 else "выключен ([assistant] enabled = false)"),

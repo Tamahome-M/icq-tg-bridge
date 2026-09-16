@@ -162,6 +162,11 @@ class Storage:
             # клиент показывает её отдельной строкой и даёт открыть браузером.
             self.conn.execute(
                 "ALTER TABLE pending ADD COLUMN url TEXT NOT NULL DEFAULT ''")
+        if "attach" not in pending_columns:
+            # Вложение сообщения для расширенного клиента: «photo:<номер
+            # сообщения>» — по нему мост потом достаёт сам снимок.
+            self.conn.execute(
+                "ALTER TABLE pending ADD COLUMN attach TEXT NOT NULL DEFAULT ''")
 
     # --- контакты -------------------------------------------------------
 
@@ -289,7 +294,7 @@ class Storage:
     # --- очередь офлайна ------------------------------------------------
 
     def queue(self, uin: int, text: str, limit_per_chat: int, forced: bool = False,
-              url: str = "", ts: int = 0) -> None:
+              url: str = "", ts: int = 0, attach: str = "") -> None:
         """forced — ответ на команду с телефона: такое доставляем при любом статусе.
 
         url — ссылка, которую стоит отдать URL-сообщением, а не простым текстом.
@@ -297,8 +302,8 @@ class Storage:
         метка времени и время в офлайн-пачке. Без него — сейчас.
         """
         self.conn.execute(
-            "INSERT INTO pending (uin, text, ts, forced, url) VALUES (?, ?, ?, ?, ?)",
-            (uin, text, int(ts or time.time()), int(forced), url),
+            "INSERT INTO pending (uin, text, ts, forced, url, attach) VALUES (?, ?, ?, ?, ?, ?)",
+            (uin, text, int(ts or time.time()), int(forced), url, attach),
         )
         self.conn.execute(
             "DELETE FROM pending WHERE uin = ? AND id NOT IN ("
@@ -306,15 +311,15 @@ class Storage:
             (uin, uin, limit_per_chat),
         )
 
-    def peek_pending(self) -> list[tuple[int, int, str, int, bool, str]]:
+    def peek_pending(self) -> list[tuple[int, int, str, int, bool, str, str]]:
         """Записи, ожидающие отправки. Уже отправленные, но ещё не
         подтверждённые, пропускаем — чтобы не слать их повторно."""
         rows = self.conn.execute(
-            "SELECT id, uin, text, ts, forced, url FROM pending WHERE sent_at = 0 "
+            "SELECT id, uin, text, ts, forced, url, attach FROM pending WHERE sent_at = 0 "
             "ORDER BY id"
         ).fetchall()
-        return [(r["id"], r["uin"], r["text"], r["ts"], bool(r["forced"]), r["url"])
-                for r in rows]
+        return [(r["id"], r["uin"], r["text"], r["ts"], bool(r["forced"]), r["url"],
+                 r["attach"]) for r in rows]
 
     def mark_sent(self, row_id: int) -> None:
         self.conn.execute("UPDATE pending SET sent_at = ? WHERE id = ?",

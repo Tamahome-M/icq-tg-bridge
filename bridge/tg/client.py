@@ -304,8 +304,11 @@ class TelegramSide:
                     sender = utils.get_display_name(await event.get_sender()) or ""
                 except Exception:
                     sender = ""
+            # Снимок в сообщении: расширенному клиенту отдадим его по запросу.
+            attach = f"photo:{event.message.id}" if media_kind(event.message) == "photo" else ""
             shown = await self.on_message(peer_id, sender, text,
-                                          int(event.message.date.timestamp()), topic_id)
+                                          int(event.message.date.timestamp()), topic_id,
+                                          attach=attach)
             if self.cfg.mark_read and shown:
                 await event.message.mark_read()
         except Exception:
@@ -454,6 +457,18 @@ class TelegramSide:
             except Exception:
                 continue
         return None
+
+    async def photo_bytes(self, peer_id: int, message_id: int) -> bytes | None:
+        """Снимок из сообщения — как есть, ужимает уже мост."""
+        try:
+            msgs = await self.client.get_messages(peer_id, ids=[message_id])
+        except Exception:
+            log.warning("сообщение %s в чате %s не нашлось", message_id, peer_id)
+            return None
+        msg = msgs[0] if msgs else None
+        if msg is None or not getattr(msg, "photo", None):
+            return None
+        return await self._download_small(msg)
 
     async def avatar(self, peer_id: int) -> bytes | None:
         """Маленькая аватарка чата — та, что Telegram отдаёт для списков."""
