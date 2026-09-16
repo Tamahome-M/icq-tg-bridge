@@ -401,9 +401,10 @@ class Bridge:
         if contact is None or contact.peer_id == ASSISTANT_PEER:
             return False
         transcoder = self._transcoder(self.cfg.tmm_voice_seconds)
-        ogg = await transcoder.convert(data, "ogg") if transcoder.available else None
+        ogg = await transcoder.to_ogg(data) if transcoder.available else None
         if ogg is None:
-            log.info("голосовое не перекодировалось в OGG — отправляю как файл")
+            log.warning("голосовое не перекодировалось в OGG — отправляю файлом; "
+                        "в чате это будет вложение, а не голосовое")
         try:
             message_id = await self.side_for(contact.peer_id).send_voice(
                 contact.peer_id, ogg or data, seconds, voice=ogg is not None,

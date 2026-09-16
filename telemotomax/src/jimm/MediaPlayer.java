@@ -29,6 +29,7 @@ import javax.microedition.lcdui.Font;
 import javax.microedition.lcdui.Graphics;
 import javax.microedition.media.Manager;
 import javax.microedition.media.Player;
+import javax.microedition.media.PlayerListener;
 import javax.microedition.media.control.VideoControl;
 
 import jimm.comm.Icq;
@@ -46,7 +47,7 @@ import jimm.util.ResourceBundle;
  * both the file and the player are dropped when the screen is closed.
  */
 public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
-		RequestBartAction.ProgressListener
+		RequestBartAction.ProgressListener, PlayerListener
 {
 	private static MediaPlayer current;
 
@@ -58,6 +59,9 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	private Player player;
 	private String filePath;           // temp file URL, or null if played from memory
 	private int clipSize;
+	private boolean paused;
+	private boolean finished;
+	private boolean ticking;
 
 	private MediaPlayer(JimmScreen back, int bartType, String mime)
 	{
@@ -177,6 +181,101 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		}
 	}
 
+	// The player tells us when the voice message has played to the end, so the
+	// screen can offer to play it again instead of just going quiet.
+	public void playerUpdate(Player p, String event, Object data)
+	{
+		if (current != this || p != player) return;
+		if (PlayerListener.END_OF_MEDIA.equals(event))
+		{
+			finished = true;
+			paused = false;
+			repaint();
+		}
+	}
+
+	// Redraws the running time about twice a second while the voice plays.
+	private void tick()
+	{
+		if (ticking) return;
+		ticking = true;
+		new Thread() {
+			public void run()
+			{
+				while (current == MediaPlayer.this && player != null)
+				{
+					repaint();
+					try { Thread.sleep(500); } catch (Exception ignore) {}
+				}
+				ticking = false;
+			}
+		}.start();
+	}
+
+	// Pause and resume; at the end of the voice message "fire" plays it again.
+	private void toggle()
+	{
+		Player p = player;
+		if (p == null) return;
+		try
+		{
+			if (finished)
+			{
+				p.setMediaTime(0);
+				p.start();
+				finished = false;
+				paused = false;
+			}
+			else if (paused)
+			{
+				p.start();
+				paused = false;
+			}
+			else
+			{
+				p.stop();
+				paused = true;
+			}
+		}
+		catch (Exception ignore) {}
+		repaint();
+	}
+
+	private void rewind()
+	{
+		Player p = player;
+		if (p == null) return;
+		try
+		{
+			p.setMediaTime(0);
+			if (paused || finished) p.start();
+			paused = false;
+			finished = false;
+		}
+		catch (Exception ignore) {}
+		repaint();
+	}
+
+	// Media time in seconds, or -1 if the player does not tell.
+	private int mediaSeconds(boolean total)
+	{
+		Player p = player;
+		if (p == null) return -1;
+		try
+		{
+			long micros = total ? p.getDuration() : p.getMediaTime();
+			if (micros < 0) return -1;
+			return (int) (micros / 1000000L);
+		}
+		catch (Exception e) { return -1; }
+	}
+
+	private static String time(int seconds)
+	{
+		if (seconds < 0) return "--:--";
+		return seconds / 60 + ":" + (seconds % 60 < 10 ? "0" : "") + (seconds % 60);
+	}
+
 	private void start(Player p) throws Exception
 	{
 		player = p;
@@ -195,7 +294,12 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			vc.setVisible(true);
 		}
 		player.prefetch();
+		if (bartType == RequestBartAction.BART_VOICE)
+		{
+			try { player.addPlayerListener(this); } catch (Exception ignore) {}
+		}
 		player.start();
+		if (bartType == RequestBartAction.BART_VOICE) tick();
 	}
 
 	// A writable temp file URL, or null if no root is available.
@@ -293,6 +397,11 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	{
 		g.setColor(0x000000);
 		g.fillRect(0, 0, getWidth(), getHeight());
+		if (status == null && player != null && bartType == RequestBartAction.BART_VOICE)
+		{
+			paintVoice(g);
+			return;
+		}
 		if (status != null)
 		{
 			Font font = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
@@ -314,6 +423,49 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		}
 	}
 
+	// A voice message has nothing to show, so the screen shows what it is
+	// doing: elapsed time, a progress bar and which key does what.
+	private void paintVoice(Graphics g)
+	{
+		Font font = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_MEDIUM);
+		Font small = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
+		int at = mediaSeconds(false), total = mediaSeconds(true);
+		if (finished && total >= 0) at = total;
+		int middle = getHeight() / 2;
+
+		g.setFont(small);
+		g.setColor(0x808080);
+		String what = ResourceBundle.getString(
+				finished ? "voice_done" : (paused ? "voice_paused" : "voice_playing"));
+		g.drawString(what, getWidth() / 2, middle - font.getHeight() - small.getHeight() - 8,
+				Graphics.HCENTER | Graphics.BASELINE);
+
+		g.setFont(font);
+		g.setColor(0xFFFFFF);
+		String clock = time(at) + (total > 0 ? " / " + time(total) : "");
+		g.drawString(clock, getWidth() / 2, middle - 6, Graphics.HCENTER | Graphics.BASELINE);
+
+		// Полоса заполняется, только если плеер знает длительность.
+		int barWidth = getWidth() - 20, barY = middle + 6, barHeight = 6;
+		g.setColor(0x404040);
+		g.drawRect(10, barY, barWidth, barHeight);
+		if (total > 0 && at >= 0)
+		{
+			int filled = at >= total ? barWidth - 1 : (barWidth - 1) * at / total;
+			g.setColor(0x33AA33);
+			g.fillRect(11, barY + 1, filled, barHeight - 1);
+		}
+
+		g.setFont(small);
+		g.setColor(0xC0C0C0);
+		g.drawString(ResourceBundle.getString(finished ? "voice_keys_again" : "voice_keys"),
+				getWidth() / 2, barY + barHeight + small.getHeight() + 6,
+				Graphics.HCENTER | Graphics.BASELINE);
+		g.drawString((clipSize / 1024) + " КБ", getWidth() / 2,
+				barY + barHeight + 2 * small.getHeight() + 8,
+				Graphics.HCENTER | Graphics.BASELINE);
+	}
+
 	private void stop()
 	{
 		if (player != null)
@@ -328,6 +480,17 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	protected void keyPressed(int keyCode)
 	{
 		DrawControls.VirtualList.touch();
+		// У голосового экран живой: «выбор» (или «5») — пауза и продолжение,
+		// в конце — ещё раз; «4» (или влево) — с начала; «0» — закрыть.
+		if (bartType == RequestBartAction.BART_VOICE && player != null)
+		{
+			int action = 0;
+			try { action = getGameAction(keyCode); } catch (Exception ignore) {}
+			if (action == FIRE || keyCode == KEY_NUM5) { toggle(); return; }
+			if (action == LEFT || keyCode == KEY_NUM4) { rewind(); return; }
+			if (keyCode == KEY_NUM0) { close(); return; }
+			return;
+		}
 		close();
 	}
 

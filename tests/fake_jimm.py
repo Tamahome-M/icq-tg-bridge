@@ -475,15 +475,17 @@ class FakeJimm:
         return r.u8() == 0
 
     async def send_voice(self, uin: int, data: bytes, seconds: int, part_size: int = 30000,
-                         timeout: float = 5.0) -> bool:
-        """Голосовое с телефона — как TeleMotoMax: части 10/04 с длительностью, ответ 10/03."""
+                         timeout: float = 5.0, kind: str = "audio/amr") -> bool:
+        """Голосовое с телефона — как TeleMotoMax: части 10/04 с длительностью
+        и типом записи хвостом первой части, ответ 10/03."""
         raw = str(uin).encode()
         total = max(1, (len(data) + part_size - 1) // part_size)
         for part in range(1, total + 1):
             chunk = data[(part - 1) * part_size:part * part_size]
+            tail = pstr8(kind.encode()) if part == 1 and kind is not None else b""
             await self.send_snac(C.SSBI, C.SSBI_UPLOAD_VOICE,
                                  pstr8(raw) + struct.pack(">HHHH", part, total, seconds, len(chunk))
-                                 + chunk)
+                                 + chunk + tail)
         ack = await self.expect(C.SSBI, C.SSBI_UPLOAD_ACK, timeout)
         r = ack.reader()
         r.pstr8()

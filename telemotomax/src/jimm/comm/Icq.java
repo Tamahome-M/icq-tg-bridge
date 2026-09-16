@@ -395,9 +395,14 @@ public class Icq implements Runnable
 
 	// TeleMotoMax: a voice message recorded on the phone, SNAC 10/04 — same
 	// as a snapshot but with the length in seconds before the chunk.
-	public static void sendVoice(String uin, byte[] voice, int seconds) throws JimmException
+	public static void sendVoice(String uin, byte[] voice, int seconds, String type)
+			throws JimmException
 	{
 		byte[] uinRaw = Util.stringToByteArray(uin);
+		// Тип записи («audio/amr») идёт хвостом первой части: мосту он
+		// подсказывает, что ему прислали, а старый мост его просто не читает.
+		byte[] typeRaw = Util.stringToByteArray(type == null ? "" : type);
+		if (typeRaw.length > 60) typeRaw = new byte[0];
 		int total = (voice.length + PHOTO_PART - 1) / PHOTO_PART;
 		if (total < 1) total = 1;
 		for (int part = 1; part <= total; part++)
@@ -405,7 +410,8 @@ public class Icq implements Runnable
 			int from = (part - 1) * PHOTO_PART;
 			int size = voice.length - from;
 			if (size > PHOTO_PART) size = PHOTO_PART;
-			byte[] buf = new byte[1 + uinRaw.length + 2 + 2 + 2 + 2 + size];
+			int tail = (part == 1) ? 1 + typeRaw.length : 0;
+			byte[] buf = new byte[1 + uinRaw.length + 2 + 2 + 2 + 2 + size + tail];
 			int marker = 0;
 			Util.putByte(buf, marker, uinRaw.length); marker += 1;
 			System.arraycopy(uinRaw, 0, buf, marker, uinRaw.length); marker += uinRaw.length;
@@ -413,7 +419,12 @@ public class Icq implements Runnable
 			Util.putWord(buf, marker, total); marker += 2;
 			Util.putWord(buf, marker, seconds); marker += 2;
 			Util.putWord(buf, marker, size); marker += 2;
-			System.arraycopy(voice, from, buf, marker, size);
+			System.arraycopy(voice, from, buf, marker, size); marker += size;
+			if (tail > 0)
+			{
+				Util.putByte(buf, marker, typeRaw.length); marker += 1;
+				System.arraycopy(typeRaw, 0, buf, marker, typeRaw.length);
+			}
 			sendPacket(new SnacPacket(0x0010, 0x0004, 0x00000000, new byte[0], buf));
 		}
 	}
