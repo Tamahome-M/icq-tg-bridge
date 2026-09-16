@@ -197,7 +197,7 @@ public class Options
 	public static final int OPTION_CL_HIDE_EMPTY     = 168;
 	public static final int OPTION_INIT_CAPS	     = 169;
 	// TeleMotoMax: how many messages "History from server" asks for
-	public static final int OPTION_HISTORY_COUNT    = 170;
+	public static final int OPTION_HISTORY_COUNT    = 113;   // 64..127 — числовые ключи
 	
 	/* long */
 	public static final int OPTION_ONLINE_STATUS = 192; 
