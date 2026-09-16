@@ -476,6 +476,26 @@ class TelegramSide:
             return await self._download_thumb(msg)
         return None
 
+    async def video_bytes(self, peer_id: int, message_id: int, max_bytes: int) -> bytes | None:
+        """Сам ролик из сообщения — как есть; перекодирует мост."""
+        try:
+            msgs = await self.client.get_messages(peer_id, ids=[message_id])
+        except Exception:
+            log.warning("сообщение %s в чате %s не нашлось", message_id, peer_id)
+            return None
+        msg = msgs[0] if msgs else None
+        if msg is None or media_kind(msg) != "video":
+            return None
+        size = getattr(getattr(msg, "file", None), "size", 0) or 0
+        if max_bytes and size > max_bytes:
+            log.info("ролик %d КБ больше потолка %d КБ — не качаю", size // 1024, max_bytes // 1024)
+            return None
+        try:
+            return await msg.download_media(file=bytes)
+        except Exception:
+            log.warning("ролик из сообщения %s не скачался", message_id, exc_info=True)
+            return None
+
     async def avatar(self, peer_id: int) -> bytes | None:
         """Маленькая аватарка чата — та, что Telegram отдаёт для списков."""
         try:

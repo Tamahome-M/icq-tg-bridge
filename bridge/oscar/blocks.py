@@ -41,17 +41,19 @@ def user_info(screenname: str, *, warning: int = 0, user_class: int | None = Non
 
 
 def icon_reply(uin: int, icon_hash: bytes, image: bytes,
-               bart_type: int = C.BART_ICON) -> bytes:
-    """Тело SNAC 10/07: аватарка контакта (или снимок по токену — тот же
-    формат с другим типом приметы, расширение TeleMotoMax).
+               bart_type: int = C.BART_ICON, part: int = 1, total: int = 1) -> bytes:
+    """Тело SNAC 10/07: аватарка контакта (или снимок, история, часть ролика
+    по токену — тот же формат с другим типом приметы, расширение TeleMotoMax).
 
     Приметы идут дважды подряд — так устроен ответ настоящего сервера, и клиент
-    отсчитывает начало картинки по этой длине, а не по разбору полей.
+    отсчитывает начало картинки по этой длине, а не по разбору полей. Байты
+    флагов у примет обычно 0x01; для ролика, который не влезает в один пакет,
+    в первом — номер части, во втором — сколько их всего.
     """
-    marks = (struct.pack(">HBB", bart_type, C.BART_ICON_FLAGS, len(icon_hash))
-             + icon_hash)
+    first = struct.pack(">HBB", bart_type, part, len(icon_hash)) + icon_hash
+    second = struct.pack(">HBB", bart_type, total, len(icon_hash)) + icon_hash
     return (pstr8(str(uin).encode("ascii"))
-            + marks + b"\x00" + marks
+            + first + b"\x00" + second
             + struct.pack(">H", len(image)) + image)
 
 

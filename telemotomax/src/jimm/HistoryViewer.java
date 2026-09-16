@@ -48,6 +48,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	private final String name;
 	private TextList list;
 	private Vector tokens = new Vector();    // per message: byte[16] or null
+	private Vector kinds = new Vector();     // per message: Integer kind (1 photo, 2 video)
 
 	private HistoryViewer(JimmScreen back, String uin, String name)
 	{
@@ -97,7 +98,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 					photo = new byte[16];
 					System.arraycopy(data, 2 + len + 1, photo, 0, 16);
 				}
-				ChatHistory.addHistoryLine(uin, text, photo);
+				ChatHistory.addHistoryLine(uin, text, photo, (flag & 2) != 0 ? 2 : 1);
 			}
 		};
 		try
@@ -120,8 +121,14 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 
 	private void addLine(String text, byte[] token)
 	{
+		addLine(text, token, 1);
+	}
+
+	private void addLine(String text, byte[] token, int kind)
+	{
 		int index = tokens.size();
 		tokens.addElement(token);
+		kinds.addElement(new Integer(kind));
 		list.addBigText(text, -1, Font.STYLE_PLAIN, index);
 		list.doCRLF(index);
 	}
@@ -133,6 +140,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		list.lock();
 		list.clear();
 		tokens.removeAllElements();
+		kinds.removeAllElements();
 		if (data == null)
 		{
 			addLine(ResourceBundle.getString("history_failed"), null);
@@ -156,7 +164,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 					System.arraycopy(data, marker, token, 0, 16);
 					marker += 16;
 				}
-				addLine(text, token);
+				addLine(text, token, (flag & 2) != 0 ? 2 : 1);
 			}
 			if (tokens.size() == 0) addLine(ResourceBundle.getString("history_empty"), null);
 		}
@@ -174,11 +182,22 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		return (byte[]) tokens.elementAt(index);
 	}
 
+	private int currentKind()
+	{
+		int index = list.getCurrTextIndex();
+		if (index < 0 || index >= kinds.size()) return 0;
+		return ((Integer) kinds.elementAt(index)).intValue();
+	}
+
 	private void checkPhoto()
 	{
 		list.removeCommandEx(ChatTextList.cmdShowPhoto);
+		list.removeCommandEx(ChatTextList.cmdPlayVideo);
 		if (currentToken() != null)
+		{
 			list.addCommandEx(ChatTextList.cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
+			if (currentKind() == 2) list.addCommandEx(ChatTextList.cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
+		}
 	}
 
 	public void vlCursorMoved(VirtualList sender)
@@ -202,9 +221,16 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			if (token != null) PhotoViewer.show(uin, token, this);
 			return;
 		}
+		if (c == ChatTextList.cmdPlayVideo)
+		{
+			byte[] token = currentToken();
+			if (token != null) VideoPlayer.show(uin, token, this);
+			return;
+		}
 		if (current == this) current = null;
 		list = null;                       // the text goes with the screen
 		tokens = null;
+		kinds = null;
 		if (back != null) back.activate();
 		else JimmUI.backToLastScreen();
 	}

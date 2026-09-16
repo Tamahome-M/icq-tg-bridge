@@ -869,6 +869,23 @@ class MaxSide:
             return await self._download(_attr(attach, "thumbnail", "") or "")
         return None
 
+    async def video_bytes(self, peer_id: int, message_id: int, max_bytes: int) -> bytes | None:
+        """Сам ролик из сообщения MAX — по ссылке, которую даёт сервер."""
+        chat_id = from_peer(peer_id)
+        try:
+            msg = await self.client.get_message(chat_id, message_id)
+        except Exception as exc:
+            log.warning("MAX: сообщение %s в чате %s не нашлось: %s", message_id, chat_id, exc)
+            return None
+        attach = self._first_media(msg) if msg is not None else None
+        if attach is None or _enum_value(_attr(attach, "type", "")).upper() != "VIDEO":
+            return None
+        data = await self._download_video(chat_id, msg, attach)
+        if data and max_bytes and len(data) > max_bytes:
+            log.info("MAX: ролик %d КБ больше потолка — пропускаю", len(data) // 1024)
+            return None
+        return data
+
     async def avatar(self, peer_id: int) -> bytes | None:
         chat = await self._chat(from_peer(peer_id))
         if chat is None:

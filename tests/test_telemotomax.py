@@ -145,6 +145,21 @@ async def run_photos() -> None:
     got = await client.request_photo(uin, client.attachments[-1][1])
     assert asked[-1] == (uin, "video:4343") and got["image"][:3] == b"\xff\xd8\xff"
 
+    # Сам ролик: приходит частями по 30 КБ, клиент склеивает.
+    clip = bytes(range(256)) * 300                     # 76 800 байт «3GP»
+    videos: list[str] = []
+
+    async def fetch_video(target: int, attach: str):
+        videos.append(attach)
+        return clip
+
+    server.fetch_video = fetch_video
+    client.parts_seen.clear()
+    got_clip = await client.request_video(uin, client.attachments[-1][1])
+    assert videos == ["video:4343"], videos
+    assert got_clip == clip, (len(got_clip), len(clip))
+    assert client.parts_seen == [(1, 3), (2, 3), (3, 3)], client.parts_seen
+
     # Чужой или протухший токен — отказ службы, а не тишина.
     await client.request_service(C.SSBI)
     redirect = await client.expect(C.OSERVICE, C.SERVICE_REDIRECT)

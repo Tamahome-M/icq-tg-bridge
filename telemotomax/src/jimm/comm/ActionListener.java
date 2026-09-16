@@ -520,6 +520,7 @@ public class ActionListener
 				// picture. Plain Jimm never looks past the body, so it is
 				// harmless for it.
 				byte[] attachToken = null;
+				int attachKind = 0;
 				int extMarker = marker;
 				while (extMarker + 4 <= buf.length)
 				{
@@ -531,6 +532,7 @@ public class ActionListener
 					{
 						attachToken = new byte[16];
 						System.arraycopy(extData, 1, attachToken, 0, 16);
+						attachKind = extData[0];
 					}
 					extMarker += 4 + extData.length;
 				}
@@ -607,7 +609,7 @@ public class ActionListener
 						PlainMessage plainMsg = new PlainMessage(uin, Options
 								.getString(Options.OPTION_UIN), Util
 								.createCurrentDate(false), text, false);
-						plainMsg.setAttachToken(attachToken);
+						plainMsg.setAttach(attachToken, attachKind);
 						MainThread.addMessageSerially(plainMsg);
 					}
 
@@ -809,7 +811,7 @@ public class ActionListener
 						}
 
 						// Forward message object to contact list
-						if (message instanceof PlainMessage) ((PlainMessage) message).setAttachToken(attachToken);
+						if (message instanceof PlainMessage) ((PlainMessage) message).setAttach(attachToken, attachKind);
 						MainThread.addMessageSerially(message);
 
 						// Acknowledge message
