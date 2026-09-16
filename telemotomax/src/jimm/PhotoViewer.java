@@ -68,15 +68,28 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 	public void onBart(byte[] data)
 	{
 		if (current != this) return;     // screen already left — drop it
-		Image img = null;
-		if (data != null)
+		if (data == null)
 		{
-			try { img = Image.createImage(data, 0, data.length); }
-			catch (Exception ignore) {}
+			image = null;
+			status = ResourceBundle.getString("photo_failed");
+			repaint();
+			return;
 		}
-		image = img;
-		status = (img == null) ? ResourceBundle.getString("photo_failed") : null;
-		repaint();
+		// Decoding a big picture takes a while; onBart runs on the comm thread,
+		// so decode on a thread of its own or the connection would stall.
+		final byte[] raw = data;
+		new Thread() {
+			public void run()
+			{
+				Image img = null;
+				try { img = Image.createImage(raw, 0, raw.length); }
+				catch (Exception ignore) {}
+				if (current != PhotoViewer.this) return;
+				image = img;
+				status = (img == null) ? ResourceBundle.getString("photo_failed") : null;
+				repaint();
+			}
+		}.start();
 	}
 
 	protected void paint(Graphics g)
