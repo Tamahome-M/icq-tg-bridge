@@ -51,8 +51,10 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	private final JimmScreen back;
 	private String status;
+	private String[] details;          // why it did not play, shown under the status
 	private Player player;
 	private String filePath;           // temp file URL, or null if played from memory
+	private int clipSize;
 
 	private VideoPlayer(JimmScreen back)
 	{
@@ -91,7 +93,8 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 		if (current != this) return;
 		if (data == null)
 		{
-			fail(null);
+			status = ResourceBundle.getString("video_failed");
+			repaint();
 			return;
 		}
 		status = null;
@@ -104,17 +107,12 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 			public void run()
 			{
 				if (current != VideoPlayer.this) return;
-				Exception err = playFromFile(clip);
-				if (err != null)
-				{
-					DebugLog.addText("VideoPlayer file play failed: " + err);
-					err = playFromStream(clip);
-				}
-				if (err != null)
-				{
-					DebugLog.addText("VideoPlayer stream play failed: " + err);
-					fail(err);
-				}
+				clipSize = clip.length;
+				Exception fileErr = playFromFile(clip);
+				if (fileErr == null) return;
+				Exception streamErr = playFromStream(clip);
+				if (streamErr == null) return;
+				fail(fileErr, streamErr);
 			}
 		}.start();
 	}
@@ -190,6 +188,7 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 			while (roots.hasMoreElements())
 			{
 				String root = (String) roots.nextElement();
+				while (root.length() > 0 && root.charAt(0) == '/') root = root.substring(1);
 				String url = "file:///" + root + "tmm_video.3gp";
 				try
 				{
@@ -218,9 +217,44 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 		filePath = null;
 	}
 
-	private void fail(Exception e)
+	// Short name of an exception: "javax.microedition.media.MediaException"
+	// does not fit the screen, "MediaException" does.
+	private static String shortName(Exception e)
+	{
+		if (e == null) return "?";
+		String name = e.getClass().getName();
+		int dot = name.lastIndexOf('.');
+		if (dot >= 0) name = name.substring(dot + 1);
+		String msg = e.getMessage();
+		if (msg != null && msg.length() > 0)
+		{
+			if (msg.length() > 40) msg = msg.substring(0, 40);
+			name += ": " + msg;
+		}
+		return name;
+	}
+
+	private void fail(Exception fileErr, Exception streamErr)
 	{
 		status = ResourceBundle.getString("video_failed");
+		String types = "";
+		try
+		{
+			String[] list = Manager.getSupportedContentTypes(null);
+			for (int i = 0; i < list.length; i++)
+			{
+				if (list[i].indexOf("video") < 0 && list[i].indexOf("3gp") < 0) continue;
+				types += (types.length() > 0 ? ", " : "") + list[i];
+			}
+			if (types.length() == 0) types = "нет видео";
+		}
+		catch (Exception e) { types = shortName(e); }
+		details = new String[] {
+			(clipSize / 1024) + " КБ",
+			"файл: " + shortName(fileErr),
+			"память: " + shortName(streamErr),
+			"плеер: " + types,
+		};
 		repaint();
 	}
 
@@ -230,9 +264,22 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 		g.fillRect(0, 0, getWidth(), getHeight());
 		if (status != null)
 		{
+			Font font = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
 			g.setColor(0xFFFFFF);
-			g.setFont(Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL));
-			g.drawString(status, getWidth() / 2, getHeight() / 2, Graphics.HCENTER | Graphics.BASELINE);
+			g.setFont(font);
+			int step = font.getHeight();
+			int lines = 1 + (details == null ? 0 : details.length);
+			int y = (getHeight() - lines * step) / 2 + step;
+			g.drawString(status, getWidth() / 2, y, Graphics.HCENTER | Graphics.BASELINE);
+			if (details != null)
+			{
+				g.setColor(0xC0C0C0);
+				for (int i = 0; i < details.length; i++)
+				{
+					y += step;
+					g.drawString(details[i], 2, y, Graphics.LEFT | Graphics.BASELINE);
+				}
+			}
 		}
 	}
 
