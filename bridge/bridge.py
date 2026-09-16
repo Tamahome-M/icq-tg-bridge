@@ -75,7 +75,8 @@ class Bridge:
                                  self.search_chats, self.verdict_for,
                                  self.on_phone_remove, self.on_phone_privacy,
                                  self.avatar, self.icon_hash, self.fetch_attachment,
-                                 self.fetch_history, self.fetch_video, self.send_camera_photo)
+                                 self.fetch_history, self.fetch_video, self.send_camera_photo,
+                                 self.fetch_voice, self.send_voice_message)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
@@ -362,6 +363,59 @@ class Bridge:
                  contact.title, width, height, len(data))
         return data
 
+    def _transcoder(self, seconds: int) -> "Transcoder":
+        """Перекодировщик с теми же кодеками, что у страницы !render."""
+        return Transcoder(self.cfg.render_ffmpeg, seconds,
+                          self.cfg.render_audio_seconds, self.cfg.render_timeout,
+                          self.cfg.render_dir, self.cfg.render_video_codec,
+                          self.cfg.render_video_kbps, self.cfg.render_video_fps)
+
+    async def fetch_voice(self, uin: int, attach: str) -> bytes | None:
+        """Голосовое из сообщения — AMR в 3GP, который телефон умеет играть."""
+        contact = self.storage.contact_by_uin(uin)
+        kind, _, ident = attach.partition(":")
+        if contact is None or kind != "voice" or not ident.isdigit():
+            return None
+        transcoder = self._transcoder(self.cfg.tmm_voice_seconds)
+        if not transcoder.available:
+            log.warning("голосовое для «%s»: ffmpeg %r не найден",
+                        contact.title, self.cfg.render_ffmpeg)
+            return None
+        raw = await self.side_for(contact.peer_id).voice_bytes(
+            contact.peer_id, int(ident), self.cfg.render_source_max_mb * 1024 * 1024)
+        if not raw:
+            return None
+        os.makedirs(self.cfg.render_dir, exist_ok=True)
+        data = await transcoder.convert(raw, "voice")
+        if data:
+            log.info("голосовое для «%s»: %d КБ", contact.title, len(data) // 1024)
+        return data
+
+    async def send_voice_message(self, uin: int, data: bytes, seconds: int) -> bool:
+        """Записанное на телефоне голосовое — в чат. True, если ушло.
+
+        Телефон пишет в своём формате (обычно AMR); в Telegram и MAX
+        голосовое — это OGG, поэтому перекодируем. Не вышло — отправляем
+        записанное как обычный звуковой файл, чтобы не потерять его."""
+        contact = self.storage.contact_by_uin(uin)
+        if contact is None or contact.peer_id == ASSISTANT_PEER:
+            return False
+        transcoder = self._transcoder(self.cfg.tmm_voice_seconds)
+        ogg = await transcoder.convert(data, "ogg") if transcoder.available else None
+        if ogg is None:
+            log.info("голосовое не перекодировалось в OGG — отправляю как файл")
+        try:
+            message_id = await self.side_for(contact.peer_id).send_voice(
+                contact.peer_id, ogg or data, seconds, voice=ogg is not None,
+                topic_id=contact.topic_id)
+        except Exception as exc:
+            log.exception("голосовое в чат «%s» не ушло", contact.title)
+            await self.reply(contact, f"Голосовое не отправлено: {type(exc).__name__}")
+            return False
+        log.info("голосовое с телефона → «%s»: %d с, %d КБ, номер %s",
+                 contact.title, seconds, len(ogg or data) // 1024, message_id)
+        return True
+
     async def send_camera_photo(self, uin: int, data: bytes) -> bool:
         """Снимок с камеры телефона — в чат. True, если ушёл."""
         contact = self.storage.contact_by_uin(uin)
@@ -389,10 +443,7 @@ class Bridge:
             return None
         if self.cfg.tmm_video_seconds <= 0:
             return None
-        transcoder = Transcoder(self.cfg.render_ffmpeg, self.cfg.tmm_video_seconds,
-                                self.cfg.render_audio_seconds, self.cfg.render_timeout,
-                                self.cfg.render_dir, self.cfg.render_video_codec,
-                                self.cfg.render_video_kbps, self.cfg.render_video_fps)
+        transcoder = self._transcoder(self.cfg.tmm_video_seconds)
         if not transcoder.available:
             log.warning("ролик для «%s»: ffmpeg %r не найден", contact.title, self.cfg.render_ffmpeg)
             return None
@@ -423,7 +474,7 @@ class Bridge:
             line = f"[{i.when.astimezone():%d.%m %H:%M}] {i.who}: {i.text}"
             if self.cfg.emoji_to_text:
                 line = emoji.to_text(line)
-            has_picture = i.kind in ("photo", "video") and i.msg_id
+            has_picture = i.kind in ("photo", "video", "voice") and i.msg_id
             out.append((line, f"{i.kind}:{i.msg_id}" if has_picture else ""))
         log.info("история «%s» для TeleMotoMax: %d сообщений, с фото %d",
                  contact.title, len(items), sum(1 for _, a in out if a))

@@ -134,8 +134,9 @@ class Session:
         # Версия TeleMotoMax (старший, младший), если подключился он: такому
         # клиенту можно слать то, чего обычный Jimm не поймёт.
         self.tmm_version: tuple[int, int] | None = None
-        # Снимок с камеры, который телефон шлёт по частям.
+        # Снимок или голосовое, которые телефон шлёт по частям.
         self.upload: bytearray | None = None
+        self.upload_seconds = 0
         self.close_reason = ""
         self.sent_messages = 0        # телефону
         self.got_messages = 0         # от телефона
@@ -465,6 +466,7 @@ class Session:
             (C.ICQ, 0x0002): self.on_icq_meta,
             (C.SSBI, C.SSBI_ICQ_REQ): self.on_icon_request,
             (C.SSBI, C.SSBI_UPLOAD): self.on_photo_upload,
+            (C.SSBI, C.SSBI_UPLOAD_VOICE): self.on_voice_upload,
         }.get((s.family, s.subtype))
 
         if handler is None:
@@ -970,7 +972,11 @@ class Session:
         if attach and self.extended:
             token = self.server.register_attachment(uin, attach)
             if token:
-                kind = C.ATTACH_VIDEO if attach.startswith("video:") else C.ATTACH_PHOTO
+                kind = C.ATTACH_PHOTO
+                if attach.startswith("video:"):
+                    kind = C.ATTACH_VIDEO
+                elif attach.startswith("voice:"):
+                    kind = C.ATTACH_VOICE
                 extra = tlv(C.TLV_TMM_ATTACH, bytes([kind]) + token)
                 log.info("телефону ← %s: вложение %s, токен %s",
                          self.server.name_of(uin), attach, token[:4].hex())
@@ -1086,6 +1092,46 @@ class Session:
                              pstr8(target.encode()) + (b"\x00" if ok else b"\x01"),
                              request_id=s.request_id)
 
+    async def on_voice_upload(self, s: Snac) -> None:
+        """Голосовое, записанное на телефоне: части 10/04, ответ 10/03.
+
+        От снимка отличается длительностью перед куском — она нужна, чтобы
+        в Telegram и MAX это было именно голосовым, а не файлом."""
+        if not self.extended:
+            return
+        r = Reader(s.data)
+        try:
+            target = r.pstr8().decode("latin-1")
+            part, total = r.u16(), r.u16()
+            seconds = r.u16()
+            chunk = r.read(r.u16())
+        except Exception:
+            log.warning("негодная часть голосового от телефона")
+            return
+        if not target.isdigit():
+            return
+        if part == 1:
+            self.upload = bytearray()
+            self.upload_seconds = seconds
+        if self.upload is None:
+            return
+        self.upload += chunk
+        if len(self.upload) > C.UPLOAD_MAX_BYTES:
+            log.warning("голосовое больше %d КБ — отказываюсь", C.UPLOAD_MAX_BYTES // 1024)
+            self.upload = None
+            await self.send_snac(C.SSBI, C.SSBI_UPLOAD_ACK,
+                                 pstr8(target.encode()) + b"\x01", request_id=s.request_id)
+            return
+        if part < total:
+            return
+        data, self.upload = bytes(self.upload), None
+        log.info("голосовое с телефона для %s: %d с, %d КБ — отправляю",
+                 self.server.name_of(int(target)), self.upload_seconds, len(data) // 1024)
+        ok = await self.server.on_voice(int(target), data, self.upload_seconds)
+        await self.send_snac(C.SSBI, C.SSBI_UPLOAD_ACK,
+                             pstr8(target.encode()) + (b"\x00" if ok else b"\x01"),
+                             request_id=s.request_id)
+
     async def on_icon_request(self, s: Snac) -> None:
         """SNAC 10/06 — клиент просит аватарку контакта или, по токену,
         снимок из сообщения (расширение TeleMotoMax, тип приметы 0x0080)."""
@@ -1116,18 +1162,21 @@ class Session:
                                  blocks.icon_reply(int(target), token, data, C.BART_HISTORY),
                                  request_id=s.request_id)
             return
-        if bart_type == C.BART_VIDEO and self.extended:
-            got = await self.server.video(token)
+        if bart_type in (C.BART_VIDEO, C.BART_VOICE) and self.extended:
+            voice = bart_type == C.BART_VOICE
+            got = await (self.server.voice(token) if voice else self.server.video(token))
+            what = "голосовое" if voice else "ролик"
             if not got:
-                log.info("ролик по токену %s не найден или не перекодировался", token[:4].hex())
+                log.info("%s по токену %s не найдено или не перекодировалось",
+                         what, token[:4].hex())
                 await self.send_error(C.SSBI, 0x0001, s.request_id)
                 return
             parts = [got[i:i + C.VIDEO_PART_BYTES] for i in range(0, len(got), C.VIDEO_PART_BYTES)]
-            log.info("ролик для %s отдан: %d байт в %d частях",
-                     self.server.name_of(target), len(got), len(parts))
+            log.info("%s для %s отдано: %d байт в %d частях",
+                     what, self.server.name_of(target), len(got), len(parts))
             for index, chunk in enumerate(parts, start=1):
                 if not await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
-                                            blocks.icon_reply(int(target), token, chunk, C.BART_VIDEO,
+                                            blocks.icon_reply(int(target), token, chunk, bart_type,
                                                               index, len(parts)),
                                             request_id=s.request_id):
                     return
@@ -1236,7 +1285,9 @@ class OscarServer:
                  fetch_history: Callable[[int, int],
                                          Awaitable[list[tuple[str, str]] | None]] | None = None,
                  fetch_video: Callable[[int, str], Awaitable[bytes | None]] | None = None,
-                 on_photo: Callable[[int, bytes], Awaitable[bool]] | None = None):
+                 on_photo: Callable[[int, bytes], Awaitable[bool]] | None = None,
+                 fetch_voice: Callable[[int, str], Awaitable[bytes | None]] | None = None,
+                 on_voice: Callable[[int, bytes, int], Awaitable[bool]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -1264,6 +1315,10 @@ class OscarServer:
         self.fetch_video = fetch_video
         # Снимок с камеры телефона — отправить в чат.
         self.on_photo = on_photo or self._no_photo
+        # Голосовое по токену — AMR в 3GP под плеер телефона.
+        self.fetch_voice = fetch_voice
+        # Записанное на телефоне голосовое — отправить в чат.
+        self.on_voice = on_voice or self._no_voice
         self.uin = str(cfg.oscar_uin)
         self.password = cfg.oscar_password
         self.ssi_encoding = cfg.ssi_encoding
@@ -1343,7 +1398,12 @@ class OscarServer:
 
     def register_attachment(self, uin: int, attach: str) -> bytes | None:
         """Токен для вложения: 16 случайных байт, живут ATTACH_TTL."""
-        if self.fetch_attachment is None:
+        # У голосового картинки нет — ему нужен свой добытчик, а не тот,
+        # что делает превью для фото и видео.
+        if attach.startswith("voice:"):
+            if self.fetch_voice is None:
+                return None
+        elif self.fetch_attachment is None:
             return None
         now = time.time()
         if len(self.attachments) > ATTACH_LIMIT:
@@ -1367,16 +1427,23 @@ class OscarServer:
 
     async def video(self, token: bytes) -> bytes | None:
         """Ролик по токену вложения — перекодированный под телефон, или None."""
+        return await self._media(token, "video:", self.fetch_video, "ролик")
+
+    async def voice(self, token: bytes) -> bytes | None:
+        """Голосовое по токену — AMR в 3GP, который телефон умеет играть."""
+        return await self._media(token, "voice:", self.fetch_voice, "голосовое")
+
+    async def _media(self, token: bytes, prefix: str, fetch, what: str) -> bytes | None:
         got = self.attachments.get(token)
-        if got is None or self.fetch_video is None:
+        if got is None or fetch is None:
             return None
         uin, attach, made = got
-        if time.time() - made > ATTACH_TTL or not attach.startswith("video:"):
+        if time.time() - made > ATTACH_TTL or not attach.startswith(prefix):
             return None
         try:
-            return await self.fetch_video(uin, attach)
+            return await fetch(uin, attach)
         except Exception:
-            log.exception("ролик %s для %s не достался", attach, self.name_of(uin))
+            log.exception("%s %s для %s не досталось", what, attach, self.name_of(uin))
             return None
 
     async def attachment(self, token: bytes) -> bytes | None:
@@ -1513,6 +1580,10 @@ class OscarServer:
 
     @staticmethod
     async def _no_photo(uin: int, data: bytes) -> bool:
+        return False
+
+    @staticmethod
+    async def _no_voice(uin: int, data: bytes, seconds: int) -> bool:
         return False
 
     @staticmethod

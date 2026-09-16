@@ -477,6 +477,42 @@ class TelegramSide:
             return await self._download_thumb(msg)
         return None
 
+    async def voice_bytes(self, peer_id: int, message_id: int, max_bytes: int) -> bytes | None:
+        """Голосовое из сообщения — как есть; перекодирует мост."""
+        try:
+            msgs = await self.client.get_messages(peer_id, ids=[message_id])
+        except Exception:
+            log.warning("сообщение %s в чате %s не нашлось", message_id, peer_id)
+            return None
+        msg = msgs[0] if msgs else None
+        if msg is None or media_kind(msg) != "voice":
+            return None
+        size = getattr(getattr(msg, "file", None), "size", 0) or 0
+        if max_bytes and size > max_bytes:
+            log.info("голосовое %d КБ больше потолка — не качаю", size // 1024)
+            return None
+        try:
+            return await msg.download_media(file=bytes)
+        except Exception:
+            log.warning("голосовое из сообщения %s не скачалось", message_id, exc_info=True)
+            return None
+
+    async def send_voice(self, peer_id: int, data: bytes, seconds: int = 0,
+                         voice: bool = True, topic_id: int = 0) -> int | None:
+        """Записанное на телефоне голосовое — в чат Telegram."""
+        stream = io.BytesIO(data)
+        stream.name = "voice.ogg" if voice else "voice.amr"
+        self._sending[peer_id] = self._sending.get(peer_id, 0) + 1
+        try:
+            message = await self.client.send_file(
+                peer_id, file=stream, voice_note=voice, reply_to=topic_id or None)
+        finally:
+            self._sending[peer_id] -= 1
+        message_id = getattr(message, "id", None)
+        if message_id:
+            self._own_ids[(peer_id, message_id)] = time.time()
+        return message_id
+
     async def send_photo(self, peer_id: int, data: bytes, caption: str = "",
                          topic_id: int = 0) -> int | None:
         """Снимок с камеры телефона — в чат Telegram."""
@@ -732,7 +768,7 @@ def attachment_of(msg) -> str:
     """Что мост сможет отдать расширенному клиенту по этому сообщению:
     снимок или кадр-превью видео, с номером сообщения."""
     kind = media_kind(msg)
-    if kind in ("photo", "video"):
+    if kind in ("photo", "video", "voice"):
         return f"{kind}:{msg.id}"
     return ""
 

@@ -33,6 +33,7 @@ public class RequestBartAction extends Action
 	public static final int BART_PHOTO = 0x0080;
 	public static final int BART_HISTORY = 0x0081;
 	public static final int BART_VIDEO = 0x0082;
+	public static final int BART_VOICE = 0x0083;
 
 	/** Who gets the bytes the service replied with (null on failure). */
 	public interface Listener

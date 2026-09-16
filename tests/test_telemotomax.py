@@ -286,11 +286,82 @@ async def run_camera() -> None:
     print("  камера: ок (снимок частями в чат, отказ на негодный, обычному Jimm нельзя)")
 
 
+async def run_voice() -> None:
+    """Голосовые в обе стороны: слушаем присланное и шлём записанное телефоном."""
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 4
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+
+    async def on_outgoing(*_):
+        return 1
+
+    asked: list[str] = []
+    amr = b"#!AMR\n" + bytes(range(256)) * 400          # 102 406 байт — три части
+
+    async def fetch_voice(target: int, attach: str):
+        asked.append(attach)
+        return amr
+
+    sent: list[tuple[int, int, int]] = []
+
+    async def on_voice(target: int, data: bytes, seconds: int) -> bool:
+        sent.append((target, len(data), seconds))
+        return data[:5] == b"#!AMR"                    # негодную запись не принимаем
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
+                         fetch_voice=fetch_voice, on_voice=on_voice)
+    await server.start()
+
+    client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+    client.tmm_version = (0, 4)
+    await client.connect()
+    await client.bos(await client.login_md5_jimm())
+    await client.drain_for(0.3)
+
+    # Присланное голосовое — тот же TLV, но вид 3: картинки нет, только «Прослушать».
+    await server.deliver(uin, "[голосовое 0:07]", attach="voice:4444")
+    await client.drain_for(0.5)
+    assert client.attachments and client.attachments[-1][2] == C.ATTACH_VOICE, client.attachments
+    token = client.attachments[-1][1]
+    assert asked == [], "запись не должна тянуться заранее"
+
+    client.parts_seen.clear()
+    got = await client.request_voice(uin, token)
+    assert asked == ["voice:4444"], asked
+    assert got == amr, (len(got), len(amr))
+    assert client.parts_seen == [(1, 2), (2, 2)], client.parts_seen
+
+    # Запись с телефона: части 10/04 с длительностью, ответ 10/03.
+    mine = b"#!AMR\n" + bytes(range(256)) * 200        # 51 206 байт — две части
+    assert await client.send_voice(uin, mine, 7) is True
+    assert sent == [(uin, len(mine), 7)], sent
+    assert await client.send_voice(uin, b"not amr" * 100, 3) is False
+    await client.close()
+    await asyncio.sleep(0.2)
+
+    # Обычный Jimm: части приходят, но сессия не расширенная — ничего не шлём.
+    sent.clear()
+    plain = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+    await plain.connect()
+    await plain.bos(await plain.login_md5_jimm())
+    await plain.drain_for(0.3)
+    await plain.send_snac(C.SSBI, C.SSBI_UPLOAD_VOICE,
+                          pstr8(str(uin).encode()) + struct.pack(">HHHH", 1, 1, 3, 3) + b"abc")
+    await plain.drain_for(0.4)
+    assert sent == [], sent
+    await plain.close()
+    server._server.close()
+    print("  голосовые: ок (слушаем частями, шлём записанное, обычному Jimm нельзя)")
+
+
 async def main() -> None:
     await run_detection()
     await run_photos()
     await run_history()
     await run_camera()
+    await run_voice()
     print("TELEMOTOMAX ПРОВЕРЕН")
 
 

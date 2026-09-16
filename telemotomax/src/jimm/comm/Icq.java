@@ -393,6 +393,31 @@ public class Icq implements Runnable
 		}
 	}
 
+	// TeleMotoMax: a voice message recorded on the phone, SNAC 10/04 — same
+	// as a snapshot but with the length in seconds before the chunk.
+	public static void sendVoice(String uin, byte[] voice, int seconds) throws JimmException
+	{
+		byte[] uinRaw = Util.stringToByteArray(uin);
+		int total = (voice.length + PHOTO_PART - 1) / PHOTO_PART;
+		if (total < 1) total = 1;
+		for (int part = 1; part <= total; part++)
+		{
+			int from = (part - 1) * PHOTO_PART;
+			int size = voice.length - from;
+			if (size > PHOTO_PART) size = PHOTO_PART;
+			byte[] buf = new byte[1 + uinRaw.length + 2 + 2 + 2 + 2 + size];
+			int marker = 0;
+			Util.putByte(buf, marker, uinRaw.length); marker += 1;
+			System.arraycopy(uinRaw, 0, buf, marker, uinRaw.length); marker += uinRaw.length;
+			Util.putWord(buf, marker, part); marker += 2;
+			Util.putWord(buf, marker, total); marker += 2;
+			Util.putWord(buf, marker, seconds); marker += 2;
+			Util.putWord(buf, marker, size); marker += 2;
+			System.arraycopy(voice, from, buf, marker, size);
+			sendPacket(new SnacPacket(0x0010, 0x0004, 0x00000000, new byte[0], buf));
+		}
+	}
+
 	public static void sendPacket(Packet packet) throws JimmException
 	{
 		if (c == null) return; // TODO: may be better to throw exception?

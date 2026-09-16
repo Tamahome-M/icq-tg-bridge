@@ -601,7 +601,8 @@ class MaxSide:
             elif self.cfg.show_sender_in_groups and not private:
                 sender = self._user_name(await self._user(sender_id)) or ""
             kind = media_kind(message)
-            attach = f"{kind}:{_attr(message, 'id', 0)}" if kind in ("photo", "video") else ""
+            attach = (f"{kind}:{_attr(message, 'id', 0)}"
+                      if kind in ("photo", "video", "voice") else "")
             shown = await self.on_message(to_peer(chat_id), sender, text, ts, 0, attach=attach)
             if self.cfg.mark_read and shown and not mine:
                 try:
@@ -868,6 +869,38 @@ class MaxSide:
         if kind == "VIDEO":
             return await self._download(_attr(attach, "thumbnail", "") or "")
         return None
+
+    async def voice_bytes(self, peer_id: int, message_id: int, max_bytes: int) -> bytes | None:
+        """Голосовое из сообщения MAX — по ссылке, которую даёт сервер."""
+        chat_id = from_peer(peer_id)
+        try:
+            msg = await self.client.get_message(chat_id, message_id)
+        except Exception as exc:
+            log.warning("MAX: сообщение %s в чате %s не нашлось: %s", message_id, chat_id, exc)
+            return None
+        attach = self._first_media(msg) if msg is not None else None
+        if attach is None or _enum_value(_attr(attach, "type", "")).upper() != "AUDIO":
+            return None
+        data = await self._download(_attr(attach, "url", "") or "")
+        if data and max_bytes and len(data) > max_bytes:
+            log.info("MAX: голосовое %d КБ больше потолка — пропускаю", len(data) // 1024)
+            return None
+        return data
+
+    async def send_voice(self, peer_id: int, data: bytes, seconds: int = 0,
+                         voice: bool = True, topic_id: int = 0) -> int | None:
+        """Записанное на телефоне голосовое — в чат MAX."""
+        from pymax import File, Voice
+        chat_id = from_peer(peer_id)
+        if voice:
+            attach = Voice(data, name="voice.ogg", duration=max(1, seconds) * 1000)
+        else:
+            attach = File(data, name="voice.amr")
+        message = await self.client.send_message(chat_id, None, attachments=[attach])
+        message_id = int(_attr(message, "id", 0) or 0)
+        if message_id:
+            self._own_ids[(chat_id, message_id)] = time.time()
+        return int(_attr(message, "time", 0) or 0) or message_id or None
 
     async def send_photo(self, peer_id: int, data: bytes, caption: str = "",
                          topic_id: int = 0) -> int | None:
