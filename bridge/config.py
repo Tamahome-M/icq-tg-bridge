@@ -122,6 +122,7 @@ class Config:
     tmm_photo_height: int = 176
     tmm_photo_max_kb: int = 20
     tmm_video_seconds: int = 10
+    tmm_voice_seconds: int = 60
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -246,6 +247,7 @@ class Config:
             tmm_photo_height=int(tm.get("photo_height", cls.tmm_photo_height)),
             tmm_photo_max_kb=int(tm.get("photo_max_kb", cls.tmm_photo_max_kb)),
             tmm_video_seconds=int(tm.get("video_seconds", cls.tmm_video_seconds)),
+            tmm_voice_seconds=int(tm.get("voice_seconds", cls.tmm_voice_seconds)),
             emoji_to_text=bool(br.get("emoji_to_text", True)),
             text_to_emoji=bool(br.get("text_to_emoji", True)),
             offline_queue_per_chat=int(br.get("offline_queue_per_chat", cls.offline_queue_per_chat)),

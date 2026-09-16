@@ -36,29 +36,34 @@ import jimm.comm.RequestBartAction;
 import jimm.util.ResourceBundle;
 
 /**
- * Plays the first seconds of a video attached to a message. The clip comes
- * from the bridge over the BART service (type 0x0082), already transcoded to
- * what the phone's player takes (3GP, H.263 or MPEG-4 SP, AMR).
+ * Plays media attached to a message: the first seconds of a video (BART type
+ * 0x0082) or a voice message (0x0083). The bridge sends it already transcoded
+ * to what the phone takes — 3GP with H.263/MPEG-4 for video, 3GP with AMR for
+ * voice. Video playback is not supported by the V3 at all (its MMAPI knows
+ * only audio/3gpp), voice is; the same screen serves both.
  *
- * The Motorola V3 player does not accept video from an in-memory stream, so
- * the clip is written to a temporary file (JSR-75) and played from there;
+ * Playing from a temp file (JSR-75) is tried first and memory second, and
  * both the file and the player are dropped when the screen is closed.
  */
-public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
+public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		RequestBartAction.ProgressListener
 {
-	private static VideoPlayer current;
+	private static MediaPlayer current;
 
 	private final JimmScreen back;
+	private final int bartType;
+	private final String mime;
 	private String status;
 	private String[] details;          // why it did not play, shown under the status
 	private Player player;
 	private String filePath;           // temp file URL, or null if played from memory
 	private int clipSize;
 
-	private VideoPlayer(JimmScreen back)
+	private MediaPlayer(JimmScreen back, int bartType, String mime)
 	{
 		this.back = back;
+		this.bartType = bartType;
+		this.mime = mime;
 		setFullScreenMode(true);
 		addCommand(JimmUI.cmdBack);
 		setCommandListener(this);
@@ -66,13 +71,26 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	static public void show(String uin, byte[] token, JimmScreen back)
 	{
-		VideoPlayer viewer = new VideoPlayer(back);
-		viewer.status = ResourceBundle.getString("video_loading");
+		open(uin, token, back, RequestBartAction.BART_VIDEO, "video/3gpp",
+				ResourceBundle.getString("video_loading"));
+	}
+
+	static public void showVoice(String uin, byte[] token, JimmScreen back)
+	{
+		open(uin, token, back, RequestBartAction.BART_VOICE, "audio/3gpp",
+				ResourceBundle.getString("voice_loading2"));
+	}
+
+	static private void open(String uin, byte[] token, JimmScreen back,
+			int bartType, String mime, String waiting)
+	{
+		MediaPlayer viewer = new MediaPlayer(back, bartType, mime);
+		viewer.status = waiting;
 		current = viewer;
 		Jimm.display.setCurrent(viewer);
 		try
 		{
-			Icq.requestAction(new RequestBartAction(uin, RequestBartAction.BART_VIDEO, token, viewer));
+			Icq.requestAction(new RequestBartAction(uin, bartType, token, viewer));
 		}
 		catch (JimmException e)
 		{
@@ -83,7 +101,7 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 	public void onBartProgress(int part, int total)
 	{
 		if (current != this) return;
-		status = ResourceBundle.getString("video_loading") + " " + part + "/" + total;
+		status = waitingText() + " " + part + "/" + total;
 		repaint();
 	}
 
@@ -93,7 +111,7 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 		if (current != this) return;
 		if (data == null)
 		{
-			status = ResourceBundle.getString("video_failed");
+			status = failedText();
 			repaint();
 			return;
 		}
@@ -106,7 +124,7 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 		new Thread() {
 			public void run()
 			{
-				if (current != VideoPlayer.this) return;
+				if (current != MediaPlayer.this) return;
 				clipSize = clip.length;
 				Exception fileErr = playFromFile(clip);
 				if (fileErr == null) return;
@@ -119,7 +137,7 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	private Exception playFromFile(byte[] data)
 	{
-		String url = tempFileUrl();
+		String url = tempFileUrl(bartType == RequestBartAction.BART_VOICE ? ".amr" : ".3gp");
 		if (url == null) return new Exception("no writable root");
 		FileConnection fc = null;
 		OutputStream os = null;
@@ -150,7 +168,7 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 	{
 		try
 		{
-			start(Manager.createPlayer(new ByteArrayInputStream(data), "video/3gpp"));
+			start(Manager.createPlayer(new ByteArrayInputStream(data), mime));
 			return null;
 		}
 		catch (Exception e)
@@ -163,7 +181,8 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 	{
 		player = p;
 		player.realize();
-		VideoControl vc = (VideoControl) player.getControl("VideoControl");
+		VideoControl vc = (bartType == RequestBartAction.BART_VOICE)
+				? null : (VideoControl) player.getControl("VideoControl");
 		if (vc != null)
 		{
 			vc.initDisplayMode(VideoControl.USE_DIRECT_VIDEO, this);
@@ -180,7 +199,7 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 	}
 
 	// A writable temp file URL, or null if no root is available.
-	private static String tempFileUrl()
+	private static String tempFileUrl(String ext)
 	{
 		try
 		{
@@ -189,7 +208,7 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 			{
 				String root = (String) roots.nextElement();
 				while (root.length() > 0 && root.charAt(0) == '/') root = root.substring(1);
-				String url = "file:///" + root + "tmm_video.3gp";
+				String url = "file:///" + root + "tmm_media" + ext;
 				try
 				{
 					FileConnection fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
@@ -234,9 +253,21 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 		return name;
 	}
 
+	private String waitingText()
+	{
+		return ResourceBundle.getString(
+				bartType == RequestBartAction.BART_VOICE ? "voice_loading2" : "video_loading");
+	}
+
+	private String failedText()
+	{
+		return ResourceBundle.getString(
+				bartType == RequestBartAction.BART_VOICE ? "voice_failed2" : "video_failed");
+	}
+
 	private void fail(Exception fileErr, Exception streamErr)
 	{
-		status = ResourceBundle.getString("video_failed");
+		status = failedText();
 		String types = "";
 		try
 		{

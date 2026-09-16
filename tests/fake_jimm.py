@@ -43,7 +43,7 @@ class FakeJimm:
         self.channels: list[int] = []    # каналы, которыми приходили сообщения
         self.to_ack: list[bytes] = []
         self.typing: list[tuple[int, bool]] = []
-        self.attachments: list[tuple[int, bytes]] = []   # (uin, токен снимка)
+        self.attachments: list[tuple[int, bytes, int]] = []   # (uin, токен, вид вложения)
         self.parts_seen: list[tuple[int, int]] = []       # части ответов службы 0x10
         self.errors: list[tuple[int, int]] = []
 
@@ -118,8 +118,9 @@ class FakeJimm:
             rr = s.reader()
             rr.read(8); rr.u16(); rr.pstr8(); rr.u16(); rr.tlvs(rr.u16())
             extra = rr.tlvs().get(C.TLV_TMM_ATTACH)
-            if extra and len(extra) == 17 and extra[0] in (C.ATTACH_PHOTO, C.ATTACH_VIDEO):
-                self.attachments.append((sender, extra[1:]))
+            if extra and len(extra) == 17 and extra[0] in (C.ATTACH_PHOTO, C.ATTACH_VIDEO,
+                                                           C.ATTACH_VOICE):
+                self.attachments.append((sender, extra[1:], extra[0]))
             if ack is not None and self.send_acks:
                 self.to_ack.append(ack)
 
@@ -449,7 +450,14 @@ class FakeJimm:
             photo = None
             if flag & 1:
                 photo = data[pos:pos + 16]; pos += 16
-            out.append((text, photo, "video" if flag & 2 else ("photo" if flag & 1 else "")))
+            kind = ""
+            if flag & 4:
+                kind = "voice"
+            elif flag & 2:
+                kind = "video"
+            elif flag & 1:
+                kind = "photo"
+            out.append((text, photo, kind))
         return out
 
     async def send_camera_photo(self, uin: int, data: bytes, part_size: int = 30000,
@@ -465,6 +473,26 @@ class FakeJimm:
         r = ack.reader()
         r.pstr8()
         return r.u8() == 0
+
+    async def send_voice(self, uin: int, data: bytes, seconds: int, part_size: int = 30000,
+                         timeout: float = 5.0) -> bool:
+        """Голосовое с телефона — как TeleMotoMax: части 10/04 с длительностью, ответ 10/03."""
+        raw = str(uin).encode()
+        total = max(1, (len(data) + part_size - 1) // part_size)
+        for part in range(1, total + 1):
+            chunk = data[(part - 1) * part_size:part * part_size]
+            await self.send_snac(C.SSBI, C.SSBI_UPLOAD_VOICE,
+                                 pstr8(raw) + struct.pack(">HHHH", part, total, seconds, len(chunk))
+                                 + chunk)
+        ack = await self.expect(C.SSBI, C.SSBI_UPLOAD_ACK, timeout)
+        r = ack.reader()
+        r.pstr8()
+        return r.u8() == 0
+
+    async def request_voice(self, uin: int, token: bytes, timeout: float = 5.0) -> bytes:
+        """Голосовое по токену — как TeleMotoMax: тип 0x0083, ответ частями, склеиваем."""
+        got = await self._request_bart(uin, C.BART_VOICE, token, timeout, parts=True)
+        return got["image"]
 
     async def request_video(self, uin: int, token: bytes, timeout: float = 5.0) -> bytes:
         """Ролик по токену — как TeleMotoMax: тип 0x0082, ответ частями, склеиваем."""

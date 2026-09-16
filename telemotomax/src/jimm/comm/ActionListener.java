@@ -163,6 +163,7 @@ public class ActionListener
 				String uin = Util.byteArrayToString(p, 1, len);
 				boolean ok = (p.length > 1 + len) && (Util.getByte(p, 1 + len) == 0);
 				jimm.CameraShot.photoSent(uin, ok);
+				jimm.VoiceRecorder.voiceSent(uin, ok);
 				return;
 			}
 
@@ -539,8 +540,9 @@ public class ActionListener
 					int extType = Util.getWord(buf, extMarker);
 					byte[] extData = Util.getTlv(buf, extMarker);
 					if (extData == null) break;
-					// kind 1 = photo, 2 = video preview: both are a picture to show
-					if ((extType == 0x9001) && (extData.length == 17) && (extData[0] == 1 || extData[0] == 2))
+					// kind 1 = photo, 2 = video preview, 3 = voice message
+					if ((extType == 0x9001) && (extData.length == 17)
+							&& (extData[0] >= 1) && (extData[0] <= 3))
 					{
 						attachToken = new byte[16];
 						System.arraycopy(extData, 1, attachToken, 0, 16);

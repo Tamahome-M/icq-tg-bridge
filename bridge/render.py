@@ -181,6 +181,22 @@ class Transcoder:
                 "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1", "-b:a", "12.2k",
                 "-f", "amr", dst]
 
+    def ogg_args(self, src: str, dst: str) -> list[str]:
+        """OGG для Telegram и MAX: голосовое там именно в нём. Кодек берём
+        какой есть — opus предпочтительнее, vorbis тоже принимается."""
+        return [self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
+                "-t", str(self.audio_seconds), "-vn",
+                "-c:a", "libopus", "-ar", "48000", "-ac", "1", "-b:a", "24k",
+                "-f", "ogg", dst]
+
+    def voice_args(self, src: str, dst: str) -> list[str]:
+        """AMR в контейнере 3GP: голый .amr плеер телефона не опознаёт,
+        а audio/3gpp он объявляет сам."""
+        return [self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
+                "-t", str(self.audio_seconds), "-vn",
+                "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1", "-b:a", "12.2k",
+                "-movflags", "+faststart", "-f", "3gp", dst]
+
     async def convert(self, raw: bytes, kind: str) -> bytes | None:
         """Перегоняет видео в 3GP, звук — в AMR."""
         if not raw or not self.available:
@@ -188,11 +204,18 @@ class Transcoder:
                 log.warning("ffmpeg %r не найден — %s не перекодирую", self.ffmpeg, kind)
             return None
 
-        ext = "3gp" if kind == "video" else "amr"
+        ext = {"audio": "amr", "ogg": "ogg"}.get(kind, "3gp")
         stamp = _token()
         src = os.path.join(self.workdir, f"in-{stamp}")
         dst = os.path.join(self.workdir, f"out-{stamp}.{ext}")
-        args = self.video_args(src, dst) if kind == "video" else self.audio_args(src, dst)
+        if kind == "video":
+            args = self.video_args(src, dst)
+        elif kind == "voice":
+            args = self.voice_args(src, dst)
+        elif kind == "ogg":
+            args = self.ogg_args(src, dst)
+        else:
+            args = self.audio_args(src, dst)
         try:
             with open(src, "wb") as fh:
                 fh.write(raw)

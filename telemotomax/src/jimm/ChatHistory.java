@@ -108,6 +108,8 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	static final Command cmdPlayVideo = new Command(ResourceBundle.getString("play_video"), Command.ITEM, 3);
 	// TeleMotoMax: take a picture with the camera and send it to this chat
 	static final Command cmdCameraShot = new Command(ResourceBundle.getString("camera_shot"), Command.ITEM, 4);
+	static final Command cmdPlayVoice = new Command(ResourceBundle.getString("play_voice"), Command.ITEM, 3);
+	static final Command cmdRecordVoice = new Command(ResourceBundle.getString("record_voice"), Command.ITEM, 4);
 	// TeleMotoMax: chat history from the bridge on its own screen
 	static final Command cmdServerHistory = new Command(ResourceBundle.getString("server_history"), Command.ITEM, 5);
 	private static final Command cmdReplWithQuota = new Command(ResourceBundle.getString("quote", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 3);
@@ -189,6 +191,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 			textList.addCommandEx(cmdReqAuth, VirtualList.MENU_TYPE_RIGHT);
 		
 		textList.addCommandEx(cmdCameraShot, VirtualList.MENU_TYPE_RIGHT);
+		textList.addCommandEx(cmdRecordVoice, VirtualList.MENU_TYPE_RIGHT);
 		textList.addCommandEx(cmdServerHistory, VirtualList.MENU_TYPE_RIGHT);
 		textList.addCommandEx(cmdContactMenu, VirtualList.MENU_TYPE_RIGHT);
 		
@@ -238,6 +241,16 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		}
 		
 		/* Write new message */
+		else if (c == cmdPlayVoice)
+		{
+			byte[] token = currentAttach();
+			if (token != null)
+				MediaPlayer.showVoice(contact.getStringValue(ContactItem.CONTACTITEM_UIN), token, this);
+		}
+		else if (c == cmdRecordVoice)
+		{
+			VoiceRecorder.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), this);
+		}
 		else if (c == cmdCameraShot)
 		{
 			CameraShot.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), this);
@@ -251,7 +264,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		{
 			byte[] token = currentAttach();
 			if (token != null)
-				VideoPlayer.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), token, this);
+				MediaPlayer.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), token, this);
 		}
 		else if (c == cmdShowPhoto)
 		{
@@ -423,12 +436,17 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	{
 		textList.removeCommandEx(cmdShowPhoto);
 		textList.removeCommandEx(cmdPlayVideo);
+		textList.removeCommandEx(cmdPlayVoice);
 		int messIndex = textList.getCurrTextIndex();
 		if (messIndex != -1)
 		{
 			MessData md = (MessData) getMessData().elementAt(messIndex);
-			if (md.attach != null) textList.addCommandEx(cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
-			if (md.attach != null && md.attachKind == 2) textList.addCommandEx(cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
+			if (md.attach != null && md.attachKind != 3)
+				textList.addCommandEx(cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
+			if (md.attach != null && md.attachKind == 2)
+				textList.addCommandEx(cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
+			if (md.attach != null && md.attachKind == 3)
+				textList.addCommandEx(cmdPlayVoice, VirtualList.MENU_TYPE_RIGHT);
 		}
 	}
 

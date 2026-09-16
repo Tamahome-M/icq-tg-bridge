@@ -234,7 +234,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		if (c == ChatTextList.cmdPlayVideo)
 		{
 			byte[] token = currentToken();
-			if (token != null) VideoPlayer.show(uin, token, this);
+			if (token != null) MediaPlayer.show(uin, token, this);
 			return;
 		}
 		if (current == this) current = null;
