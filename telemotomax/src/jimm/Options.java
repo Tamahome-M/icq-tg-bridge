@@ -1039,6 +1039,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private static final int OPTIONS_RENAME_GROUP  = 103;
 	private static final int OPTIONS_DELETE_GROUP  = 104;
 	private static final int OPTIONS_PRIVATE_LISTS = 105;
+	private static final int OPTIONS_ALL_CHATS     = 106;
 
 	
 	// Options
@@ -1243,6 +1244,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			JimmUI.addTextListItem(optionsMenu, "add_user", MainMenu.menuIcons.elementAt(27), OPTIONS_ADD_USER, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "add_group", MainMenu.menuIcons.elementAt(28), OPTIONS_ADD_GROUP, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "search_user", MainMenu.menuIcons.elementAt(29), OPTIONS_SEARCH_USER, true, -1, Font.STYLE_PLAIN);
+			JimmUI.addTextListItem(optionsMenu, "all_chats", MainMenu.menuIcons.elementAt(29), OPTIONS_ALL_CHATS, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "del_group", MainMenu.menuIcons.elementAt(30), OPTIONS_DELETE_GROUP, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "rename_group", MainMenu.menuIcons.elementAt(31), OPTIONS_RENAME_GROUP, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "priv_lists", MainMenu.menuIcons.elementAt(32), OPTIONS_PRIVATE_LISTS, true, -1, Font.STYLE_PLAIN);
@@ -1900,6 +1902,12 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		case OPTIONS_SEARCH_USER:
 			Search searchf = new Search();
 			searchf.getSearchForm().activate(Search.SearchForm.ACTIV_JUST_SHOW);
+			return;
+
+		// TeleMotoMax: весь список чатов моста, включая те, что не влезли
+		// в контакт-лист телефона.
+		case OPTIONS_ALL_CHATS:
+			ChatListViewer.show(null);
 			return;
 			
 		case OPTIONS_PRIVATE_LISTS:

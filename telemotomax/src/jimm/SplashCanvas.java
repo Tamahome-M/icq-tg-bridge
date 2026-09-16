@@ -458,8 +458,8 @@ public class SplashCanvas extends Canvas implements CommandListener
 		g.setColor(textColor);
 		g.setFont(SplashCanvas.font);
 		
-		// Jimm version
-		g.drawString("Jimm "+Jimm.VERSION, width/2, y, Graphics.HCENTER|Graphics.TOP);
+		// Имя и версия сборки
+		g.drawString(Jimm.NAME+" "+Jimm.VERSION, width/2, y, Graphics.HCENTER|Graphics.TOP);
 		y += fontHeight+2;
 		
 		// Display notice

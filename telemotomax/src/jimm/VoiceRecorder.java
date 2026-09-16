@@ -24,6 +24,7 @@ import javax.microedition.lcdui.Font;
 import javax.microedition.lcdui.Graphics;
 import javax.microedition.media.Manager;
 import javax.microedition.media.Player;
+import javax.microedition.media.PlayerListener;
 import javax.microedition.media.control.RecordControl;
 
 import jimm.comm.Icq;
@@ -38,9 +39,11 @@ import jimm.util.ResourceBundle;
  * The phone records in its own format, usually AMR; turning that into what
  * Telegram and MAX call a voice message is the bridge's job.
  */
-public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
+public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen,
+		PlayerListener
 {
 	public static final int MAX_SECONDS = 60;
+	public static final int MAX_BYTES = 512 * 1024;
 
 	private static VoiceRecorder current;
 
@@ -51,9 +54,15 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 	private ByteArrayOutputStream sink;
 	private long startedAt;
 	private String status;
+	private String hint;
 	private String[] details;
 	private boolean recording;
 	private boolean sending;
+	private boolean done;
+	private int sentPart;
+	private int sentTotal;
+	private int lastSize;               // сколько уже записано, байт
+	private String stopReason = "";     // почему запись прекратилась сама
 
 	private VoiceRecorder(String uin, JimmScreen back)
 	{
@@ -90,7 +99,10 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 					if (rc == null) throw new Exception("no RecordControl");
 					sink = new ByteArrayOutputStream();
 					rc.setRecordStream(sink);
-					rc.setRecordSizeLimit(512 * 1024);
+					// Потолок размера не ставим: телефон вправе урезать его до
+					// своего (на V3 это обрывало запись на ~10 секундах), а
+					// длину мы и так держим сами — по времени и по размеру.
+					try { p.addPlayerListener(VoiceRecorder.this); } catch (Exception ignore) {}
 					p.start();
 					rc.startRecord();
 					player = p;
@@ -141,13 +153,38 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 				while (recording && current == VoiceRecorder.this)
 				{
 					int secs = seconds();
-					status = ResourceBundle.getString("voice_recording") + " " + secs + " с";
+					lastSize = (sink == null) ? 0 : sink.size();
+					status = ResourceBundle.getString("voice_recording") + " " + time(secs);
 					repaint();
-					if (secs >= MAX_SECONDS) { stopAndSend(); return; }
-					try { Thread.sleep(1000); } catch (Exception ignore) {}
+					if (secs >= MAX_SECONDS || lastSize >= MAX_BYTES) { stopAndSend(); return; }
+					try { Thread.sleep(500); } catch (Exception ignore) {}
 				}
 			}
 		}.start();
+	}
+
+	// Телефон может прекратить запись сам — по своему потолку размера или
+	// по ошибке. Молча терять записанное нельзя: заканчиваем и отправляем,
+	// а причину показываем на экране.
+	public void playerUpdate(Player p, String event, Object data)
+	{
+		if (current != this || !recording) return;
+		// Имена событий записи берём строками: в MIDP-заголовках сборки есть
+		// не все константы JSR-135, а телефон шлёт именно эти имена.
+		if ("recordStopped".equals(event) || "recordError".equals(event)
+				|| "sizeLimitReached".equals(event)
+				|| PlayerListener.END_OF_MEDIA.equals(event)
+				|| PlayerListener.ERROR.equals(event))
+		{
+			stopReason = event;
+			stopAndSend();
+		}
+	}
+
+	private static String time(int secs)
+	{
+		if (secs < 0) secs = 0;
+		return secs / 60 + ":" + (secs % 60 < 10 ? "0" : "") + (secs % 60);
 	}
 
 	private int seconds()
@@ -162,7 +199,8 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 		recording = false;
 		sending = true;
 		final int secs = Math.max(1, seconds());
-		status = ResourceBundle.getString("voice_recorded") + secs + " с";
+		status = ResourceBundle.getString("voice_recorded") + time(secs);
+		hint = null;
 		repaint();
 		new Thread() {
 			public void run()
@@ -186,11 +224,21 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 					failed(err);
 					return;
 				}
+				lastSize = data.length;
+				status = ResourceBundle.getString("camera_sending");
+				repaint();
 				try
 				{
-					Icq.sendVoice(uin, data, secs, type);
-					status = ResourceBundle.getString("camera_sending")
-							+ " " + (data.length / 1024) + " КБ";
+					// Заливка идёт частями и не быстро — показываем, сколько ушло.
+					Icq.sendVoice(uin, data, secs, type, new Icq.UploadProgress() {
+						public void onPart(int part, int total)
+						{
+							sentPart = part;
+							sentTotal = total;
+							repaint();
+						}
+					});
+					status = ResourceBundle.getString("voice_waiting");
 				}
 				catch (Exception e)
 				{
@@ -206,12 +254,22 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 	// The bridge said whether the voice message reached the chat.
 	static public void voiceSent(String uin, boolean ok)
 	{
-		VoiceRecorder rec = current;
+		final VoiceRecorder rec = current;
 		if (rec == null || !rec.uin.equals(uin)) return;
 		rec.sending = false;
 		if (ok)
 		{
-			rec.close();
+			rec.done = true;
+			rec.status = ResourceBundle.getString("voice_sent");
+			rec.hint = null;
+			rec.repaint();
+			new Thread() {
+				public void run()
+				{
+					try { Thread.sleep(1200); } catch (Exception ignore) {}
+					rec.close();
+				}
+			}.start();
 			return;
 		}
 		rec.status = ResourceBundle.getString("camera_not_sent");
@@ -251,29 +309,62 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 		repaint();
 	}
 
+	// Экран говорит ровно то, что происходит: ждём нажатия, пишем, заливаем
+	// (с частями), отправлено или нет — раньше на нём висела одна строка, и
+	// понять, ушло ли голосовое, было нельзя.
 	protected void paint(Graphics g)
 	{
 		g.setColor(0x000000);
 		g.fillRect(0, 0, getWidth(), getHeight());
-		Font font = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
-		g.setFont(font);
-		int step = font.getHeight();
-		int lines = 2 + (details == null ? 0 : details.length);
-		int y = (getHeight() - lines * step) / 2 + step;
+		Font big = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_BOLD, Font.SIZE_MEDIUM);
+		Font small = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
+		int middle = getHeight() / 2;
+
+		// Красный кружок, пока идёт запись: видно без чтения текста.
+		if (recording)
+		{
+			g.setColor(0xCC2222);
+			int r = small.getHeight();
+			g.fillArc(getWidth() / 2 - r / 2, middle - big.getHeight() - r - 4, r, r, 0, 360);
+		}
+
+		g.setFont(big);
 		g.setColor(0xFFFFFF);
-		if (status != null) g.drawString(status, getWidth() / 2, y, Graphics.HCENTER | Graphics.BASELINE);
-		y += step;
+		if (status != null)
+			g.drawString(status, getWidth() / 2, middle, Graphics.HCENTER | Graphics.BASELINE);
+
+		g.setFont(small);
+		int y = middle + small.getHeight() + 4;
 		g.setColor(0xC0C0C0);
-		String hint = recording ? ResourceBundle.getString("voice_stop") : ResourceBundle.getString("voice_start");
-		if (!sending) g.drawString(hint, getWidth() / 2, y, Graphics.HCENTER | Graphics.BASELINE);
+		String second = second();
+		if (second != null)
+			g.drawString(second, getWidth() / 2, y, Graphics.HCENTER | Graphics.BASELINE);
+		y += small.getHeight() + 2;
+
+		if (!sending && !done)
+		{
+			String keys = (hint != null) ? hint : ResourceBundle.getString(
+					recording ? "voice_stop" : "voice_start");
+			g.drawString(keys, getWidth() / 2, y, Graphics.HCENTER | Graphics.BASELINE);
+		}
 		if (details != null)
 		{
 			for (int i = 0; i < details.length; i++)
 			{
-				y += step;
+				y += small.getHeight();
 				g.drawString(details[i], 2, y, Graphics.LEFT | Graphics.BASELINE);
 			}
 		}
+	}
+
+	// Вторая строка: размер записи, ход заливки, причина самостановки.
+	private String second()
+	{
+		if (sending && sentTotal > 1)
+			return ResourceBundle.getString("voice_part") + " " + sentPart + "/" + sentTotal;
+		if (lastSize > 0) return (lastSize / 1024) + " КБ"
+				+ (stopReason.length() > 0 ? ", " + stopReason : "");
+		return stopReason.length() > 0 ? stopReason : null;
 	}
 
 	protected void keyPressed(int keyCode)

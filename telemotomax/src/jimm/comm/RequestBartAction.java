@@ -34,6 +34,8 @@ public class RequestBartAction extends Action
 	public static final int BART_HISTORY = 0x0081;
 	public static final int BART_VIDEO = 0x0082;
 	public static final int BART_VOICE = 0x0083;
+	public static final int BART_CHATS = 0x0084;     // весь список чатов моста
+	public static final int BART_OPEN = 0x0085;      // вернуть чат на телефон
 
 	/** Who gets the bytes the service replied with (null on failure). */
 	public interface Listener

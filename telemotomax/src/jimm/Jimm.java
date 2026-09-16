@@ -46,6 +46,9 @@ public class Jimm extends MIDlet
 	// Version
 	public static String VERSION;
 
+	// Имя сборки: на заставке стоит наше, а не Jimm, от которого мы пошли.
+	public static String NAME = "TeleMotoMax";
+
 	// Application main object
 	public static Jimm jimm;
 
@@ -215,10 +218,16 @@ public class Jimm extends MIDlet
 //#sijapp cond.end#		
 		
 
-		// Get Jimm version
-		Jimm.VERSION = this.getAppProperty("Jimm-Version");
+		// Версия и имя — наши: сборку на телефоне надо узнавать с первого
+		// экрана. Если их нет (собрано не нашим build.sh) — как было у Jimm.
+		Jimm.VERSION = this.getAppProperty("TeleMotoMax-Version");
+		if (Jimm.VERSION == null)
+			Jimm.VERSION = this.getAppProperty("Jimm-Version");
 		if (Jimm.VERSION == null)
 			Jimm.VERSION = "###VERSION###";
+		String name = this.getAppProperty("MIDlet-Name");
+		if (name != null && name.length() > 0)
+			Jimm.NAME = name;
 
 		// Create options container 	 
 		this.o = new Options();
