@@ -196,6 +196,8 @@ public class Options
 	public static final int OPTION_FULL_TEXTBOX      = 167;
 	public static final int OPTION_CL_HIDE_EMPTY     = 168;
 	public static final int OPTION_INIT_CAPS	     = 169;
+	// TeleMotoMax: how many messages "History from server" asks for
+	public static final int OPTION_HISTORY_COUNT    = 170;
 	
 	/* long */
 	public static final int OPTION_ONLINE_STATUS = 192; 
@@ -409,6 +411,7 @@ public class Options
 		//#sijapp cond.if target="MOTOROLA" | target="MIDP2"#
 		setInt    (Options.OPTION_LIGHT_TIMEOUT,      5);
 		//#sijapp cond.end #
+		setInt    (Options.OPTION_HISTORY_COUNT,     10);
 
 		setBoolean(Options.OPTION_CP1251_HACK, ResourceBundle.langAvailable[0]
 				.equals("RU") || ResourceBundle.langAvailable[0].equals("BE") );
@@ -1104,6 +1107,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup choiceContactList;
 //#sijapp cond.if target="MOTOROLA" | target="MIDP2" #
 	private TextField lightTimeout;
+	private TextField historyCount;     // TeleMotoMax
 	private ChoiceGroup lightManual;
 //#sijapp cond.end#
 	private TextField txtCapOffset;
@@ -2341,6 +2345,9 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		optionsForm.append(clSortByChoiceGroup);
 
 		if (chrgChat.size() != 0) optionsForm.append(chrgChat);
+		historyCount = new TextField(ResourceBundle.getString("history_count"),
+				String.valueOf(Options.getInt(Options.OPTION_HISTORY_COUNT)), 3, TextField.NUMERIC);
+		optionsForm.append(historyCount);
 		optionsForm.append(chrgMessFormat);
 		
 		//#sijapp cond.if target="MIDP2" | target="SIEMENS2"#
@@ -2714,6 +2721,15 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			(newUseGroups != lastGroupsUsed) || (newHideOffline != lastHideOffline) || (newHideEmpty != lastHideEmpty),
 			(newSortMethod != lastSortMethod)
 		);
+
+		try
+		{
+			int n = Integer.parseInt(historyCount.getString());
+			if (n < 1) n = 1;
+			if (n > 100) n = 100;
+			Options.setInt(Options.OPTION_HISTORY_COUNT, n);
+		}
+		catch (Exception ignore) {}
 
 		//#sijapp cond.if target="MOTOROLA" | target="MIDP2" #
 		boolean useBackLight = lightManual.isSelected(0);

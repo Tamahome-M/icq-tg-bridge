@@ -74,7 +74,8 @@ class Bridge:
                                  self.roster, self.status_of, self.chat_info,
                                  self.search_chats, self.verdict_for,
                                  self.on_phone_remove, self.on_phone_privacy,
-                                 self.avatar, self.icon_hash, self.fetch_attachment)
+                                 self.avatar, self.icon_hash, self.fetch_attachment,
+                                 self.fetch_history)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
@@ -359,6 +360,23 @@ class Bridge:
         data, width, height = got
         log.info("снимок для «%s» ужат до %d×%d, %d байт", contact.title, width, height, len(data))
         return data
+
+    async def fetch_history(self, uin: int, count: int) -> str | None:
+        """История чата текстом для TeleMotoMax — то же, что !last, но не в
+        переписку, а на отдельный экран, который отпустит память при закрытии."""
+        contact = self.storage.contact_by_uin(uin)
+        if contact is None or contact.peer_id == ASSISTANT_PEER:
+            return None
+        cap = self.cfg.history_limit
+        count = min(count or 20, cap)
+        items = await self.side_for(contact.peer_id).history(contact.peer_id, count, None, cap,
+                                                             contact.topic_id)
+        lines = [f"[{i.when.astimezone():%d.%m %H:%M}] {i.who}: {i.text}" for i in items]
+        text = "\n".join(lines) if lines else "Сообщений нет"
+        if self.cfg.emoji_to_text:
+            text = emoji.to_text(text)
+        log.info("история «%s» для TeleMotoMax: %d сообщений", contact.title, len(items))
+        return text
 
     def icon_hash(self, uin: int) -> bytes | None:
         """Примета аватарки для блока сведений о контакте."""

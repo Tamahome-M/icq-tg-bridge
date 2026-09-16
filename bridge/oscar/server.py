@@ -263,6 +263,12 @@ class Session:
                 # иначе телефон останется без сообщений.
                 self.service_only = True
                 self.authorized = True
+                # Расширения решаются по основной сессии: это второе соединение
+                # того же клиента, способности он объявлял там.
+                main = self.server.session
+                if main is not None and main.tmm_version is not None:
+                    self.tmm_version = main.tmm_version
+                    self.client_name = main.client_name
                 log.debug("подключение за аватарками с %s", self.peer)
                 await self.send_snac(C.OSERVICE, C.SRV_READY,
                                      struct.pack(">H", C.SSBI))
@@ -1050,6 +1056,20 @@ class Session:
             bart_type, token = C.BART_ICON, b""
         if not target.isdigit():
             return
+        if bart_type == C.BART_HISTORY and self.extended:
+            # История чата на отдельный экран: число сообщений — в первых двух
+            # байтах «хеша», текст уходит тем же 10/07 вместо картинки.
+            count = struct.unpack(">H", token[:2])[0] if len(token) >= 2 else 0
+            text = await self.server.history_text(int(target), count)
+            if text is None:
+                await self.send_error(C.SSBI, 0x0001, s.request_id)
+                return
+            data = text.encode("utf-8")[:C.HISTORY_MAX_BYTES]
+            log.info("история для %s отдана: %d байт", self.server.name_of(target), len(data))
+            await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
+                                 blocks.icon_reply(int(target), token, data, C.BART_HISTORY),
+                                 request_id=s.request_id)
+            return
         if bart_type == C.BART_PHOTO:
             got = await self.server.attachment(token)
             if got is None:
@@ -1150,7 +1170,8 @@ class OscarServer:
                  on_privacy: Callable[[int, bool], Awaitable[None]] | None = None,
                  avatar: Callable[[int], Awaitable[tuple[bytes, bytes] | None]] | None = None,
                  icon_hash: Callable[[int], bytes | None] | None = None,
-                 fetch_attachment: Callable[[int, str], Awaitable[bytes | None]] | None = None):
+                 fetch_attachment: Callable[[int, str], Awaitable[bytes | None]] | None = None,
+                 fetch_history: Callable[[int, int], Awaitable[str | None]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -1172,6 +1193,8 @@ class OscarServer:
         # снимок достаёт мост, когда клиент за ним пришёл.
         self.fetch_attachment = fetch_attachment
         self.attachments: dict[bytes, tuple[int, str, float]] = {}
+        # История чата для расширенного клиента — текстом, на отдельный экран.
+        self.fetch_history = fetch_history
         self.uin = str(cfg.oscar_uin)
         self.password = cfg.oscar_password
         self.ssi_encoding = cfg.ssi_encoding
@@ -1263,6 +1286,15 @@ class OscarServer:
         token = os.urandom(16)
         self.attachments[token] = (uin, attach, now)
         return token
+
+    async def history_text(self, uin: int, count: int) -> str | None:
+        if self.fetch_history is None:
+            return None
+        try:
+            return await self.fetch_history(uin, count)
+        except Exception:
+            log.exception("история для %s не собралась", self.name_of(uin))
+            return None
 
     async def attachment(self, token: bytes) -> bytes | None:
         """Снимок по токену — готовый под экран телефона, или None."""

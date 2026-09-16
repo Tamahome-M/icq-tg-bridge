@@ -23,7 +23,7 @@ import javax.microedition.lcdui.Graphics;
 import javax.microedition.lcdui.Image;
 
 import jimm.comm.Icq;
-import jimm.comm.RequestPhotoAction;
+import jimm.comm.RequestBartAction;
 import jimm.util.ResourceBundle;
 
 /**
@@ -31,7 +31,7 @@ import jimm.util.ResourceBundle;
  * only while this screen is open: "Back" drops it and the memory with it —
  * a decoded 176x176 image is ~120 KB of the phone's heap, so one at a time.
  */
-public class PhotoViewer extends Canvas implements CommandListener, JimmScreen
+public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, RequestBartAction.Listener
 {
 	private static PhotoViewer current;
 
@@ -56,18 +56,24 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen
 		Jimm.display.setCurrent(viewer);
 		try
 		{
-			Icq.requestAction(new RequestPhotoAction(uin, token, viewer));
+			Icq.requestAction(new RequestBartAction(uin, RequestBartAction.BART_PHOTO, token, viewer));
 		}
 		catch (JimmException e)
 		{
-			viewer.onPhoto(null);
+			viewer.onBart(null);
 		}
 	}
 
 	// Called from the comm thread when the picture (or a failure) arrives.
-	public void onPhoto(Image img)
+	public void onBart(byte[] data)
 	{
 		if (current != this) return;     // screen already left — drop it
+		Image img = null;
+		if (data != null)
+		{
+			try { img = Image.createImage(data, 0, data.length); }
+			catch (Exception ignore) {}
+		}
 		image = img;
 		status = (img == null) ? ResourceBundle.getString("photo_failed") : null;
 		repaint();
