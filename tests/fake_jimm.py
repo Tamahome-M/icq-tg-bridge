@@ -449,7 +449,7 @@ class FakeJimm:
             photo = None
             if flag & 1:
                 photo = data[pos:pos + 16]; pos += 16
-            out.append((text, photo))
+            out.append((text, photo, "video" if flag & 2 else ("photo" if flag & 1 else "")))
         return out
 
     async def request_video(self, uin: int, token: bytes, timeout: float = 5.0) -> bytes:

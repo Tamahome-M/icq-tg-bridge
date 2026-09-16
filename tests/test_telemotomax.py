@@ -190,9 +190,11 @@ async def run_history() -> None:
         asked.append((target, count))
         when = dt.datetime(2026, 9, 16, 10, 0, tzinfo=dt.timezone.utc)
         items = [HistoryItem(when, "Мама", "привет"), HistoryItem(when, "Я", "и тебе"),
-                 HistoryItem(when, "Мама", "[фото] закат", 4242, "photo")]
+                 HistoryItem(when, "Мама", "[фото] закат", 4242, "photo"),
+                 HistoryItem(when, "Папа", "[видео 0:09] кот", 4343, "video")]
         return [(f"[{i.when:%d.%m %H:%M}] {i.who}: {i.text}",
-                 f"photo:{i.msg_id}" if i.kind == "photo" else "") for i in items[:count]]
+                 f"{i.kind}:{i.msg_id}" if i.kind in ("photo", "video") else "")
+                for i in items[:count]]
 
     async def fetch_attachment(target: int, attach: str):
         fetched.append(attach)
@@ -209,8 +211,10 @@ async def run_history() -> None:
 
     rows = await client.request_history(uin, 30)
     assert asked == [(uin, 30)], asked
-    assert [t.split("] ", 1)[1] for t, _ in rows] == ["Мама: привет", "Я: и тебе", "Мама: [фото] закат"], rows
+    assert [t.split("] ", 1)[1] for t, _, _ in rows] == \
+        ["Мама: привет", "Я: и тебе", "Мама: [фото] закат", "Папа: [видео 0:09] кот"], rows
     assert rows[0][1] is None and rows[2][1] is not None, "у сообщения с фото должен быть токен"
+    assert [k for _, _, k in rows] == ["", "", "photo", "video"], "вид вложения — во флаге записи"
     # Фото из истории открывается тем же запросом, что и из чата.
     got = await client.request_photo(uin, rows[2][1])
     assert fetched == ["photo:4242"] and got["image"][:3] == b"\xff\xd8\xff"
