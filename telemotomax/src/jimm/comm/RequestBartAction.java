@@ -16,23 +16,28 @@
 package jimm.comm;
 
 import java.util.Date;
-import javax.microedition.lcdui.Image;
-
 import jimm.DebugLog;
 import jimm.JimmException;
-import jimm.PhotoViewer;
 import jimm.comm.connections.SOCKETConnection;
 
 /**
- * Fetches a picture the bridge attached to a message. Same road as the
- * buddy icon: the BART service (family 0x10) over the second connection,
- * only the item type is 0x0080 and the "hash" is the bridge's token.
- * The reply is parsed exactly like the icon reply, so the bridge answers
- * with the very same layout.
+ * Fetches something from the bridge over the BART service (family 0x10,
+ * the second connection the buddy icons use): a picture attached to a
+ * message (type 0x0080, "hash" = the bridge's token) or a chat's history
+ * as text (type 0x0081, "hash" = the number of messages). The reply is
+ * parsed exactly like the icon reply, so the bridge answers with the very
+ * same layout; what the bytes mean is up to the listener.
  */
-public class RequestPhotoAction extends Action
+public class RequestBartAction extends Action
 {
 	public static final int BART_PHOTO = 0x0080;
+	public static final int BART_HISTORY = 0x0081;
+
+	/** Who gets the bytes the service replied with (null on failure). */
+	public interface Listener
+	{
+		void onBart(byte[] data);
+	}
 
 	public static final int STATE_ERROR = -1;
 	public static final int STATE_INIT_DONE = 0;
@@ -47,19 +52,21 @@ public class RequestPhotoAction extends Action
 	private String srvHost;
 	private String srvPort;
 	private String uin;
+	private int bartType;
 	private byte[] token;
 	private byte[] clicookie;
-	private PhotoViewer viewer;
+	private Listener listener;
 	private int state;
 	private Date lastActivity = new Date();
 	private boolean active;
 
-	public RequestPhotoAction(String uin, byte[] token, PhotoViewer viewer)
+	public RequestBartAction(String uin, int bartType, byte[] token, Listener listener)
 	{
 		super(false, true);
 		this.uin = uin;
+		this.bartType = bartType;
 		this.token = token;
-		this.viewer = viewer;
+		this.listener = listener;
 	}
 
 	protected void init() throws JimmException
@@ -94,7 +101,7 @@ public class RequestPhotoAction extends Action
 		Util.putByte(buf, 0, uinLength);
 		System.arraycopy(uinRaw, 0, buf, 1, uinLength);
 		Util.putByte(buf, 1 + uinLength, 0x01);
-		Util.putWord(buf, 2 + uinLength, BART_PHOTO);
+		Util.putWord(buf, 2 + uinLength, bartType);
 		Util.putByte(buf, 4 + uinLength, 0x01);
 		Util.putByte(buf, 5 + uinLength, 0x10);
 		System.arraycopy(token, 0, buf, 6 + uinLength, 16);
@@ -207,24 +214,20 @@ public class RequestPhotoAction extends Action
 						int uinLength = Util.getByte(buf, marker);
 						marker += 1 + uinLength;
 						marker += 2 + 1 + 1 + 16 + 1 + 2 + 1 + 1 + 16;
-						int imgLength = Util.getWord(buf, marker);
+						int dataLength = Util.getWord(buf, marker);
 						marker += 2;
-						Image img = null;
-						try
-						{
-							img = Image.createImage(buf, marker, imgLength);
-						}
-						catch (Exception ignore) {}
+						byte[] data = new byte[dataLength];
+						System.arraycopy(buf, marker, data, 0, dataLength);
 						buf = null;
-						viewer.onPhoto(img);
+						listener.onBart(data);
 						this.state = STATE_ACTION_DONE;
 						consumed = true;
 					}
 					else if ((snacPacket.getFamily() == SnacPacket.SRV_REPLYAVATAR_FAMILY)
 							&& (snacPacket.getCommand() == 0x0001))
 					{
-						// Error from the service: the bridge has no such picture.
-						viewer.onPhoto(null);
+						// Error from the service: the bridge has nothing to give.
+						listener.onBart(null);
 						this.state = STATE_ACTION_DONE;
 						consumed = true;
 					}
@@ -272,8 +275,8 @@ public class RequestPhotoAction extends Action
 			break;
 		case ON_CANCEL:
 		case ON_ERROR:
-			DebugLog.addText("RequestPhotoAction ON_ERROR");
-			viewer.onPhoto(null);
+			DebugLog.addText("RequestBartAction ON_ERROR");
+			listener.onBart(null);
 			Icq.disconnectBart(true);
 			break;
 		}

@@ -146,9 +146,48 @@ async def run_photos() -> None:
     print("  снимки: ок (Jimm — без вложения, TeleMotoMax — токен и картинка по запросу)")
 
 
+async def run_history() -> None:
+    """История чата на отдельный экран: текст последних N сообщений по службе 0x10."""
+    import datetime as dt
+    from bridge.history import HistoryItem
+
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 2
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+    asked: list[tuple[int, int]] = []
+
+    async def on_outgoing(*_):
+        return 1
+
+    async def fetch_history(target: int, count: int):
+        asked.append((target, count))
+        when = dt.datetime(2026, 9, 16, 10, 0, tzinfo=dt.timezone.utc)
+        items = [HistoryItem(when, "Мама", "привет"), HistoryItem(when, "Я", "и тебе")]
+        return "\n".join(f"[{i.when:%d.%m %H:%M}] {i.who}: {i.text}" for i in items[:count])
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
+                         fetch_history=fetch_history)
+    await server.start()
+    client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+    client.tmm_version = (0, 2)
+    await client.connect()
+    await client.bos(await client.login_md5_jimm())
+    await client.drain_for(0.3)
+
+    text = await client.request_history(uin, 30)
+    assert asked == [(uin, 30)], asked
+    assert "Мама: привет" in text and "Я: и тебе" in text, text
+    await client.close()
+    server._server.close()
+    print("  история: ок (текст последних сообщений по службе 0x10)")
+
+
 async def main() -> None:
     await run_detection()
     await run_photos()
+    await run_history()
     print("TELEMOTOMAX ПРОВЕРЕН")
 
 
