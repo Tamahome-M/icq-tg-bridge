@@ -75,7 +75,7 @@ class Bridge:
                                  self.search_chats, self.verdict_for,
                                  self.on_phone_remove, self.on_phone_privacy,
                                  self.avatar, self.icon_hash, self.fetch_attachment,
-                                 self.fetch_history)
+                                 self.fetch_history, self.fetch_video)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
@@ -360,6 +360,35 @@ class Bridge:
         data, width, height = got
         log.info("%s для «%s» ужат до %d×%d, %d байт", "кадр видео" if kind == "video" else "снимок",
                  contact.title, width, height, len(data))
+        return data
+
+    async def fetch_video(self, uin: int, attach: str) -> bytes | None:
+        """Первые секунды ролика для TeleMotoMax — 3GP под плеер телефона.
+
+        Ролик качается и перекодируется только по запросу клиента; тем же
+        ffmpeg и с тем же кодеком, что страница !render, но короче."""
+        contact = self.storage.contact_by_uin(uin)
+        kind, _, ident = attach.partition(":")
+        if contact is None or kind != "video" or not ident.isdigit():
+            return None
+        if self.cfg.tmm_video_seconds <= 0:
+            return None
+        transcoder = Transcoder(self.cfg.render_ffmpeg, self.cfg.tmm_video_seconds,
+                                self.cfg.render_audio_seconds, self.cfg.render_timeout,
+                                self.cfg.render_dir, self.cfg.render_video_codec,
+                                self.cfg.render_video_kbps, self.cfg.render_video_fps)
+        if not transcoder.available:
+            log.warning("ролик для «%s»: ffmpeg %r не найден", contact.title, self.cfg.render_ffmpeg)
+            return None
+        raw = await self.side_for(contact.peer_id).video_bytes(
+            contact.peer_id, int(ident), self.cfg.render_source_max_mb * 1024 * 1024)
+        if not raw:
+            return None
+        os.makedirs(self.cfg.render_dir, exist_ok=True)
+        data = await transcoder.convert(raw, "video")
+        if data:
+            log.info("ролик для «%s»: первые %d с, %d КБ", contact.title,
+                     self.cfg.tmm_video_seconds, len(data) // 1024)
         return data
 
     async def fetch_history(self, uin: int, count: int) -> list[tuple[str, str]] | None:

@@ -32,11 +32,18 @@ public class RequestBartAction extends Action
 {
 	public static final int BART_PHOTO = 0x0080;
 	public static final int BART_HISTORY = 0x0081;
+	public static final int BART_VIDEO = 0x0082;
 
 	/** Who gets the bytes the service replied with (null on failure). */
 	public interface Listener
 	{
 		void onBart(byte[] data);
+	}
+
+	/** A listener that also wants to know how many parts have arrived. */
+	public interface ProgressListener extends Listener
+	{
+		void onBartProgress(int part, int total);
 	}
 
 	public static final int STATE_ERROR = -1;
@@ -48,6 +55,7 @@ public class RequestBartAction extends Action
 	public static final int STATE_MAX = 5;
 
 	public int TIMEOUT = 60 * 1000;
+	public static final int VIDEO_TIMEOUT = 240 * 1000;   // the clip is transcoded first
 
 	private String srvHost;
 	private String srvPort;
@@ -59,6 +67,8 @@ public class RequestBartAction extends Action
 	private int state;
 	private Date lastActivity = new Date();
 	private boolean active;
+	// Replies that come in parts (the clip): collected here until the last one.
+	private java.io.ByteArrayOutputStream parts;
 
 	public RequestBartAction(String uin, int bartType, byte[] token, Listener listener)
 	{
@@ -67,6 +77,7 @@ public class RequestBartAction extends Action
 		this.bartType = bartType;
 		this.token = token;
 		this.listener = listener;
+		if (bartType == BART_VIDEO) TIMEOUT = VIDEO_TIMEOUT;
 	}
 
 	protected void init() throws JimmException
@@ -213,13 +224,37 @@ public class RequestBartAction extends Action
 						int marker = 0;
 						int uinLength = Util.getByte(buf, marker);
 						marker += 1 + uinLength;
+						// Flags of the two item blocks carry "part N of M" for
+						// replies that do not fit one packet; 1 of 1 otherwise.
+						int part = Util.getByte(buf, marker + 2);
+						int total = Util.getByte(buf, marker + 2 + 1 + 1 + 16 + 1 + 2);
 						marker += 2 + 1 + 1 + 16 + 1 + 2 + 1 + 1 + 16;
 						int dataLength = Util.getWord(buf, marker);
 						marker += 2;
-						byte[] data = new byte[dataLength];
-						System.arraycopy(buf, marker, data, 0, dataLength);
-						buf = null;
-						listener.onBart(data);
+						if (total > 1)
+						{
+							if (parts == null) parts = new java.io.ByteArrayOutputStream();
+							parts.write(buf, marker, dataLength);
+							buf = null;
+							if (listener instanceof ProgressListener)
+								((ProgressListener) listener).onBartProgress(part, total);
+							if (part < total)
+							{
+								this.lastActivity = new Date();
+								this.active = false;
+								return true;           // wait for the rest
+							}
+							byte[] all = parts.toByteArray();
+							parts = null;
+							listener.onBart(all);
+						}
+						else
+						{
+							byte[] data = new byte[dataLength];
+							System.arraycopy(buf, marker, data, 0, dataLength);
+							buf = null;
+							listener.onBart(data);
+						}
 						this.state = STATE_ACTION_DONE;
 						consumed = true;
 					}

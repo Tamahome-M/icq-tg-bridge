@@ -1073,6 +1073,22 @@ class Session:
                                  blocks.icon_reply(int(target), token, data, C.BART_HISTORY),
                                  request_id=s.request_id)
             return
+        if bart_type == C.BART_VIDEO and self.extended:
+            got = await self.server.video(token)
+            if not got:
+                log.info("ролик по токену %s не найден или не перекодировался", token[:4].hex())
+                await self.send_error(C.SSBI, 0x0001, s.request_id)
+                return
+            parts = [got[i:i + C.VIDEO_PART_BYTES] for i in range(0, len(got), C.VIDEO_PART_BYTES)]
+            log.info("ролик для %s отдан: %d байт в %d частях",
+                     self.server.name_of(target), len(got), len(parts))
+            for index, chunk in enumerate(parts, start=1):
+                if not await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
+                                            blocks.icon_reply(int(target), token, chunk, C.BART_VIDEO,
+                                                              index, len(parts)),
+                                            request_id=s.request_id):
+                    return
+            return
         if bart_type == C.BART_PHOTO:
             got = await self.server.attachment(token)
             if got is None:
@@ -1175,7 +1191,8 @@ class OscarServer:
                  icon_hash: Callable[[int], bytes | None] | None = None,
                  fetch_attachment: Callable[[int, str], Awaitable[bytes | None]] | None = None,
                  fetch_history: Callable[[int, int],
-                                         Awaitable[list[tuple[str, str]] | None]] | None = None):
+                                         Awaitable[list[tuple[str, str]] | None]] | None = None,
+                 fetch_video: Callable[[int, str], Awaitable[bytes | None]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -1199,6 +1216,8 @@ class OscarServer:
         self.attachments: dict[bytes, tuple[int, str, float]] = {}
         # История чата для расширенного клиента — текстом, на отдельный экран.
         self.fetch_history = fetch_history
+        # Сам ролик (первые секунды, перекодированный под телефон) по токену.
+        self.fetch_video = fetch_video
         self.uin = str(cfg.oscar_uin)
         self.password = cfg.oscar_password
         self.ssi_encoding = cfg.ssi_encoding
@@ -1298,6 +1317,20 @@ class OscarServer:
             return await self.fetch_history(uin, count)
         except Exception:
             log.exception("история для %s не собралась", self.name_of(uin))
+            return None
+
+    async def video(self, token: bytes) -> bytes | None:
+        """Ролик по токену вложения — перекодированный под телефон, или None."""
+        got = self.attachments.get(token)
+        if got is None or self.fetch_video is None:
+            return None
+        uin, attach, made = got
+        if time.time() - made > ATTACH_TTL or not attach.startswith("video:"):
+            return None
+        try:
+            return await self.fetch_video(uin, attach)
+        except Exception:
+            log.exception("ролик %s для %s не достался", attach, self.name_of(uin))
             return None
 
     async def attachment(self, token: bytes) -> bytes | None:

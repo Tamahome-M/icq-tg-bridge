@@ -63,15 +63,27 @@ public abstract class Message
 	// TeleMotoMax: bridge attached a picture to this message — 16-byte token
 	// to fetch it with through the BART service (family 0x10). null if none.
 	private byte[] attachToken;
+	private int attachKind;          // 1 = photo, 2 = video (preview + clip)
 
 	public byte[] getAttachToken()
 	{
 		return attachToken;
 	}
 
+	public int getAttachKind()
+	{
+		return attachKind;
+	}
+
 	public void setAttachToken(byte[] token)
 	{
 		attachToken = token;
+	}
+
+	public void setAttach(byte[] token, int kind)
+	{
+		attachToken = token;
+		attachKind = kind;
 	}
 
 	protected boolean offline;

@@ -44,6 +44,7 @@ class FakeJimm:
         self.to_ack: list[bytes] = []
         self.typing: list[tuple[int, bool]] = []
         self.attachments: list[tuple[int, bytes]] = []   # (uin, токен снимка)
+        self.parts_seen: list[tuple[int, int]] = []       # части ответов службы 0x10
         self.errors: list[tuple[int, int]] = []
 
     async def connect(self) -> None:
@@ -451,12 +452,17 @@ class FakeJimm:
             out.append((text, photo))
         return out
 
+    async def request_video(self, uin: int, token: bytes, timeout: float = 5.0) -> bytes:
+        """Ролик по токену — как TeleMotoMax: тип 0x0082, ответ частями, склеиваем."""
+        got = await self._request_bart(uin, C.BART_VIDEO, token, timeout, parts=True)
+        return got["image"]
+
     async def request_photo(self, uin: int, token: bytes, timeout: float = 5.0) -> dict:
         """Снимок по токену — как TeleMotoMax: та же служба, тип приметы 0x0080."""
         return await self._request_bart(uin, C.BART_PHOTO, token, timeout)
 
     async def _request_bart(self, uin: int, bart_type: int, digest: bytes,
-                            timeout: float) -> dict:
+                            timeout: float, parts: bool = False) -> dict:
         await self.request_service(C.SSBI)
         redirect = await self.expect(C.OSERVICE, C.SERVICE_REDIRECT, timeout)
         tlvs = redirect.reader().tlvs(3)
@@ -475,18 +481,26 @@ class FakeJimm:
             body = (pstr8(str(uin).encode()) + b"\x01" + struct.pack(">H", bart_type)
                     + b"\x01" + bytes([len(digest)]) + digest)
             await self.send_snac(C.SSBI, C.SSBI_ICQ_REQ, body)
-            reply = await self.expect(C.SSBI, C.SSBI_ICQ_REPLY, timeout)
+            chunks: list[bytes] = []
+            got_uin = 0
+            while True:
+                reply = await self.expect(C.SSBI, C.SSBI_ICQ_REPLY, timeout)
+                r = reply.reader()
+                got_uin = int(r.pstr8())
+                # Клиент отсчитывает начало картинки по длине блока примет: две
+                # штуки подряд и разделительный байт между ними; во флагах —
+                # «часть N из M», если ответ не влез в один пакет.
+                r.u16(); part = r.u8(); r.u8(); r.read(16); r.u8()
+                r.u16(); total = r.u8(); r.u8(); r.read(16)
+                length = r.u16()
+                chunks.append(r.read(length))
+                self.parts_seen.append((part, total))
+                if not parts or part >= total:
+                    break
         finally:
             self.writer.close()
             self.reader, self.writer = main_reader, main_writer
-
-        r = reply.reader()
-        got_uin = int(r.pstr8())
-        # Клиент отсчитывает начало картинки по длине блока примет: две
-        # штуки подряд и разделительный байт между ними.
-        r.read(2 + 1 + 1 + 16 + 1 + 2 + 1 + 1 + 16)
-        length = r.u16()
-        return {"uin": got_uin, "image": r.read(length), "hash": digest}
+        return {"uin": got_uin, "image": b"".join(chunks), "hash": digest}
 
     async def set_status(self, status: int) -> None:
         """Ставит статус так же, как это делает Jimm."""

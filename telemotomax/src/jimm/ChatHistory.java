@@ -49,8 +49,10 @@ class MessData
 
 	private int rowData;
 	private int messId;
-	// TeleMotoMax: token of the picture attached by the bridge, or null
+	// TeleMotoMax: token of the picture attached by the bridge, or null,
+	// and its kind (1 = photo, 2 = video: preview and a clip)
 	byte[] attach;
+	int attachKind;
 
 	public MessData(boolean incoming, long time, int textOffset,
 			boolean contains_url, int messId)
@@ -103,6 +105,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	private static final Command cmdCopyText = new Command(ResourceBundle.getString("copy_text"), Command.ITEM, 4);
 	// TeleMotoMax: show the picture the bridge attached to the current message
 	static final Command cmdShowPhoto = new Command(ResourceBundle.getString("show_photo"), Command.ITEM, 3);
+	static final Command cmdPlayVideo = new Command(ResourceBundle.getString("play_video"), Command.ITEM, 3);
 	// TeleMotoMax: chat history from the bridge on its own screen
 	static final Command cmdServerHistory = new Command(ResourceBundle.getString("server_history"), Command.ITEM, 5);
 	private static final Command cmdReplWithQuota = new Command(ResourceBundle.getString("quote", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 3);
@@ -236,6 +239,12 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		{
 			HistoryViewer.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN),
 					contact.getStringValue(ContactItem.CONTACTITEM_NAME), this);
+		}
+		else if (c == cmdPlayVideo)
+		{
+			byte[] token = currentAttach();
+			if (token != null)
+				VideoPlayer.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), token, this);
 		}
 		else if (c == cmdShowPhoto)
 		{
@@ -406,11 +415,13 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	void checkTextForPhoto()
 	{
 		textList.removeCommandEx(cmdShowPhoto);
+		textList.removeCommandEx(cmdPlayVideo);
 		int messIndex = textList.getCurrTextIndex();
 		if (messIndex != -1)
 		{
 			MessData md = (MessData) getMessData().elementAt(messIndex);
 			if (md.attach != null) textList.addCommandEx(cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
+			if (md.attach != null && md.attachKind == 2) textList.addCommandEx(cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
 		}
 	}
 
@@ -469,6 +480,12 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 
 	void addTextToForm(String from, String message, String url, long time,
 			boolean red, boolean offline, int messId, byte[] attach)
+	{
+		addTextToForm(from, message, url, time, red, offline, messId, attach, 1);
+	}
+
+	void addTextToForm(String from, String message, String url, long time,
+			boolean red, boolean offline, int messId, byte[] attach, int attachKind)
 	{
 		int texOffset = 0;
 		boolean deliveryReqOn = Options.getBoolean(Options.OPTION_DELIV_MES_INFO); 
@@ -533,6 +550,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		//#sijapp cond.end#
 		MessData md = new MessData(red, time, texOffset, contains_url, messId);
 		md.attach = attach;
+		md.attachKind = attachKind;
 		getMessData().addElement(md);
 		messTotalCounter++;
 		lastMsgTime = (shortMsg) ? lastMsgTime : time;
@@ -620,7 +638,7 @@ public class ChatHistory
 				addTextToForm(uin, contact
 						.getStringValue(ContactItem.CONTACTITEM_NAME),
 						plainMsg.getText(), "", plainMsg.getNewDate(), true,
-						offline, -1, plainMsg.getAttachToken());
+						offline, -1, plainMsg.getAttachToken(), plainMsg.getAttachKind());
 				
 				//#sijapp cond.if modules_HISTORY is "true" #
 				if (Options.getBoolean(Options.OPTION_HISTORY))
@@ -717,10 +735,10 @@ public class ChatHistory
 	// Add text to message form
 	static synchronized private void addTextToForm(String uin, String from,
 			String message, String url, long time, boolean red, boolean offline, int messId,
-			byte[] attach)
+			byte[] attach, int attachKind)
 	{
 		ChatTextList msgDisplay = (ChatTextList) historyTable.get(uin);
-		msgDisplay.addTextToForm(from, message, url, time, red, offline, messId, attach);
+		msgDisplay.addTextToForm(from, message, url, time, red, offline, messId, attach, attachKind);
 	}
 
 	static synchronized private void addTextToForm(String uin, String from,
@@ -860,12 +878,12 @@ public class ChatHistory
 
 	// TeleMotoMax: a history record from the bridge goes into the chat as
 	// an incoming line (used for the last message of a fresh chat).
-	static synchronized void addHistoryLine(String uin, String text, byte[] attach)
+	static synchronized void addHistoryLine(String uin, String text, byte[] attach, int kind)
 	{
 		ChatTextList chat = (ChatTextList) historyTable.get(uin);
 		if (chat == null) return;
 		chat.addTextToForm(chat.contact.getStringValue(ContactItem.CONTACTITEM_NAME),
-				text, "", Util.createCurrentDate(false), true, true, -1, attach);
+				text, "", Util.createCurrentDate(false), true, true, -1, attach, kind);
 		chat.checkTextForPhoto();
 	}
 
