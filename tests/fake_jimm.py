@@ -501,6 +501,25 @@ class FakeJimm:
         got = await self._request_bart(uin, C.BART_VIDEO, token, timeout, parts=True)
         return got["image"]
 
+    async def request_chats(self, uin: int, timeout: float = 5.0) -> list[tuple]:
+        """Весь список чатов — как TeleMotoMax: тип 0x0084, ответ частями.
+        Возвращает (uin, название, MAX ли, дней тишины, в контакт-листе ли)."""
+        got = await self._request_bart(uin, C.BART_CHATS, bytes(16), timeout, parts=True)
+        data, pos, out = got["image"], 0, []
+        while pos + 9 <= len(data):
+            chat, flags, days = struct.unpack(">IBH", data[pos:pos + 7]); pos += 7
+            length = struct.unpack(">H", data[pos:pos + 2])[0]; pos += 2
+            title = data[pos:pos + length].decode("utf-8"); pos += length
+            out.append((chat, title, bool(flags & 1), -1 if days == 0xFFFF else days,
+                        bool(flags & 2)))
+        return out
+
+    async def open_chat(self, uin: int, wanted: int, timeout: float = 5.0) -> bool:
+        """«Вернуть чат на телефон» — как TeleMotoMax: тип 0x0085, в «хеше» UIN."""
+        token = struct.pack(">I", wanted) + bytes(12)
+        got = await self._request_bart(uin, C.BART_OPEN, token, timeout)
+        return got["image"][:1] == b"\x00"
+
     async def request_photo(self, uin: int, token: bytes, timeout: float = 5.0) -> dict:
         """Снимок по токену — как TeleMotoMax: та же служба, тип приметы 0x0080."""
         return await self._request_bart(uin, C.BART_PHOTO, token, timeout)

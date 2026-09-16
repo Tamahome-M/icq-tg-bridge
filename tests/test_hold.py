@@ -287,6 +287,70 @@ async def main() -> None:
         "известный чат после поиска не должен менять группу, мьют и позицию"
     bridge.storage.close()
     print("  roster_limit: ок (не слетает после !fav и поиска)")
+
+    # --- весь список чатов и возвращение вытесненного -----------------------
+    bridge = make_bridge()
+    bridge.cfg.roster_limit = 2
+    bridge._reload_roster()
+    in_roster = {c.uin for c in bridge.roster()}
+    rows = await bridge.chat_list()
+    assert len(rows) == 4, f"в списке должны быть все чаты, а не {len(rows)}"
+    assert [r[1] for r in rows] == sorted([r[1] for r in rows], key=str.lower), \
+        "список идёт по алфавиту — его листают глазами"
+    assert {r[0] for r in rows if r[4]} == in_roster, \
+        "пометка «в контакт-листе» должна совпадать с самим списком"
+    assert any(not r[4] for r in rows), "вытесненные чаты тоже должны быть в списке"
+
+    # Поиск без запроса отдаёт то же самое, но с пометками сети в названии.
+    found = await bridge.search_chats("")
+    assert len(found) == 4, found
+    assert all(f["title"][:3] in ("[T]", "[M]") for f in found), found
+    assert found == await bridge.search_chats("*"), "«*» — тот же «покажи всё»"
+
+    # Убранный чат возвращается на телефон вместе с последним сообщением.
+    lost = bridge.storage.contact_by_peer(-4002)
+    bridge.storage.set_hidden(lost.uin)
+    bridge._reload_roster()
+    assert lost.uin not in {c.uin for c in bridge.roster()}
+
+    said: list[str] = []
+
+    async def deliver(uin, text, wait_ack=False, row_id=None, url="", attach="", forced=False):
+        said.append(text)
+        return True
+
+    async def fetch_history(uin, count):
+        return [("[16.09 12:00] Вася: последнее", "")]
+
+    bridge.oscar.deliver = deliver
+    bridge.fetch_history = fetch_history
+    assert await bridge.open_chat(lost.uin) is True
+    assert bridge.storage.contact_by_uin(lost.uin).hidden == 0, "скрытие должно сняться"
+    assert lost.uin in {c.uin for c in bridge.roster()}, "чат должен вернуться в список"
+    assert said and "последнее" in said[-1], said
+    assert await bridge.open_chat(999999) is False, "чужой UIN — отказ"
+
+    # Отправленное с телефона видно в самой переписке: своё голосовое и свой
+    # снимок телефон в окно чата не кладёт, это делает мост.
+    said.clear()
+    mom = bridge.storage.contact_by_peer(555)
+
+    async def send_voice(peer_id, data, seconds=0, voice=True, topic_id=0):
+        return 42
+
+    async def send_photo(peer_id, data, caption="", topic_id=0):
+        return 43
+
+    bridge.telegram.send_voice = send_voice
+    bridge.telegram.send_photo = send_photo
+    bridge.cfg.render_ffmpeg = "ffmpeg-которого-нет"
+    assert await bridge.send_voice_message(mom.uin, b"#!AMR\n" + b"x" * 100, 75) is True
+    assert said and said[-1].startswith("[голосовое 1:15] отправлено"), said
+    assert "файлом" in said[-1], "без opus честно говорим, что ушло вложением"
+    assert await bridge.send_camera_photo(mom.uin, b"\xff\xd8\xff" + b"x" * 100) is True
+    assert said[-1] == "[фото] отправлено", said
+    bridge.storage.close()
+    print("  все чаты: ок (список целиком, пометки сети, возвращение убранного)")
     print("ПРИДЕРЖАНИЕ ПРОВЕРЕНО")
 
 
