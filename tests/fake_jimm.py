@@ -434,11 +434,22 @@ class FakeJimm:
         return await self._request_bart(uin, C.BART_ICON,
                                         self.icon_hashes.get(uin, b"\x00" * 16), timeout)
 
-    async def request_history(self, uin: int, count: int, timeout: float = 5.0) -> str:
-        """История чата текстом — как TeleMotoMax: тип 0x0081, число сообщений в «хеше»."""
+    async def request_history(self, uin: int, count: int,
+                              timeout: float = 5.0) -> list[tuple[str, bytes | None]]:
+        """История чата — как TeleMotoMax: тип 0x0081, число сообщений в «хеше».
+        Возвращает записи (текст, токен снимка или None)."""
         token = struct.pack(">H", count) + bytes(14)
         got = await self._request_bart(uin, C.BART_HISTORY, token, timeout)
-        return got["image"].decode("utf-8")
+        data, pos, out = got["image"], 0, []
+        while pos + 3 <= len(data):
+            length = struct.unpack(">H", data[pos:pos + 2])[0]; pos += 2
+            text = data[pos:pos + length].decode("utf-8"); pos += length
+            flag = data[pos]; pos += 1
+            photo = None
+            if flag & 1:
+                photo = data[pos:pos + 16]; pos += 16
+            out.append((text, photo))
+        return out
 
     async def request_photo(self, uin: int, token: bytes, timeout: float = 5.0) -> dict:
         """Снимок по токену — как TeleMotoMax: та же служба, тип приметы 0x0080."""

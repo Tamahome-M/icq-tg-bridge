@@ -328,6 +328,7 @@
 "server_history"				"History from server"
 "history_loading"				"Loading history..."
 "history_failed"				"History unavailable"
+"history_empty"				"No messages"
 "photo_loading"				"Loading photo..."
 "photo_failed"				"Photo unavailable"
 "when_idle"				"If idle for 60 s"

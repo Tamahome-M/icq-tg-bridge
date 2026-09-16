@@ -34,6 +34,8 @@ class HistoryItem:
     when: dt.datetime
     who: str
     text: str
+    msg_id: int = 0        # номер сообщения в сети — по нему достаётся вложение
+    kind: str = ""         # photo, video, voice, audio — или пусто
 
 
 def parse(text: str) -> Command | None:

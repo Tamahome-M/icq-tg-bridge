@@ -1060,11 +1060,13 @@ class Session:
             # История чата на отдельный экран: число сообщений — в первых двух
             # байтах «хеша», текст уходит тем же 10/07 вместо картинки.
             count = struct.unpack(">H", token[:2])[0] if len(token) >= 2 else 0
-            text = await self.server.history_text(int(target), count)
-            if text is None:
+            rows = await self.server.history_text(int(target), count)
+            if rows is None:
                 await self.send_error(C.SSBI, 0x0001, s.request_id)
                 return
-            data = text.encode("utf-8")[:C.HISTORY_MAX_BYTES]
+            data = blocks.history_records(rows, C.HISTORY_MAX_BYTES,
+                                          lambda attach: self.server.register_attachment(
+                                              int(target), attach))
             log.info("история для %s отдана: %d байт", self.server.name_of(target), len(data))
             await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
                                  blocks.icon_reply(int(target), token, data, C.BART_HISTORY),
@@ -1171,7 +1173,8 @@ class OscarServer:
                  avatar: Callable[[int], Awaitable[tuple[bytes, bytes] | None]] | None = None,
                  icon_hash: Callable[[int], bytes | None] | None = None,
                  fetch_attachment: Callable[[int, str], Awaitable[bytes | None]] | None = None,
-                 fetch_history: Callable[[int, int], Awaitable[str | None]] | None = None):
+                 fetch_history: Callable[[int, int],
+                                         Awaitable[list[tuple[str, str]] | None]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -1287,7 +1290,7 @@ class OscarServer:
         self.attachments[token] = (uin, attach, now)
         return token
 
-    async def history_text(self, uin: int, count: int) -> str | None:
+    async def history_text(self, uin: int, count: int) -> list[tuple[str, str]] | None:
         if self.fetch_history is None:
             return None
         try:

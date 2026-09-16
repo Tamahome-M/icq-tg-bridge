@@ -474,6 +474,7 @@
 "server_history"				"История с сервера"
 "history_loading"				"Загрузка истории..."
 "history_failed"				"История недоступна"
+"history_empty"				"Сообщений нет"
 "photo_loading"				"Загрузка фото..."
 "photo_failed"				"Фото недоступно"
 "when_idle"				"Если не трогали 60 с"

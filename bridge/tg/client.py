@@ -344,7 +344,7 @@ class TelegramSide:
                 who = chat_name
             else:
                 who = await self._sender_name(msg, names)
-            items.append(HistoryItem(msg.date, who, text))
+            items.append(HistoryItem(msg.date, who, text, msg.id, media_kind(msg)))
         items.reverse()
         return items
 

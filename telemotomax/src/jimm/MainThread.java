@@ -174,6 +174,10 @@ public class MainThread implements Runnable
 		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 		case TYPE_UPDATE_BUDDYICON:
 			ContactList.update((String) data[0], (Image) data[1], (byte[]) data[2]);
+			// TeleMotoMax: refresh the open card here, after the image is
+			// stored — the comm thread used to do it on ON_COMPLETE, racing
+			// this task and finding no image yet.
+			JimmUI.updateActiveUserInfo((String) data[0]);
 			break;
 		//  #sijapp cond.end#
 
