@@ -145,18 +145,28 @@ async def run_photos() -> None:
     got = await client.request_photo(uin, client.attachments[-1][1])
     assert asked[-1] == (uin, "video:4343") and got["image"][:3] == b"\xff\xd8\xff"
 
-    # Сам ролик: приходит частями по 30 КБ, клиент склеивает.
-    clip = bytes(range(256)) * 300                     # 76 800 байт «3GP»
+    # Короткий ролик укладывается в один пакет — тот же путь, что у фото.
+    short = bytes(range(256)) * 150                    # 38 400 байт
     videos: list[str] = []
 
-    async def fetch_video(target: int, attach: str):
+    async def fetch_short(target: int, attach: str):
         videos.append(attach)
-        return clip
+        return short
 
-    server.fetch_video = fetch_video
+    server.fetch_video = fetch_short
+    client.parts_seen.clear()
+    got_short = await client.request_video(uin, client.attachments[-1][1])
+    assert videos == ["video:4343"], videos
+    assert got_short == short, (len(got_short), len(short))
+    assert client.parts_seen == [(1, 1)], client.parts_seen
+
+    # Длинный ролик — частями по 60 КБ, клиент склеивает байт в байт.
+    clip = bytes(range(256)) * 500                     # 128 000 байт
+    async def fetch_clip(target: int, attach: str):
+        return clip
+    server.fetch_video = fetch_clip
     client.parts_seen.clear()
     got_clip = await client.request_video(uin, client.attachments[-1][1])
-    assert videos == ["video:4343"], videos
     assert got_clip == clip, (len(got_clip), len(clip))
     assert client.parts_seen == [(1, 3), (2, 3), (3, 3)], client.parts_seen
 
