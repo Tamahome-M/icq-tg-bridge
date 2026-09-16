@@ -165,6 +165,20 @@ def presence_name(presence) -> str:
     return "offline"
 
 
+def _patch_pymax_models() -> None:
+    """Сервер MAX присылает номер сообщения в уведомлении о реакции числом,
+    а модель PyMax 2.4.1 ждёт строку — каждая реакция в любом чате
+    роняла разбор кадра с трассировкой в журнал. Расширяем поле."""
+    try:
+        from pymax.types.events import ReactionUpdateEvent
+        field = ReactionUpdateEvent.model_fields.get("message_id")
+        if field is not None and field.annotation is str:
+            field.annotation = int | str
+            ReactionUpdateEvent.model_rebuild(force=True)
+    except Exception:
+        log.debug("модель реакций PyMax не поправилась", exc_info=True)
+
+
 class NoConsoleCode:
     """Под службой SMS-код спросить не у кого: вход делается заранее."""
 
@@ -212,9 +226,13 @@ class MaxSide:
         # более. Журнал библиотеки — своим уровнем, как у Telethon.
         # chats_sync=-1 — полная синхронизация при каждом входе: иначе сервер
         # отдаёт лишь чаты, изменившиеся с прошлого раза, и список пуст.
-        from pymax.types.domain.sync import SyncOverrides
+        # config_hash по умолчанию — чтобы сервер прислал настройки профиля
+        # целиком (в них «не беспокоить» по чатам): с сохранённым хешем он
+        # их опускает как неизменившиеся, и при старте мьюты не видны.
+        from pymax.types.domain.sync import DEFAULT_CONFIG_HASH, SyncOverrides
         extra = ExtraConfig(telemetry=False, log_level=self.cfg.log_max_level,
-                            sync=SyncOverrides(chats_sync=-1))
+                            sync=SyncOverrides(chats_sync=-1, config_hash=DEFAULT_CONFIG_HASH))
+        _patch_pymax_models()
         return Client(phone=self.cfg.max_phone, work_dir=work_dir,
                       session_name=os.path.basename(self.cfg.max_session),
                       extra_config=extra, **kwargs)
