@@ -752,7 +752,8 @@ class MaxSide:
             if not text:
                 continue
             who, _ = await self._who(msg, kind == "user", chat_name)
-            items.append(HistoryItem(when, who, text))
+            items.append(HistoryItem(when, who, text, int(_attr(msg, "id", 0) or 0),
+                                     media_kind(msg)))
         items.reverse()
         return items
 

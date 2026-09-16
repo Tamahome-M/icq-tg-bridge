@@ -161,14 +161,22 @@ async def run_history() -> None:
     async def on_outgoing(*_):
         return 1
 
+    fetched: list[str] = []
+
     async def fetch_history(target: int, count: int):
         asked.append((target, count))
         when = dt.datetime(2026, 9, 16, 10, 0, tzinfo=dt.timezone.utc)
-        items = [HistoryItem(when, "Мама", "привет"), HistoryItem(when, "Я", "и тебе")]
-        return "\n".join(f"[{i.when:%d.%m %H:%M}] {i.who}: {i.text}" for i in items[:count])
+        items = [HistoryItem(when, "Мама", "привет"), HistoryItem(when, "Я", "и тебе"),
+                 HistoryItem(when, "Мама", "[фото] закат", 4242, "photo")]
+        return [(f"[{i.when:%d.%m %H:%M}] {i.who}: {i.text}",
+                 f"photo:{i.msg_id}" if i.kind == "photo" else "") for i in items[:count]]
+
+    async def fetch_attachment(target: int, attach: str):
+        fetched.append(attach)
+        return small_jpeg()[:3000]
 
     server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
-                         fetch_history=fetch_history)
+                         fetch_attachment=fetch_attachment, fetch_history=fetch_history)
     await server.start()
     client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
     client.tmm_version = (0, 2)
@@ -176,9 +184,13 @@ async def run_history() -> None:
     await client.bos(await client.login_md5_jimm())
     await client.drain_for(0.3)
 
-    text = await client.request_history(uin, 30)
+    rows = await client.request_history(uin, 30)
     assert asked == [(uin, 30)], asked
-    assert "Мама: привет" in text and "Я: и тебе" in text, text
+    assert [t.split("] ", 1)[1] for t, _ in rows] == ["Мама: привет", "Я: и тебе", "Мама: [фото] закат"], rows
+    assert rows[0][1] is None and rows[2][1] is not None, "у сообщения с фото должен быть токен"
+    # Фото из истории открывается тем же запросом, что и из чата.
+    got = await client.request_photo(uin, rows[2][1])
+    assert fetched == ["photo:4242"] and got["image"][:3] == b"\xff\xd8\xff"
     await client.close()
     server._server.close()
     print("  история: ок (текст последних сообщений по службе 0x10)")

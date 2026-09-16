@@ -805,17 +805,10 @@ public class ContactItem implements ContactListItem, JimmScreen
 		
 		String currentUin = getStringValue(ContactItem.CONTACTITEM_UIN);
 
-		/* Display chat history */
-		if (getBooleanValue(ContactItem.CONTACTITEM_HAS_CHAT))
-		{
-			ChatTextList chat = ChatHistory.getChatHistoryAt(currentUin);
-			chat.activate();
-		} 
-		else
-		/* Display menu */
-		{
-			JimmUI.showContactMenu(this);
-		}
+		/* TeleMotoMax: always open the chat, empty or not — its menu holds
+		   the server history and the rest; the contact menu is a step
+		   away from there. */
+		ChatHistory.openChat(this);
 	}
 	
 	public boolean isScreenActive()

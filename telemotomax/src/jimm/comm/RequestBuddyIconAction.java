@@ -352,7 +352,7 @@ public class RequestBuddyIconAction extends Action
     	{
 	    	case ON_COMPLETE:
 				DebugLog.addText ("RequestBuddyIconAction ON_COMPLETE");
-				JimmUI.updateActiveUserInfo(this.uin);
+				// the card is refreshed from MainThread, once the image is stored
 	    		break;
 	    	case ON_CANCEL:
 	    	case ON_ERROR:

@@ -55,6 +55,22 @@ def icon_reply(uin: int, icon_hash: bytes, image: bytes,
             + struct.pack(">H", len(image)) + image)
 
 
+def history_records(rows: list[tuple[str, str]], max_bytes: int, token_for) -> bytes:
+    """Записи истории для TeleMotoMax: длина текста (2 байта), UTF-8, флаг
+    и, если флаг взведён, 16-байтный токен снимка. Не влезает — теряем
+    самое старое (записи идут от старых к новым)."""
+    encoded: list[bytes] = []
+    for text, attach in rows:
+        raw = text.encode("utf-8")[:4000]
+        token = token_for(attach) if attach else None
+        rec = struct.pack(">H", len(raw)) + raw
+        rec += (b"\x01" + token) if token else b"\x00"
+        encoded.append(rec)
+    while encoded and sum(len(r) for r in encoded) > max_bytes:
+        encoded.pop(0)
+    return b"".join(encoded)
+
+
 def buddy_departed(uin: int) -> bytes:
     """Короткий блок для SNAC 03/0C — контакт больше не в сети."""
     return pstr8(str(uin).encode("ascii")) + struct.pack(">HH", 0, 0)

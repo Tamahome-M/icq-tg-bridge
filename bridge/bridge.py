@@ -361,9 +361,10 @@ class Bridge:
         log.info("снимок для «%s» ужат до %d×%d, %d байт", contact.title, width, height, len(data))
         return data
 
-    async def fetch_history(self, uin: int, count: int) -> str | None:
-        """История чата текстом для TeleMotoMax — то же, что !last, но не в
-        переписку, а на отдельный экран, который отпустит память при закрытии."""
+    async def fetch_history(self, uin: int, count: int) -> list[tuple[str, str]] | None:
+        """История чата для TeleMotoMax — то же, что !last, но не в переписку,
+        а на отдельный экран. Каждое сообщение — строка и вложение
+        («photo:<номер>» или пусто), чтобы фото из истории тоже открывались."""
         contact = self.storage.contact_by_uin(uin)
         if contact is None or contact.peer_id == ASSISTANT_PEER:
             return None
@@ -371,12 +372,15 @@ class Bridge:
         count = min(count or 20, cap)
         items = await self.side_for(contact.peer_id).history(contact.peer_id, count, None, cap,
                                                              contact.topic_id)
-        lines = [f"[{i.when.astimezone():%d.%m %H:%M}] {i.who}: {i.text}" for i in items]
-        text = "\n".join(lines) if lines else "Сообщений нет"
-        if self.cfg.emoji_to_text:
-            text = emoji.to_text(text)
-        log.info("история «%s» для TeleMotoMax: %d сообщений", contact.title, len(items))
-        return text
+        out: list[tuple[str, str]] = []
+        for i in items:
+            line = f"[{i.when.astimezone():%d.%m %H:%M}] {i.who}: {i.text}"
+            if self.cfg.emoji_to_text:
+                line = emoji.to_text(line)
+            out.append((line, f"photo:{i.msg_id}" if i.kind == "photo" and i.msg_id else ""))
+        log.info("история «%s» для TeleMotoMax: %d сообщений, с фото %d",
+                 contact.title, len(items), sum(1 for _, a in out if a))
+        return out
 
     def icon_hash(self, uin: int) -> bytes | None:
         """Примета аватарки для блока сведений о контакте."""

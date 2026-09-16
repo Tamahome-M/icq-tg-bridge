@@ -844,6 +844,31 @@ public class ChatHistory
 		}
 	}
 
+	// TeleMotoMax: opens the contact's chat, creating it if needed. A chat
+	// that has nothing in it yet gets the last message from the bridge, so
+	// the screen is not empty and the conversation has its tail.
+	static public synchronized void openChat(ContactItem contact)
+	{
+		String uin = contact.getStringValue(ContactItem.CONTACTITEM_UIN);
+		boolean fresh = !historyTable.containsKey(uin);
+		if (fresh)
+			newChatForm(contact, contact.getStringValue(ContactItem.CONTACTITEM_NAME));
+		ChatTextList chat = (ChatTextList) historyTable.get(uin);
+		chat.activate();
+		if (fresh && chat.getMessData().size() == 0) HistoryViewer.preloadLast(uin, chat);
+	}
+
+	// TeleMotoMax: a history record from the bridge goes into the chat as
+	// an incoming line (used for the last message of a fresh chat).
+	static synchronized void addHistoryLine(String uin, String text, byte[] attach)
+	{
+		ChatTextList chat = (ChatTextList) historyTable.get(uin);
+		if (chat == null) return;
+		chat.addTextToForm(chat.contact.getStringValue(ContactItem.CONTACTITEM_NAME),
+				text, "", Util.createCurrentDate(false), true, true, -1, attach);
+		chat.checkTextForPhoto();
+	}
+
 	// Creates a new chat form
 	static private void newChatForm(ContactItem contact, String name)
 	{
