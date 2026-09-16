@@ -1168,6 +1168,14 @@ public abstract class VirtualList
 	}
 
 	//! Set caption text for list
+	// TeleMotoMax: show free memory in the caption (contact list only).
+	private boolean showMemory = false;
+
+	public void setShowMemory(boolean value)
+	{
+		showMemory = value;
+	}
+
 	public void setCaption(String capt)
 	{
 		if ((caption != null) && (caption.equals(capt))) return;
@@ -1281,6 +1289,13 @@ public abstract class VirtualList
 		} else {
 			g.setColor(capTxtColor);
 			g.drawString(caption, x, (height - capAndMenuFont.getHeight()) / 2, Graphics.TOP | Graphics.LEFT);
+			// TeleMotoMax: free heap at the right edge of the caption, so the
+			// phone's memory is visible without opening "About".
+			if (showMemory)
+			{
+				String mem = (Runtime.getRuntime().freeMemory() / 1024) + "K";
+				g.drawString(mem, width - 3, (height - capAndMenuFont.getHeight()) / 2, Graphics.TOP | Graphics.RIGHT);
+			}
 		}
 		
 		//#sijapp cond.if modules_DEBUGLOG is "true"#
