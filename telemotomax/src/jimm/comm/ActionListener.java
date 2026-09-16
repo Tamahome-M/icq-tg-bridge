@@ -154,6 +154,18 @@ public class ActionListener
 		{
 			SnacPacket snacPacket = (SnacPacket) packet;
 
+			// TeleMotoMax: the bridge answers a camera snapshot with 10/03 —
+			// the uin and one byte: 0 sent, anything else failed.
+			if ((snacPacket.getFamily() == 0x0010) && (snacPacket.getCommand() == 0x0003))
+			{
+				byte[] p = snacPacket.getData();
+				int len = Util.getByte(p, 0);
+				String uin = Util.byteArrayToString(p, 1, len);
+				boolean ok = (p.length > 1 + len) && (Util.getByte(p, 1 + len) == 0);
+				jimm.CameraShot.photoSent(uin, ok);
+				return;
+			}
+
 			// Typing notify
 			//#sijapp cond.if target isnot "DEFAULT"#
 			if ((snacPacket.getFamily() == 0x0004)

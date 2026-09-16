@@ -452,6 +452,20 @@ class FakeJimm:
             out.append((text, photo, "video" if flag & 2 else ("photo" if flag & 1 else "")))
         return out
 
+    async def send_camera_photo(self, uin: int, data: bytes, part_size: int = 30000,
+                                timeout: float = 5.0) -> bool:
+        """Снимок с камеры — как TeleMotoMax: части 10/02, ответ 10/03."""
+        raw = str(uin).encode()
+        total = max(1, (len(data) + part_size - 1) // part_size)
+        for part in range(1, total + 1):
+            chunk = data[(part - 1) * part_size:part * part_size]
+            await self.send_snac(C.SSBI, C.SSBI_UPLOAD,
+                                 pstr8(raw) + struct.pack(">HHH", part, total, len(chunk)) + chunk)
+        ack = await self.expect(C.SSBI, C.SSBI_UPLOAD_ACK, timeout)
+        r = ack.reader()
+        r.pstr8()
+        return r.u8() == 0
+
     async def request_video(self, uin: int, token: bytes, timeout: float = 5.0) -> bytes:
         """Ролик по токену — как TeleMotoMax: тип 0x0082, ответ частями, склеиваем."""
         got = await self._request_bart(uin, C.BART_VIDEO, token, timeout, parts=True)

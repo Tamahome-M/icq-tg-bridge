@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
 import time
 import logging
 from dataclasses import dataclass
@@ -475,6 +476,23 @@ class TelegramSide:
         if kind == "video":
             return await self._download_thumb(msg)
         return None
+
+    async def send_photo(self, peer_id: int, data: bytes, caption: str = "",
+                         topic_id: int = 0) -> int | None:
+        """Снимок с камеры телефона — в чат Telegram."""
+        stream = io.BytesIO(data)
+        stream.name = "camera.jpg"
+        self._sending[peer_id] = self._sending.get(peer_id, 0) + 1
+        try:
+            message = await self.client.send_file(
+                peer_id, file=stream, caption=caption or None,
+                reply_to=topic_id or None)
+        finally:
+            self._sending[peer_id] -= 1
+        message_id = getattr(message, "id", None)
+        if message_id:
+            self._own_ids[(peer_id, message_id)] = time.time()
+        return message_id
 
     async def video_bytes(self, peer_id: int, message_id: int, max_bytes: int) -> bytes | None:
         """Сам ролик из сообщения — как есть; перекодирует мост."""

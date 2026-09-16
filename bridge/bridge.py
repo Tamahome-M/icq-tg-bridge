@@ -75,7 +75,7 @@ class Bridge:
                                  self.search_chats, self.verdict_for,
                                  self.on_phone_remove, self.on_phone_privacy,
                                  self.avatar, self.icon_hash, self.fetch_attachment,
-                                 self.fetch_history, self.fetch_video)
+                                 self.fetch_history, self.fetch_video, self.send_camera_photo)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
@@ -361,6 +361,22 @@ class Bridge:
         log.info("%s для «%s» ужат до %d×%d, %d байт", "кадр видео" if kind == "video" else "снимок",
                  contact.title, width, height, len(data))
         return data
+
+    async def send_camera_photo(self, uin: int, data: bytes) -> bool:
+        """Снимок с камеры телефона — в чат. True, если ушёл."""
+        contact = self.storage.contact_by_uin(uin)
+        if contact is None or contact.peer_id == ASSISTANT_PEER:
+            return False
+        try:
+            message_id = await self.side_for(contact.peer_id).send_photo(
+                contact.peer_id, data, topic_id=contact.topic_id)
+        except Exception as exc:
+            log.exception("снимок в чат «%s» не ушёл", contact.title)
+            await self.reply(contact, f"Снимок не отправлен: {type(exc).__name__}")
+            return False
+        log.info("снимок с камеры → «%s»: %d КБ, номер %s",
+                 contact.title, len(data) // 1024, message_id)
+        return True
 
     async def fetch_video(self, uin: int, attach: str) -> bytes | None:
         """Первые секунды ролика для TeleMotoMax — 3GP под плеер телефона.

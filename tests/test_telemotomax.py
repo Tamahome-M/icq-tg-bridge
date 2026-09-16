@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -11,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bridge.config import Config
 from bridge.db import Storage
 from bridge.oscar import const as C
+from bridge.oscar.proto import pstr8
 from bridge.oscar.server import OscarServer
 from tests.fake_jimm import FakeJimm
 
@@ -233,10 +235,62 @@ async def run_history() -> None:
     print("  история: ок (текст последних сообщений по службе 0x10)")
 
 
+async def run_camera() -> None:
+    """Снимок с камеры телефона уходит в чат; обычному Jimm это недоступно."""
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 3
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+    got: list[tuple[int, int]] = []
+
+    async def on_outgoing(*_):
+        return 1
+
+    async def on_photo(target: int, data: bytes) -> bool:
+        got.append((target, len(data)))
+        return data[:3] == b"\xff\xd8\xff"        # принимаем только JPEG
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts, on_photo=on_photo)
+    await server.start()
+
+    client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+    client.tmm_version = (0, 3)
+    await client.connect()
+    await client.bos(await client.login_md5_jimm())
+    await client.drain_for(0.3)
+
+    # Снимок больше одной части — мост собирает его целиком.
+    shot = small_jpeg()
+    assert len(shot) > 30000, len(shot)
+    assert await client.send_camera_photo(uin, shot) is True
+    assert got == [(uin, len(shot))], got
+
+    # Не JPEG — мост отвечает отказом, а не молчанием.
+    assert await client.send_camera_photo(uin, b"not a jpeg" * 100) is False
+    await client.close()
+    await asyncio.sleep(0.2)
+
+    # Обычный Jimm: части приходят, но сессия не расширенная — ничего не шлём.
+    got.clear()
+    plain = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+    await plain.connect()
+    await plain.bos(await plain.login_md5_jimm())
+    await plain.drain_for(0.3)
+    await plain.send_snac(C.SSBI, C.SSBI_UPLOAD,
+                          pstr8(str(uin).encode()) + struct.pack(">HHH", 1, 1, 3) + b"abc")
+    await plain.drain_for(0.4)
+    assert got == [], got
+    await plain.close()
+    server._server.close()
+    print("  камера: ок (снимок частями в чат, отказ на негодный, обычному Jimm нельзя)")
+
+
 async def main() -> None:
     await run_detection()
     await run_photos()
     await run_history()
+    await run_camera()
     print("TELEMOTOMAX ПРОВЕРЕН")
 
 
