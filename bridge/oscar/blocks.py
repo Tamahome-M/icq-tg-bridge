@@ -59,14 +59,19 @@ def icon_reply(uin: int, icon_hash: bytes, image: bytes,
 
 def history_records(rows: list[tuple[str, str]], max_bytes: int, token_for) -> bytes:
     """Записи истории для TeleMotoMax: длина текста (2 байта), UTF-8, флаг
-    и, если флаг взведён, 16-байтный токен снимка. Не влезает — теряем
+    и, если бит 1 флага взведён, 16-байтный токен вложения; бит 2 —
+    это видео (превью и ролик), без него — фото. Не влезает — теряем
     самое старое (записи идут от старых к новым)."""
     encoded: list[bytes] = []
     for text, attach in rows:
         raw = text.encode("utf-8")[:4000]
         token = token_for(attach) if attach else None
         rec = struct.pack(">H", len(raw)) + raw
-        rec += (b"\x01" + token) if token else b"\x00"
+        if token:
+            flag = 0x03 if attach.startswith("video:") else 0x01
+            rec += bytes([flag]) + token
+        else:
+            rec += b"\x00"
         encoded.append(rec)
     while encoded and sum(len(r) for r in encoded) > max_bytes:
         encoded.pop(0)
