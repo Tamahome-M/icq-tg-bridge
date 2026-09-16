@@ -107,6 +107,7 @@
 
 // General strings
 "backlight_timeout"			"Время подсветки (сек)"
+"history_count"			"Сообщений в истории с сервера"
 "backlight_manual"			"Управлять подсветкой"
 "bg_image_mode"             "Отображать"
 "bg_center"                 "В центре экрана"

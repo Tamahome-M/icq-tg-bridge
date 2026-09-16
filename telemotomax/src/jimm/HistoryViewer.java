@@ -33,8 +33,6 @@ import jimm.util.ResourceBundle;
  */
 public class HistoryViewer implements CommandListener, JimmScreen, RequestBartAction.Listener
 {
-	public static final int COUNT = 30;
-
 	private static HistoryViewer current;
 
 	private final JimmScreen back;
@@ -47,14 +45,16 @@ public class HistoryViewer implements CommandListener, JimmScreen, RequestBartAc
 		this.name = name;
 	}
 
-	// Opens the screen and asks the bridge for the last COUNT messages.
+	// Opens the screen and asks the bridge for the last N messages (Options).
 	static public void show(String uin, String name, JimmScreen back)
 	{
 		HistoryViewer viewer = new HistoryViewer(back, name);
 		current = viewer;
 		viewer.build(ResourceBundle.getString("history_loading"));
 		byte[] token = new byte[16];
-		Util.putWord(token, 0, COUNT);
+		int count = Options.getInt(Options.OPTION_HISTORY_COUNT);
+		if (count < 1) count = 10;
+		Util.putWord(token, 0, count);
 		try
 		{
 			Icq.requestAction(new RequestBartAction(uin, RequestBartAction.BART_HISTORY, token, viewer));
