@@ -103,6 +103,8 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	private static final Command cmdCopyText = new Command(ResourceBundle.getString("copy_text"), Command.ITEM, 4);
 	// TeleMotoMax: show the picture the bridge attached to the current message
 	static final Command cmdShowPhoto = new Command(ResourceBundle.getString("show_photo"), Command.ITEM, 3);
+	// TeleMotoMax: chat history from the bridge on its own screen
+	static final Command cmdServerHistory = new Command(ResourceBundle.getString("server_history"), Command.ITEM, 5);
 	private static final Command cmdReplWithQuota = new Command(ResourceBundle.getString("quote", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 3);
 	private static final Command cmdAddUrs = new Command(ResourceBundle.getString("add_user", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 5);
 	private static final Command cmdDenyAuth = new Command(ResourceBundle.getString("deny"), Command.CANCEL, 1);
@@ -181,6 +183,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		if (contact.getBooleanValue(ContactItem.CONTACTITEM_NO_AUTH))
 			textList.addCommandEx(cmdReqAuth, VirtualList.MENU_TYPE_RIGHT);
 		
+		textList.addCommandEx(cmdServerHistory, VirtualList.MENU_TYPE_RIGHT);
 		textList.addCommandEx(cmdContactMenu, VirtualList.MENU_TYPE_RIGHT);
 		
 		textList.addCommandEx(cmdCloseChat, VirtualList.MENU_TYPE_LEFT_BAR);
@@ -229,6 +232,11 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		}
 		
 		/* Write new message */
+		else if (c == cmdServerHistory)
+		{
+			HistoryViewer.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN),
+					contact.getStringValue(ContactItem.CONTACTITEM_NAME), this);
+		}
 		else if (c == cmdShowPhoto)
 		{
 			byte[] token = currentAttach();

@@ -434,6 +434,12 @@ class FakeJimm:
         return await self._request_bart(uin, C.BART_ICON,
                                         self.icon_hashes.get(uin, b"\x00" * 16), timeout)
 
+    async def request_history(self, uin: int, count: int, timeout: float = 5.0) -> str:
+        """История чата текстом — как TeleMotoMax: тип 0x0081, число сообщений в «хеше»."""
+        token = struct.pack(">H", count) + bytes(14)
+        got = await self._request_bart(uin, C.BART_HISTORY, token, timeout)
+        return got["image"].decode("utf-8")
+
     async def request_photo(self, uin: int, token: bytes, timeout: float = 5.0) -> dict:
         """Снимок по токену — как TeleMotoMax: та же служба, тип приметы 0x0080."""
         return await self._request_bart(uin, C.BART_PHOTO, token, timeout)
