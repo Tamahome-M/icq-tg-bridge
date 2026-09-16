@@ -42,6 +42,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	private Player player;
 	private VideoControl video;
 	private String status;
+	private String[] details;          // что телефон отвечает про съёмку
 	private boolean sending;
 
 	private CameraShot(String uin, JimmScreen back)
@@ -90,11 +91,46 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 				}
 				catch (Exception e)
 				{
-					status = ResourceBundle.getString("camera_failed") + " " + shortName(e);
-					repaint();
+					failed(e);
 				}
 			}
 		}.start();
+	}
+
+	// The camera refused: show what the phone itself says about capture, so
+	// it is clear whether a MIDlet may use it here at all.
+	private void failed(Exception e)
+	{
+		status = ResourceBundle.getString("camera_failed") + " " + shortName(e);
+		String types = "";
+		try
+		{
+			String[] list = Manager.getSupportedContentTypes("capture");
+			for (int i = 0; i < list.length; i++)
+				types += (types.length() > 0 ? ", " : "") + list[i];
+		}
+		catch (Exception ex) { types = shortName(ex); }
+		if (types.length() == 0) types = "нет";
+		if (types.length() > 60) types = types.substring(0, 60);
+		details = new String[] {
+			"снимки: " + property("video.snapshot.encodings"),
+			"видео: " + property("supports.video.capture")
+					+ ", звук: " + property("supports.audio.capture"),
+			"capture: " + types,
+		};
+		repaint();
+	}
+
+	private static String property(String name)
+	{
+		try
+		{
+			String value = System.getProperty(name);
+			if (value == null || value.length() == 0) return "нет";
+			if (value.length() > 40) value = value.substring(0, 40);
+			return value;
+		}
+		catch (Exception e) { return "?"; }
 	}
 
 	private static String shortName(Exception e)
@@ -135,8 +171,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 				if (shot == null)
 				{
 					sending = false;
-					status = ResourceBundle.getString("camera_failed") + " " + shortName(err);
-					repaint();
+					failed(err);
 					return;
 				}
 				try
@@ -181,10 +216,23 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		{
 			Font font = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
 			g.setFont(font);
+			int step = font.getHeight();
+			int lines = 1 + (details == null ? 0 : details.length);
+			int top = getHeight() - lines * step - 4;
 			g.setColor(0x000000);
-			g.fillRect(0, getHeight() - font.getHeight() - 4, getWidth(), font.getHeight() + 4);
+			g.fillRect(0, top, getWidth(), lines * step + 4);
 			g.setColor(0xFFFFFF);
-			g.drawString(status, 2, getHeight() - 2, Graphics.LEFT | Graphics.BOTTOM);
+			int y = top + step;
+			g.drawString(status, 2, y, Graphics.LEFT | Graphics.BASELINE);
+			if (details != null)
+			{
+				g.setColor(0xC0C0C0);
+				for (int i = 0; i < details.length; i++)
+				{
+					y += step;
+					g.drawString(details[i], 2, y, Graphics.LEFT | Graphics.BASELINE);
+				}
+			}
 		}
 	}
 
