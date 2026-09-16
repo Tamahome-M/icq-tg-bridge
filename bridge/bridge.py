@@ -348,7 +348,7 @@ class Bridge:
         ничего не стоит, а сам снимок — трафик на GPRS."""
         contact = self.storage.contact_by_uin(uin)
         kind, _, ident = attach.partition(":")
-        if contact is None or kind != "photo" or not ident.isdigit():
+        if contact is None or kind not in ("photo", "video") or not ident.isdigit():
             return None
         raw = await self.side_for(contact.peer_id).photo_bytes(contact.peer_id, int(ident))
         if not raw:
@@ -358,7 +358,8 @@ class Bridge:
         if got is None:
             return None
         data, width, height = got
-        log.info("снимок для «%s» ужат до %d×%d, %d байт", contact.title, width, height, len(data))
+        log.info("%s для «%s» ужат до %d×%d, %d байт", "кадр видео" if kind == "video" else "снимок",
+                 contact.title, width, height, len(data))
         return data
 
     async def fetch_history(self, uin: int, count: int) -> list[tuple[str, str]] | None:
@@ -377,7 +378,8 @@ class Bridge:
             line = f"[{i.when.astimezone():%d.%m %H:%M}] {i.who}: {i.text}"
             if self.cfg.emoji_to_text:
                 line = emoji.to_text(line)
-            out.append((line, f"photo:{i.msg_id}" if i.kind == "photo" and i.msg_id else ""))
+            has_picture = i.kind in ("photo", "video") and i.msg_id
+            out.append((line, f"{i.kind}:{i.msg_id}" if has_picture else ""))
         log.info("история «%s» для TeleMotoMax: %d сообщений, с фото %d",
                  contact.title, len(items), sum(1 for _, a in out if a))
         return out

@@ -117,7 +117,7 @@ class FakeJimm:
             rr = s.reader()
             rr.read(8); rr.u16(); rr.pstr8(); rr.u16(); rr.tlvs(rr.u16())
             extra = rr.tlvs().get(C.TLV_TMM_ATTACH)
-            if extra and len(extra) == 17 and extra[0] == C.ATTACH_PHOTO:
+            if extra and len(extra) == 17 and extra[0] in (C.ATTACH_PHOTO, C.ATTACH_VIDEO):
                 self.attachments.append((sender, extra[1:]))
             if ack is not None and self.send_acks:
                 self.to_ack.append(ack)

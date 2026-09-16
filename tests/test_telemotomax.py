@@ -137,6 +137,14 @@ async def run_photos() -> None:
     with Image.open(io.BytesIO(got["image"])) as img:
         assert max(img.size) <= 176, img.size
 
+    # Видео: та же примета, только вид 2, и кадр-превью по запросу.
+    client.attachments.clear()
+    await server.deliver(uin, "[видео 0:12] ролик", attach="video:4343")
+    await client.drain_for(0.5)
+    assert client.attachments and client.attachments[-1][0] == uin, client.attachments
+    got = await client.request_photo(uin, client.attachments[-1][1])
+    assert asked[-1] == (uin, "video:4343") and got["image"][:3] == b"\xff\xd8\xff"
+
     # Чужой или протухший токен — отказ службы, а не тишина.
     await client.request_service(C.SSBI)
     redirect = await client.expect(C.OSERVICE, C.SERVICE_REDIRECT)

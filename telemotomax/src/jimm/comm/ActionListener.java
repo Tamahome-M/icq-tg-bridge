@@ -526,7 +526,8 @@ public class ActionListener
 					int extType = Util.getWord(buf, extMarker);
 					byte[] extData = Util.getTlv(buf, extMarker);
 					if (extData == null) break;
-					if ((extType == 0x9001) && (extData.length == 17) && (extData[0] == 1))
+					// kind 1 = photo, 2 = video preview: both are a picture to show
+					if ((extType == 0x9001) && (extData.length == 17) && (extData[0] == 1 || extData[0] == 2))
 					{
 						attachToken = new byte[16];
 						System.arraycopy(extData, 1, attachToken, 0, 16);
