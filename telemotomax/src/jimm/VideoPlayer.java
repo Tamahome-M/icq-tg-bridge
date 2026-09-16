@@ -15,7 +15,12 @@
 package jimm;
 
 import java.io.ByteArrayInputStream;
+import java.io.OutputStream;
+import java.util.Enumeration;
 
+import javax.microedition.io.Connector;
+import javax.microedition.io.file.FileConnection;
+import javax.microedition.io.file.FileSystemRegistry;
 import javax.microedition.lcdui.Canvas;
 import javax.microedition.lcdui.Command;
 import javax.microedition.lcdui.CommandListener;
@@ -32,9 +37,12 @@ import jimm.util.ResourceBundle;
 
 /**
  * Plays the first seconds of a video attached to a message. The clip comes
- * from the bridge in parts over the BART service (type 0x0082), already
- * transcoded to what the phone's player takes (3GP, H.263 or MPEG-4 SP,
- * AMR); it is played straight from memory and dropped with the screen.
+ * from the bridge over the BART service (type 0x0082), already transcoded to
+ * what the phone's player takes (3GP, H.263 or MPEG-4 SP, AMR).
+ *
+ * The Motorola V3 player does not accept video from an in-memory stream, so
+ * the clip is written to a temporary file (JSR-75) and played from there;
+ * both the file and the player are dropped when the screen is closed.
  */
 public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 		RequestBartAction.ProgressListener
@@ -44,7 +52,7 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 	private final JimmScreen back;
 	private String status;
 	private Player player;
-	private byte[] clip;
+	private String filePath;           // temp file URL, or null if played from memory
 
 	private VideoPlayer(JimmScreen back)
 	{
@@ -83,39 +91,137 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 		if (current != this) return;
 		if (data == null)
 		{
-			status = ResourceBundle.getString("video_failed");
-			repaint();
+			fail(null);
 			return;
 		}
-		clip = data;
 		status = null;
 		repaint();
+		// Setting up the player (writing the temp file, createPlayer, start)
+		// blocks; it must not run on the comm thread that called us, or the
+		// whole connection freezes. Do it on a thread of its own.
+		final byte[] clip = data;
+		new Thread() {
+			public void run()
+			{
+				if (current != VideoPlayer.this) return;
+				Exception err = playFromFile(clip);
+				if (err != null)
+				{
+					DebugLog.addText("VideoPlayer file play failed: " + err);
+					err = playFromStream(clip);
+				}
+				if (err != null)
+				{
+					DebugLog.addText("VideoPlayer stream play failed: " + err);
+					fail(err);
+				}
+			}
+		}.start();
+	}
+
+	private Exception playFromFile(byte[] data)
+	{
+		String url = tempFileUrl();
+		if (url == null) return new Exception("no writable root");
+		FileConnection fc = null;
+		OutputStream os = null;
 		try
 		{
-			player = Manager.createPlayer(new ByteArrayInputStream(clip), "video/3gpp");
-			player.realize();
-			VideoControl vc = (VideoControl) player.getControl("VideoControl");
-			if (vc != null)
-			{
-				vc.initDisplayMode(VideoControl.USE_DIRECT_VIDEO, this);
-				int w = vc.getSourceWidth(), h = vc.getSourceHeight();
-				if (w <= 0 || h <= 0) { w = getWidth(); h = getHeight(); }
-				// Fit the frame into the screen, keep the aspect.
-				int dw = getWidth(), dh = h * dw / w;
-				if (dh > getHeight()) { dh = getHeight(); dw = w * dh / h; }
-				vc.setDisplaySize(dw, dh);
-				vc.setDisplayLocation((getWidth() - dw) / 2, (getHeight() - dh) / 2);
-				vc.setVisible(true);
-			}
-			player.prefetch();
-			player.start();
+			fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
+			if (fc.exists()) fc.delete();
+			fc.create();
+			os = fc.openOutputStream();
+			os.write(data);
+			os.flush();
+			os.close(); os = null;
+			fc.close(); fc = null;
+			filePath = url;
+			start(Manager.createPlayer(url));
+			return null;
 		}
 		catch (Exception e)
 		{
-			status = ResourceBundle.getString("video_failed") + " (" + e.getClass().getName() + ")";
-			stop();
-			repaint();
+			try { if (os != null) os.close(); } catch (Exception ignore) {}
+			try { if (fc != null) fc.close(); } catch (Exception ignore) {}
+			deleteTemp();
+			return e;
 		}
+	}
+
+	private Exception playFromStream(byte[] data)
+	{
+		try
+		{
+			start(Manager.createPlayer(new ByteArrayInputStream(data), "video/3gpp"));
+			return null;
+		}
+		catch (Exception e)
+		{
+			return e;
+		}
+	}
+
+	private void start(Player p) throws Exception
+	{
+		player = p;
+		player.realize();
+		VideoControl vc = (VideoControl) player.getControl("VideoControl");
+		if (vc != null)
+		{
+			vc.initDisplayMode(VideoControl.USE_DIRECT_VIDEO, this);
+			int w = vc.getSourceWidth(), h = vc.getSourceHeight();
+			if (w <= 0 || h <= 0) { w = getWidth(); h = getHeight(); }
+			int dw = getWidth(), dh = h * dw / w;
+			if (dh > getHeight()) { dh = getHeight(); dw = w * dh / h; }
+			vc.setDisplaySize(dw, dh);
+			vc.setDisplayLocation((getWidth() - dw) / 2, (getHeight() - dh) / 2);
+			vc.setVisible(true);
+		}
+		player.prefetch();
+		player.start();
+	}
+
+	// A writable temp file URL, or null if no root is available.
+	private static String tempFileUrl()
+	{
+		try
+		{
+			Enumeration roots = FileSystemRegistry.listRoots();
+			while (roots.hasMoreElements())
+			{
+				String root = (String) roots.nextElement();
+				String url = "file:///" + root + "tmm_video.3gp";
+				try
+				{
+					FileConnection fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
+					boolean ok = fc.canWrite();
+					fc.close();
+					if (ok) return url;
+				}
+				catch (Exception ignore) {}
+			}
+		}
+		catch (Exception ignore) {}
+		return null;
+	}
+
+	private void deleteTemp()
+	{
+		if (filePath == null) return;
+		try
+		{
+			FileConnection fc = (FileConnection) Connector.open(filePath, Connector.READ_WRITE);
+			if (fc.exists()) fc.delete();
+			fc.close();
+		}
+		catch (Exception ignore) {}
+		filePath = null;
+	}
+
+	private void fail(Exception e)
+	{
+		status = ResourceBundle.getString("video_failed");
+		repaint();
 	}
 
 	protected void paint(Graphics g)
@@ -138,7 +244,7 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 			try { player.close(); } catch (Exception ignore) {}
 			player = null;
 		}
-		clip = null;
+		deleteTemp();
 	}
 
 	protected void keyPressed(int keyCode)
@@ -155,7 +261,7 @@ public class VideoPlayer extends Canvas implements CommandListener, JimmScreen,
 	private void close()
 	{
 		if (current == this) current = null;
-		stop();                            // free the player and the clip first
+		stop();                            // free the player and the temp file first
 		if (back != null) back.activate();
 		else JimmUI.backToLastScreen();
 	}
