@@ -133,8 +133,18 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		list.doCRLF(index);
 	}
 
-	// Called from the comm thread with the history records or null.
-	public void onBart(byte[] data)
+	// Called from the comm thread with the history records or null. Parsing
+	// and laying out the messages runs on a thread of its own, so the comm
+	// thread that called us is not held up while the list is built.
+	public void onBart(final byte[] data)
+	{
+		if (current != this) return;
+		new Thread() {
+			public void run() { render(data); }
+		}.start();
+	}
+
+	private void render(byte[] data)
 	{
 		if (current != this) return;
 		list.lock();
