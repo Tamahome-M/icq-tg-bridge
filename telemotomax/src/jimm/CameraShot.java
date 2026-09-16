@@ -1,0 +1,232 @@
+/*******************************************************************************
+ TeleMotoMax - Jimm fork for icq-tg-bridge
+
+ This program is free software; you can redistribute it and/or
+ modify it under the terms of the GNU General Public License
+ as published by the Free Software Foundation; either version 2
+ of the License, or (at your option) any later version.
+
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ *******************************************************************************/
+
+package jimm;
+
+import javax.microedition.lcdui.Canvas;
+import javax.microedition.lcdui.Command;
+import javax.microedition.lcdui.CommandListener;
+import javax.microedition.lcdui.Displayable;
+import javax.microedition.lcdui.Font;
+import javax.microedition.lcdui.Graphics;
+import javax.microedition.media.Manager;
+import javax.microedition.media.Player;
+import javax.microedition.media.control.VideoControl;
+
+import jimm.comm.Icq;
+import jimm.util.ResourceBundle;
+
+/**
+ * Takes a picture with the phone's camera and sends it to the chat through
+ * the bridge. The viewfinder is a canvas of its own: the fire key (or "5")
+ * takes the shot, "Back" leaves. The picture is sent in parts over the main
+ * connection (SNAC 10/02) and the bridge answers 10/03 — sent or not.
+ */
+public class CameraShot extends Canvas implements CommandListener, JimmScreen
+{
+	private static CameraShot current;
+
+	private final JimmScreen back;
+	private final String uin;
+	private Player player;
+	private VideoControl video;
+	private String status;
+	private boolean sending;
+
+	private CameraShot(String uin, JimmScreen back)
+	{
+		this.uin = uin;
+		this.back = back;
+		setFullScreenMode(true);
+		addCommand(JimmUI.cmdBack);
+		setCommandListener(this);
+	}
+
+	static public void show(String uin, JimmScreen back)
+	{
+		CameraShot shot = new CameraShot(uin, back);
+		current = shot;
+		Jimm.display.setCurrent(shot);
+		shot.open();
+	}
+
+	// Opening the camera blocks for a while — do it off the UI thread.
+	private void open()
+	{
+		status = ResourceBundle.getString("camera_opening");
+		repaint();
+		new Thread() {
+			public void run()
+			{
+				try
+				{
+					Player p;
+					try { p = Manager.createPlayer("capture://image"); }
+					catch (Exception first) { p = Manager.createPlayer("capture://video"); }
+					p.realize();
+					VideoControl vc = (VideoControl) p.getControl("VideoControl");
+					if (vc == null) throw new Exception("no VideoControl");
+					vc.initDisplayMode(VideoControl.USE_DIRECT_VIDEO, CameraShot.this);
+					vc.setDisplaySize(getWidth(), getHeight());
+					vc.setDisplayLocation(0, 0);
+					vc.setVisible(true);
+					p.start();
+					if (current != CameraShot.this) { try { p.close(); } catch (Exception ig) {} return; }
+					player = p;
+					video = vc;
+					status = null;
+					repaint();
+				}
+				catch (Exception e)
+				{
+					status = ResourceBundle.getString("camera_failed") + " " + shortName(e);
+					repaint();
+				}
+			}
+		}.start();
+	}
+
+	private static String shortName(Exception e)
+	{
+		if (e == null) return "?";
+		String name = e.getClass().getName();
+		int dot = name.lastIndexOf('.');
+		if (dot >= 0) name = name.substring(dot + 1);
+		String msg = e.getMessage();
+		if (msg != null && msg.length() > 0)
+		{
+			if (msg.length() > 30) msg = msg.substring(0, 30);
+			name += ": " + msg;
+		}
+		return name;
+	}
+
+	// Snapshot and send: both are slow, so they run on their own thread.
+	private void shoot()
+	{
+		if (video == null || sending) return;
+		sending = true;
+		status = ResourceBundle.getString("camera_sending");
+		repaint();
+		new Thread() {
+			public void run()
+			{
+				byte[] shot = null;
+				Exception err = null;
+				try { shot = video.getSnapshot("encoding=jpeg"); }
+				catch (Exception e) { err = e; }
+				if (shot == null)
+				{
+					try { shot = video.getSnapshot(null); err = null; }
+					catch (Exception e) { if (err == null) err = e; }
+				}
+				stopCamera();
+				if (shot == null)
+				{
+					sending = false;
+					status = ResourceBundle.getString("camera_failed") + " " + shortName(err);
+					repaint();
+					return;
+				}
+				try
+				{
+					Icq.sendPhoto(uin, shot);
+					status = ResourceBundle.getString("camera_sending")
+							+ " " + (shot.length / 1024) + " КБ";
+				}
+				catch (Exception e)
+				{
+					sending = false;
+					status = ResourceBundle.getString("camera_failed") + " " + shortName(e);
+				}
+				repaint();
+			}
+		}.start();
+	}
+
+	// The bridge said whether the picture reached the chat.
+	static public void photoSent(String uin, boolean ok)
+	{
+		CameraShot shot = current;
+		if (shot == null || !shot.uin.equals(uin)) return;
+		shot.sending = false;
+		if (ok)
+		{
+			shot.close();
+			return;
+		}
+		shot.status = ResourceBundle.getString("camera_not_sent");
+		shot.repaint();
+	}
+
+	protected void paint(Graphics g)
+	{
+		if (video == null)
+		{
+			g.setColor(0x000000);
+			g.fillRect(0, 0, getWidth(), getHeight());
+		}
+		if (status != null)
+		{
+			Font font = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
+			g.setFont(font);
+			g.setColor(0x000000);
+			g.fillRect(0, getHeight() - font.getHeight() - 4, getWidth(), font.getHeight() + 4);
+			g.setColor(0xFFFFFF);
+			g.drawString(status, 2, getHeight() - 2, Graphics.LEFT | Graphics.BOTTOM);
+		}
+	}
+
+	protected void keyPressed(int keyCode)
+	{
+		DrawControls.VirtualList.touch();
+		int action = 0;
+		try { action = getGameAction(keyCode); } catch (Exception ignore) {}
+		if (action == FIRE || keyCode == KEY_NUM5) shoot();
+	}
+
+	private void stopCamera()
+	{
+		video = null;
+		if (player != null)
+		{
+			try { player.stop(); } catch (Exception ignore) {}
+			try { player.close(); } catch (Exception ignore) {}
+			player = null;
+		}
+	}
+
+	public void commandAction(Command c, Displayable d)
+	{
+		close();
+	}
+
+	private void close()
+	{
+		if (current == this) current = null;
+		stopCamera();
+		if (back != null) back.activate();
+		else JimmUI.backToLastScreen();
+	}
+
+	public void activate()
+	{
+		Jimm.display.setCurrent(this);
+	}
+
+	public boolean isScreenActive()
+	{
+		return isShown();
+	}
+}

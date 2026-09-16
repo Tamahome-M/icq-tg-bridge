@@ -366,6 +366,33 @@ public class Icq implements Runnable
 		return (conn == c);
 	}
 
+	// TeleMotoMax: sends a camera snapshot to the bridge over the main
+	// connection, in parts of PHOTO_PART bytes: SNAC 10/02 with the target
+	// uin, the part number and the chunk. The bridge answers 10/03.
+	public static final int PHOTO_PART = 30000;
+
+	public static void sendPhoto(String uin, byte[] photo) throws JimmException
+	{
+		byte[] uinRaw = Util.stringToByteArray(uin);
+		int total = (photo.length + PHOTO_PART - 1) / PHOTO_PART;
+		if (total < 1) total = 1;
+		for (int part = 1; part <= total; part++)
+		{
+			int from = (part - 1) * PHOTO_PART;
+			int size = photo.length - from;
+			if (size > PHOTO_PART) size = PHOTO_PART;
+			byte[] buf = new byte[1 + uinRaw.length + 2 + 2 + 2 + size];
+			int marker = 0;
+			Util.putByte(buf, marker, uinRaw.length); marker += 1;
+			System.arraycopy(uinRaw, 0, buf, marker, uinRaw.length); marker += uinRaw.length;
+			Util.putWord(buf, marker, part); marker += 2;
+			Util.putWord(buf, marker, total); marker += 2;
+			Util.putWord(buf, marker, size); marker += 2;
+			System.arraycopy(photo, from, buf, marker, size);
+			sendPacket(new SnacPacket(0x0010, 0x0002, 0x00000000, new byte[0], buf));
+		}
+	}
+
 	public static void sendPacket(Packet packet) throws JimmException
 	{
 		if (c == null) return; // TODO: may be better to throw exception?
@@ -813,7 +840,7 @@ public class Icq implements Runnable
 	// TeleMotoMax: own capability so the bridge knows an extended client is
 	// talking to it. "TMM:" then major and minor version, rest zeros.
 	public static final int TMM_VERSION_MAJOR = 0;
-	public static final int TMM_VERSION_MINOR = 3;
+	public static final int TMM_VERSION_MINOR = 4;
 	public static final byte[] CAP_TMM = new byte[] {
 		(byte) 'T', (byte) 'M', (byte) 'M', (byte) ':', (byte) TMM_VERSION_MAJOR, (byte) TMM_VERSION_MINOR,
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };

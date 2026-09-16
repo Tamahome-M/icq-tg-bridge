@@ -869,6 +869,18 @@ class MaxSide:
             return await self._download(_attr(attach, "thumbnail", "") or "")
         return None
 
+    async def send_photo(self, peer_id: int, data: bytes, caption: str = "",
+                         topic_id: int = 0) -> int | None:
+        """Снимок с камеры телефона — в чат MAX."""
+        from pymax import Photo
+        chat_id = from_peer(peer_id)
+        message = await self.client.send_message(
+            chat_id, caption or None, attachments=[Photo(data, name="camera.jpg")])
+        message_id = int(_attr(message, "id", 0) or 0)
+        if message_id:
+            self._own_ids[(chat_id, message_id)] = time.time()
+        return int(_attr(message, "time", 0) or 0) or message_id or None
+
     async def video_bytes(self, peer_id: int, message_id: int, max_bytes: int) -> bytes | None:
         """Сам ролик из сообщения MAX — по ссылке, которую даёт сервер."""
         chat_id = from_peer(peer_id)

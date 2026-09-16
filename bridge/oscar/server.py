@@ -134,6 +134,8 @@ class Session:
         # Версия TeleMotoMax (старший, младший), если подключился он: такому
         # клиенту можно слать то, чего обычный Jimm не поймёт.
         self.tmm_version: tuple[int, int] | None = None
+        # Снимок с камеры, который телефон шлёт по частям.
+        self.upload: bytearray | None = None
         self.close_reason = ""
         self.sent_messages = 0        # телефону
         self.got_messages = 0         # от телефона
@@ -462,6 +464,7 @@ class Session:
             (C.SSI, C.SSI_REMOVE_ME): self.on_ssi_remove_me,
             (C.ICQ, 0x0002): self.on_icq_meta,
             (C.SSBI, C.SSBI_ICQ_REQ): self.on_icon_request,
+            (C.SSBI, C.SSBI_UPLOAD): self.on_photo_upload,
         }.get((s.family, s.subtype))
 
         if handler is None:
@@ -1043,6 +1046,46 @@ class Session:
         await self.send_snac(C.OSERVICE, C.SERVICE_REDIRECT, body,
                              request_id=s.request_id)
 
+    async def on_photo_upload(self, s: Snac) -> None:
+        """Снимок с камеры телефона: части 10/02, ответ 10/03.
+
+        Расширение TeleMotoMax; обычный Jimm этого не шлёт."""
+        if not self.extended:
+            return
+        r = Reader(s.data)
+        try:
+            target = r.pstr8().decode("latin-1")
+            part, total = r.u16(), r.u16()
+            chunk = r.read(r.u16())
+        except Exception:
+            log.warning("негодная часть снимка от телефона")
+            return
+        if not target.isdigit():
+            return
+        uin = int(target)
+        if part == 1:
+            self.upload = bytearray()
+        if self.upload is None:
+            return                      # первая часть потерялась — ждать нечего
+        self.upload += chunk
+        log.debug("снимок с камеры: часть %d/%d, всего %d байт", part, total, len(self.upload))
+        if len(self.upload) > C.UPLOAD_MAX_BYTES:
+            log.warning("снимок с камеры больше %d КБ — отказываюсь",
+                        C.UPLOAD_MAX_BYTES // 1024)
+            self.upload = None
+            await self.send_snac(C.SSBI, C.SSBI_UPLOAD_ACK,
+                                 pstr8(target.encode()) + b"\x01", request_id=s.request_id)
+            return
+        if part < total:
+            return
+        data, self.upload = bytes(self.upload), None
+        log.info("снимок с камеры для %s: %d КБ — отправляю",
+                 self.server.name_of(uin), len(data) // 1024)
+        ok = await self.server.on_photo(uin, data)
+        await self.send_snac(C.SSBI, C.SSBI_UPLOAD_ACK,
+                             pstr8(target.encode()) + (b"\x00" if ok else b"\x01"),
+                             request_id=s.request_id)
+
     async def on_icon_request(self, s: Snac) -> None:
         """SNAC 10/06 — клиент просит аватарку контакта или, по токену,
         снимок из сообщения (расширение TeleMotoMax, тип приметы 0x0080)."""
@@ -1192,7 +1235,8 @@ class OscarServer:
                  fetch_attachment: Callable[[int, str], Awaitable[bytes | None]] | None = None,
                  fetch_history: Callable[[int, int],
                                          Awaitable[list[tuple[str, str]] | None]] | None = None,
-                 fetch_video: Callable[[int, str], Awaitable[bytes | None]] | None = None):
+                 fetch_video: Callable[[int, str], Awaitable[bytes | None]] | None = None,
+                 on_photo: Callable[[int, bytes], Awaitable[bool]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -1218,6 +1262,8 @@ class OscarServer:
         self.fetch_history = fetch_history
         # Сам ролик (первые секунды, перекодированный под телефон) по токену.
         self.fetch_video = fetch_video
+        # Снимок с камеры телефона — отправить в чат.
+        self.on_photo = on_photo or self._no_photo
         self.uin = str(cfg.oscar_uin)
         self.password = cfg.oscar_password
         self.ssi_encoding = cfg.ssi_encoding
@@ -1464,6 +1510,10 @@ class OscarServer:
         self.storage.queue(uin, text, self.cfg.offline_queue_per_chat, forced, url, ts, attach)
         self.wake_sender()
         return True
+
+    @staticmethod
+    async def _no_photo(uin: int, data: bytes) -> bool:
+        return False
 
     @staticmethod
     async def _no_info(uin: int) -> dict | None:
