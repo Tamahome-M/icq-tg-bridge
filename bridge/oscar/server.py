@@ -967,7 +967,8 @@ class Session:
         if attach and self.extended:
             token = self.server.register_attachment(uin, attach)
             if token:
-                extra = tlv(C.TLV_TMM_ATTACH, bytes([C.ATTACH_PHOTO]) + token)
+                kind = C.ATTACH_VIDEO if attach.startswith("video:") else C.ATTACH_PHOTO
+                extra = tlv(C.TLV_TMM_ATTACH, bytes([kind]) + token)
                 log.info("телефону ← %s: вложение %s, токен %s",
                          self.server.name_of(uin), attach, token[:4].hex())
         for index, part in enumerate(parts):

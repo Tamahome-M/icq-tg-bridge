@@ -305,7 +305,7 @@ class TelegramSide:
                 except Exception:
                     sender = ""
             # Снимок в сообщении: расширенному клиенту отдадим его по запросу.
-            attach = f"photo:{event.message.id}" if media_kind(event.message) == "photo" else ""
+            attach = attachment_of(event.message)
             shown = await self.on_message(peer_id, sender, text,
                                           int(event.message.date.timestamp()), topic_id,
                                           attach=attach)
@@ -459,16 +459,22 @@ class TelegramSide:
         return None
 
     async def photo_bytes(self, peer_id: int, message_id: int) -> bytes | None:
-        """Снимок из сообщения — как есть, ужимает уже мост."""
+        """Снимок из сообщения (или кадр-превью видео) — как есть, ужимает
+        уже мост."""
         try:
             msgs = await self.client.get_messages(peer_id, ids=[message_id])
         except Exception:
             log.warning("сообщение %s в чате %s не нашлось", message_id, peer_id)
             return None
         msg = msgs[0] if msgs else None
-        if msg is None or not getattr(msg, "photo", None):
+        if msg is None:
             return None
-        return await self._download_small(msg)
+        kind = media_kind(msg)
+        if kind == "photo":
+            return await self._download_small(msg)
+        if kind == "video":
+            return await self._download_thumb(msg)
+        return None
 
     async def avatar(self, peer_id: int) -> bytes | None:
         """Маленькая аватарка чата — та, что Telegram отдаёт для списков."""
@@ -682,6 +688,15 @@ def status_of(entity, kind: str) -> str:
     if kind != "user":
         return "online"
     return status_name(getattr(entity, "status", None))
+
+
+def attachment_of(msg) -> str:
+    """Что мост сможет отдать расширенному клиенту по этому сообщению:
+    снимок или кадр-превью видео, с номером сообщения."""
+    kind = media_kind(msg)
+    if kind in ("photo", "video"):
+        return f"{kind}:{msg.id}"
+    return ""
 
 
 def media_kind(msg) -> str:
