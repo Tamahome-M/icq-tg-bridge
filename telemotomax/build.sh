@@ -69,11 +69,18 @@ rm -rf src && mkdir src && cp -r "$HERE/src" "$HERE/res" "$HERE/util" "$HERE/bui
 STAMP="$VERSION.$(date +%y%m%d)"
 MAJOR=${VERSION%%.*}
 MINOR=${VERSION#*.}; MINOR=${MINOR%%.*}
+# Набор модулей Jimm. FILES тянет передачу файлов и прямые соединения —
+# мосту они не нужны, и без него сборка легче на два десятка килобайт.
+# Выключать по умолчанию боязно (на нём же держится опознание «печатает»
+# у некоторых клиентов), поэтому это отдельный ключ: TMM_MODULES=light.
+MODULES=${TMM_MODULES:-FILES,SMILES_STD,AVATARS}
+if [ "$MODULES" = "light" ]; then MODULES="SMILES_STD,AVATARS"; fi
 sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION###|$STAMP|; \
-     s|###TMM-VERSION-JAVA###|$VERSION|; s|###TMM-NAME###|$NAME|" "$HERE/build.properties" > src/build.properties
+     s|###TMM-VERSION-JAVA###|$VERSION|; s|###TMM-NAME###|$NAME|; \
+     s|###TMM-MODULES###|$MODULES|" "$HERE/build.properties" > src/build.properties
 sed -i "s|TMM_VERSION_MAJOR = .*;|TMM_VERSION_MAJOR = $MAJOR;|; \
         s|TMM_VERSION_MINOR = .*;|TMM_VERSION_MINOR = $MINOR;|" src/src/jimm/comm/Icq.java
-say "Версия: $STAMP (способность TMM:$MAJOR.$MINOR, имя «$NAME»)"
+say "Версия: $STAMP (способность TMM:$MAJOR.$MINOR, имя «$NAME», модули $MODULES)"
 cd src
 
 say "Сборка"

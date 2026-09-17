@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bridge.config import Config
 from bridge.db import Storage
 from bridge.oscar import const as C
-from bridge.oscar.proto import pstr8
+from bridge.oscar.proto import flap, pstr8, tlv
 from bridge.oscar.server import OscarServer
 from tests.fake_jimm import FakeJimm
 
@@ -445,6 +445,63 @@ async def run_chats() -> None:
     print("  список чатов: ок (все чаты с пометками, возвращение забытого)")
 
 
+async def run_stale_service() -> None:
+    """Оборванное соединение за аватарками не должно держать слот вечно."""
+    from bridge.oscar import server as server_module
+
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 6
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    cfg.max_connections = 4
+    storage = Storage(":memory:")
+    storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+
+    async def on_outgoing(*_):
+        return 1
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts)
+    await server.start()
+    was = server_module.SERVICE_IDLE_TIMEOUT
+    server_module.SERVICE_IDLE_TIMEOUT = 0.3
+    try:
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 9)
+        await client.connect()
+        await client.bos(await client.login_md5_jimm())
+        await client.drain_for(0.3)
+
+        # Второе соединение — как за аватарками: берём cookie у сервера и
+        # входим по нему, но больше ничего не шлём.
+        await client.request_service(C.SSBI)
+        redirect = await client.expect(C.OSERVICE, C.SERVICE_REDIRECT)
+        tlvs = redirect.reader().tlvs(3)
+        cookie = tlvs.get(C.TLV_AUTH_COOKIE) or b""
+        host = (tlvs.get(C.TLV_BOS_ADDRESS) or b"").decode()
+        port = int(host.partition(":")[2] or cfg.oscar_port)
+        reader, writer = await asyncio.open_connection(cfg.oscar_host, port)
+        head = await reader.readexactly(6)
+        await reader.readexactly(struct.unpack(">H", head[4:6])[0])
+        writer.write(flap(1, 2, struct.pack(">I", 1) + tlv(C.TLV_AUTH_COOKIE, cookie)))
+        await writer.drain()
+        await asyncio.sleep(0.2)
+        busy = server.access.connections
+        assert busy >= 2, busy
+
+        # Молчим дольше срока — сервер закрывает соединение сам.
+        for _ in range(60):
+            await asyncio.sleep(0.05)
+            if server.access.connections < busy:
+                break
+        assert server.access.connections < busy, \
+            "зависшее служебное соединение должно освобождать слот"
+        writer.close()
+        await client.close()
+    finally:
+        server_module.SERVICE_IDLE_TIMEOUT = was
+        server._server.close()
+    print("  зависшее служебное соединение: ок (слот освобождается сам)")
+
+
 async def main() -> None:
     await run_detection()
     await run_photos()
@@ -452,6 +509,7 @@ async def main() -> None:
     await run_camera()
     await run_voice()
     await run_chats()
+    await run_stale_service()
     print("TELEMOTOMAX ПРОВЕРЕН")
 
 

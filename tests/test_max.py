@@ -376,9 +376,64 @@ async def run_bridge() -> None:
     print("  мост с двумя сетями: ок (общий список, маршрутизация, новый чат, статусы)")
 
 
+async def run_reconnect() -> None:
+    """Обрыв связи не должен оставлять сторону MAX молчать навсегда."""
+    import bridge.max.client as max_module
+    from bridge.max.client import MaxSide
+
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.max_enabled, cfg.max_phone = True, "+70000000000"
+
+    async def nothing(*_args, **_kw):
+        return True
+
+    made: list = []
+
+    class Flaky(FakeMax):
+        """Входит как настоящий, а по команде рвёт связь ошибкой."""
+
+        def __init__(self):
+            super().__init__()
+            self.broken = asyncio.Event()
+
+        async def start(self):
+            await self.handlers["start"](self)      # вошли
+            await self.broken.wait()
+            raise ConnectionError("сеть пропала")
+
+    def make() -> Flaky:
+        client = Flaky()
+        made.append(client)
+        return client
+
+    first = make()
+    side = MaxSide(cfg, nothing, nothing, nothing, nothing, client=first)
+    side._make_client = lambda interactive: make()
+    old_start, old_max = max_module.RETRY_START, max_module.RETRY_MAX
+    max_module.RETRY_START, max_module.RETRY_MAX = 0.05, 0.2
+    try:
+        await side.start()
+        assert side.me_id == ME and len(made) == 1, made
+
+        first.broken.set()                          # связь оборвалась
+        for _ in range(40):
+            await asyncio.sleep(0.05)
+            if len(made) > 1 and side._started.is_set():
+                break
+        assert len(made) == 2, f"сторона MAX не поднялась заново: {made}"
+        assert side.client is made[1], "работать должен новый клиент"
+        assert side._started.is_set(), "повторный вход не состоялся"
+        assert not side._task.done(), "задача MAX не должна завершаться из-за обрыва"
+    finally:
+        max_module.RETRY_START, max_module.RETRY_MAX = old_start, old_max
+        await side.stop()
+    print("  обрыв связи: ок (сторона MAX входит заново сама)")
+
+
 async def main() -> None:
     run_pure()
     await run_side()
+    await run_reconnect()
     await run_bridge()
     print("MAX ПРОВЕРЕН")
 

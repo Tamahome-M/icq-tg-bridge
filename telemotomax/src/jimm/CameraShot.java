@@ -35,6 +35,9 @@ import jimm.util.ResourceBundle;
  */
 public class CameraShot extends Canvas implements CommandListener, JimmScreen
 {
+	/** Столько ждём от моста ответа «ушло или нет». */
+	public static final int ANSWER_WAIT = 45 * 1000;
+
 	private static CameraShot current;
 
 	private final JimmScreen back;
@@ -179,12 +182,30 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 					Icq.sendPhoto(uin, shot);
 					status = ResourceBundle.getString("camera_sending")
 							+ " " + (shot.length / 1024) + " КБ";
+					waitForBridge();
 				}
 				catch (Exception e)
 				{
 					sending = false;
 					status = ResourceBundle.getString("camera_failed") + " " + shortName(e);
 				}
+				repaint();
+			}
+		}.start();
+	}
+
+	// Мост отвечает 10/03 — ушло или нет. Ответ может и не прийти (оборвалась
+	// связь на последней части), и тогда экран должен сказать это сам, а не
+	// висеть с «Отправляю».
+	private void waitForBridge()
+	{
+		new Thread() {
+			public void run()
+			{
+				try { Thread.sleep(ANSWER_WAIT); } catch (Exception ignore) {}
+				if (current != CameraShot.this || !sending) return;
+				sending = false;
+				status = ResourceBundle.getString("camera_not_sent");
 				repaint();
 			}
 		}.start();

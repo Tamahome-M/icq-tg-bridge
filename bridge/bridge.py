@@ -38,6 +38,8 @@ DEAD_SESSION = (
 ROSTER_REFRESH_SECONDS = 600
 MAX_ROSTER_SLOTS = 100_000       # чаты MAX стоят в списке раньше любого чата Telegram
 SEARCH_LIMIT = 10                # столько результатов отдаём телефону
+TG_RETRY_START = 5               # через сколько поднимать связь с Telegram
+TG_RETRY_MAX = 300               # и когда сдаваться, чтобы мост перезапустила служба
 SEARCH_ALL_LIMIT = 50            # а столько — на поиск без запроса, «покажи всё»
 # Telegram повторяет «печатает» каждые несколько секунд, а Jimm сам индикатор
 # не гасит — снимаем его по молчанию.
@@ -89,6 +91,7 @@ class Bridge:
         self._refresh_task: asyncio.Task | None = None
         self._background: set[asyncio.Task] = set()
         self.mode = policy.UNMUTED
+        self._stopping = False
         self.oscar.on_owner_status = self.on_owner_status
         self.oscar.on_typing = self.on_phone_typing
         self.avatars = (avatar_lib.AvatarStore(cfg.avatar_size, cfg.avatar_max_kb * 1024)
@@ -1242,7 +1245,7 @@ class Bridge:
         self._refresh_task = asyncio.create_task(self._refresh_loop())
         log.info("мост готов, ждём подключения Jimm")
         try:
-            await self.telegram.client.run_until_disconnected()
+            await self._keep_telegram()
         except DEAD_SESSION as exc:
             raise RuntimeError(
                 f"Telegram аннулировал сессию ({type(exc).__name__}). "
@@ -1253,7 +1256,42 @@ class Bridge:
                 f"Получите свои api_id/api_hash на my.telegram.org и впишите в config.toml."
             ) from exc
 
+    async def _keep_telegram(self) -> None:
+        """Держит связь с Telegram, пока мост работает.
+
+        Telethon переподключается сам, но когда сдаётся окончательно,
+        `run_until_disconnected` просто возвращается — и мост раньше тихо
+        заканчивал работу, будто его попросили. Поднимаем связь сами, а
+        если не выходит совсем долго — выходим с ошибкой, чтобы служба
+        подняла мост заново.
+        """
+        delay = TG_RETRY_START
+        while not self._stopping:
+            await self.telegram.client.run_until_disconnected()
+            if self._stopping:
+                return
+            log.warning("Telegram отключился — пробую подключиться снова через %.0f с", delay)
+            await asyncio.sleep(delay)
+            try:
+                await self.telegram.client.connect()
+            except Exception as exc:
+                log.warning("Telegram не отвечает: %s: %s", type(exc).__name__, exc)
+            if self.telegram.client.is_connected():
+                log.info("связь с Telegram восстановлена — догоняю пропущенное")
+                delay = TG_RETRY_START
+                try:
+                    await self.refresh_roster()
+                    await self.catch_up()
+                except Exception:
+                    log.exception("после обрыва не получилось обновить список и очередь")
+                continue
+            delay = min(delay * 2, TG_RETRY_MAX)
+            if delay >= TG_RETRY_MAX:
+                raise RuntimeError(
+                    "Telegram не отвечает уже долго — выхожу, пусть служба поднимет мост заново")
+
     async def close(self) -> None:
+        self._stopping = True
         # Порядок важен: сначала перестаём принимать и отдавать, и только
         # потом закрываем базу — иначе уходящая сессия обратится к ней уже
         # закрытой.

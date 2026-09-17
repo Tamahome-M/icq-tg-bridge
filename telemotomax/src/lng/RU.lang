@@ -475,6 +475,7 @@
 "play_voice"				"Прослушать"
 "voice_start"				"Нажмите «выбор» — запись"
 "voice_stop"				"Нажмите «выбор» — стоп"
+"voice_no_answer"				"мост не ответил"
 "voice_sent"				"Отправлено"
 "voice_waiting"				"Жду ответа моста..."
 "voice_part"				"часть"
