@@ -86,6 +86,9 @@ public class ChatListViewer implements CommandListener, VirtualListCommands, Jim
 		JimmUI.setColorScheme(list, false, -1, true);
 		list.setCaption(ResourceBundle.getString("all_chats"));
 		list.addCommandEx(JimmUI.cmdBack, VirtualList.MENU_TYPE_LEFT_BAR);
+		// Правая софт-клавиша с меню: в него попадают «Ещё», «Показать фото»
+		// и «Прослушать» — без неё они некуда было бы нажать.
+		list.addCommandEx(JimmUI.cmdMenu, VirtualList.MENU_TYPE_RIGHT_BAR);
 		list.setCommandListener(this);
 		list.setVLCommands(this);
 		list.activate(Jimm.display);

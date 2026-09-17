@@ -11,8 +11,8 @@
 
 "point"						 ","
 "about"						 "About"
-"about_cap"                 "ICQ client for J2ME" 
-"about_info"				"Build: ###VERSION###\nTarget: ###TARGET###\nModules: ###MODULES###\n\nSee http://www.jimm.org/"
+"about_cap"                 "TeleMotoMax - bridge to Telegram and MAX" 
+"about_info"				"Client for icq-tg-bridge\nVersion ###VERSION###\nBuild: ###TARGET###\nModules: ###MODULES###\n\nhttps://github.com/Tamahome-M/icq-tg-bridge"
 "about_visit_wap"			"Visit Jimm WAP site"
 "add_new"					"New"
 "add_group"					"Add group"

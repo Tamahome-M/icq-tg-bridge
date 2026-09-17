@@ -58,6 +58,8 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	private Vector kinds = new Vector();     // per message: Integer kind (1 photo, 2 video)
 	private int shown;                       // сколько сообщений уже загружено
 	private boolean more;                    // осталось ли что подгружать
+	private boolean paged;                   // мост ответил с пометкой «есть ещё»
+	private boolean exhausted;               // последняя пачка пришла пустой
 	private boolean loading;
 
 	private HistoryViewer(JimmScreen back, String uin, String name)
@@ -138,6 +140,9 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		JimmUI.setColorScheme(list, false, -1, true);
 		list.setCaption(name);
 		list.addCommandEx(JimmUI.cmdBack, VirtualList.MENU_TYPE_LEFT_BAR);
+		// Правая софт-клавиша с меню: в него попадают «Ещё», «Показать фото»
+		// и «Прослушать» — без неё они некуда было бы нажать.
+		list.addCommandEx(JimmUI.cmdMenu, VirtualList.MENU_TYPE_RIGHT_BAR);
 		list.setCommandListener(this);
 		list.setVLCommands(this);
 		list.activate(Jimm.display);
@@ -164,12 +169,29 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		{
 			String line = (String) texts.elementAt(i);
 			boolean mine = ((Integer) kinds.elementAt(i)).intValue() >= 8;
-			// Своё и чужое различаются цветом всей строки — как входящее и
-			// исходящее в чате. Красить отдельно имя и текст не выходит:
-			// две части одной строки список показывает только первую.
-			list.addBigText(line, ChatTextList.getInOutColor(!mine),
-					Font.STYLE_PLAIN, i);
-			list.doCRLF(i);
+			// Строка от моста — «[дд.мм чч:мм] Кто: текст». Заголовок с
+			// именем и временем красим, как в чате (свои одним цветом,
+			// чужие другим), а сам текст выводим тем же способом, что и
+			// сообщения в переписке: обычным цветом и со смайлами.
+			int cut = -1;
+			int close = line.indexOf("] ");
+			if (close > 0) cut = line.indexOf(": ", close);
+			if (cut > 0 && cut + 2 <= line.length())
+			{
+				list.addBigText(line.substring(0, cut + 1),
+						ChatTextList.getInOutColor(!mine), Font.STYLE_BOLD, i);
+				// Перевод строки обязателен: без него текст дописывается в
+				// строку заголовка, и то, что в неё уже не влезает, уходит
+				// за край экрана — от «текст для проверки» оставалось
+				// «проверки». В чате перенос делается ровно так же.
+				list.doCRLF(i);
+				JimmUI.addMessageText(list, line.substring(cut + 2),
+						list.getTextColor(), i);
+			}
+			else
+			{
+				JimmUI.addMessageText(list, line, list.getTextColor(), i);
+			}
 		}
 	}
 
@@ -215,6 +237,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 					break;
 				}
 			}
+			paged = start > 0;
 			more = (start == 2) ? Util.getByte(data, 1) != 0
 					: ((start == 1) ? Util.getByte(data, 0) != 0 : false);
 			int marker = start;
@@ -258,7 +281,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			kinds.insertElementAt(newKinds.elementAt(i), 0);
 		}
 		shown += newTexts.size();
-		if (newTexts.size() == 0) more = false;
+		if (newTexts.size() == 0) exhausted = true;
 		if (texts.size() == 0)
 		{
 			texts.addElement(ResourceBundle.getString(
@@ -309,10 +332,14 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		return records > 0 && marker == data.length;
 	}
 
+	// «Ещё» показываем, пока есть что просить. Мост с пометкой сам говорит,
+	// осталось ли; мост постарше её не шлёт — тогда предлагаем, пока
+	// очередная пачка не придёт пустой.
 	private void checkMore()
 	{
 		list.removeCommandEx(cmdMore);
-		if (more && texts.size() < MAX_LINES)
+		boolean worth = paged ? more : !exhausted;
+		if (worth && texts.size() < MAX_LINES)
 			list.addCommandEx(cmdMore, VirtualList.MENU_TYPE_RIGHT);
 	}
 
@@ -334,10 +361,14 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	{
 		list.removeCommandEx(ChatTextList.cmdShowPhoto);
 		list.removeCommandEx(ChatTextList.cmdPlayVideo);
+		list.removeCommandEx(ChatTextList.cmdPlayVoice);
 		if (currentToken() != null)
 		{
-			list.addCommandEx(ChatTextList.cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
-			if (currentKind() == 2) list.addCommandEx(ChatTextList.cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
+			int kind = currentKind();
+			// У голосового картинки нет — только «Прослушать», как в чате.
+			if (kind != 3) list.addCommandEx(ChatTextList.cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
+			if (kind == 2) list.addCommandEx(ChatTextList.cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
+			if (kind == 3) list.addCommandEx(ChatTextList.cmdPlayVoice, VirtualList.MENU_TYPE_RIGHT);
 		}
 	}
 
@@ -346,10 +377,15 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		checkPhoto();
 	}
 
+	// Выбор записи открывает то, что к ней приложено: снимок, ролик или
+	// голосовое.
 	public void vlItemClicked(VirtualList sender)
 	{
 		byte[] token = currentToken();
-		if (token != null) PhotoViewer.show(uin, token, this);
+		if (token == null) return;
+		int kind = currentKind();
+		if (kind == 3) MediaPlayer.showVoice(uin, token, this);
+		else PhotoViewer.show(uin, token, this);
 	}
 
 	public void vlKeyPress(VirtualList sender, int keyCode, int type) {}
@@ -366,6 +402,12 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		{
 			byte[] token = currentToken();
 			if (token != null) MediaPlayer.show(uin, token, this);
+			return;
+		}
+		if (c == ChatTextList.cmdPlayVoice)
+		{
+			byte[] token = currentToken();
+			if (token != null) MediaPlayer.showVoice(uin, token, this);
 			return;
 		}
 		if (c == cmdMore)

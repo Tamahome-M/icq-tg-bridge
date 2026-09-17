@@ -1293,8 +1293,8 @@ public abstract class VirtualList
 			// phone's memory is visible without opening "About".
 			if (showMemory)
 			{
-				String mem = (Runtime.getRuntime().freeMemory() / 1024) + "K";
-				g.drawString(mem, width - 3, (height - capAndMenuFont.getHeight()) / 2, Graphics.TOP | Graphics.RIGHT);
+				g.drawString(memoryText(), width - 3,
+						(height - capAndMenuFont.getHeight()) / 2, Graphics.TOP | Graphics.RIGHT);
 			}
 		}
 		
@@ -1307,6 +1307,26 @@ public abstract class VirtualList
 		afterDrawCaption(g, height);
 		
 		return height;
+	}
+
+	// Свободная память для заголовка. Значение обновляется не чаще раза в
+	// две секунды и держится готовой строкой: заголовок перерисовывается
+	// часто, а и сам подсчёт, и склейка строки создают мусор — то есть
+	// индикатор портил бы ровно то, что показывает. Округление до 4 КБ
+	// убирает дрожание последней цифры.
+	private static String memoryString = "";
+	private static long memoryStamp;
+
+	private static String memoryText()
+	{
+		long now = System.currentTimeMillis();
+		if (now - memoryStamp >= 2000 || memoryString.length() == 0)
+		{
+			memoryStamp = now;
+			long kb = Runtime.getRuntime().freeMemory() / 1024;
+			memoryString = ((kb / 4) * 4) + "K";
+		}
+		return memoryString;
 	}
 
 	protected boolean isItemSelected(int index)
