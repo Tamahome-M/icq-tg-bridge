@@ -439,7 +439,8 @@ class Bridge:
         return Transcoder(self.cfg.render_ffmpeg, seconds,
                           self.cfg.render_audio_seconds, self.cfg.render_timeout,
                           self.cfg.render_dir, self.cfg.render_video_codec,
-                          self.cfg.render_video_kbps, self.cfg.render_video_fps)
+                          self.cfg.render_video_kbps, self.cfg.render_video_fps,
+                          self.cfg.tmm_voice_kbps)
 
     async def fetch_voice(self, uin: int, attach: str) -> bytes | None:
         """Голосовое из сообщения — AMR в 3GP, который телефон умеет играть."""

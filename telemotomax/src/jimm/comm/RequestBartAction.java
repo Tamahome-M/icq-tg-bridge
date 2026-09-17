@@ -231,6 +231,21 @@ public class RequestBartAction extends Action
 						int marker = 0;
 						int uinLength = Util.getByte(buf, marker);
 						marker += 1 + uinLength;
+						// Ответ службы адресован примете: типу и «хешу» —
+						// у нас это токен. Пока идёт одна загрузка, может
+						// начаться другая (история и снимок, например), и
+						// без этой проверки первое же действие в очереди
+						// съедало бы чужой ответ, а его хозяин ждал бы
+						// вечно. Чужое не берём — пусть достанется своему.
+						int replyType = Util.getWord(buf, marker);
+						int hashLen = Util.getByte(buf, marker + 3);
+						if (replyType != this.bartType
+								|| hashLen != 16
+								|| !Util.byteArrayEquals(buf, marker + 4, this.token, 0, 16))
+						{
+							this.active = false;
+							return false;
+						}
 						// Flags of the two item blocks carry "part N of M" for
 						// replies that do not fit one packet; 1 of 1 otherwise.
 						int part = Util.getByte(buf, marker + 2);

@@ -64,6 +64,16 @@ def _known_audio(raw: bytes) -> bool:
     return any(raw.startswith(magic) for magic in AUDIO_MAGIC)
 
 
+# Режимы AMR-NB: других кодек не знает, поэтому заданный битрейт
+# округляем к ближайшему из них.
+AMR_RATES = (4.75, 5.15, 5.9, 6.7, 7.4, 7.95, 10.2, 12.2)
+
+
+def amr_rate(kbps: float) -> float:
+    """Ближайший режим AMR-NB к заданному битрейту."""
+    return min(AMR_RATES, key=lambda rate: abs(rate - kbps))
+
+
 VIDEO_KBPS = 64
 VIDEO_FPS = 15
 VIDEO_CODECS = {
@@ -159,7 +169,8 @@ class Transcoder:
     def __init__(self, ffmpeg: str = "ffmpeg", video_seconds: int = 60,
                  audio_seconds: int = 300, timeout: int = 120,
                  workdir: str = "/tmp", video_codec: str = "h263",
-                 video_kbps: int = VIDEO_KBPS, video_fps: int = VIDEO_FPS):
+                 video_kbps: int = VIDEO_KBPS, video_fps: int = VIDEO_FPS,
+                 voice_kbps: float = 12.2):
         self.ffmpeg = ffmpeg
         self.video_seconds = video_seconds
         self.audio_seconds = audio_seconds
@@ -168,6 +179,7 @@ class Transcoder:
         self.video_codec = video_codec if video_codec in VIDEO_CODECS else "h263"
         self.video_kbps = video_kbps
         self.video_fps = video_fps
+        self.voice_kbps = amr_rate(voice_kbps)
 
     @property
     def available(self) -> bool:
@@ -271,10 +283,17 @@ class Transcoder:
 
     def voice_args(self, src: str, dst: str) -> list[str]:
         """AMR в контейнере 3GP: голый .amr плеер телефона не опознаёт,
-        а audio/3gpp он объявляет сам."""
+        а audio/3gpp он объявляет сам.
+
+        Битрейт AMR-NB выбирается не любой: кодек знает ровно восемь
+        режимов (см. AMR_RATES). 12.2 кбит/с — самый «жирный», 4.75 —
+        самый экономный; речь разборчива и на нём, а качать по GPRS
+        вдвое-втрое меньше.
+        """
         return [self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
                 "-t", str(self.audio_seconds), "-vn",
-                "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1", "-b:a", "12.2k",
+                "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1",
+                "-b:a", f"{self.voice_kbps}k",
                 "-movflags", "+faststart", "-f", "3gp", dst]
 
     async def convert(self, raw: bytes, kind: str, codec: str = "libopus") -> bytes | None:

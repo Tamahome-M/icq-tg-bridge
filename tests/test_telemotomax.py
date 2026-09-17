@@ -498,6 +498,30 @@ def run_history_layout() -> None:
     print("  разбор истории: ок (ответ моста любого возраста читается)")
 
 
+def run_reply_routing() -> None:
+    """Ответ службы адресован примете: типу и токену.
+
+    Пока идёт одна загрузка, клиент может начать вторую (история и снимок),
+    и без проверки первое же действие в очереди съедало бы чужой ответ —
+    а его хозяин ждал бы вечно. Проверяем, что по ответу видно, чей он."""
+    from bridge.oscar import blocks
+
+    mine, other = os.urandom(16), os.urandom(16)
+    reply = blocks.icon_reply(1000002, mine, "история".encode(), C.BART_HISTORY)
+
+    def belongs(data: bytes, bart_type: int, token: bytes) -> bool:
+        pos = 1 + data[0]                      # длина UIN и сам UIN
+        kind = struct.unpack(">H", data[pos:pos + 2])[0]
+        length = data[pos + 3]
+        return kind == bart_type and length == len(token) \
+            and data[pos + 4:pos + 4 + length] == token
+
+    assert belongs(reply, C.BART_HISTORY, mine), "свой ответ должен опознаваться"
+    assert not belongs(reply, C.BART_HISTORY, other), "чужой токен — чужой ответ"
+    assert not belongs(reply, C.BART_PHOTO, mine), "другая примета — другой запрос"
+    print("  адресность ответов: ок (примета и токен видны в ответе службы)")
+
+
 async def run_stale_service() -> None:
     """Оборванное соединение за аватарками не должно держать слот вечно."""
     from bridge.oscar import server as server_module
@@ -563,6 +587,7 @@ async def main() -> None:
     await run_voice()
     await run_chats()
     run_history_layout()
+    run_reply_routing()
     await run_stale_service()
     print("TELEMOTOMAX ПРОВЕРЕН")
 
