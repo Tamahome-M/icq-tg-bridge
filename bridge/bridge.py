@@ -85,6 +85,7 @@ class Bridge:
         self._by_uin: dict[int, Contact] = {}
         self._unread: dict[tuple[int, int], int] = {}   # (peer_id, topic_id)
         self._typing: dict[int, asyncio.Task] = {}
+        self._typing_sent: dict[int, float] = {}   # когда телефону ушло «печатает»
         self._refresh_task: asyncio.Task | None = None
         self._background: set[asyncio.Task] = set()
         self.mode = policy.UNMUTED
@@ -780,14 +781,25 @@ class Bridge:
             return
 
         old = self._typing.pop(contact.uin, None)
+        now = time.time()
+        # Telegram повторяет «печатает» каждые несколько секунд. Телефону
+        # каждый такой повтор — отдельное уведомление со звуком, поэтому
+        # шлём начало, а продления только продлевают показ; повторять их
+        # телефону можно, но не чаще, чем раз в typing_repeat секунд
+        # (0 — не повторять вовсе).
+        repeat = self.cfg.typing_repeat
+        send = True
         if old is None:
-            # Telegram повторяет «печатает» каждые несколько секунд —
-            # в журнал попадает только начало, продления лишь продлевают.
             log.info("«%s» печатает — показываю на телефоне", contact.title)
         else:
             old.cancel()
-            log.debug("«%s» всё ещё печатает", contact.title)
-        await self.oscar.notify_typing(contact.uin, True)
+            since = now - self._typing_sent.get(contact.uin, 0.0)
+            send = repeat > 0 and since >= repeat
+            log.debug("«%s» всё ещё печатает%s", contact.title,
+                      "" if send else " (телефону не повторяю)")
+        if send:
+            self._typing_sent[contact.uin] = now
+            await self.oscar.notify_typing(contact.uin, True)
         self._typing[contact.uin] = asyncio.create_task(self._typing_expiry(contact.uin))
 
     async def _typing_expiry(self, uin: int) -> None:
@@ -797,6 +809,7 @@ class Bridge:
         except asyncio.CancelledError:
             return
         self._typing.pop(uin, None)
+        self._typing_sent.pop(uin, None)
         contact = self._by_uin.get(uin) or self.storage.contact_by_uin(uin)
         log.info("«%s» перестал печатать — гашу по молчанию (%d с)",
                  contact.title if contact else uin, TYPING_TIMEOUT)
@@ -805,6 +818,7 @@ class Bridge:
     async def stop_typing(self, uin: int, why: str = "пришло сообщение") -> None:
         """Гасит индикатор сразу — клиент сам этого не делает."""
         task = self._typing.pop(uin, None)
+        self._typing_sent.pop(uin, None)
         if task is None:
             return
         task.cancel()
