@@ -1212,9 +1212,12 @@ class Session:
                                           lambda attach: self.server.register_attachment(
                                               int(target), attach))
             if paged:
-                # Клиенту нужно знать, стоит ли предлагать «Ещё». Старый
-                # клиент этого байта не ждёт и не просит.
-                data = bytes([1 if more else 0]) + data
+                # Клиенту нужно знать, стоит ли предлагать «Ещё». Заголовок
+                # начинается с 0xFF: длина текста первой записи с такого
+                # байта начаться не может, и клиент по нему видит, ответил
+                # ему мост со страницами или без — со старым мостом он
+                # разобрал бы заголовок как часть записи и не показал ничего.
+                data = bytes([0xFF, 1 if more else 0]) + data
             log.info("история для %s отдана: %d байт%s", self.server.name_of(target), len(data),
                      f", сдвиг {offset}" if offset else "")
             await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,

@@ -50,7 +50,7 @@ class Config:
     idle_timeout: int = 360
     delivery_ack: bool = True
     typing_prime: bool = True
-    typing_repeat: int = 0
+    typing_repeat: int = 10
     ack_on: str = "read"
     ack_timeout: int = 30
     catch_up: bool = True

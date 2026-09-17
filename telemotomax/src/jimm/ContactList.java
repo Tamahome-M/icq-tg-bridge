@@ -1548,9 +1548,12 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 
 		// If the user does not have it add the typing capability
 		if (!item.hasCapability(Icq.CAPF_TYPING)) item.addCapability(Icq.CAPF_TYPING);
+		boolean wasTyping = item.isTyping();
 		item.BeginTyping(type);
 		
-		if (type) playSoundNotification(ContactList.SOUND_TYPE_TYPING);
+		// Звук — только когда набор начался: мост повторяет уведомление,
+		// пока собеседник пишет, и телефон пищал бы раз в несколько секунд.
+		if (type && !wasTyping) playSoundNotification(ContactList.SOUND_TYPE_TYPING);
 		
 		if (ChatHistory.chatHistoryShown(uin)) ChatHistory.getChatHistoryAt(uin).BeginTyping(type);
 		else tree.repaint();
