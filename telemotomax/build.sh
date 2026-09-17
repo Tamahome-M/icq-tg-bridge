@@ -69,12 +69,16 @@ rm -rf src && mkdir src && cp -r "$HERE/src" "$HERE/res" "$HERE/util" "$HERE/bui
 STAMP="$VERSION.$(date +%y%m%d)"
 MAJOR=${VERSION%%.*}
 MINOR=${VERSION#*.}; MINOR=${MINOR%%.*}
-# Набор модулей Jimm. FILES тянет передачу файлов и прямые соединения —
-# мосту они не нужны, и без него сборка легче на два десятка килобайт.
-# Выключать по умолчанию боязно (на нём же держится опознание «печатает»
-# у некоторых клиентов), поэтому это отдельный ключ: TMM_MODULES=light.
-MODULES=${TMM_MODULES:-FILES,SMILES_STD,AVATARS}
-if [ "$MODULES" = "light" ]; then MODULES="SMILES_STD,AVATARS"; fi
+# Набор модулей Jimm. FILES — это передача файлов и прямые соединения
+# между клиентами: мосту они не нужны, а памяти и классов берут немало.
+# «Печатает» от него не зависит — ни объявление способности при входе, ни
+# разбор чужих, ни приём и отправка 04/14 (проверено по исходникам), —
+# поэтому по умолчанию собираем без него. TMM_MODULES=full вернёт всё.
+MODULES=${TMM_MODULES:-light}
+case "$MODULES" in
+	light) MODULES="SMILES_STD,AVATARS" ;;
+	full)  MODULES="FILES,SMILES_STD,AVATARS" ;;
+esac
 sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION###|$STAMP|; \
      s|###TMM-VERSION-JAVA###|$VERSION|; s|###TMM-NAME###|$NAME|; \
      s|###TMM-MODULES###|$MODULES|" "$HERE/build.properties" > src/build.properties
