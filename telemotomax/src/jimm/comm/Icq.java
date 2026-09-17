@@ -91,6 +91,41 @@ public class Icq implements Runnable
 	// Keep alive timer task
 	static private TimerTasks keepAliveTimerTask;
 
+	// Сторож связи. На GPRS оборванное соединение остаётся открытым: сокет
+	// жив, клиент считает себя в сети, а мост давно закрыл сессию. Мост
+	// отвечает на каждый наш keepalive, поэтому молчание в ответ на
+	// несколько пингов подряд — верный признак, что канала больше нет.
+	static private long lastServerData;
+	static private long lastPingAt;
+	static private int pingMisses;
+
+	/** Сколько пингов подряд остались без единого байта в ответ. */
+	static public int getPingMisses()
+	{
+		return pingMisses;
+	}
+
+	static public void noteServerData()
+	{
+		lastServerData = System.currentTimeMillis();
+		pingMisses = 0;
+	}
+
+	static public void notePingSent()
+	{
+		long now = System.currentTimeMillis();
+		if (lastPingAt != 0 && lastServerData < lastPingAt) pingMisses++;
+		else pingMisses = 0;
+		lastPingAt = now;
+	}
+
+	static public void resetPingWatch()
+	{
+		lastServerData = System.currentTimeMillis();
+		lastPingAt = 0;
+		pingMisses = 0;
+	}
+
 	public static int reconnect_attempts;
 
 	public Icq()
@@ -507,6 +542,7 @@ public class Icq implements Runnable
 		// Instantiate action listener
 		actListener = new ActionListener();
 
+		resetPingWatch();        // новый сеанс — счёт пингов с чистого листа
 		keepAliveTimerTask = new TimerTasks(TimerTasks.ICQ_KEEPALIVE);
 		long keepAliveInterv = Integer.parseInt(Options
 				.getString(Options.OPTION_CONN_ALIVE_INVTERV)) * 1000;
@@ -623,7 +659,11 @@ public class Icq implements Runnable
 					packet = null;
 					try
 					{
-						if (c.available() > 0) packet = c.getPacket();
+						if (c.available() > 0)
+						{
+							packet = c.getPacket();
+							noteServerData();     // канал жив
+						}
 						//  #sijapp cond.if target!="DEFAULT" & modules_FILES="true"#
 						else if (dcPacketAvailable) packet = peerC.getPacket();
 						//  #sijapp cond.end#
