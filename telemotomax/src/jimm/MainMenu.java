@@ -55,6 +55,7 @@ public class MainMenu implements CommandListener, JimmScreen
 	private static final int MENU_KEYLOCK       = 7;
 	private static final int MENU_STATUS        = 8;
 	private static final int MENU_XSTATUS       = 9;
+	private static final int MENU_CLIST_MENU    = 17;   // «Список»: управление и все чаты
 	private static final int MENU_ABOUT         = 10;
 	private static final int MENU_MINIMIZE      = 11;
 	private static final int MENU_SOUND         = 12;
@@ -134,7 +135,9 @@ public class MainMenu implements CommandListener, JimmScreen
 		}
 		
 		JimmUI.addTextListItem(list, "set_status", getStatusImage(), MENU_STATUS, true, -1, Font.STYLE_PLAIN);
-		JimmUI.addTextListItem(list, "set_xstatus", getXStatusImage(), MENU_XSTATUS, true, -1, Font.STYLE_PLAIN);
+		// Вместо X-статуса, которого с мостом всё равно нет, — «Список»:
+		// управление контакт-листом и полный список чатов моста.
+		JimmUI.addTextListItem(list, "list_menu", menuIcons.elementAt(24), MENU_CLIST_MENU, true, -1, Font.STYLE_PLAIN);
 		
 		if (ContactList.getSize() != 0)
 			JimmUI.addTextListItem(list, "contact_list", menuIcons.elementAt(2), MENU_LIST, true, -1, Font.STYLE_PLAIN);
@@ -321,6 +324,10 @@ public class MainMenu implements CommandListener, JimmScreen
 			case MENU_LIST:
 				/* ContactList */
 				ContactList.activateList();
+				break;
+
+			case MENU_CLIST_MENU:
+				Options.editContactList();
 				break;
 
 			//#sijapp cond.if modules_PIM is "true" #

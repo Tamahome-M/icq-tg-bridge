@@ -333,6 +333,7 @@
 "voice_waiting"				"Waiting for bridge..."
 "voice_part"				"part"
 "all_chats"				"All chats"
+"list_menu"				"List"
 "chats_loading"				"Loading chats..."
 "chats_failed"				"No chat list"
 "chats_empty"				"No chats"

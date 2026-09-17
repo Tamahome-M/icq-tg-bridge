@@ -78,6 +78,31 @@ def setup_logging(cfg=None) -> None:
     logging.getLogger("pymax").setLevel((cfg.log_max_level if cfg else "WARNING").upper())
 
 
+def bridge_version() -> str:
+    """Какой код сейчас работает: коммит и дата, иначе дата самого файла.
+
+    Нужно, чтобы по журналу было видно, обновлён ли мост: иначе «новая
+    возможность не работает» и «мост старой сборки» выглядят одинаково.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        import subprocess
+        out = subprocess.run(["git", "-C", here, "log", "-1", "--format=%h %cd",
+                              "--date=format:%d.%m.%Y %H:%M"],
+                             capture_output=True, text=True, timeout=5)
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    try:
+        import datetime as dt
+        stamp = dt.datetime.fromtimestamp(os.path.getmtime(os.path.join(here, "bridge",
+                                                                        "bridge.py")))
+        return f"без git, файлы от {stamp:%d.%m.%Y %H:%M}"
+    except Exception:
+        return "неизвестна"
+
+
 async def main() -> int:
     setup_logging()
     if not os.path.exists(CONFIG):
@@ -93,6 +118,8 @@ async def main() -> int:
     for path in loose:
         logging.getLogger("bridge").warning(
             "файл %s доступен другим пользователям — сделайте chmod 600", path)
+
+    logging.getLogger("bridge").info("версия моста: %s", bridge_version())
 
     from bridge.config import describe
     for line in describe(cfg):

@@ -519,8 +519,19 @@ class Session:
 
     @property
     def extended(self) -> bool:
-        """Подключён TeleMotoMax — можно слать расширения протокола."""
-        return self.tmm_version is not None
+        """Подключён TeleMotoMax — можно слать расширения протокола.
+
+        Соединение за аватарками способностей не объявляет: клиент назвал
+        себя на основном. Раньше мы копировали версию в момент входа, но
+        если основная сессия в ту секунду переподключалась, копировать было
+        нечего, и запросы расширений молча уходили в ветку аватарок.
+        Поэтому смотрим на основную сессию каждый раз.
+        """
+        if self.tmm_version is not None:
+            return True
+        main = self.server.session
+        return (self.service_only and main is not None
+                and main is not self and main.tmm_version is not None)
 
     async def on_locate_rights(self, s: Snac) -> None:
         body = tlv_u16(0x0001, 1024) + tlv_u16(0x0002, 16) + tlv_u16(0x0003, 10)
@@ -1148,6 +1159,12 @@ class Session:
             bart_type, token = C.BART_ICON, b""
         if not target.isdigit():
             return
+        if bart_type != C.BART_ICON:
+            log.debug("запрос приметы 0x%04x от %s, сессия %s", bart_type, self.peer,
+                      "расширенная" if self.extended else "обычная")
+            if not self.extended:
+                log.warning("примета 0x%04x: клиент не опознан как TeleMotoMax — "
+                            "отвечаю как на аватарку", bart_type)
         if bart_type == C.BART_HISTORY and self.extended:
             # История чата на отдельный экран: число сообщений — в первых двух
             # байтах «хеша», текст уходит тем же 10/07 вместо картинки.
