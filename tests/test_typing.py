@@ -100,9 +100,10 @@ async def main() -> None:
     assert sent[-1] == (mom, False), f"индикатор так и не погас: {sent}"
 
     # --- повторные уведомления продлевают, а не дублируют -----------------
-    # На каждое уведомление телефон играет звук, поэтому по умолчанию
-    # (typing_repeat = 0) продления телефону не уходят вовсе.
+    # Продления телефону не уходят чаще, чем раз в typing_repeat секунд;
+    # в этой проверке повтор выключен вовсе.
     sent.clear()
+    bridge.cfg.typing_repeat = 0
     for _ in range(3):
         await bridge.on_telegram_typing(555, True)
         await asyncio.sleep(0.1)

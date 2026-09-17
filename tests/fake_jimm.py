@@ -443,7 +443,9 @@ class FakeJimm:
         token = struct.pack(">HHB", count, offset, 1) + bytes(11)
         got = await self._request_bart(uin, C.BART_HISTORY, token, timeout)
         data = got["image"]
-        return self._history_records(data[1:]), bool(data[:1] and data[0])
+        if data[:1] != b"\xff":          # старый мост страниц не знает
+            return self._history_records(data), False
+        return self._history_records(data[2:]), bool(data[1])
 
     async def request_history(self, uin: int, count: int,
                               timeout: float = 5.0) -> list[tuple[str, bytes | None]]:

@@ -755,6 +755,11 @@ public class ContactItem implements ContactListItem, JimmScreen
 	//#sijapp cond.if target isnot "DEFAULT"#
 	private boolean typing = false; // TODO: make as boolean flag
 
+	public boolean isTyping()
+	{
+		return typing;
+	}
+
 	public void BeginTyping(boolean type)
 	{
 		typing = type;
