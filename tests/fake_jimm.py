@@ -436,13 +436,26 @@ class FakeJimm:
         return await self._request_bart(uin, C.BART_ICON,
                                         self.icon_hashes.get(uin, b"\x00" * 16), timeout)
 
+    async def request_history_page(self, uin: int, count: int, offset: int = 0,
+                                   timeout: float = 5.0) -> tuple[list[tuple], bool]:
+        """Пачка истории — как TeleMotoMax 0.8: в «хеше» число сообщений,
+        сколько телефон уже показал и признак «жду пометку “есть ещё”»."""
+        token = struct.pack(">HHB", count, offset, 1) + bytes(11)
+        got = await self._request_bart(uin, C.BART_HISTORY, token, timeout)
+        data = got["image"]
+        return self._history_records(data[1:]), bool(data[:1] and data[0])
+
     async def request_history(self, uin: int, count: int,
                               timeout: float = 5.0) -> list[tuple[str, bytes | None]]:
         """История чата — как TeleMotoMax: тип 0x0081, число сообщений в «хеше».
         Возвращает записи (текст, токен снимка или None)."""
         token = struct.pack(">H", count) + bytes(14)
         got = await self._request_bart(uin, C.BART_HISTORY, token, timeout)
-        data, pos, out = got["image"], 0, []
+        return self._history_records(got["image"])
+
+    @staticmethod
+    def _history_records(data: bytes) -> list[tuple]:
+        pos, out = 0, []
         while pos + 3 <= len(data):
             length = struct.unpack(">H", data[pos:pos + 2])[0]; pos += 2
             text = data[pos:pos + length].decode("utf-8"); pos += length
@@ -457,7 +470,7 @@ class FakeJimm:
                 kind = "video"
             elif flag & 1:
                 kind = "photo"
-            out.append((text, photo, kind))
+            out.append((text, photo, kind, bool(flag & 8)))
         return out
 
     async def send_camera_photo(self, uin: int, data: bytes, part_size: int = 30000,

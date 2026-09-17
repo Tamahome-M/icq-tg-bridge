@@ -46,9 +46,19 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	private final JimmScreen back;
 	private final String uin;
 	private final String name;
+	/** Больше строк на экране держать незачем — это память телефона. */
+	public static final int MAX_LINES = 200;
+
+	static final Command cmdMore = new Command(ResourceBundle.getString("history_more"),
+			Command.ITEM, 3);
+
 	private TextList list;
+	private Vector texts = new Vector();     // per message: String
 	private Vector tokens = new Vector();    // per message: byte[16] or null
 	private Vector kinds = new Vector();     // per message: Integer kind (1 photo, 2 video)
+	private int shown;                       // сколько сообщений уже загружено
+	private boolean more;                    // осталось ли что подгружать
+	private boolean loading;
 
 	private HistoryViewer(JimmScreen back, String uin, String name)
 	{
@@ -63,18 +73,32 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		HistoryViewer viewer = new HistoryViewer(back, uin, name);
 		current = viewer;
 		viewer.build();
-		viewer.addLine(ResourceBundle.getString("history_loading"), null);
+		viewer.request();
+	}
+
+	// Просит у моста следующую пачку: сколько сообщений и сколько уже
+	// показано. Пятый байт «хеша» говорит мосту, что клиент ждёт ответ с
+	// пометкой «есть ещё» — старый мост её не приписывает.
+	private void request()
+	{
+		if (loading) return;
+		loading = true;
+		if (texts.size() == 0) addLine(ResourceBundle.getString("history_loading"), null);
+		else list.setCaption(ResourceBundle.getString("history_loading"));
+		list.repaint();
 		byte[] token = new byte[16];
 		int count = Options.getInt(Options.OPTION_HISTORY_COUNT);
 		if (count < 1) count = 10;
 		Util.putWord(token, 0, count);
+		Util.putWord(token, 2, shown);
+		Util.putByte(token, 4, 1);
 		try
 		{
-			Icq.requestAction(new RequestBartAction(uin, RequestBartAction.BART_HISTORY, token, viewer));
+			Icq.requestAction(new RequestBartAction(uin, RequestBartAction.BART_HISTORY, token, this));
 		}
 		catch (JimmException e)
 		{
-			viewer.onBart(null);
+			onBart(null);
 		}
 	}
 
@@ -126,11 +150,38 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 
 	private void addLine(String text, byte[] token, int kind)
 	{
-		int index = tokens.size();
+		texts.addElement(text);
 		tokens.addElement(token);
 		kinds.addElement(new Integer(kind));
-		list.addBigText(text, -1, Font.STYLE_PLAIN, index);
-		list.doCRLF(index);
+	}
+
+	// Список перерисовывается целиком: подгруженная пачка встаёт перед уже
+	// показанным, а TextList умеет только дописывать в конец.
+	private void fill()
+	{
+		list.clear();
+		for (int i = 0; i < texts.size(); i++)
+		{
+			String line = (String) texts.elementAt(i);
+			boolean mine = ((Integer) kinds.elementAt(i)).intValue() >= 8;
+			// Строка от моста — «[дд.мм чч:мм] Кто: текст». Заголовок красим
+			// как в чате (свои одним цветом, чужие другим), текст оставляем
+			// обычным — читать его так легче.
+			int cut = -1;
+			int close = line.indexOf("] ");
+			if (close > 0) cut = line.indexOf(": ", close);
+			if (cut > 0)
+			{
+				list.addBigText(line.substring(0, cut + 1),
+						ChatTextList.getInOutColor(!mine), Font.STYLE_BOLD, i);
+				list.addBigText(line.substring(cut + 1), -1, Font.STYLE_PLAIN, i);
+			}
+			else
+			{
+				list.addBigText(line, -1, Font.STYLE_PLAIN, i);
+			}
+			list.doCRLF(i);
+		}
 	}
 
 	// Called from the comm thread with the history records or null. Parsing
@@ -147,17 +198,21 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	private void render(byte[] data)
 	{
 		if (current != this) return;
-		list.lock();
-		list.clear();
-		tokens.removeAllElements();
-		kinds.removeAllElements();
-		if (data == null)
-		{
-			addLine(ResourceBundle.getString("history_failed"), null);
-		}
-		else
+		boolean first = shown == 0;
+		boolean failed = data == null;
+		Vector newTexts = new Vector();
+		Vector newTokens = new Vector();
+		Vector newKinds = new Vector();
+		if (data != null)
 		{
 			int marker = 0;
+			// Первый байт ответа — «есть ещё»: мост приписывает его, когда
+			// клиент попросил ответ с пометкой.
+			if (marker < data.length)
+			{
+				more = Util.getByte(data, marker) != 0;
+				marker += 1;
+			}
 			while (marker + 3 <= data.length)
 			{
 				int len = Util.getWord(data, marker);
@@ -174,15 +229,59 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 					System.arraycopy(data, marker, token, 0, 16);
 					marker += 16;
 				}
-				addLine(text, token, (flag & 2) != 0 ? 2 : 1);
+				newTexts.addElement(text);
+				newTokens.addElement(token);
+				int kind = (flag & 4) != 0 ? 3 : ((flag & 2) != 0 ? 2 : 1);
+				if ((flag & 8) != 0) kind += 8;
+				newKinds.addElement(new Integer(kind));
 			}
-			if (tokens.size() == 0) addLine(ResourceBundle.getString("history_empty"), null);
 		}
 		data = null;
+
+		list.lock();
+		if (first)
+		{
+			texts.removeAllElements();
+			tokens.removeAllElements();
+			kinds.removeAllElements();
+		}
+		// Подгруженное старее уже показанного, поэтому встаёт перед ним.
+		for (int i = newTexts.size() - 1; i >= 0; i--)
+		{
+			texts.insertElementAt(newTexts.elementAt(i), 0);
+			tokens.insertElementAt(newTokens.elementAt(i), 0);
+			kinds.insertElementAt(newKinds.elementAt(i), 0);
+		}
+		shown += newTexts.size();
+		if (newTexts.size() == 0) more = false;
+		if (texts.size() == 0)
+		{
+			texts.addElement(ResourceBundle.getString(
+					failed ? "history_failed" : "history_empty"));
+			tokens.addElement(null);
+			kinds.addElement(new Integer(1));
+		}
+		else if (failed)
+		{
+			list.setCaption(ResourceBundle.getString("history_failed"));
+		}
+		fill();
 		list.unlock();
-		list.setTopItem(list.getSize());
+		list.setCaption(name + (shown > 0 ? " (" + shown + ")" : ""));
+		// Первую пачку смотрят с конца (свежее), подгруженную — с начала,
+		// с того места, где она кончается и начинается уже прочитанное.
+		list.setTopItem(first ? list.getSize() : 0);
+		loading = false;
+		checkMore();
 		checkPhoto();
 		list.repaint();
+	}
+
+	private void checkMore()
+	{
+		list.removeCommandEx(cmdMore);
+		if (more && texts.size() < MAX_LINES)
+			list.addCommandEx(cmdMore, VirtualList.MENU_TYPE_RIGHT);
 	}
 
 	private byte[] currentToken()
@@ -196,7 +295,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	{
 		int index = list.getCurrTextIndex();
 		if (index < 0 || index >= kinds.size()) return 0;
-		return ((Integer) kinds.elementAt(index)).intValue();
+		return ((Integer) kinds.elementAt(index)).intValue() & 7;   // без пометки «моё»
 	}
 
 	private void checkPhoto()
@@ -237,8 +336,14 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			if (token != null) MediaPlayer.show(uin, token, this);
 			return;
 		}
+		if (c == cmdMore)
+		{
+			request();
+			return;
+		}
 		if (current == this) current = null;
 		list = null;                       // the text goes with the screen
+		texts = null;
 		tokens = null;
 		kinds = null;
 		if (back != null) back.activate();

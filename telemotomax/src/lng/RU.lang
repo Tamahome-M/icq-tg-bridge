@@ -479,6 +479,7 @@
 "voice_waiting"				"Жду ответа моста..."
 "voice_part"				"часть"
 "all_chats"				"Все чаты"
+"history_more"				"Ещё"
 "list_menu"				"Список"
 "chats_loading"				"Загрузка списка..."
 "chats_failed"				"Список не получен"

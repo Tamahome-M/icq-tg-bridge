@@ -198,6 +198,9 @@ public class Options
 	public static final int OPTION_INIT_CAPS	     = 169;
 	// TeleMotoMax: how many messages "History from server" asks for
 	public static final int OPTION_HISTORY_COUNT    = 113;   // 64..127 — числовые ключи
+	// TeleMotoMax: раз выключили цветной текст сообщений у тех, кто обновился
+	// со старой сборки (в новых установках он и так выключен).
+	public static final int OPTION_PLAIN_TEXT_DONE  = 170;   // 128..191 — флаги
 	
 	/* long */
 	public static final int OPTION_ONLINE_STATUS = 192; 
@@ -494,7 +497,10 @@ public class Options
 		setBoolean(OPTION_SHOW_NICK, false);
 		setBoolean(OPTION_SHOW_MESS_DATE, true);
 		setBoolean(OPTION_SHOW_MESS_CLRF, false);
-		setBoolean(OPTION_MESS_COLORED_TEXT, true);
+		// Текст сообщения обычным цветом: цветными остаются ник и время,
+		// а красный текст читать на V3 тяжело.
+		setBoolean(OPTION_MESS_COLORED_TEXT, false);
+		setBoolean(OPTION_PLAIN_TEXT_DONE, true);
 		setBoolean(OPTION_CL_CLIENTS, true);
 		setBoolean(OPTION_XSTATUSES, true);
 		setBoolean(OPTION_ASK_FOR_WEB_FT, true);
@@ -593,6 +599,16 @@ public class Options
 					setString(optionKey, Util.byteArrayToString(optionValue, 0,
 							optionValue.length, true));
 				}
+			}
+			// Обновившимся со старой сборки один раз выключаем цветной текст
+			// сообщения: ник и время остаются цветными, а сам текст — обычным.
+			// Кому так не нравится, вернёт галочку в настройках — больше мы
+			// её не трогаем.
+			if (!getBoolean(OPTION_PLAIN_TEXT_DONE))
+			{
+				setBoolean(OPTION_MESS_COLORED_TEXT, false);
+				setBoolean(OPTION_PLAIN_TEXT_DONE, true);
+				safeSave();
 			}
 		}
 	}

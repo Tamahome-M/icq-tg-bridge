@@ -1166,17 +1166,27 @@ class Session:
                 log.warning("примета 0x%04x: клиент не опознан как TeleMotoMax — "
                             "отвечаю как на аватарку", bart_type)
         if bart_type == C.BART_HISTORY and self.extended:
-            # История чата на отдельный экран: число сообщений — в первых двух
-            # байтах «хеша», текст уходит тем же 10/07 вместо картинки.
+            # История чата на отдельный экран: в «хеше» — сколько сообщений
+            # (2 байта), сколько телефон уже показал (2 байта) и вид ответа
+            # (1 байт: 1 — с заголовком «есть ещё»). Текст уходит тем же
+            # 10/07 вместо картинки.
             count = struct.unpack(">H", token[:2])[0] if len(token) >= 2 else 0
-            rows = await self.server.history_text(int(target), count)
-            if rows is None:
+            offset = struct.unpack(">H", token[2:4])[0] if len(token) >= 4 else 0
+            paged = len(token) >= 5 and token[4] == 1
+            got = await self.server.history_text(int(target), count, offset)
+            if got is None:
                 await self.send_error(C.SSBI, 0x0001, s.request_id)
                 return
+            rows, more = got
             data = blocks.history_records(rows, C.HISTORY_MAX_BYTES,
                                           lambda attach: self.server.register_attachment(
                                               int(target), attach))
-            log.info("история для %s отдана: %d байт", self.server.name_of(target), len(data))
+            if paged:
+                # Клиенту нужно знать, стоит ли предлагать «Ещё». Старый
+                # клиент этого байта не ждёт и не просит.
+                data = bytes([1 if more else 0]) + data
+            log.info("история для %s отдана: %d байт%s", self.server.name_of(target), len(data),
+                     f", сдвиг {offset}" if offset else "")
             await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
                                  blocks.icon_reply(int(target), token, data, C.BART_HISTORY),
                                  request_id=s.request_id)
@@ -1329,8 +1339,8 @@ class OscarServer:
                  avatar: Callable[[int], Awaitable[tuple[bytes, bytes] | None]] | None = None,
                  icon_hash: Callable[[int], bytes | None] | None = None,
                  fetch_attachment: Callable[[int, str], Awaitable[bytes | None]] | None = None,
-                 fetch_history: Callable[[int, int],
-                                         Awaitable[list[tuple[str, str]] | None]] | None = None,
+                 fetch_history: Callable[..., Awaitable[
+                     tuple[list[tuple[str, str]], bool] | None]] | None = None,
                  fetch_video: Callable[[int, str], Awaitable[bytes | None]] | None = None,
                  on_photo: Callable[[int, bytes], Awaitable[bool]] | None = None,
                  fetch_voice: Callable[[int, str], Awaitable[bytes | None]] | None = None,
@@ -1476,11 +1486,12 @@ class OscarServer:
         self.attachments[token] = (uin, attach, now)
         return token
 
-    async def history_text(self, uin: int, count: int) -> list[tuple[str, str]] | None:
+    async def history_text(self, uin: int, count: int,
+                           offset: int = 0) -> tuple[list[tuple[str, str]], bool] | None:
         if self.fetch_history is None:
             return None
         try:
-            return await self.fetch_history(uin, count)
+            return await self.fetch_history(uin, count, offset)
         except Exception:
             log.exception("история для %s не собралась", self.name_of(uin))
             return None
