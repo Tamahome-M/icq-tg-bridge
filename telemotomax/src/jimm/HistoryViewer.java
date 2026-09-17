@@ -174,11 +174,12 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			{
 				list.addBigText(line.substring(0, cut + 1),
 						ChatTextList.getInOutColor(!mine), Font.STYLE_BOLD, i);
-				list.addBigText(line.substring(cut + 1), -1, Font.STYLE_PLAIN, i);
+				list.addBigText(line.substring(cut + 1), list.getTextColor(),
+						Font.STYLE_PLAIN, i);
 			}
 			else
 			{
-				list.addBigText(line, -1, Font.STYLE_PLAIN, i);
+				list.addBigText(line, list.getTextColor(), Font.STYLE_PLAIN, i);
 			}
 			list.doCRLF(i);
 		}
@@ -206,12 +207,17 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		if (data != null)
 		{
 			int marker = 0;
-			// Первый байт ответа — «есть ещё»: мост приписывает его, когда
-			// клиент попросил ответ с пометкой.
-			if (marker < data.length)
+			// Ответ со страницами начинается с приметы 0xFF и байта «есть
+			// ещё». Мост постарше её не приписывает — тогда читаем записи
+			// с самого начала, как раньше, и «Ещё» не предлагаем.
+			if (data.length >= 2 && Util.getByte(data, 0) == 0xFF)
 			{
-				more = Util.getByte(data, marker) != 0;
-				marker += 1;
+				more = Util.getByte(data, 1) != 0;
+				marker = 2;
+			}
+			else
+			{
+				more = false;
 			}
 			while (marker + 3 <= data.length)
 			{
