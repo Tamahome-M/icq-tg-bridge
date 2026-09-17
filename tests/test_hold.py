@@ -319,8 +319,8 @@ async def main() -> None:
         said.append(text)
         return True
 
-    async def fetch_history(uin, count):
-        return [("[16.09 12:00] Вася: последнее", "")]
+    async def fetch_history(uin, count, offset=0):
+        return [("[16.09 12:00] Вася: последнее", "")], False
 
     bridge.oscar.deliver = deliver
     bridge.fetch_history = fetch_history
@@ -349,6 +349,33 @@ async def main() -> None:
     assert "файлом" in said[-1], "без opus честно говорим, что ушло вложением"
     assert await bridge.send_camera_photo(mom.uin, b"\xff\xd8\xff" + b"x" * 100) is True
     assert said[-1] == "[фото] отправлено", said
+
+    # История пачками: вторая пачка — то, что старее первой.
+    del bridge.fetch_history          # выше он был подменён ради open_chat
+    import datetime as dt
+    from bridge.history import HistoryItem
+    when = dt.datetime(2026, 9, 17, 9, 0, tzinfo=dt.timezone.utc)
+    whole = [HistoryItem(when, "Вася", f"строка {n}") for n in range(1, 8)]
+    wanted: list[int] = []
+
+    async def last_messages(peer_id, count, since, cap, topic_id=0):
+        wanted.append(count)
+        return whole[-count:] if count else list(whole)
+
+    bridge.telegram.history = last_messages
+    rows, more = await bridge.fetch_history(mom.uin, 3)
+    assert [r[0].split(": ", 1)[1] for r in rows] == ["строка 5", "строка 6", "строка 7"], rows
+    assert more is True, more
+    assert wanted[-1] == 4, "берём на одно сообщение больше, чтобы знать про «ещё»"
+
+    rows, more = await bridge.fetch_history(mom.uin, 3, offset=3)
+    assert [r[0].split(": ", 1)[1] for r in rows] == ["строка 2", "строка 3", "строка 4"], rows
+    assert more is True, "перед ними осталась ещё одна строка"
+
+    rows, more = await bridge.fetch_history(mom.uin, 3, offset=6)
+    assert [r[0].split(": ", 1)[1] for r in rows] == ["строка 1"], rows
+    assert more is False, "дальше истории нет"
+    print("  история пачками: ок (окно по смещению и признак «есть ещё»)")
     bridge.storage.close()
     print("  все чаты: ок (список целиком, пометки сети, возвращение убранного)")
     print("ПРИДЕРЖАНИЕ ПРОВЕРЕНО")

@@ -248,7 +248,8 @@ class Bridge:
         self.storage.raise_contact(uin)
         self._reload_roster()
         await self.refresh_shown_statuses()
-        rows = await self.fetch_history(uin, 1)
+        got = await self.fetch_history(uin, 1)
+        rows = got[0] if got else []
         last = rows[0][0] if rows else ""
         contact = self.storage.contact_by_uin(uin) or contact
         await self.reply(contact, last or "— чат открыт, сообщений пока не было —")
@@ -530,27 +531,45 @@ class Bridge:
                      self.cfg.tmm_video_seconds, len(data) // 1024)
         return data
 
-    async def fetch_history(self, uin: int, count: int) -> list[tuple[str, str]] | None:
+    async def fetch_history(self, uin: int, count: int,
+                            offset: int = 0) -> tuple[list[tuple[str, str, bool]], bool] | None:
         """История чата для TeleMotoMax — то же, что !last, но не в переписку,
         а на отдельный экран. Каждое сообщение — строка и вложение
-        («photo:<номер>» или пусто), чтобы фото из истории тоже открывались."""
+        («photo:<номер>» или пусто), чтобы фото из истории тоже открывались.
+
+        offset — сколько сообщений телефон уже показал: следующая пачка
+        берётся старее них. Вместе со списком возвращаем, осталось ли ещё
+        что листать. Курсор именно счётчиком, а не номером сообщения: у
+        Telegram это номер, у MAX — время, и общего у них нет.
+        """
         contact = self.storage.contact_by_uin(uin)
         if contact is None or contact.peer_id == ASSISTANT_PEER:
             return None
-        cap = self.cfg.history_limit
-        count = min(count or 20, cap)
-        items = await self.side_for(contact.peer_id).history(contact.peer_id, count, None, cap,
+        count = min(count or 20, self.cfg.history_limit)
+        cap = max(self.cfg.history_limit, self.cfg.tmm_history_max)
+        # На одно сообщение больше, чем нужно: по нему и видно, осталось ли
+        # что листать дальше.
+        want = min(offset + count + 1, cap)
+        items = await self.side_for(contact.peer_id).history(contact.peer_id, want, None, cap,
                                                              contact.topic_id)
-        out: list[tuple[str, str]] = []
+        # items идут от старых к новым: нужное окно — то, что старее уже
+        # показанных, и не длиннее пачки.
+        end = max(0, len(items) - offset)
+        start = max(0, end - count)
+        more = start > 0
+        items = items[start:end]
+        out: list[tuple[str, str, bool]] = []
         for i in items:
             line = f"[{i.when.astimezone():%d.%m %H:%M}] {i.who}: {i.text}"
             if self.cfg.emoji_to_text:
                 line = emoji.to_text(line)
             has_picture = i.kind in ("photo", "video", "voice") and i.msg_id
-            out.append((line, f"{i.kind}:{i.msg_id}" if has_picture else ""))
-        log.info("история «%s» для TeleMotoMax: %d сообщений, с фото %d",
-                 contact.title, len(items), sum(1 for _, a in out if a))
-        return out
+            out.append((line, f"{i.kind}:{i.msg_id}" if has_picture else "", i.who == "Я"))
+        log.info("история «%s» для TeleMotoMax: %d сообщений%s, с фото %d%s",
+                 contact.title, len(items),
+                 f" (пропущено свежих {offset})" if offset else "",
+                 sum(1 for row in out if row[1]), ", есть ещё" if more else "")
+        return out, more
 
     def icon_hash(self, uin: int) -> bytes | None:
         """Примета аватарки для блока сведений о контакте."""

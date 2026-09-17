@@ -198,15 +198,21 @@ async def run_history() -> None:
 
     fetched: list[str] = []
 
-    async def fetch_history(target: int, count: int):
-        asked.append((target, count))
-        when = dt.datetime(2026, 9, 16, 10, 0, tzinfo=dt.timezone.utc)
-        items = [HistoryItem(when, "Мама", "привет"), HistoryItem(when, "Я", "и тебе"),
-                 HistoryItem(when, "Мама", "[фото] закат", 4242, "photo"),
-                 HistoryItem(when, "Папа", "[видео 0:09] кот", 4343, "video")]
-        return [(f"[{i.when:%d.%m %H:%M}] {i.who}: {i.text}",
-                 f"{i.kind}:{i.msg_id}" if i.kind in ("photo", "video") else "")
-                for i in items[:count]]
+    when = dt.datetime(2026, 9, 16, 10, 0, tzinfo=dt.timezone.utc)
+    whole = [HistoryItem(when, "Мама", "самое старое"), HistoryItem(when, "Я", "и правда"),
+             HistoryItem(when, "Мама", "привет"), HistoryItem(when, "Я", "и тебе"),
+             HistoryItem(when, "Мама", "[фото] закат", 4242, "photo"),
+             HistoryItem(when, "Папа", "[видео 0:09] кот", 4343, "video")]
+
+    async def fetch_history(target: int, count: int, offset: int = 0):
+        asked.append((target, count, offset))
+        end = max(0, len(whole) - offset)
+        start = max(0, end - count)
+        rows = [(f"[{i.when:%d.%m %H:%M}] {i.who}: {i.text}",
+                 f"{i.kind}:{i.msg_id}" if i.kind in ("photo", "video") else "",
+                 i.who == "Я")
+                for i in whole[start:end]]
+        return rows, start > 0
 
     async def fetch_attachment(target: int, attach: str):
         fetched.append(attach)
@@ -221,18 +227,33 @@ async def run_history() -> None:
     await client.bos(await client.login_md5_jimm())
     await client.drain_for(0.3)
 
-    rows = await client.request_history(uin, 30)
-    assert asked == [(uin, 30)], asked
-    assert [t.split("] ", 1)[1] for t, _, _ in rows] == \
+    rows = await client.request_history(uin, 4)
+    assert asked == [(uin, 4, 0)], asked
+    assert [t.split("] ", 1)[1] for t, _, _, _ in rows] == \
         ["Мама: привет", "Я: и тебе", "Мама: [фото] закат", "Папа: [видео 0:09] кот"], rows
     assert rows[0][1] is None and rows[2][1] is not None, "у сообщения с фото должен быть токен"
-    assert [k for _, _, k in rows] == ["", "", "photo", "video"], "вид вложения — во флаге записи"
+    assert [k for _, _, k, _ in rows] == ["", "", "photo", "video"], "вид вложения — во флаге записи"
+    assert [m for _, _, _, m in rows] == [False, True, False, False], "своё сообщение помечено"
     # Фото из истории открывается тем же запросом, что и из чата.
     got = await client.request_photo(uin, rows[2][1])
     assert fetched == ["photo:4242"] and got["image"][:3] == b"\xff\xd8\xff"
+
+    # Пачками: первая — свежие, вторая — то, что старее, и мост говорит,
+    # осталось ли ещё.
+    asked.clear()
+    first, more = await client.request_history_page(uin, 4)
+    assert asked == [(uin, 4, 0)], asked
+    assert [t.split("] ", 1)[1] for t, _, _, _ in first][0] == "Мама: привет"
+    assert more is True, "в чате осталось ещё два сообщения"
+
+    older, more = await client.request_history_page(uin, 4, offset=4)
+    assert asked[-1] == (uin, 4, 4), asked
+    assert [t.split("] ", 1)[1] for t, _, _, _ in older] == \
+        ["Мама: самое старое", "Я: и правда"], older
+    assert more is False, "дальше истории нет — «Ещё» предлагать не надо"
     await client.close()
     server._server.close()
-    print("  история: ок (текст последних сообщений по службе 0x10)")
+    print("  история: ок (последние сообщения и подгрузка пачками)")
 
 
 async def run_camera() -> None:
