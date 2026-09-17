@@ -248,6 +248,15 @@ class Session:
             self.pings_seen += 1
             log.info("пинг от телефона %s: %d-й%s", self.peer, self.pings_seen,
                      f", через {since:.0f} с после прошлого" if since else "")
+            # Отвечаем тем же: телефону нужен признак, что канал жив. На
+            # GPRS оборванное соединение остаётся открытым, и без ответа
+            # клиент считает себя в сети, пока не попробует что-то
+            # отправить — а мост его уже похоронил. Обычный Jimm ответ
+            # просто не замечает.
+            try:
+                await self.send_flap(5, b"")
+            except Exception:
+                pass
         if self.server.ack_works is None and self.server._probe_started:
             # Признак жизни во время проверки подтверждений — повод решить.
             self.server.wake_sender()

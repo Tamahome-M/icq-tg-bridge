@@ -95,10 +95,22 @@ public class TimerTasks extends TimerTask
 				if (Icq.isConnected()
 						&& Options.getBoolean(Options.OPTION_KEEP_CONN_ALIVE))
 				{
+					// Мост отвечает на keepalive. Если в ответ на два пинга
+					// подряд не пришло ни байта, канала больше нет — на
+					// GPRS такое соединение висит открытым, и телефон
+					// продолжал бы показывать «в сети», ничего не получая.
+					if (Icq.getPingMisses() >= 2)
+					{
+						Icq.resetPingWatch();
+						JimmException.handleException(
+								new JimmException(120, 3, JimmException.ICQ_MAIN));
+						break;
+					}
 					// Instantiate and send an alive packet
 					try
 					{
 						Icq.sendPacket(new jimm.comm.Packet(5, new byte[0]));
+						Icq.notePingSent();
 					} catch (JimmException e)
 					{
 						JimmException.handleException(e);
