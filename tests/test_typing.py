@@ -100,11 +100,27 @@ async def main() -> None:
     assert sent[-1] == (mom, False), f"индикатор так и не погас: {sent}"
 
     # --- повторные уведомления продлевают, а не дублируют -----------------
+    # На каждое уведомление телефон играет звук, поэтому по умолчанию
+    # (typing_repeat = 0) продления телефону не уходят вовсе.
     sent.clear()
     for _ in range(3):
         await bridge.on_telegram_typing(555, True)
         await asyncio.sleep(0.1)
-    assert all(active for _, active in sent), sent
+    assert sent == [(mom, True)], f"продления не должны доходить до телефона: {sent}"
+    await asyncio.sleep(0.4)
+    assert sent[-1] == (mom, False), sent
+
+    # С typing_repeat повтор всё же уходит, но не чаще заданного.
+    sent.clear()
+    bridge.cfg.typing_repeat = 0.2
+    await bridge.on_telegram_typing(555, True)
+    await asyncio.sleep(0.1)
+    await bridge.on_telegram_typing(555, True)       # рано — молчим
+    assert sent == [(mom, True)], sent
+    await asyncio.sleep(0.15)
+    await bridge.on_telegram_typing(555, True)       # срок вышел — повторяем
+    assert sent == [(mom, True), (mom, True)], sent
+    bridge.cfg.typing_repeat = 0
     await asyncio.sleep(0.4)
     assert sent[-1] == (mom, False), sent
 

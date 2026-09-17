@@ -50,6 +50,7 @@ class Config:
     idle_timeout: int = 360
     delivery_ack: bool = True
     typing_prime: bool = True
+    typing_repeat: int = 0
     ack_on: str = "read"
     ack_timeout: int = 30
     catch_up: bool = True
@@ -178,6 +179,7 @@ class Config:
             idle_timeout=int(br.get("idle_timeout", cls.idle_timeout)),
             delivery_ack=bool(br.get("delivery_ack", True)),
             typing_prime=bool(br.get("typing_prime", cls.typing_prime)),
+            typing_repeat=int(br.get("typing_repeat", cls.typing_repeat)),
             ack_on=str(br.get("ack_on", cls.ack_on)),
             ack_timeout=int(br.get("ack_timeout", cls.ack_timeout)),
             catch_up=bool(br.get("catch_up", True)),
