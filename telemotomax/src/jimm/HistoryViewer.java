@@ -171,10 +171,15 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			int cut = -1;
 			int close = line.indexOf("] ");
 			if (close > 0) cut = line.indexOf(": ", close);
-			if (cut > 0)
+			if (cut > 0 && cut + 2 <= line.length())
 			{
-				list.addBigText(line.substring(0, cut + 1) + " ",
+				list.addBigText(line.substring(0, cut + 1),
 						ChatTextList.getInOutColor(!mine), Font.STYLE_BOLD, i);
+				// Перевод строки обязателен: без него текст дописывается в
+				// строку заголовка, и то, что в неё уже не влезает, уходит
+				// за край экрана — от «текст для проверки» оставалось
+				// «проверки». В чате перенос делается ровно так же.
+				list.doCRLF(i);
 				JimmUI.addMessageText(list, line.substring(cut + 2),
 						list.getTextColor(), i);
 			}
