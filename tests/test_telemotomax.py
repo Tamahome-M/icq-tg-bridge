@@ -445,6 +445,51 @@ async def run_chats() -> None:
     print("  список чатов: ок (все чаты с пометками, возвращение забытого)")
 
 
+def run_history_layout() -> None:
+    """Клиент должен читать историю от моста любого возраста."""
+
+    def record(text: str, flag: int = 0) -> bytes:
+        raw = text.encode("utf-8")
+        out = struct.pack(">H", len(raw)) + raw + bytes([flag])
+        return out + (os.urandom(16) if flag & 1 else b"")
+
+    body = (record("[17.09 11:20] Вася: привет") + record("[17.09 11:21] Я: и тебе", 8)
+            + record("[17.09 11:22] Вася: [фото] кот", 1))
+    variants = {
+        "без заголовка": (body, 0, False),
+        "один байт": (bytes([1]) + body, 1, True),
+        "примета и флаг": (bytes([0xFF, 1]) + body, 2, True),
+    }
+
+    def fits(data: bytes, start: int) -> bool:
+        pos, seen = start, 0
+        while pos + 3 <= len(data):
+            length = struct.unpack(">H", data[pos:pos + 2])[0]
+            pos += 2
+            if not 0 < length <= 4000 or pos + length + 1 > len(data):
+                return False
+            pos += length
+            flag = data[pos]
+            pos += 1
+            if flag & 0xF0:
+                return False
+            if flag & 1:
+                if pos + 16 > len(data):
+                    return False
+                pos += 16
+            seen += 1
+        return seen > 0 and pos == len(data)
+
+    for name, (data, want_start, want_more) in variants.items():
+        order = [2, 1, 0] if data[:1] == b"\xff" else [0, 1, 2]
+        start = next((i for i in order if i <= len(data) and fits(data, i)), 0)
+        more = bool(data[1]) if start == 2 else (bool(data[0]) if start == 1 else False)
+        assert start == want_start, f"{name}: начало {start}, ждали {want_start}"
+        assert more is want_more, f"{name}: «есть ещё» {more}"
+        assert len(FakeJimm._history_records(data[start:])) == 3, name
+    print("  разбор истории: ок (ответ моста любого возраста читается)")
+
+
 async def run_stale_service() -> None:
     """Оборванное соединение за аватарками не должно держать слот вечно."""
     from bridge.oscar import server as server_module
@@ -509,6 +554,7 @@ async def main() -> None:
     await run_camera()
     await run_voice()
     await run_chats()
+    run_history_layout()
     await run_stale_service()
     print("TELEMOTOMAX ПРОВЕРЕН")
 

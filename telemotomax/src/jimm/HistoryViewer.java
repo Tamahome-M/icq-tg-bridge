@@ -164,23 +164,11 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		{
 			String line = (String) texts.elementAt(i);
 			boolean mine = ((Integer) kinds.elementAt(i)).intValue() >= 8;
-			// Строка от моста — «[дд.мм чч:мм] Кто: текст». Заголовок красим
-			// как в чате (свои одним цветом, чужие другим), текст оставляем
-			// обычным — читать его так легче.
-			int cut = -1;
-			int close = line.indexOf("] ");
-			if (close > 0) cut = line.indexOf(": ", close);
-			if (cut > 0)
-			{
-				list.addBigText(line.substring(0, cut + 1),
-						ChatTextList.getInOutColor(!mine), Font.STYLE_BOLD, i);
-				list.addBigText(line.substring(cut + 1), list.getTextColor(),
-						Font.STYLE_PLAIN, i);
-			}
-			else
-			{
-				list.addBigText(line, list.getTextColor(), Font.STYLE_PLAIN, i);
-			}
+			// Своё и чужое различаются цветом всей строки — как входящее и
+			// исходящее в чате. Красить отдельно имя и текст не выходит:
+			// две части одной строки список показывает только первую.
+			list.addBigText(line, ChatTextList.getInOutColor(!mine),
+					Font.STYLE_PLAIN, i);
 			list.doCRLF(i);
 		}
 	}
@@ -206,19 +194,30 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		Vector newKinds = new Vector();
 		if (data != null)
 		{
-			int marker = 0;
-			// Ответ со страницами начинается с приметы 0xFF и байта «есть
-			// ещё». Мост постарше её не приписывает — тогда читаем записи
-			// с самого начала, как раньше, и «Ещё» не предлагаем.
-			if (data.length >= 2 && Util.getByte(data, 0) == 0xFF)
+			// Мосты разных возрастов отвечают по-разному: со страницами
+			// впереди идёт примета 0xFF и байт «есть ещё», с мостом
+			// постарше — сразу записи, а был и промежуточный, с одним
+			// байтом без приметы. Перепутать их нельзя: со сдвигом на
+			// байт разбор даёт пустые строки вместо текста. Поэтому
+			// пробуем все три начала и берём то, при котором записи легли
+			// ровно до конца ответа.
+			// Порядок проверки — от самого вероятного: с приметой впереди
+			// это наверняка ответ со страницами.
+			int[] order = (data.length > 0 && Util.getByte(data, 0) == 0xFF)
+					? new int[] { 2, 1, 0 } : new int[] { 0, 1, 2 };
+			int start = 0;
+			for (int i = 0; i < order.length; i++)
 			{
-				more = Util.getByte(data, 1) != 0;
-				marker = 2;
+				if (order[i] > data.length) continue;
+				if (fits(data, order[i]))
+				{
+					start = order[i];
+					break;
+				}
 			}
-			else
-			{
-				more = false;
-			}
+			more = (start == 2) ? Util.getByte(data, 1) != 0
+					: ((start == 1) ? Util.getByte(data, 0) != 0 : false);
+			int marker = start;
 			while (marker + 3 <= data.length)
 			{
 				int len = Util.getWord(data, marker);
@@ -281,6 +280,33 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		checkMore();
 		checkPhoto();
 		list.repaint();
+	}
+
+	// Ложатся ли записи ровно до конца ответа, если начать с этого байта.
+	// Заодно отбрасываем начала, дающие пустые или нелепо длинные строки:
+	// именно так выглядит разбор со сдвигом.
+	private static boolean fits(byte[] data, int start)
+	{
+		int marker = start;
+		int records = 0;
+		while (marker + 3 <= data.length)
+		{
+			int len = Util.getWord(data, marker);
+			marker += 2;
+			if (len == 0 || len > 4000) return false;
+			if (marker + len + 1 > data.length) return false;
+			marker += len;
+			int flag = Util.getByte(data, marker);
+			marker += 1;
+			if ((flag & 0xF0) != 0) return false;        // старшие биты не наши
+			if ((flag & 1) != 0)
+			{
+				if (marker + 16 > data.length) return false;
+				marker += 16;
+			}
+			records++;
+		}
+		return records > 0 && marker == data.length;
 	}
 
 	private void checkMore()
