@@ -733,6 +733,14 @@ public class Options
 		optionsForm.activateForm();
 	}
 
+	/** Меню списка контактов — из главного меню, а не из глубины настроек. */
+	static public void editContactList()
+	{
+		if (optionsForm == null)
+			optionsForm = new OptionsForm();
+		optionsForm.activateContactList();
+	}
+
 	static public void setCaptchaImage(Image img)
 	{
 		int width = 9*SplashCanvas.getAreaWidth()/10-2;
@@ -1227,7 +1235,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			if (connected)
 			{
 				JimmUI.addTextListItem(optionsMenu, "myself", MainMenu.menuIcons.elementAt(23), OPTIONS_MY_INFO, true, -1, Font.STYLE_PLAIN);
-				JimmUI.addTextListItem(optionsMenu, "manage_contact_list", MainMenu.menuIcons.elementAt(24), OPTIONS_MANAGE_CL, true, -1, Font.STYLE_PLAIN);
 			}
 //#sijapp cond.if modules_ANTISPAM="true"#			
 			JimmUI.addTextListItem(optionsMenu, "antispam", MainMenu.menuIcons.elementAt(25), OPTIONS_ANTISPAM, true, -1, Font.STYLE_PLAIN);
@@ -1241,10 +1248,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			break;
 			
 		case TYPE_MCL_OPTIONS:
+			JimmUI.addTextListItem(optionsMenu, "all_chats", MainMenu.menuIcons.elementAt(2), OPTIONS_ALL_CHATS, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "add_user", MainMenu.menuIcons.elementAt(27), OPTIONS_ADD_USER, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "add_group", MainMenu.menuIcons.elementAt(28), OPTIONS_ADD_GROUP, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "search_user", MainMenu.menuIcons.elementAt(29), OPTIONS_SEARCH_USER, true, -1, Font.STYLE_PLAIN);
-			JimmUI.addTextListItem(optionsMenu, "all_chats", MainMenu.menuIcons.elementAt(29), OPTIONS_ALL_CHATS, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "del_group", MainMenu.menuIcons.elementAt(30), OPTIONS_DELETE_GROUP, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "rename_group", MainMenu.menuIcons.elementAt(31), OPTIONS_RENAME_GROUP, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "priv_lists", MainMenu.menuIcons.elementAt(32), OPTIONS_PRIVATE_LISTS, true, -1, Font.STYLE_PLAIN);
@@ -1750,6 +1757,12 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		lastSortMethod  = Options.getInt    (Options.OPTION_CL_SORT_BY);
 
 		initOptionsList(TYPE_TOP_OPTIONS);
+		JimmUI.setLastScreen(this, false);
+	}
+
+	public void activateContactList()
+	{
+		initOptionsList(TYPE_MCL_OPTIONS);
 		JimmUI.setLastScreen(this, false);
 	}
 
