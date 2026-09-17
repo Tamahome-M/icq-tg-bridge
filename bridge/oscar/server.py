@@ -132,6 +132,7 @@ class Session:
         self.auth_key = b""
         self.last_seen = time.time()
         self.pings_seen = 0
+        self.last_ping = 0.0
         self.client_name = "?"
         # Версия TeleMotoMax (старший, младший), если подключился он: такому
         # клиенту можно слать то, чего обычный Jimm не поймёт.
@@ -238,7 +239,15 @@ class Session:
         log.debug("<- FLAP канал %d, %d байт: %s", channel, len(payload), payload[:48].hex())
         self.last_seen = time.time()
         if channel == 5:
+            # Пинг — единственный признак жизни молчащего телефона, по нему
+            # же сторож решает, жива ли сессия. В журнале он виден с
+            # промежутком от прошлого: по нему сразу понятно, ходит ли
+            # связь и с какой частотой телефон пингует.
+            since = time.time() - self.last_ping if self.last_ping else 0.0
+            self.last_ping = time.time()
             self.pings_seen += 1
+            log.info("пинг от телефона %s: %d-й%s", self.peer, self.pings_seen,
+                     f", через {since:.0f} с после прошлого" if since else "")
         if self.server.ack_works is None and self.server._probe_started:
             # Признак жизни во время проверки подтверждений — повод решить.
             self.server.wake_sender()
