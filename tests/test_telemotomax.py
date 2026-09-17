@@ -425,6 +425,14 @@ async def run_chats() -> None:
     assert await client.open_chat(mom, old) is True
     assert opened == [old], opened
     assert await client.open_chat(mom, 12345) is False, "чужой UIN — отказ, а не тишина"
+    # Пинг от телефона виден в журнале и считается: по нему сторож решает,
+    # жива ли сессия.
+    before = server.session.pings_seen
+    await client.ping()
+    await client.drain_for(0.3)
+    assert server.session.pings_seen == before + 1, "пинг должен считаться"
+    assert server.session.last_ping > 0, "время пинга нужно для промежутка в журнале"
+
     await client.close()
     await asyncio.sleep(0.2)
 
