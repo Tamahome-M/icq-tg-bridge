@@ -498,9 +498,12 @@ public class Options
 		setBoolean(OPTION_SHOW_MESS_DATE, true);
 		setBoolean(OPTION_SHOW_MESS_CLRF, false);
 		// Текст сообщения обычным цветом: цветными остаются ник и время,
-		// а красный текст читать на V3 тяжело.
+		// а красный текст читать на V3 тяжело. Пометку «уже переключили»
+		// здесь ставить нельзя: значения по умолчанию раскладываются перед
+		// чтением настроек, и с ней разовое переключение у тех, кто
+		// обновился со старой сборки, не срабатывало ни разу.
 		setBoolean(OPTION_MESS_COLORED_TEXT, false);
-		setBoolean(OPTION_PLAIN_TEXT_DONE, true);
+		setBoolean(OPTION_PLAIN_TEXT_DONE, false);
 		setBoolean(OPTION_CL_CLIENTS, true);
 		setBoolean(OPTION_XSTATUSES, true);
 		setBoolean(OPTION_ASK_FOR_WEB_FT, true);
@@ -602,8 +605,9 @@ public class Options
 			}
 			// Обновившимся со старой сборки один раз выключаем цветной текст
 			// сообщения: ник и время остаются цветными, а сам текст — обычным.
-			// Кому так не нравится, вернёт галочку в настройках — больше мы
-			// её не трогаем.
+			// В настройках, сохранённых прежней сборкой, этой пометки нет —
+			// по ней и видно, что переключение ещё не делали. Кому так не
+			// нравится, вернёт галочку в настройках — больше мы её не трогаем.
 			if (!getBoolean(OPTION_PLAIN_TEXT_DONE))
 			{
 				setBoolean(OPTION_MESS_COLORED_TEXT, false);

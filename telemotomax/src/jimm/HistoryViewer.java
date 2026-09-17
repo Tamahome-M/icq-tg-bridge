@@ -58,6 +58,8 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	private Vector kinds = new Vector();     // per message: Integer kind (1 photo, 2 video)
 	private int shown;                       // сколько сообщений уже загружено
 	private boolean more;                    // осталось ли что подгружать
+	private boolean paged;                   // мост ответил с пометкой «есть ещё»
+	private boolean exhausted;               // последняя пачка пришла пустой
 	private boolean loading;
 
 	private HistoryViewer(JimmScreen back, String uin, String name)
@@ -232,6 +234,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 					break;
 				}
 			}
+			paged = start > 0;
 			more = (start == 2) ? Util.getByte(data, 1) != 0
 					: ((start == 1) ? Util.getByte(data, 0) != 0 : false);
 			int marker = start;
@@ -275,7 +278,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			kinds.insertElementAt(newKinds.elementAt(i), 0);
 		}
 		shown += newTexts.size();
-		if (newTexts.size() == 0) more = false;
+		if (newTexts.size() == 0) exhausted = true;
 		if (texts.size() == 0)
 		{
 			texts.addElement(ResourceBundle.getString(
@@ -326,10 +329,14 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		return records > 0 && marker == data.length;
 	}
 
+	// «Ещё» показываем, пока есть что просить. Мост с пометкой сам говорит,
+	// осталось ли; мост постарше её не шлёт — тогда предлагаем, пока
+	// очередная пачка не придёт пустой.
 	private void checkMore()
 	{
 		list.removeCommandEx(cmdMore);
-		if (more && texts.size() < MAX_LINES)
+		boolean worth = paged ? more : !exhausted;
+		if (worth && texts.size() < MAX_LINES)
 			list.addCommandEx(cmdMore, VirtualList.MENU_TYPE_RIGHT);
 	}
 
