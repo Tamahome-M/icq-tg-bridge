@@ -71,7 +71,11 @@ public class RequestBartAction extends Action
 	private Date lastActivity = new Date();
 	private boolean active;
 	// Replies that come in parts (the clip): collected here until the last one.
-	private java.io.ByteArrayOutputStream parts;
+	// The buffer is allocated once, by the size of the first part, so the
+	// phone does not hold the clip twice while the parts are being joined.
+	private byte[] parts;
+	private int filled;
+	private boolean notified;         // слушателю уже сказали, чем кончилось
 
 	public RequestBartAction(String uin, int bartType, byte[] token, Listener listener)
 	{
@@ -236,8 +240,21 @@ public class RequestBartAction extends Action
 						marker += 2;
 						if (total > 1)
 						{
-							if (parts == null) parts = new java.io.ByteArrayOutputStream();
-							parts.write(buf, marker, dataLength);
+							if (parts == null)
+							{
+								// Части, кроме последней, одного размера —
+								// значит по первой известен весь объём.
+								parts = new byte[dataLength * total];
+								filled = 0;
+							}
+							if (filled + dataLength > parts.length)
+							{
+								byte[] bigger = new byte[filled + dataLength];
+								System.arraycopy(parts, 0, bigger, 0, filled);
+								parts = bigger;
+							}
+							System.arraycopy(buf, marker, parts, filled, dataLength);
+							filled += dataLength;
 							buf = null;
 							if (listener instanceof ProgressListener)
 								((ProgressListener) listener).onBartProgress(part, total);
@@ -247,8 +264,16 @@ public class RequestBartAction extends Action
 								this.active = false;
 								return true;           // wait for the rest
 							}
-							byte[] all = parts.toByteArray();
+							byte[] all = parts;
+							if (filled != all.length)
+							{
+								// Последняя часть короче — отдаём ровно то,
+								// что пришло.
+								all = new byte[filled];
+								System.arraycopy(parts, 0, all, 0, filled);
+							}
 							parts = null;
+							notified = true;
 							listener.onBart(all);
 						}
 						else
@@ -256,6 +281,7 @@ public class RequestBartAction extends Action
 							byte[] data = new byte[dataLength];
 							System.arraycopy(buf, marker, data, 0, dataLength);
 							buf = null;
+							notified = true;
 							listener.onBart(data);
 						}
 						this.state = STATE_ACTION_DONE;
@@ -297,6 +323,15 @@ public class RequestBartAction extends Action
 		{
 			this.state = STATE_ERROR;
 		}
+		// Действие с ошибкой просто убирают из очереди, и экран, который ждёт
+		// ответа, остался бы с «Загрузка...» навсегда. Поэтому о неудаче
+		// говорим сами — один раз — и отпускаем собранные части.
+		if (this.state == STATE_ERROR && !this.notified)
+		{
+			this.notified = true;
+			this.parts = null;
+			if (listener != null) listener.onBart(null);
+		}
 		return (this.state == STATE_ERROR);
 	}
 
@@ -314,7 +349,12 @@ public class RequestBartAction extends Action
 		case ON_CANCEL:
 		case ON_ERROR:
 			DebugLog.addText("RequestBartAction ON_ERROR");
-			listener.onBart(null);
+			parts = null;
+			if (!notified)
+			{
+				notified = true;
+				listener.onBart(null);
+			}
 			Icq.disconnectBart(true);
 			break;
 		}

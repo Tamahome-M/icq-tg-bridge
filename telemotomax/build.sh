@@ -69,11 +69,22 @@ rm -rf src && mkdir src && cp -r "$HERE/src" "$HERE/res" "$HERE/util" "$HERE/bui
 STAMP="$VERSION.$(date +%y%m%d)"
 MAJOR=${VERSION%%.*}
 MINOR=${VERSION#*.}; MINOR=${MINOR%%.*}
+# Набор модулей Jimm. FILES — это передача файлов и прямые соединения
+# между клиентами: мосту они не нужны, а памяти и классов берут немало.
+# «Печатает» от него не зависит — ни объявление способности при входе, ни
+# разбор чужих, ни приём и отправка 04/14 (проверено по исходникам), —
+# поэтому по умолчанию собираем без него. TMM_MODULES=full вернёт всё.
+MODULES=${TMM_MODULES:-light}
+case "$MODULES" in
+	light) MODULES="SMILES_STD,AVATARS" ;;
+	full)  MODULES="FILES,SMILES_STD,AVATARS" ;;
+esac
 sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION###|$STAMP|; \
-     s|###TMM-VERSION-JAVA###|$VERSION|; s|###TMM-NAME###|$NAME|" "$HERE/build.properties" > src/build.properties
+     s|###TMM-VERSION-JAVA###|$VERSION|; s|###TMM-NAME###|$NAME|; \
+     s|###TMM-MODULES###|$MODULES|" "$HERE/build.properties" > src/build.properties
 sed -i "s|TMM_VERSION_MAJOR = .*;|TMM_VERSION_MAJOR = $MAJOR;|; \
         s|TMM_VERSION_MINOR = .*;|TMM_VERSION_MINOR = $MINOR;|" src/src/jimm/comm/Icq.java
-say "Версия: $STAMP (способность TMM:$MAJOR.$MINOR, имя «$NAME»)"
+say "Версия: $STAMP (способность TMM:$MAJOR.$MINOR, имя «$NAME», модули $MODULES)"
 cd src
 
 say "Сборка"

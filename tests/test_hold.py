@@ -378,6 +378,56 @@ async def main() -> None:
     print("  история пачками: ок (окно по смещению и признак «есть ещё»)")
     bridge.storage.close()
     print("  все чаты: ок (список целиком, пометки сети, возвращение убранного)")
+
+    # --- обрыв Telegram: мост не должен тихо заканчивать работу ------------
+    import bridge.bridge as bridge_module
+    bridge = make_bridge()
+    bridge_module.TG_RETRY_START = 0.05
+    bridge_module.TG_RETRY_MAX = 0.2
+
+    class FlakyTelegram:
+        """Отваливается дважды, на третий раз соединение возвращается."""
+
+        def __init__(self):
+            self.drops = 0
+            self.connected = False
+
+        async def run_until_disconnected(self):
+            self.drops += 1
+            self.connected = False
+
+        async def connect(self):
+            self.connected = self.drops >= 2      # со второго раза получилось
+
+        def is_connected(self):
+            return self.connected
+
+    flaky = FlakyTelegram()
+    bridge.telegram.client = flaky
+    caught: list[str] = []
+
+    async def refresh_roster():
+        caught.append("список")
+
+    async def catch_up():
+        caught.append("очередь")
+
+    bridge.refresh_roster = refresh_roster
+    bridge.catch_up = catch_up
+    task = asyncio.create_task(bridge._keep_telegram())
+    await asyncio.sleep(0.4)
+    assert flaky.drops >= 2, f"мост должен был подключаться заново: {flaky.drops}"
+    assert caught[:2] == ["список", "очередь"], \
+        f"после восстановления связи надо догнать пропущенное: {caught}"
+    assert not task.done(), "мост не должен заканчивать работу из-за обрыва"
+    bridge._stopping = True
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    bridge.storage.close()
+    print("  обрыв Telegram: ок (мост подключается заново и догоняет пропущенное)")
     print("ПРИДЕРЖАНИЕ ПРОВЕРЕНО")
 
 

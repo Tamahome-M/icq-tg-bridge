@@ -329,6 +329,7 @@
 "play_voice"				"Play voice"
 "voice_start"				"Press fire to record"
 "voice_stop"				"Press fire to stop"
+"voice_no_answer"				"no answer from bridge"
 "voice_sent"				"Sent"
 "voice_waiting"				"Waiting for bridge..."
 "voice_part"				"part"

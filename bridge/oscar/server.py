@@ -28,6 +28,8 @@ log = logging.getLogger("oscar")
 MAX_SNAC_PAYLOAD = 3800          # с запасом под скромные буферы телефона
 BUDDY_BURST = 20                 # по столько уведомлений об онлайне за раз
 SENDER_IDLE_POLL = 10            # как часто отправитель просыпается сам, секунды
+SERVICE_IDLE_TIMEOUT = 180       # столько молчит соединение за аватарками — и хватит
+UPLOAD_TIMEOUT = 300             # столько ждём остальные части снимка или голосового
 SENT_MEMORY = 200                # столько отправленных помним ради галочек
 AWAITING_LIMIT = 500             # потолок неподтверждённых сообщений в памяти
 ATTACH_TTL = 24 * 3600           # сколько живёт токен вложения для TeleMotoMax
@@ -267,6 +269,7 @@ class Session:
                 # иначе телефон останется без сообщений.
                 self.service_only = True
                 self.authorized = True
+                self.spawn(self.watch_service())
                 # Расширения решаются по основной сессии: это второе соединение
                 # того же клиента, способности он объявлял там.
                 main = self.server.session
@@ -421,10 +424,25 @@ class Session:
                 await self.close(f"молчание {silent:.0f} с")
                 return
 
+    async def watch_service(self) -> None:
+        """Соединение за аватарками живёт от запроса до запроса. Телефон
+        закрывает его сам, но оборванное на GPRS остаётся открытым — и
+        держит слот, которых всего max_connections. Молчит дольше срока —
+        закрываем."""
+        step = max(0.05, min(30.0, SERVICE_IDLE_TIMEOUT / 3))
+        while not self.closed:
+            await asyncio.sleep(step)
+            silent = time.time() - self.last_seen
+            if silent > SERVICE_IDLE_TIMEOUT:
+                log.info("соединение за аватарками %s молчит %.0f с — закрываю",
+                         self.peer, silent)
+                await self.close(f"служебное молчание {silent:.0f} с")
+                return
+
     async def start_bos(self) -> None:
         self.authorized = True
         self.server.session_arrived(self)
-        asyncio.create_task(self.watch_idle())
+        self.spawn(self.watch_idle())
         families = b"".join(struct.pack(">H", f) for f in C.FAMILY_VERSIONS)
         await self.send_snac(C.OSERVICE, C.SRV_READY, families)
 
@@ -813,9 +831,9 @@ class Session:
         if self.service_only:
             return          # соединение за аватарками: ни списка статусов, ни очереди
         log.info("клиент готов: %s, %r", self.peer, self.client_name)
-        asyncio.create_task(self.announce_buddies())
+        self.spawn(self.announce_buddies())
         self.offline_phase = True
-        asyncio.create_task(self._offline_gate())
+        self.spawn(self._offline_gate())
 
     async def _offline_gate(self) -> None:
         """Если клиент так и не спросил офлайн-сообщения — отдаём очередь как обычно."""
@@ -1079,6 +1097,13 @@ class Session:
         uin = int(target)
         if part == 1:
             self.upload = bytearray()
+            self.upload_started = time.time()
+        elif self.upload is not None and time.time() - self.upload_started > UPLOAD_TIMEOUT:
+            # Телефон оборвался на середине: держать мегабайт недосбора
+            # до конца сессии незачем.
+            log.warning("части снимка идут дольше %d с — бросаю недособранное",
+                        UPLOAD_TIMEOUT)
+            self.upload = None
         if self.upload is None:
             return                      # первая часть потерялась — ждать нечего
         self.upload += chunk
@@ -1125,6 +1150,11 @@ class Session:
             self.upload = bytearray()
             self.upload_seconds = seconds
             self.upload_kind = kind
+            self.upload_started = time.time()
+        elif self.upload is not None and time.time() - self.upload_started > UPLOAD_TIMEOUT:
+            log.warning("части голосового идут дольше %d с — начинаю заново",
+                        UPLOAD_TIMEOUT)
+            self.upload = None
         if self.upload is None:
             return
         self.upload += chunk
@@ -1410,15 +1440,32 @@ class OscarServer:
         self.last_auth_key = b""
         self._cookies: dict[bytes, float] = {}
         self._server: asyncio.AbstractServer | None = None
+        # Ссылки на фоновые задачи держим сами: без них сборщик мусора
+        # вправе унести задачу на середине, и отправитель однажды просто
+        # не проснётся.
+        self._own_tasks: set[asyncio.Task] = set()
 
     # --- жизненный цикл -------------------------------------------------
 
     async def start(self) -> None:
         self._server = await asyncio.start_server(
             self._accept, self.cfg.oscar_host, self.cfg.oscar_port)
-        asyncio.create_task(self.sender_loop())
+        self._keep(self.sender_loop())
         log.info("OSCAR слушает %s:%d, UIN владельца %s",
                  self.cfg.oscar_host, self.cfg.oscar_port, self.uin)
+
+    def _keep(self, coro) -> asyncio.Task:
+        """Задача, которая переживёт сборщик мусора и пожалуется, если упадёт."""
+        task = asyncio.create_task(coro)
+        self._own_tasks.add(task)
+
+        def done(t: asyncio.Task) -> None:
+            self._own_tasks.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                log.error("сбой фоновой задачи сервера", exc_info=t.exception())
+
+        task.add_done_callback(done)
+        return task
 
     async def stop(self) -> None:
         """Перестаёт принимать подключения и закрывает текущую сессию."""
@@ -1585,7 +1632,7 @@ class OscarServer:
             self.session = None
             log.info("телефон подключился заново (%s) — прежнее соединение %s закрываю",
                      session.peer, old.peer)
-            asyncio.create_task(old.close())
+            self._keep(old.close())
             self.awaiting.clear()
             returned = self.storage.reset_sent()
             if returned:
@@ -1793,7 +1840,7 @@ class OscarServer:
                 if self.idle_timeout > 0 and silent_for > self.idle_timeout:
                     log.warning("от клиента ни подтверждений, ни вестей %.0f с — "
                                 "закрываю сессию", silent_for)
-                    asyncio.create_task(session.close())
+                    self._keep(session.close())
                 return
             log.warning("клиент жив, но не подтверждает получение — "
                         "перехожу на обычные сообщения")

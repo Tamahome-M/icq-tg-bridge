@@ -156,6 +156,9 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			os.close(); os = null;
 			fc.close(); fc = null;
 			filePath = url;
+			// Данные уже во временном файле — держать их ещё и в куче незачем:
+			// плеер читает с «диска», а памяти на V3 немного.
+			data = null;
 			start(Manager.createPlayer(url));
 			return null;
 		}

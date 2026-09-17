@@ -44,6 +44,8 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 {
 	public static final int MAX_SECONDS = 60;
 	public static final int MAX_BYTES = 512 * 1024;
+	/** Столько ждём от моста ответа «ушло или нет». */
+	public static final int ANSWER_WAIT = 45 * 1000;
 
 	private static VoiceRecorder current;
 
@@ -239,6 +241,7 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 						}
 					});
 					status = ResourceBundle.getString("voice_waiting");
+					waitForBridge();
 				}
 				catch (Exception e)
 				{
@@ -246,6 +249,23 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 					failed(e);
 					return;
 				}
+				repaint();
+			}
+		}.start();
+	}
+
+	// Ответ моста (10/03) может и не прийти — например, связь оборвалась на
+	// последней части. Ждать вечно нельзя: экран должен сказать, чем кончилось.
+	private void waitForBridge()
+	{
+		new Thread() {
+			public void run()
+			{
+				try { Thread.sleep(ANSWER_WAIT); } catch (Exception ignore) {}
+				if (current != VoiceRecorder.this || !sending) return;
+				sending = false;
+				status = ResourceBundle.getString("camera_not_sent");
+				stopReason = ResourceBundle.getString("voice_no_answer");
 				repaint();
 			}
 		}.start();

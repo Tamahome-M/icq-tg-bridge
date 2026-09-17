@@ -62,6 +62,8 @@ CHAT_FRAMES = (OP_LOGIN2, OP_LOGIN, OP_SYNC, OP_CONFIG, OP_CHAT_INFO, OP_CHATS_L
 MUTE_KEY = "dontDisturbUntil"
 MUTE_FOREVER = -1
 START_TIMEOUT = 60
+RETRY_START = 5                  # через сколько поднимать сторону MAX заново
+RETRY_MAX = 300                  # и не реже, чем раз в пять минут
 
 TAGS = {
     "PHOTO": "[фото]",
@@ -373,13 +375,41 @@ class MaxSide:
             raise RuntimeError(f"MAX не ответил за {START_TIMEOUT} с")
 
     async def _run(self) -> None:
-        try:
-            await self.client.start()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            log.error("клиент MAX остановился: %s: %s", type(exc).__name__, exc)
-            raise
+        """Держит сторону MAX живой, пока мост работает.
+
+        PyMax сам переподключается при сетевых обрывах, но на всём
+        остальном — ошибке разбора, отказе сервера, закрытии сессии —
+        `start()` просто возвращается или бросает, и MAX молча замолкает
+        до перезапуска моста. Поэтому поднимаем заново сами, отступая всё
+        дальше, чтобы не долбить сервер.
+        """
+        delay = RETRY_START
+        while True:
+            began = time.time()
+            try:
+                await self.client.start()
+                log.warning("клиент MAX завершился сам — поднимаю заново через %.0f с", delay)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error("клиент MAX остановился: %s: %s — пробую снова через %.0f с",
+                          type(exc).__name__, exc, delay)
+            if time.time() - began > RETRY_MAX:
+                delay = RETRY_START     # сторона долго работала — это не круговерть
+            if not self._started.is_set():
+                # Ни разу не вошли: пусть start() расскажет об этом мосту,
+                # а тот — пользователю. Вслепую долбиться смысла нет.
+                raise RuntimeError("вход в MAX не состоялся")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, RETRY_MAX)
+            try:
+                await self.client.close()
+            except Exception:
+                pass
+            self._started.clear()
+            self.client = self._make_client(interactive=False)
+            self._bind_handlers()
+            log.info("поднимаю сторону MAX заново")
 
     async def login(self) -> None:
         """Интерактивный вход: телефон из настроек, код из SMS, при необходимости пароль."""
