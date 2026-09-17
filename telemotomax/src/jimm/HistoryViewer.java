@@ -202,8 +202,50 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	{
 		if (current != this) return;
 		new Thread() {
-			public void run() { render(data); }
+			public void run()
+			{
+				try
+				{
+					render(data);
+				}
+				catch (Throwable t)
+				{
+					// Иначе поток тихо умирает, а на экране навсегда
+					// остаётся «Загрузка истории...».
+					fail(t, data == null ? 0 : data.length);
+				}
+			}
 		}.start();
+	}
+
+	// Показывает, что именно не вышло: экран, застывший без объяснений,
+	// ничем не помогает — а по имени ошибки и размеру ответа сразу видно,
+	// дошли ли данные и где сломался разбор.
+	private void fail(Throwable t, int size)
+	{
+		loading = false;
+		if (list == null) return;
+		String name = t.getClass().getName();
+		int dot = name.lastIndexOf('.');
+		if (dot >= 0) name = name.substring(dot + 1);
+		list.lock();
+		list.clear();
+		texts.removeAllElements();
+		tokens.removeAllElements();
+		kinds.removeAllElements();
+		texts.addElement(ResourceBundle.getString("history_failed") + " " + name);
+		tokens.addElement(null);
+		kinds.addElement(new Integer(1));
+		if (size > 0)
+		{
+			texts.addElement(size + " " + ResourceBundle.getString("bytes"));
+			tokens.addElement(null);
+			kinds.addElement(new Integer(1));
+		}
+		fill();
+		list.unlock();
+		list.setCaption(name);
+		list.repaint();
 	}
 
 	private void render(byte[] data)
@@ -211,6 +253,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		if (current != this) return;
 		boolean first = shown == 0;
 		boolean failed = data == null;
+		int bytes = (data == null) ? 0 : data.length;
 		Vector newTexts = new Vector();
 		Vector newTokens = new Vector();
 		Vector newKinds = new Vector();
@@ -285,7 +328,9 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		if (texts.size() == 0)
 		{
 			texts.addElement(ResourceBundle.getString(
-					failed ? "history_failed" : "history_empty"));
+					failed ? "history_failed" : "history_empty")
+					+ (bytes > 0 ? " (" + bytes + " " + ResourceBundle.getString("bytes") + ")"
+							: ""));
 			tokens.addElement(null);
 			kinds.addElement(new Integer(1));
 		}

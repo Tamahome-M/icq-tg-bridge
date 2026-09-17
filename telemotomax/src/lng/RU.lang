@@ -481,6 +481,7 @@
 "voice_part"				"часть"
 "all_chats"				"Все чаты"
 "history_more"				"Ещё"
+"bytes"				"байт"
 "list_menu"				"Контакты"
 "chats_loading"				"Загрузка списка..."
 "chats_failed"				"Список не получен"
