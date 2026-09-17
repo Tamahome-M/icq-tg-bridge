@@ -140,6 +140,9 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		JimmUI.setColorScheme(list, false, -1, true);
 		list.setCaption(name);
 		list.addCommandEx(JimmUI.cmdBack, VirtualList.MENU_TYPE_LEFT_BAR);
+		// Правая софт-клавиша с меню: в него попадают «Ещё», «Показать фото»
+		// и «Прослушать» — без неё они некуда было бы нажать.
+		list.addCommandEx(JimmUI.cmdMenu, VirtualList.MENU_TYPE_RIGHT_BAR);
 		list.setCommandListener(this);
 		list.setVLCommands(this);
 		list.activate(Jimm.display);
@@ -358,10 +361,14 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	{
 		list.removeCommandEx(ChatTextList.cmdShowPhoto);
 		list.removeCommandEx(ChatTextList.cmdPlayVideo);
+		list.removeCommandEx(ChatTextList.cmdPlayVoice);
 		if (currentToken() != null)
 		{
-			list.addCommandEx(ChatTextList.cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
-			if (currentKind() == 2) list.addCommandEx(ChatTextList.cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
+			int kind = currentKind();
+			// У голосового картинки нет — только «Прослушать», как в чате.
+			if (kind != 3) list.addCommandEx(ChatTextList.cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
+			if (kind == 2) list.addCommandEx(ChatTextList.cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
+			if (kind == 3) list.addCommandEx(ChatTextList.cmdPlayVoice, VirtualList.MENU_TYPE_RIGHT);
 		}
 	}
 
@@ -370,10 +377,15 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		checkPhoto();
 	}
 
+	// Выбор записи открывает то, что к ней приложено: снимок, ролик или
+	// голосовое.
 	public void vlItemClicked(VirtualList sender)
 	{
 		byte[] token = currentToken();
-		if (token != null) PhotoViewer.show(uin, token, this);
+		if (token == null) return;
+		int kind = currentKind();
+		if (kind == 3) MediaPlayer.showVoice(uin, token, this);
+		else PhotoViewer.show(uin, token, this);
 	}
 
 	public void vlKeyPress(VirtualList sender, int keyCode, int type) {}
@@ -390,6 +402,12 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		{
 			byte[] token = currentToken();
 			if (token != null) MediaPlayer.show(uin, token, this);
+			return;
+		}
+		if (c == ChatTextList.cmdPlayVoice)
+		{
+			byte[] token = currentToken();
+			if (token != null) MediaPlayer.showVoice(uin, token, this);
 			return;
 		}
 		if (c == cmdMore)
