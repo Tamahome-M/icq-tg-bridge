@@ -164,12 +164,24 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		{
 			String line = (String) texts.elementAt(i);
 			boolean mine = ((Integer) kinds.elementAt(i)).intValue() >= 8;
-			// Своё и чужое различаются цветом всей строки — как входящее и
-			// исходящее в чате. Красить отдельно имя и текст не выходит:
-			// две части одной строки список показывает только первую.
-			list.addBigText(line, ChatTextList.getInOutColor(!mine),
-					Font.STYLE_PLAIN, i);
-			list.doCRLF(i);
+			// Строка от моста — «[дд.мм чч:мм] Кто: текст». Заголовок с
+			// именем и временем красим, как в чате (свои одним цветом,
+			// чужие другим), а сам текст выводим тем же способом, что и
+			// сообщения в переписке: обычным цветом и со смайлами.
+			int cut = -1;
+			int close = line.indexOf("] ");
+			if (close > 0) cut = line.indexOf(": ", close);
+			if (cut > 0)
+			{
+				list.addBigText(line.substring(0, cut + 1) + " ",
+						ChatTextList.getInOutColor(!mine), Font.STYLE_BOLD, i);
+				JimmUI.addMessageText(list, line.substring(cut + 2),
+						list.getTextColor(), i);
+			}
+			else
+			{
+				JimmUI.addMessageText(list, line, list.getTextColor(), i);
+			}
 		}
 	}
 
