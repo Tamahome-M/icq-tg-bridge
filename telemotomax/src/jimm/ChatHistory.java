@@ -142,7 +142,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	// закрытия чата руками, а каждое сообщение лежит в куче разложенным по
 	// словам (TextItem на слово) — на V3 это и съедало кучу за день.
 	// Старое уходит, когда приходит новое; за старым — «История с сервера».
-	static final int MAX_MESSAGES = 30;
+	static final int MAX_MESSAGES = 15;
 	// Номер первого сообщения в messData: номера строк в списке (bigTextIndex)
 	// растут вечно, а старые сообщения из начала удаляются.
 	private int firstMess = 0;
