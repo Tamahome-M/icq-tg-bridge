@@ -672,21 +672,26 @@ public class Icq implements Runnable
 				biPacketAvailable = (bi != null) ? ((bi.available() > 0) ? true : false ) : false;
 				//  #sijapp cond.end#
 
-				// Wait if a new action does not exist
-				if ((newAction == null) && (c.available() == 0)
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-					&& !dcPacketAvailable
-//#sijapp cond.end#
-				//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-					&& !biPacketAvailable
-				//  #sijapp cond.end#
-				)
+				// Wait if a new action does not exist. The check and the
+				// wait share one lock: a packet that arrived in between
+				// used to notify nobody, and the loop slept until the next
+				// packet on the main connection — a photo from the service
+				// sat in its queue while the screen said "loading".
+				if (newAction == null)
 				{
 					try
 					{
 						synchronized (wait)
 						{
-							wait.wait(/*Icq.STANDBY*/);
+							boolean quiet = (c.available() == 0);
+//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
+							if (quiet && peerC != null && peerC.available() > 0) quiet = false;
+//#sijapp cond.end#
+				//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
+							bi = bartC;
+							if (quiet && bi != null && bi.available() > 0) quiet = false;
+				//  #sijapp cond.end#
+							if (quiet) wait.wait(/*Icq.STANDBY*/);
 						}
 					} catch (InterruptedException e)
 					{
