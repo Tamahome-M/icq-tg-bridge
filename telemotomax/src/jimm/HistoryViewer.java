@@ -124,7 +124,11 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 					photo = new byte[16];
 					System.arraycopy(data, 2 + len + 1, photo, 0, 16);
 				}
-				ChatHistory.addHistoryLine(uin, text, photo, (flag & 2) != 0 ? 2 : 1);
+				// Вид вложения — как в полной истории: бит 2 — видео,
+				// бит 4 — голосовое, иначе фото. Раньше голосовое здесь
+				// считалось фото, и в чате была кнопка «Показать фото».
+				int kind = (flag & 4) != 0 ? 3 : ((flag & 2) != 0 ? 2 : 1);
+				ChatHistory.addHistoryLine(uin, text, photo, kind);
 			}
 		};
 		try
