@@ -89,7 +89,7 @@ public class RequestBartAction extends Action
 
 	protected void init() throws JimmException
 	{
-		if (Icq.bartC != null && Icq.bartC.getState())
+		if (Icq.bartUsable())
 		{
 			this.sendRequest();
 			this.lastActivity = new Date();
@@ -127,11 +127,13 @@ public class RequestBartAction extends Action
 		try
 		{
 			Icq.bartC.sendPacket(request);
+			Icq.noteBartUse();
 		}
 		catch (JimmException je)
 		{
 			this.state = STATE_ERROR;
-			throw (new JimmException(100, 53, true));
+			Icq.disconnectBart(true);
+			throw (new JimmException(je.getErrCode(), 53, true));
 		}
 		this.state = STATE_CLI_REQ_SENT;
 	}
@@ -175,19 +177,28 @@ public class RequestBartAction extends Action
 						this.state = STATE_ERROR;
 						throw (new JimmException(117, 0, false));
 					}
+					// Старое соединение, если оно ещё есть, закрываем до
+					// открытия нового — брошенный сокет на телефоне никто
+					// не закроет. В ошибке оставляем настоящую причину
+					// (#120 — ввод-вывод, #121 — сеть не даёт соединение),
+					// а не безликое #100.
+					Icq.disconnectBart(true);
 					try
 					{
 						Icq.bartC = new SOCKETConnection(JimmException.ICQ_BART);
 						Icq.bartC.connect(this.srvHost + ":" + this.srvPort);
+						Icq.noteBartUse();
 					}
 					catch (JimmException e)
 					{
 						this.state = STATE_ERROR;
-						throw (new JimmException(100, 51, true));
+						Icq.disconnectBart(true);
+						throw (new JimmException(e.getErrCode(), 51, true));
 					}
 					catch (Exception e)
 					{
 						this.state = STATE_ERROR;
+						Icq.disconnectBart(true);
 						throw (new JimmException(100, 52, true));
 					}
 					this.state = STATE_CONNECTION_ESTB;
@@ -237,6 +248,7 @@ public class RequestBartAction extends Action
 						// без этой проверки первое же действие в очереди
 						// съедало бы чужой ответ, а его хозяин ждал бы
 						// вечно. Чужое не берём — пусть достанется своему.
+						Icq.noteBartUse();
 						int replyType = Util.getWord(buf, marker);
 						int hashLen = Util.getByte(buf, marker + 3);
 						if (replyType != this.bartType
@@ -345,6 +357,10 @@ public class RequestBartAction extends Action
 		{
 			this.notified = true;
 			this.parts = null;
+			// Jimm рассчитывает на onEvent(ON_ERROR), но главный цикл его
+			// не вызывает — соединение, в котором запрос пропал, закрываем
+			// здесь, иначе следующий запрос уйдёт в тот же мёртвый сокет.
+			Icq.disconnectBart(true);
 			if (listener != null) listener.onBart(null);
 		}
 		return (this.state == STATE_ERROR);

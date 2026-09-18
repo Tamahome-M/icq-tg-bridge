@@ -309,6 +309,32 @@ public class Icq implements Runnable
 
 		if (bartC.haveToSetNullAfterDisconnect()) bartC = null;
 	}
+
+	// Когда служебным соединением пользовались в последний раз: мост
+	// закрывает его после трёх минут тишины, а на GPRS его FIN до телефона
+	// может и не дойти — сокет тогда выглядит живым, но всё, что в него
+	// пишут, уходит в никуда.
+	static private long bartLastUse;
+	static public final long BART_REUSE_MS = 120 * 1000;
+
+	static public void noteBartUse()
+	{
+		bartLastUse = System.currentTimeMillis();
+	}
+
+	// Есть ли служебное соединение, которым ещё можно пользоваться. Залежалое
+	// или сломанное закрываем сразу: иначе следующий запрос уйдёт в мёртвый
+	// сокет и повиснет до таймаута, а сам сокет останется занимать место —
+	// у телефона их немного, и однажды новое соединение просто не откроется.
+	static public synchronized boolean bartUsable()
+	{
+		if (bartC == null) return false;
+		if (bartC.getState()
+				&& System.currentTimeMillis() - bartLastUse < BART_REUSE_MS)
+			return true;
+		disconnectBart(true);
+		return false;
+	}
 	//#sijapp cond.end#
 
 	static public void setVisibility(int value)
