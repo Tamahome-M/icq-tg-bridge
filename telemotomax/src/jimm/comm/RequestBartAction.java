@@ -203,6 +203,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 			case STATE_CLI_COOKIE_SENT:
 				if (packet instanceof SnacPacket)
 				{
+					Icq.sendCryptoHello(Icq.bartC);     // служба шифруется так же
 					SnacPacket reply = new SnacPacket(SnacPacket.CLI_READY_FAMILY, SnacPacket.CLI_READY_COMMAND, 0x00000000, new byte[0], ConnectAction.CLI_READY_DATA);
 					Icq.bartC.sendPacket(reply);
 					this.sendRequest();

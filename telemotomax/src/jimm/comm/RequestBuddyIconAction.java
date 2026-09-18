@@ -230,7 +230,8 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 			    // Watch out for SNAC packet
 			    if (packet instanceof SnacPacket)
 			    {
-					// Send a CLI_READY packet
+					// Send a CLI_READY packet (TeleMotoMax: after the crypto hello)
+					Icq.sendCryptoHello(Icq.bartC);
 					SnacPacket reply = new SnacPacket(SnacPacket.CLI_READY_FAMILY, SnacPacket.CLI_READY_COMMAND, 0x00000000, new byte[0], ConnectAction.CLI_READY_DATA);
 					Icq.bartC.sendPacket(reply);
 	

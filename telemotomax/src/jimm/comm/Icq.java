@@ -326,6 +326,16 @@ public class Icq implements Runnable
 	// или сломанное закрываем сразу: иначе следующий запрос уйдёт в мёртвый
 	// сокет и повиснет до таймаута, а сам сокет останется занимать место —
 	// у телефона их немного, и однажды новое соединение просто не откроется.
+	// TeleMotoMax: просьба к мосту перейти на шифрование (01/F0), если в
+	// настройках задан ключ. Мост без ключа просто промолчит, и канал
+	// останется открытым; ответ 01/F1 ловит приёмник соединения.
+	static public void sendCryptoHello(Connection conn) throws JimmException
+	{
+		String secret = Options.getString(Options.OPTION_TMM_SECRET);
+		if (secret == null || secret.length() == 0) return;
+		conn.sendPacket(new SnacPacket(0x0001, 0x00F0, 0x00000000, new byte[0], new byte[] { 1 }));
+	}
+
 	// Кому сообщить, чем кончилось соединение со службой.
 	public interface BartConnectListener
 	{

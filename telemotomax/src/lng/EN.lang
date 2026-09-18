@@ -259,6 +259,7 @@
 "send_img"					"Send image"
 "send_message"				"New Message"
 "server_host"				"Hostname"
+"tmm_secret"			"Encryption key (bridge)"
 "server_port"				"Port"
 "set_status"				"Set status"
 "set_xstatus"				"Set x-status"
@@ -558,6 +559,8 @@
 "error_135"					"Disconnect channel packet could not be parsed (#135.EXT)"
 "error_136"					"Ping channel packet could not be parsed (#136.EXT)"
 "error_137"					"Old ICQ protocol header could not be parsed (#137.EXT)"
+"error_138"					"Encryption key does not match the bridge (#138.EXT)"
+"error_139"					"Encrypted frame from the bridge without a key (#139.EXT)"
 
 // Action errors
 "error_140"					"Requested action cannot be queued for execution at this time (#140.EXT)"

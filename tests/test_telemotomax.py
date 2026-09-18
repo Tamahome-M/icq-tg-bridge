@@ -630,6 +630,119 @@ async def run_stuck_send() -> None:
     print("  зависшая отправка: ок (сессия закрыта по таймауту)")
 
 
+async def run_crypto() -> None:
+    """Шифрование канала: после рукопожатия всё в обе стороны закрыто,
+    служба 0x10 тоже; чужой ключ — сессия закрывается; secret_required не
+    пускает клиента без ключа; обычный Jimm ничего не замечает."""
+    from bridge.oscar import crypto
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 8
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    cfg.avatars = True
+    cfg.tmm_secret = "пароль от моста"
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+    outgoing: list[tuple[int, str]] = []
+
+    async def on_outgoing(target, text, *rest):
+        outgoing.append((target, text))
+        return 1
+
+    async def fetch_attachment(target: int, attach: str):
+        from bridge import photos
+        got = photos.shrink(small_jpeg(), 176, 176, 12 * 1024)
+        return got[0] if got else None
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
+                         fetch_attachment=fetch_attachment)
+    await server.start()
+    try:
+        # TeleMotoMax с ключом: рукопожатие, дальше всё шифровано.
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 25)
+        client.secret = cfg.tmm_secret
+        await client.connect()
+        await client.bos(await client.login_md5_jimm())
+        await client.drain_for(0.3)
+        assert client.rx_cipher is not None, "мост не ответил на 01/F0"
+        session = server.session
+        assert session is not None and session.tx_cipher is not None
+        before = client.encrypted_frames
+        await server.deliver(uin, "секретное сообщение", attach="photo:4242")
+        await client.drain_for(0.5)
+        assert client.received and "секретное сообщение" in client.received[-1][1], client.received
+        assert client.encrypted_frames > before, "сообщение пришло открытым"
+        await client.say(uin, "ответ телефона")
+        await client.drain_for(0.3)
+        assert outgoing and outgoing[-1][1] == "ответ телефона", outgoing
+        assert session.client_encrypted, "мост не видел шифрованных кадров от телефона"
+
+        # Служба 0x10 — своё рукопожатие на втором соединении.
+        token = client.attachments[-1][1]
+        got = await client.request_photo(uin, token)
+        assert got["image"][:3] == b"\xff\xd8\xff"
+
+        # Пинг после перехода тоже шифруется, и мост отвечает шифрованным.
+        before = client.encrypted_frames
+        await client.send_flap(5, b"")
+        await client.drain_for(0.3)
+        assert client.encrypted_frames > before, "понг пришёл открытым"
+        await client.close()
+        await asyncio.sleep(0.2)
+
+        # Чужой ключ: первый же кадр от телефона не расшифруется — сессия закрыта.
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 25)
+        client.secret = "другой ключ"
+        await client.connect()
+        try:
+            await client.bos(await client.login_md5_jimm())
+        except (AssertionError, asyncio.IncompleteReadError, ConnectionError, asyncio.TimeoutError):
+            pass          # кадры моста не расшифровались — телефон покажет #138
+        assert client.tx_cipher is not None
+        # А если телефон всё же что-то шлёт своим ключом — мост не примет.
+        try:
+            await client.send_flap(5, b"")
+        except ConnectionError:
+            pass
+        await asyncio.sleep(0.3)
+        assert server.session is None, "сессия с чужим ключом должна закрываться"
+        try:
+            await client.close()
+        except Exception:
+            pass
+
+        # Обычный Jimm (без 01/F0) — открытый текст, как раньше.
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        await client.connect()
+        await client.bos(await client.login_md5_jimm())
+        await client.drain_for(0.3)
+        await server.deliver(uin, "открыто")
+        await client.drain_for(0.5)
+        assert client.received and client.encrypted_frames == 0
+        await client.close()
+        await asyncio.sleep(0.2)
+
+        # secret_required: TeleMotoMax без ключа не пускаем.
+        cfg.tmm_secret_required = True
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 25)
+        await client.connect()
+        try:
+            await client.bos(await client.login_md5_jimm())
+            await client.drain_for(0.5)
+        except Exception:
+            pass
+        assert server.session is None, "без ключа при secret_required сессии быть не должно"
+        try:
+            await client.close()
+        except Exception:
+            pass
+    finally:
+        server._server.close()
+    print("  шифрование канала: ок (обе стороны, служба, чужой ключ, secret_required)")
+
+
 async def main() -> None:
     await run_detection()
     await run_photos()
@@ -641,6 +754,7 @@ async def main() -> None:
     run_reply_routing()
     await run_stale_service()
     await run_stuck_send()
+    await run_crypto()
     print("TELEMOTOMAX ПРОВЕРЕН")
 
 

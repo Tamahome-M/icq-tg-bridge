@@ -11,6 +11,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bridge.oscar import const as C
+from bridge.oscar import crypto
 from bridge.oscar.blocks import message_fragments, parse_message_fragments
 from bridge.oscar.proto import (Reader, Snac, flap, pstr8, pstr16,
                                 roast_password, snac, tlv, tlv_u16)
@@ -46,6 +47,12 @@ class FakeJimm:
         self.attachments: list[tuple[int, bytes, int]] = []   # (uin, токен, вид вложения)
         self.parts_seen: list[tuple[int, int]] = []       # части ответов службы 0x10
         self.errors: list[tuple[int, int]] = []
+        # Шифрование канала, как у TeleMotoMax: ключ задан — после входа
+        # просим мост перейти на шифрование; 01/F1 переключает приёмник.
+        self.secret = ""
+        self.tx_cipher: crypto.Cipher | None = None
+        self.rx_cipher: crypto.Cipher | None = None
+        self.encrypted_frames = 0        # сколько шифрованных кадров пришло
 
     async def connect(self) -> None:
         self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
@@ -53,8 +60,15 @@ class FakeJimm:
 
     async def send_flap(self, channel: int, payload: bytes) -> None:
         self.seq += 1
+        if self.tx_cipher is not None:
+            payload = self.tx_cipher.seal(payload)
+            channel |= crypto.ENCRYPTED
         self.writer.write(flap(channel, self.seq, payload))
         await self.writer.drain()
+
+    async def crypto_hello(self) -> None:
+        if self.secret:
+            await self.send_snac(C.OSERVICE, C.CRYPTO_HELLO, b"\x01")
 
     async def send_snac(self, family: int, subtype: int, data: bytes = b"", req: int = 0) -> None:
         await self.send_flap(2, snac(family, subtype, data, 0, req))
@@ -64,7 +78,21 @@ class FakeJimm:
         assert header[0] == 0x2A, f"не FLAP: {header!r}"
         length = struct.unpack(">H", header[4:6])[0]
         payload = await asyncio.wait_for(self.reader.readexactly(length), timeout) if length else b""
-        return header[1], payload
+        channel = header[1]
+        if channel & crypto.ENCRYPTED:
+            assert self.rx_cipher is not None, "шифрованный кадр без рукопожатия"
+            opened = self.rx_cipher.open(payload)
+            assert opened is not None, "кадр от моста не расшифровался"
+            payload, channel = opened, channel & ~crypto.ENCRYPTED
+            self.encrypted_frames += 1
+        elif (self.rx_cipher is None and channel == 2 and len(payload) >= 18
+              and payload[:4] == bytes([0, 1, 0, C.CRYPTO_START])):
+            # Как приёмник на телефоне: переключаемся сразу, до разбора.
+            snonce = payload[10:18]
+            k32 = crypto.master_key(self.secret)
+            self.rx_cipher = crypto.Cipher(crypto.direction_key(k32, b"s2c\0", snonce))
+            self.tx_cipher = crypto.Cipher(crypto.direction_key(k32, b"c2s\0", snonce))
+        return channel, payload
 
     async def recv_snac(self, timeout: float = 5.0) -> Snac:
         while True:
@@ -290,6 +318,7 @@ class FakeJimm:
         await self.send_snac(C.LOCATE, C.LOCATE_SET_INFO, tlv(C.LOCATE_TLV_CAPS, caps))
 
         await self.send_snac(C.OSERVICE, C.SET_STATUS, tlv(0x0006, b"\x00\x00\x00\x00"))
+        await self.crypto_hello()        # как TeleMotoMax: до «клиент готов»
         await self.send_snac(C.OSERVICE, C.CLI_READY,
                              b"".join(struct.pack(">HHHH", f, v, 0x0110, 0x0629)
                                       for f, v in C.FAMILY_VERSIONS.items()))
@@ -549,11 +578,15 @@ class FakeJimm:
         port = int(host.partition(":")[2] or 5190)
 
         main_reader, main_writer = self.reader, self.writer
+        # Служебное соединение шифруется отдельно, со своим рукопожатием.
+        main_tx, main_rx = self.tx_cipher, self.rx_cipher
+        self.tx_cipher = self.rx_cipher = None
         self.reader, self.writer = await asyncio.open_connection(self.host, port)
         try:
             await self.recv_flap()
             await self.send_flap(1, struct.pack(">I", 1) + tlv(C.TLV_AUTH_COOKIE, cookie))
             await self.expect(C.OSERVICE, C.SRV_READY, timeout)
+            await self.crypto_hello()
             await self.send_snac(C.OSERVICE, C.CLI_READY, b"")
 
             body = (pstr8(str(uin).encode()) + b"\x01" + struct.pack(">H", bart_type)
@@ -578,6 +611,7 @@ class FakeJimm:
         finally:
             self.writer.close()
             self.reader, self.writer = main_reader, main_writer
+            self.tx_cipher, self.rx_cipher = main_tx, main_rx
         return {"uin": got_uin, "image": b"".join(chunks), "hash": digest}
 
     async def set_status(self, status: int) -> None:
