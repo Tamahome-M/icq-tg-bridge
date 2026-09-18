@@ -108,10 +108,15 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 		}
 	}
 
+	// Закрывают только «выбор» (или «5»), «0» и «Назад». Любая другая
+	// клавиша просто будит подсветку: на V3 она гаснет быстро, и нажатие
+	// «чтобы увидеть», роняющее фото, раздражало.
 	protected void keyPressed(int keyCode)
 	{
 		DrawControls.VirtualList.touch();
-		close();
+		int action = 0;
+		try { action = getGameAction(keyCode); } catch (Exception ignore) {}
+		if (action == FIRE || keyCode == KEY_NUM5 || keyCode == KEY_NUM0) close();
 	}
 
 	protected void pointerPressed(int x, int y)

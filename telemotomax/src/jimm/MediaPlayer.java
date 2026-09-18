@@ -494,7 +494,11 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			if (keyCode == KEY_NUM0) { close(); return; }
 			return;
 		}
-		close();
+		// Как и фото: закрывают «выбор», «5», «0» и «Назад», остальные
+		// клавиши только будят подсветку.
+		int action = 0;
+		try { action = getGameAction(keyCode); } catch (Exception ignore) {}
+		if (action == FIRE || keyCode == KEY_NUM5 || keyCode == KEY_NUM0) close();
 	}
 
 	public void commandAction(Command c, Displayable d)
