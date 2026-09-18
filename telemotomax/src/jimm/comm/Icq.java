@@ -326,6 +326,49 @@ public class Icq implements Runnable
 	// или сломанное закрываем сразу: иначе следующий запрос уйдёт в мёртвый
 	// сокет и повиснет до таймаута, а сам сокет останется занимать место —
 	// у телефона их немного, и однажды новое соединение просто не откроется.
+	// Кому сообщить, чем кончилось соединение со службой.
+	public interface BartConnectListener
+	{
+		void onBartConnected();
+		void onBartConnectFailed(JimmException e);
+	}
+
+	// Соединение со службой открывается в своём потоке: Connector.open на
+	// GPRS занимает секунды, а то и десятки секунд, и раньше всё это время
+	// стоял поток связи — не ходили ни сообщения, ни пинги. Готовое
+	// соединение становится bartC и будит главный цикл.
+	static public void connectBart(final String hostAndPort, final BartConnectListener l)
+	{
+		new Thread() {
+			public void run()
+			{
+				disconnectBart(true);        // брошенный сокет никто больше не закроет
+				Connection conn = new SOCKETConnection(JimmException.ICQ_BART);
+				try
+				{
+					conn.connect(hostAndPort);
+				}
+				catch (JimmException e)
+				{
+					l.onBartConnectFailed(e);
+					return;
+				}
+				catch (Exception e)
+				{
+					l.onBartConnectFailed(new JimmException(100, 52, true));
+					return;
+				}
+				synchronized (Icq.class)
+				{
+					bartC = conn;
+					noteBartUse();
+				}
+				l.onBartConnected();
+				synchronized (wait) { wait.notifyAll(); }
+			}
+		}.start();
+	}
+
 	static public synchronized boolean bartUsable()
 	{
 		if (bartC == null) return false;
@@ -621,7 +664,12 @@ public class Icq implements Runnable
 				// Set biPacketAvailable to true if the bartC is not null and
 				// there is an packet waiting
 				//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-				biPacketAvailable = (bartC != null) ? ((bartC.available() > 0) ? true : false ) : false;
+				// bartC читаем один раз: приёмник службы, увидев конец
+				// потока, обнуляет его из своего потока — прямое
+				// bartC.available() падало с NullPointerException, а это #141
+				// и мёртвый главный цикл при живом сокете.
+				Connection bi = bartC;
+				biPacketAvailable = (bi != null) ? ((bi.available() > 0) ? true : false ) : false;
 				//  #sijapp cond.end#
 
 				// Wait if a new action does not exist
@@ -665,7 +713,8 @@ public class Icq implements Runnable
 				dcPacketAvailable = (peerC != null) ? ((peerC.available() > 0) ? true : false ) : false;
 //#sijapp cond.end#
 				//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-				biPacketAvailable = (bartC != null) ? ((bartC.available() > 0) ? true : false ) : false;
+				bi = bartC;
+				biPacketAvailable = (bi != null) ? ((bi.available() > 0) ? true : false ) : false;
 				//  #sijapp cond.end#
 
 				// Read next packet, if available
@@ -694,7 +743,7 @@ public class Icq implements Runnable
 						else if (dcPacketAvailable) packet = peerC.getPacket();
 						//  #sijapp cond.end#
 						//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-						else if (biPacketAvailable) packet = bartC.getPacket();
+						else if (biPacketAvailable) packet = bi.getPacket();
 						//  #sijapp cond.end#
 					} catch (JimmException e)
 					{
@@ -738,7 +787,8 @@ public class Icq implements Runnable
 					dcPacketAvailable = (peerC != null) ? ((peerC.available() > 0) ? true : false ) : false;
 					//  #sijapp cond.end#
 					//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-					biPacketAvailable = (bartC != null) ? ((bartC.available() > 0) ? true : false ) : false;
+					bi = bartC;
+					biPacketAvailable = (bi != null) ? ((bi.available() > 0) ? true : false ) : false;
 					//  #sijapp cond.end#
 				}
 
@@ -760,7 +810,10 @@ public class Icq implements Runnable
 			e.printStackTrace();
 
 			if (c != null) {// Construct and handle exception
-				JimmException f = new JimmException(141, 0, true);
+				// Как ошибка связи: закрыть сокет и переподключиться.
+				// Некритичный вариант оставлял открытое соединение без
+				// обработчика — «в сети», но ничего не приходит.
+				JimmException f = new JimmException(141, 0, JimmException.ICQ_MAIN);
 				JimmException.handleException(f);
 			}
 		}
