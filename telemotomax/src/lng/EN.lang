@@ -445,6 +445,7 @@
 // MOTOROLA strings
 "backlight_timeout"			"Backlight timeout (sec)"
 "history_count"			"Messages in history from server"
+"chat_messages"			"Messages kept in chat"
 "backlight_manual"			"Manual backlight"
 
 //#sijapp cond.if modules_PROXY is "true" #

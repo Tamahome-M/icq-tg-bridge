@@ -198,6 +198,7 @@ public class Options
 	public static final int OPTION_INIT_CAPS	     = 169;
 	// TeleMotoMax: how many messages "History from server" asks for
 	public static final int OPTION_HISTORY_COUNT    = 113;   // 64..127 — числовые ключи
+	public static final int OPTION_CHAT_MESSAGES    = 114;   // сколько сообщений держит чат
 	// TeleMotoMax: раз выключили цветной текст сообщений у тех, кто обновился
 	// со старой сборки (в новых установках он и так выключен).
 	public static final int OPTION_PLAIN_TEXT_DONE  = 170;   // 128..191 — флаги
@@ -415,6 +416,7 @@ public class Options
 		setInt    (Options.OPTION_LIGHT_TIMEOUT,      5);
 		//#sijapp cond.end #
 		setInt    (Options.OPTION_HISTORY_COUNT,     10);
+		setInt    (Options.OPTION_CHAT_MESSAGES,     15);
 
 		setBoolean(Options.OPTION_CP1251_HACK, ResourceBundle.langAvailable[0]
 				.equals("RU") || ResourceBundle.langAvailable[0].equals("BE") );
@@ -1137,6 +1139,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 //#sijapp cond.if target="MOTOROLA" | target="MIDP2" #
 	private TextField lightTimeout;
 	private TextField historyCount;     // TeleMotoMax
+	private TextField chatMessages;     // TeleMotoMax
 	private ChoiceGroup lightManual;
 //#sijapp cond.end#
 	private TextField txtCapOffset;
@@ -2389,6 +2392,9 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		historyCount = new TextField(ResourceBundle.getString("history_count"),
 				String.valueOf(Options.getInt(Options.OPTION_HISTORY_COUNT)), 3, TextField.NUMERIC);
 		optionsForm.append(historyCount);
+		chatMessages = new TextField(ResourceBundle.getString("chat_messages"),
+				String.valueOf(Options.getInt(Options.OPTION_CHAT_MESSAGES)), 3, TextField.NUMERIC);
+		optionsForm.append(chatMessages);
 		optionsForm.append(chrgMessFormat);
 		
 		//#sijapp cond.if target="MIDP2" | target="SIEMENS2"#
@@ -2769,6 +2775,14 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			if (n < 1) n = 1;
 			if (n > 100) n = 100;
 			Options.setInt(Options.OPTION_HISTORY_COUNT, n);
+		}
+		catch (Exception ignore) {}
+		try
+		{
+			int n = Integer.parseInt(chatMessages.getString());
+			if (n < 1) n = 1;
+			if (n > 100) n = 100;
+			Options.setInt(Options.OPTION_CHAT_MESSAGES, n);
 		}
 		catch (Exception ignore) {}
 
