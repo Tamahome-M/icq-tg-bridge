@@ -83,6 +83,7 @@ public class Options
 	public static final int OPTION_SRV_HOST           = 1;
 	public static final int OPTION_SRV_PORT           = 2;
 	public static final int OPTION_UI_LANGUAGE        = 3;
+	public static final int OPTION_TMM_SECRET         = 30;   // TeleMotoMax: ключ шифрования канала
 	public static final int OPTION_MESS_NOTIF_FILE    = 4;
 	public static final int OPTION_ONLINE_NOTIF_FILE  = 5;
 	public static final int OPTION_CURRENCY           = 6;
@@ -363,6 +364,7 @@ public class Options
 		setString(Options.OPTION_UIN1, emptyString);
 		setString(Options.OPTION_PASSWORD1, emptyString);
 		setString (Options.OPTION_SRV_HOST, "login.icq.com,login.oscar.aol.com,ibucp-vip-d.blue.aol.com");
+		setString (Options.OPTION_TMM_SECRET, "");
 		
 		setString(Options.OPTION_SRV_PORT, "5190");
 		setBoolean(Options.OPTION_KEEP_CONN_ALIVE, true);
@@ -1078,6 +1080,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private TextField[] passwordTextField;
 	private TextField srvHostTextField;
 	private TextField srvPortTextField;
+	private TextField tmmSecretTextField;     // TeleMotoMax
 	private TextField httpUserAgendTextField;
 	private TextField httpWAPProfileTextField;
 	private ChoiceGroup keepConnAliveChoiceGroup;
@@ -1994,6 +1997,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				.getString("server_port"), Options
 				.getString(Options.OPTION_SRV_PORT), 5,
 				TextField.NUMERIC);
+		tmmSecretTextField = new TextField(ResourceBundle
+				.getString("tmm_secret"), Options
+				.getString(Options.OPTION_TMM_SECRET), 64,
+				TextField.ANY | TextField.PASSWORD);
 
 		connTypeChoiceGroup = new ChoiceGroup(ResourceBundle
 				.getString("conn_type"), Choice.EXCLUSIVE);
@@ -2057,6 +2064,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 		optionsForm.append(srvHostTextField);
 		optionsForm.append(srvPortTextField);
+		optionsForm.append(tmmSecretTextField);
 		optionsForm.append(connTypeChoiceGroup);
 		optionsForm.append(keepConnAliveChoiceGroup);
 		optionsForm.append(connAliveIntervTextField);
@@ -2840,6 +2848,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	{
 		Options.setString(Options.OPTION_SRV_HOST, srvHostTextField.getString());
 		Options.setString(Options.OPTION_SRV_PORT, srvPortTextField.getString());
+		Options.setString(Options.OPTION_TMM_SECRET, tmmSecretTextField.getString().trim());
 		Options.setInt(Options.OPTION_CONN_TYPE, connTypeChoiceGroup.getSelectedIndex());
 		Options.setBoolean(Options.OPTION_KEEP_CONN_ALIVE,
 				keepConnAliveChoiceGroup.isSelected(0));

@@ -126,6 +126,8 @@ class Config:
     tmm_voice_seconds: int = 60
     tmm_history_max: int = 200
     tmm_voice_kbps: float = 12.2
+    tmm_secret: str = ""               # ключ шифрования канала с TeleMotoMax
+    tmm_secret_required: bool = False  # без шифрования TeleMotoMax не пускать
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -254,6 +256,8 @@ class Config:
             tmm_voice_seconds=int(tm.get("voice_seconds", cls.tmm_voice_seconds)),
             tmm_history_max=int(tm.get("history_max", cls.tmm_history_max)),
             tmm_voice_kbps=float(tm.get("voice_kbps", cls.tmm_voice_kbps)),
+            tmm_secret=str(tm.get("secret", "")),
+            tmm_secret_required=bool(tm.get("secret_required", False)),
             emoji_to_text=bool(br.get("emoji_to_text", True)),
             text_to_emoji=bool(br.get("text_to_emoji", True)),
             offline_queue_per_chat=int(br.get("offline_queue_per_chat", cls.offline_queue_per_chat)),

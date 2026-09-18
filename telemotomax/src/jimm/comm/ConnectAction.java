@@ -866,6 +866,10 @@ public class ConnectAction extends Action
             // STATE_CLI_STATUS_INFO_SENT
 			else if (this.state == ConnectAction.STATE_CLI_STATUS_INFO_SENT)
 			{
+				// TeleMotoMax: шифрование — до «клиент готов», чтобы список
+				// контактов и всё дальнейшее уже шло закрытым.
+				Icq.sendCryptoHello(Icq.c);
+
 				// Send a CLI_READY packet
 				SnacPacket reply2 = new SnacPacket(SnacPacket.CLI_READY_FAMILY, SnacPacket.CLI_READY_COMMAND, 0x00000000, new byte[0], ConnectAction.CLI_READY_DATA);
 				Icq.c.sendPacket(reply2);

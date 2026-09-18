@@ -45,6 +45,10 @@ CLI_VERSIONS = 0x0017
 SRV_VERSIONS = 0x0018
 SET_STATUS = 0x001E
 SERVICE_REQUEST = 0x0004    # клиент просит адрес дополнительного сервиса
+# TeleMotoMax: шифрование канала (bridge/oscar/crypto.py). Свои подтипы
+# в семействе 0x01 — настоящий OSCAR так высоко не забирался.
+CRYPTO_HELLO = 0x00F0       # телефон: «давай шифровать» (1 байт версии)
+CRYPTO_START = 0x00F1       # мост: 8 случайных байт сеанса; дальше всё шифруется
 SERVICE_REDIRECT = 0x0005   # ответ: куда идти за этим сервисом
 SRV_MOTD = 0x0013
 

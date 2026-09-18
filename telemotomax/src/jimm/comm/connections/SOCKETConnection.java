@@ -68,6 +68,29 @@ public class SOCKETConnection extends Connection implements Runnable
 	// ICQ sequence number counter
 	private int nextIcqSequence;
 
+	// TeleMotoMax: шифрование канала. Пока null — открытый текст. Мост
+	// отвечает на наш 01/F0 кадром 01/F1 со случайными байтами сеанса; его
+	// замечает приёмник — и с этого места всё принятое расшифровывается,
+	// всё отправляемое шифруется. Схема — в jimm.comm.Crypto.
+	private jimm.comm.Crypto txCipher, rxCipher;
+
+	public boolean isEncrypted()
+	{
+		return txCipher != null;
+	}
+
+	// Кадр 01/F1: 10 байт заголовка SNAC, потом 8 байт snonce.
+	private void startCrypto(byte[] snac)
+	{
+		String secret = Options.getString(Options.OPTION_TMM_SECRET);
+		if (secret == null || secret.length() == 0 || snac.length < 18) return;
+		byte[] snonce = new byte[8];
+		System.arraycopy(snac, 10, snonce, 0, 8);
+		byte[] k32 = jimm.comm.Crypto.masterKey(secret);
+		rxCipher = jimm.comm.Crypto.forDirection(k32, jimm.comm.Crypto.LABEL_S2C, snonce);
+		txCipher = jimm.comm.Crypto.forDirection(k32, jimm.comm.Crypto.LABEL_C2S, snonce);
+	}
+
 	public SOCKETConnection ()
 	{
 		this.typeNetwork = JimmException.ICQ_MAIN;
@@ -143,6 +166,8 @@ public class SOCKETConnection extends Connection implements Runnable
 			try
 			{
 				byte[] outpack = packet.toByteArray();
+				jimm.comm.Crypto tx = txCipher;
+				if (tx != null) outpack = tx.sealFlap(outpack);
 				out.write(outpack);
 				out.flush();
 //#sijapp cond.if modules_TRAFFIC is "true" #
@@ -250,6 +275,26 @@ public class SOCKETConnection extends Connection implements Runnable
 				} while (bReadSum < flapData.length);
 				if (bRead == -1)
 					break;
+
+				// TeleMotoMax: шифрованный кадр — бит 0x80 в канале.
+				if ((flapHeader[1] & jimm.comm.Crypto.ENCRYPTED) != 0)
+				{
+					jimm.comm.Crypto rx = rxCipher;
+					if (rx == null) throw (new JimmException(139, 0, this.typeNetwork));
+					flapData = rx.open(flapData, 0, flapData.length);
+					if (flapData == null) throw (new JimmException(138, 0, this.typeNetwork));
+					flapHeader[1] = (byte) (flapHeader[1] & ~jimm.comm.Crypto.ENCRYPTED);
+					Util.putWord(flapHeader, 4, flapData.length);
+				}
+				else if (rxCipher == null && flapHeader[1] == 2 && flapData.length >= 18
+						&& Util.getWord(flapData, 0) == 0x0001
+						&& Util.getWord(flapData, 2) == 0x00F1)
+				{
+					// Ответ моста на просьбу о шифровании: дальше всё
+					// шифруется. Решает приёмник, а не главный цикл, иначе
+					// следующий кадр успел бы прочитаться как открытый.
+					startCrypto(flapData);
+				}
 
 				// Merge flap header and data and count the data
 				rcvdPacket = new byte[flapHeader.length + flapData.length];

@@ -18,7 +18,7 @@ from typing import Awaitable, Callable
 
 from ..access import AccessControl
 from ..db import Contact, Storage
-from . import blocks
+from . import blocks, crypto
 from . import const as C
 from .proto import (Reader, Snac, flap, pstr8, pstr16, roast_password, snac,
                     tlv, tlv_u16, tlv_u32)
@@ -139,6 +139,13 @@ class Session:
         # Версия TeleMotoMax (старший, младший), если подключился он: такому
         # клиенту можно слать то, чего обычный Jimm не поймёт.
         self.tmm_version: tuple[int, int] | None = None
+        # Шифрование канала (bridge/oscar/crypto.py): чем читаем от телефона
+        # и чем шифруем ему. До рукопожатия 01/F0 → 01/F1 — открытый текст.
+        self.rx_cipher: crypto.Cipher | None = None
+        self.tx_cipher: crypto.Cipher | None = None
+        # Телефон уже прислал шифрованный кадр: с этого места открытый текст
+        # от него — либо отставший кадр, либо попытка отката; не принимаем.
+        self.client_encrypted = False
         # Снимок или голосовое, которые телефон шлёт по частям.
         self.upload: bytearray | None = None
         self.upload_seconds = 0
@@ -174,6 +181,10 @@ class Session:
             return False
         async with self._lock:
             self.seq = (self.seq + 1) & 0xFFFF
+            tx = self.tx_cipher
+            if tx is not None:
+                payload = tx.seal(payload)
+                channel |= crypto.ENCRYPTED
             try:
                 self.writer.write(flap(channel, self.seq, payload))
                 # drain ждёт, пока телефон заберёт накопленное. На оборванном
@@ -215,6 +226,24 @@ class Session:
                 channel = header[1]
                 length = struct.unpack(">H", header[4:6])[0]
                 payload = await self.reader.readexactly(length) if length else b""
+                if channel & crypto.ENCRYPTED:
+                    if self.rx_cipher is None:
+                        log.warning("шифрованный кадр от %s без рукопожатия", self.peer)
+                        self.close_reason = "шифрованный кадр без рукопожатия"
+                        break
+                    opened = self.rx_cipher.open(payload)
+                    if opened is None:
+                        log.warning("кадр от %s не расшифровался — ключ на телефоне "
+                                    "не совпадает с secret", self.peer)
+                        self.close_reason = "неверный ключ шифрования"
+                        break
+                    payload, channel = opened, channel & ~crypto.ENCRYPTED
+                    self.client_encrypted = True
+                elif self.client_encrypted:
+                    log.warning("открытый кадр от %s после перехода на шифрование — "
+                                "закрываю", self.peer)
+                    self.close_reason = "открытый текст после шифрования"
+                    break
                 await self.handle_flap(channel, payload)
         except (asyncio.IncompleteReadError, ConnectionError, OSError) as exc:
             self.close_reason = self.close_reason or f"обрыв соединения ({type(exc).__name__})"
@@ -511,6 +540,7 @@ class Session:
             (C.ICBM, C.ICBM_CLIENT_ACK): self.on_icbm_client_ack,
             (C.ICBM, C.ICBM_CLIENT_EVENT): self.on_icbm_typing,
             (C.OSERVICE, C.SERVICE_REQUEST): self.on_service_request,
+            (C.OSERVICE, C.CRYPTO_HELLO): self.on_crypto_hello,
             (C.PD, C.PD_RIGHTS_REQ): self.on_pd_rights,
             (C.SSI, C.SSI_RIGHTS_REQ): self.on_ssi_rights,
             (C.SSI, C.SSI_LIST_REQ): self.on_ssi_list,
@@ -861,10 +891,38 @@ class Session:
         body = struct.pack("<H", len(inner)) + inner
         await self.send_snac(C.ICQ, C.ICQ_FROM_SERVER, tlv(0x0001, body))
 
+    async def on_crypto_hello(self, s: Snac) -> None:
+        """TeleMotoMax просит шифровать канал (01/F0). Отвечаем 01/F1 со
+        случайными байтами сеанса — открытым текстом, это последний такой
+        кадр, — и дальше шифруем всё, что отправляем. Телефон шифрует своё
+        с того момента, как увидит ответ; его первый шифрованный кадр
+        закрывает приём открытого текста."""
+        secret = self.server.cfg.tmm_secret
+        if not secret:
+            log.warning("телефон %s просит шифрование, а secret в [telemotomax] не задан — "
+                        "канал остаётся открытым", self.peer)
+            return
+        if self.tx_cipher is not None:
+            return
+        snonce = os.urandom(8)
+        rx, tx = crypto.session_ciphers(secret, snonce)
+        await self.send_snac(C.OSERVICE, C.CRYPTO_START, snonce)
+        self.rx_cipher, self.tx_cipher = rx, tx
+        log.info("%s %s: канал шифруется (ChaCha20-Poly1305)",
+                 "соединение за аватарками" if self.service_only else "сессия", self.peer)
+
     async def on_client_ready(self, s: Snac) -> None:
         if self.ready:
             return
         self.ready = True
+        if (self.server.cfg.tmm_secret_required and self.extended
+                and self.tx_cipher is None):
+            # Ключа на телефоне нет: без secret_required канал остался бы
+            # открытым молча, а это ровно то, чего флаг не допускает.
+            log.warning("TeleMotoMax %s без шифрования, а secret_required = true — "
+                        "закрываю", self.peer)
+            await self.close("шифрование обязательно, а ключа на телефоне нет")
+            return
         if self.service_only:
             return          # соединение за аватарками: ни списка статусов, ни очереди
         log.info("клиент готов: %s, %r", self.peer, self.client_name)
@@ -1493,6 +1551,9 @@ class OscarServer:
         self._keep(self.sender_loop())
         log.info("OSCAR слушает %s:%d, UIN владельца %s",
                  self.cfg.oscar_host, self.cfg.oscar_port, self.uin)
+        if getattr(self.cfg, "tmm_secret", ""):
+            log.info("шифрование канала с TeleMotoMax: включено%s",
+                     ", обязательно" if getattr(self.cfg, "tmm_secret_required", False) else "")
 
     def _keep(self, coro) -> asyncio.Task:
         """Задача, которая переживёт сборщик мусора и пожалуется, если упадёт."""
