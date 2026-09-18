@@ -729,6 +729,15 @@ public abstract class VirtualList
 		return (index >= topItem) && (index <= (topItem + getVisCount()));
 	}
 
+	// TeleMotoMax: the first `count` items are gone — keep the cursor and
+	// the top of the window on the same items they showed before.
+	protected void itemsRemovedAtTop(int count)
+	{
+		currItem = Math.max(0, currItem - count);
+		topItem = Math.max(0, topItem - count);
+		checkTopItem();
+	}
+
 	// private void storelastItemIndexes()
 	protected void storelastItemIndexes()
 	{

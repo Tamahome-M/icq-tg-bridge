@@ -137,6 +137,35 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 
 	private Vector messData = new Vector();
 
+	// TeleMotoMax: столько сообщений чат держит в памяти. Раньше предела не
+	// было: группа или канал, открытые входящим, копили всё подряд до
+	// закрытия чата руками, а каждое сообщение лежит в куче разложенным по
+	// словам (TextItem на слово) — на V3 это и съедало кучу за день.
+	// Старое уходит, когда приходит новое; за старым — «История с сервера».
+	// Сколько именно — настройка «Сообщений в чате» (по умолчанию 15).
+	static int maxMessages()
+	{
+		int n = Options.getInt(Options.OPTION_CHAT_MESSAGES);
+		return n < 1 ? 15 : n;
+	}
+	// Номер первого сообщения в messData: номера строк в списке (bigTextIndex)
+	// растут вечно, а старые сообщения из начала удаляются.
+	private int firstMess = 0;
+
+	MessData messAt(int textIndex)
+	{
+		int i = textIndex - firstMess;
+		if (i < 0 || i >= messData.size()) return null;
+		return (MessData) messData.elementAt(i);
+	}
+
+	private void dropOldest()
+	{
+		textList.removeTextByIndex(firstMess);
+		messData.removeElementAt(0);
+		firstMess++;
+	}
+
 	private int messTotalCounter = 0;
 
 	private long lastMsgTime = 0;
@@ -337,7 +366,8 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		{
 			int textIndex = textList.getCurrTextIndex();
 
-			MessData data = (MessData) getMessData().elementAt(textIndex);
+			MessData data = messAt(textIndex);
+			if (data == null) return;
 
 			String text = textList.getCurrText(data.getOffset(), false);
 			if (text == null)
@@ -437,10 +467,9 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		textList.removeCommandEx(cmdShowPhoto);
 		textList.removeCommandEx(cmdPlayVideo);
 		textList.removeCommandEx(cmdPlayVoice);
-		int messIndex = textList.getCurrTextIndex();
-		if (messIndex != -1)
+		MessData md = messAt(textList.getCurrTextIndex());
+		if (md != null)
 		{
-			MessData md = (MessData) getMessData().elementAt(messIndex);
 			if (md.attach != null && md.attachKind != 3)
 				textList.addCommandEx(cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
 			if (md.attach != null && md.attachKind == 2)
@@ -452,21 +481,17 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 
 	byte[] currentAttach()
 	{
-		int messIndex = textList.getCurrTextIndex();
-		if (messIndex == -1) return null;
-		return ((MessData) getMessData().elementAt(messIndex)).attach;
+		MessData md = messAt(textList.getCurrTextIndex());
+		return md == null ? null : md.attach;
 	}
 
 	void checkTextForURL()
 	{
 //#sijapp cond.if target != "DEFAULT"#
 		textList.removeCommandEx(JimmUI.cmdGotoURL);
-		int messIndex = textList.getCurrTextIndex();
-		if (messIndex != -1)
-		{
-			MessData md = (MessData) getMessData().elementAt(messIndex);
-			if (md.isURL()) textList.addCommandEx(JimmUI.cmdGotoURL, VirtualList.MENU_TYPE_RIGHT);
-		}
+		MessData md = messAt(textList.getCurrTextIndex());
+		if (md != null && md.isURL())
+			textList.addCommandEx(JimmUI.cmdGotoURL, VirtualList.MENU_TYPE_RIGHT);
 //#sijapp cond.end#
 	}
 	
@@ -516,6 +541,9 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		boolean deliveryReqOn = Options.getBoolean(Options.OPTION_DELIV_MES_INFO); 
 
 		textList.lock();
+
+		int limit = maxMessages();
+		while (messData.size() >= limit) dropOldest();
 	
 		boolean shortMsg = (inOneMinute (lastMsgTime, time)) 
 			&& (lastDirection == red) 
@@ -613,7 +641,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 			data = (MessData)messData.elementAt(i);
 			if (data.getMessId() == messId)
 			{
-				ok = textList.replaceImages(i, JimmUI.eventPlainMessageImg, JimmUI.imgMessDeliv);
+				ok = textList.replaceImages(firstMess + i, JimmUI.eventPlainMessageImg, JimmUI.imgMessDeliv);
 				if (ok) textList.repaint();
 				break;
 			}
@@ -777,24 +805,21 @@ public class ChatHistory
 	static private MessData getCurrentMessData(String uin)
 	{
 		ChatTextList list = getChatHistoryAt(uin);
-		int messIndex = list.textList.getCurrTextIndex();
-		if (messIndex == -1)
-			return null;
-		MessData md = (MessData) list.getMessData().elementAt(messIndex);
-		return md;
+		return list.messAt(list.textList.getCurrTextIndex());
 	}
 
 	static public String getCurrentMessage(String uin)
 	{
-		return getChatHistoryAt(uin).textList.getCurrText(getCurrentMessData(uin).getOffset(), false);
+		MessData md = getCurrentMessData(uin);
+		if (md == null) return null;
+		return getChatHistoryAt(uin).textList.getCurrText(md.getOffset(), false);
 	}
 
 	static public void copyText(String uin, String from)
 	{
 		ChatTextList list = getChatHistoryAt(uin);
-		int messIndex = list.textList.getCurrTextIndex();
-		if (messIndex == -1) return;
-		MessData md = (MessData) list.getMessData().elementAt(messIndex);
+		MessData md = list.messAt(list.textList.getCurrTextIndex());
+		if (md == null) return;
 
 		JimmUI.setClipBoardText(md.getIncoming(), Util.getDateString(false, md
 				.getTime()), md.getIncoming() ? from : ResourceBundle
