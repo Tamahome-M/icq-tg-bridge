@@ -760,6 +760,26 @@ public class TextList extends VirtualList implements Runnable
 		return this;
 	}
 	
+	// TeleMotoMax: drops every line of one big text (a message). Lines of
+	// a message are contiguous, so the removed span is counted and the
+	// cursor moved by that much. Returns the number of lines removed.
+	public int removeTextByIndex(int textIndex)
+	{
+		int removed = 0;
+		for (int i = lines.size() - 1; i >= 0; i--)
+		{
+			if (getLine(i).bigTextIndex != textIndex) continue;
+			lines.removeElementAt(i);
+			removed++;
+		}
+		if (removed > 0)
+		{
+			itemsRemovedAtTop(removed);
+			invalidate();
+		}
+		return removed;
+	}
+
 	public boolean replaceImages(int textIndex, Image from, Image to)
 	{
 		boolean replaced = false;
