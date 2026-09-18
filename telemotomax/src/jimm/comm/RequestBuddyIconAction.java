@@ -83,7 +83,7 @@ public class RequestBuddyIconAction extends Action
 
 		if (Icq.bartC != null)
 		{
-			if (Icq.bartC.getState())
+			if (Icq.bartUsable())
 			{
 				this.sendBuddyIconRequest();
 		        // Update activity timestamp
@@ -133,11 +133,13 @@ public class RequestBuddyIconAction extends Action
 		try
 		{
 			Icq.bartC.sendPacket(request);
+			Icq.noteBartUse();
 		}
 		catch (JimmException je)
 		{
 			this.state = RequestBuddyIconAction.STATE_ERROR;
-			throw (new JimmException (100, 53, true));
+			Icq.disconnectBart(true);
+			throw (new JimmException (je.getErrCode(), 53, true));
 		}
 		// Set STATE_CLI_REQBUDDYICON_SENT
 		this.state = RequestBuddyIconAction.STATE_CLI_REQBUDDYICON_SENT;
@@ -194,17 +196,21 @@ public class RequestBuddyIconAction extends Action
 						throw (new JimmException(117, 0, false));
 					}
 	
-					// Open connection
+					// Open connection; the old one, if any, is closed first —
+					// a dropped socket is never closed by anyone else.
+					Icq.disconnectBart(true);
 					try
 					{
 						Icq.bartC = new SOCKETConnection(JimmException.ICQ_BART);
 						Icq.bartC.connect(this.srvHost + ":" + this.srvPort);
+						Icq.noteBartUse();
 		            }
 					catch (JimmException e)
 					{
 						DebugLog.addText (e.getMessage());
 						this.state = RequestBuddyIconAction.STATE_ERROR;
-						throw (new JimmException (100, 51, true));
+						Icq.disconnectBart(true);
+						throw (new JimmException (e.getErrCode(), 51, true));
 					}
 					catch (Exception e)
 					{
@@ -265,6 +271,7 @@ public class RequestBuddyIconAction extends Action
 						    && (snacPacket.getCommand() == SnacPacket.SRV_REPLYAVATAR_COMMAND))
 				    {
 					    // Get data
+					    Icq.noteBartUse();
 					    byte[] buf = snacPacket.getData();
 	
 					    int marker = 0;
@@ -336,6 +343,7 @@ public class RequestBuddyIconAction extends Action
     	if ((this.state != RequestBuddyIconAction.STATE_ERROR) && !this.active && (this.lastActivity.getTime() + this.TIMEOUT < System.currentTimeMillis()))
         {
             this.state = RequestBuddyIconAction.STATE_ERROR;
+            Icq.disconnectBart(true);       // the request is lost; so is the socket
         }
         return (this.state == RequestBuddyIconAction.STATE_ERROR);
     }
