@@ -29,6 +29,8 @@ MAX_SNAC_PAYLOAD = 3800          # с запасом под скромные б�
 BUDDY_BURST = 20                 # по столько уведомлений об онлайне за раз
 SENDER_IDLE_POLL = 10            # как часто отправитель просыпается сам, секунды
 SERVICE_IDLE_TIMEOUT = 180       # столько молчит соединение за аватарками — и хватит
+SEND_TIMEOUT = 120               # столько телефон может не забирать отправленное
+CLOSE_TIMEOUT = 5                # столько ждём вежливого закрытия, дальше — обрыв
 UPLOAD_TIMEOUT = 300             # столько ждём остальные части снимка или голосового
 SENT_MEMORY = 200                # столько отправленных помним ради галочек
 AWAITING_LIMIT = 500             # потолок неподтверждённых сообщений в памяти
@@ -174,7 +176,17 @@ class Session:
             self.seq = (self.seq + 1) & 0xFFFF
             try:
                 self.writer.write(flap(channel, self.seq, payload))
-                await self.writer.drain()
+                # drain ждёт, пока телефон заберёт накопленное. На оборванном
+                # GPRS он не заберёт никогда, а ждать здесь — значит держать
+                # замок: встали бы и ответы на пинги, и чтение (оно отвечает
+                # на пинг из своей же задачи). Не забирает две минуты —
+                # это обрыв, а не медленная сеть: столько буфер не тянется.
+                await asyncio.wait_for(self.writer.drain(), timeout=SEND_TIMEOUT)
+            except asyncio.TimeoutError:
+                log.warning("телефон %s не забирает отправленное %d с — считаю связь "
+                            "оборванной", self.peer, SEND_TIMEOUT)
+                self.spawn(self.close(f"не забирает отправленное {SEND_TIMEOUT} с"))
+                return False
             except (ConnectionError, OSError) as exc:
                 log.warning("обрыв при отправке телефону: %s", exc)
                 self.closed = True
@@ -228,12 +240,19 @@ class Session:
             log.debug("соединение %s закрыто до входа: %s", self.peer, self.close_reason)
         self.server.session_gone(self)
         for task in list(self._tasks):
-            task.cancel()
+            if task is not asyncio.current_task():
+                task.cancel()
+        # Вежливое закрытие дожидается, пока уйдёт накопленное в буфере, —
+        # на оборванном соединении это минуты ожидания повторов TCP, и всё
+        # это время сессия держала бы слот. Не закрылось быстро — рвём.
         try:
             self.writer.close()
-            await self.writer.wait_closed()
+            await asyncio.wait_for(self.writer.wait_closed(), timeout=CLOSE_TIMEOUT)
         except Exception:
-            pass
+            try:
+                self.writer.transport.abort()
+            except Exception:
+                pass
 
     async def handle_flap(self, channel: int, payload: bytes) -> None:
         log.debug("<- FLAP канал %d, %d байт: %s", channel, len(payload), payload[:48].hex())

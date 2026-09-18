@@ -28,7 +28,7 @@ import jimm.comm.connections.SOCKETConnection;
  * parsed exactly like the icon reply, so the bridge answers with the very
  * same layout; what the bytes mean is up to the listener.
  */
-public class RequestBartAction extends Action
+public class RequestBartAction extends Action implements Icq.BartConnectListener
 {
 	public static final int BART_PHOTO = 0x0080;
 	public static final int BART_HISTORY = 0x0081;
@@ -52,6 +52,7 @@ public class RequestBartAction extends Action
 	public static final int STATE_ERROR = -1;
 	public static final int STATE_INIT_DONE = 0;
 	public static final int STATE_CONNECTION_ESTB = 1;
+	public static final int STATE_CONNECTING = 6;         // Connector.open в своём потоке
 	public static final int STATE_CLI_COOKIE_SENT = 2;
 	public static final int STATE_CLI_REQ_SENT = 4;
 	public static final int STATE_ACTION_DONE = 5;
@@ -177,31 +178,10 @@ public class RequestBartAction extends Action
 						this.state = STATE_ERROR;
 						throw (new JimmException(117, 0, false));
 					}
-					// Старое соединение, если оно ещё есть, закрываем до
-					// открытия нового — брошенный сокет на телефоне никто
-					// не закроет. В ошибке оставляем настоящую причину
-					// (#120 — ввод-вывод, #121 — сеть не даёт соединение),
-					// а не безликое #100.
-					Icq.disconnectBart(true);
-					try
-					{
-						Icq.bartC = new SOCKETConnection(JimmException.ICQ_BART);
-						Icq.bartC.connect(this.srvHost + ":" + this.srvPort);
-						Icq.noteBartUse();
-					}
-					catch (JimmException e)
-					{
-						this.state = STATE_ERROR;
-						Icq.disconnectBart(true);
-						throw (new JimmException(e.getErrCode(), 51, true));
-					}
-					catch (Exception e)
-					{
-						this.state = STATE_ERROR;
-						Icq.disconnectBart(true);
-						throw (new JimmException(100, 52, true));
-					}
-					this.state = STATE_CONNECTION_ESTB;
+					// Соединение открывается в своём потоке — поток связи
+					// не ждёт; ответ придёт в onBartConnected/Failed.
+					this.state = STATE_CONNECTING;
+					Icq.connectBart(this.srvHost + ":" + this.srvPort, this);
 					consumed = true;
 				}
 				break;
@@ -341,6 +321,29 @@ public class RequestBartAction extends Action
 	public boolean isCompleted()
 	{
 		return (this.state == STATE_ACTION_DONE);
+	}
+
+	// Соединение со службой готово (из потока Icq.connectBart).
+	public void onBartConnected()
+	{
+		if (this.state != STATE_CONNECTING)
+		{
+			// Пока соединялись, запрос сочли пропавшим — сокет не нужен.
+			Icq.disconnectBart(true);
+			return;
+		}
+		this.lastActivity = new Date();
+		this.state = STATE_CONNECTION_ESTB;
+	}
+
+	// В ошибке — настоящая причина (#120 — ввод-вывод, #121 — сеть не
+	// даёт соединение), а не безликое #100.
+	public void onBartConnectFailed(JimmException e)
+	{
+		this.state = STATE_ERROR;
+		Icq.disconnectBart(true);
+		int ext = (e.getErrCode() == 100) ? 52 : 51;
+		JimmException.handleException(new JimmException(e.getErrCode(), ext, true));
 	}
 
 	public boolean isError()

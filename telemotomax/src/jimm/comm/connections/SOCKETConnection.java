@@ -123,11 +123,13 @@ public class SOCKETConnection extends Connection implements Runnable
 	// Sends the specified packet
 	public void sendPacket(Packet packet) throws JimmException
 	{
-		// Throw exception if output stream is not ready
-		if (os == null) throw new JimmException(123, 0, this.typeNetwork);
+		// Throw exception if output stream is not ready. The stream is read
+		// once: closeStreams() may null it from another thread in between.
+		OutputStream out = os;
+		if (out == null) throw new JimmException(123, 0, this.typeNetwork);
 
 		// Request lock on output stream
-		synchronized (os)
+		synchronized (out)
 		{
 
 			// Set sequence numbers
@@ -141,8 +143,8 @@ public class SOCKETConnection extends Connection implements Runnable
 			try
 			{
 				byte[] outpack = packet.toByteArray();
-				os.write(outpack);
-				os.flush();
+				out.write(outpack);
+				out.flush();
 //#sijapp cond.if modules_TRAFFIC is "true" #
 				Traffic.addOutTraffic(outpack.length + 51); // 51 is the overhead for each packet
 				MainThread.updateContactListCaption();

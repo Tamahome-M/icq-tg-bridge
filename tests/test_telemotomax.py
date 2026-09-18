@@ -582,6 +582,54 @@ async def run_stale_service() -> None:
     print("  зависшее служебное соединение: ок (слот освобождается сам)")
 
 
+async def run_stuck_send() -> None:
+    """Телефон, который не забирает отправленное, не должен вешать сессию:
+    на оборванном GPRS drain() не завершится никогда, а под ним замок —
+    встали бы и ответы на пинги, и чтение."""
+    from bridge.oscar import server as server_module
+
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 7
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    storage = Storage(":memory:")
+    storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+
+    async def on_outgoing(*_):
+        return 1
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts)
+    await server.start()
+    was = server_module.SEND_TIMEOUT
+    server_module.SEND_TIMEOUT = 0.3
+    try:
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 9)
+        await client.connect()
+        await client.bos(await client.login_md5_jimm())
+        await client.drain_for(0.3)
+        session = server.session
+        assert session is not None
+
+        # Буфер «встал»: drain никогда не завершается. Пинг заставляет
+        # сервер отвечать — и ждать.
+        async def never():
+            await asyncio.sleep(3600)
+        session.writer.drain = never
+        client.writer.write(flap(5, 7, b""))
+        await client.writer.drain()
+        for _ in range(40):
+            await asyncio.sleep(0.05)
+            if session.closed:
+                break
+        assert session.closed, "сессия с зависшей отправкой должна закрываться"
+        assert server.session is None
+        await client.close()
+    finally:
+        server_module.SEND_TIMEOUT = was
+        server._server.close()
+    print("  зависшая отправка: ок (сессия закрыта по таймауту)")
+
+
 async def main() -> None:
     await run_detection()
     await run_photos()
@@ -592,6 +640,7 @@ async def main() -> None:
     run_history_layout()
     run_reply_routing()
     await run_stale_service()
+    await run_stuck_send()
     print("TELEMOTOMAX ПРОВЕРЕН")
 
 

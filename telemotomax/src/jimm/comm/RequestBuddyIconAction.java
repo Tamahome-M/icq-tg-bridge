@@ -32,12 +32,13 @@ import jimm.JimmUI;
 import jimm.MainThread;
 import jimm.comm.connections.SOCKETConnection;
 
-public class RequestBuddyIconAction extends Action
+public class RequestBuddyIconAction extends Action implements Icq.BartConnectListener
 {
     // Action states
     public static final int STATE_ERROR = -1;
     public static final int STATE_INIT_DONE = 0;
     public static final int STATE_CONNECTION_ESTB = 1;
+    public static final int STATE_CONNECTING = 6;
     public static final int STATE_CLI_COOKIE_SENT = 2;
     public static final int STATE_CLI_READY_SENT = 3;
     public static final int STATE_CLI_REQBUDDYICON_SENT = 4;
@@ -196,30 +197,10 @@ public class RequestBuddyIconAction extends Action
 						throw (new JimmException(117, 0, false));
 					}
 	
-					// Open connection; the old one, if any, is closed first —
-					// a dropped socket is never closed by anyone else.
-					Icq.disconnectBart(true);
-					try
-					{
-						Icq.bartC = new SOCKETConnection(JimmException.ICQ_BART);
-						Icq.bartC.connect(this.srvHost + ":" + this.srvPort);
-						Icq.noteBartUse();
-		            }
-					catch (JimmException e)
-					{
-						DebugLog.addText (e.getMessage());
-						this.state = RequestBuddyIconAction.STATE_ERROR;
-						Icq.disconnectBart(true);
-						throw (new JimmException (e.getErrCode(), 51, true));
-					}
-					catch (Exception e)
-					{
-						DebugLog.addText (e.toString());
-						this.state = RequestBuddyIconAction.STATE_ERROR;
-						throw (new JimmException (100, 52, true));
-					}
-					// Set STATE_CONNECTION_ESTB
-					this.state = RequestBuddyIconAction.STATE_CONNECTION_ESTB;
+					// Open connection on a thread of its own; the comm
+					// thread must not wait for Connector.open.
+					this.state = RequestBuddyIconAction.STATE_CONNECTING;
+					Icq.connectBart(this.srvHost + ":" + this.srvPort, this);
 					// Packet has been consumed
 					consumed = true;
 			    }	
@@ -335,6 +316,26 @@ public class RequestBuddyIconAction extends Action
     public boolean isCompleted()
     {
         return (this.state == RequestBuddyIconAction.STATE_ACTION_DONE);
+    }
+
+    public void onBartConnected()
+    {
+        if (this.state != RequestBuddyIconAction.STATE_CONNECTING)
+        {
+            Icq.disconnectBart(true);       // given up meanwhile
+            return;
+        }
+        this.lastActivity = new Date();
+        this.state = RequestBuddyIconAction.STATE_CONNECTION_ESTB;
+    }
+
+    public void onBartConnectFailed(JimmException e)
+    {
+        DebugLog.addText(e.getMessage());
+        this.state = RequestBuddyIconAction.STATE_ERROR;
+        Icq.disconnectBart(true);
+        int ext = (e.getErrCode() == 100) ? 52 : 51;
+        JimmException.handleException(new JimmException(e.getErrCode(), ext, true));
     }
 
     // Returns true if an error has occured
