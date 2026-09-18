@@ -82,8 +82,10 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 			public void run()
 			{
 				Image img = null;
+				// Throwable: на большой картинке это OutOfMemoryError, и
+				// экран оставался с «Загрузка...» навсегда.
 				try { img = Image.createImage(raw, 0, raw.length); }
-				catch (Exception ignore) {}
+				catch (Throwable ignore) {}
 				if (current != PhotoViewer.this) return;
 				image = img;
 				status = (img == null) ? ResourceBundle.getString("photo_failed") : null;

@@ -254,6 +254,21 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 					    // Get data
 					    Icq.noteBartUse();
 					    byte[] buf = snacPacket.getData();
+					    // Ответ службы адресован примете: типу и хешу.
+					    // Раньше действие съедало любой 10/07 — в том
+					    // числе фото или голосовое для другого действия,
+					    // и то ждало «Загрузка...» до таймаута, а снимок
+					    // становился аватаркой контакта.
+					    {
+					        int at = 1 + Util.getByte(buf, 0);
+					        if (Util.getWord(buf, at) != 0x0001
+					                || Util.getByte(buf, at + 3) != 16
+					                || !Util.byteArrayEquals(buf, at + 4, this.biHash, 0, 16))
+					        {
+					            this.active = false;
+					            return false;
+					        }
+					    }
 	
 					    int marker = 0;
 					    int uinLength = Util.getByte(buf, marker);
@@ -282,6 +297,15 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 					    // Move to next state
 					    this.state = RequestBuddyIconAction.STATE_ACTION_DONE;
 					    // Packet has been consumed
+					    consumed = true;
+				    }
+				    else if ((snacPacket.getFamily() == SnacPacket.SRV_REPLYAVATAR_FAMILY)
+						    && (snacPacket.getCommand() == 0x0001))
+				    {
+					    // Ошибка службы: аватарки нет. Иначе действие
+					    // висело бы в очереди минуту и перехватывало
+					    // чужие ответы.
+					    this.state = RequestBuddyIconAction.STATE_ACTION_DONE;
 					    consumed = true;
 				    }
 			    }
