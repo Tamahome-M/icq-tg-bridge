@@ -1177,14 +1177,6 @@ public abstract class VirtualList
 	}
 
 	//! Set caption text for list
-	// TeleMotoMax: show free memory in the caption (contact list only).
-	private boolean showMemory = false;
-
-	public void setShowMemory(boolean value)
-	{
-		showMemory = value;
-	}
-
 	public void setCaption(String capt)
 	{
 		if ((caption != null) && (caption.equals(capt))) return;
@@ -1298,13 +1290,6 @@ public abstract class VirtualList
 		} else {
 			g.setColor(capTxtColor);
 			g.drawString(caption, x, (height - capAndMenuFont.getHeight()) / 2, Graphics.TOP | Graphics.LEFT);
-			// TeleMotoMax: free heap at the right edge of the caption, so the
-			// phone's memory is visible without opening "About".
-			if (showMemory)
-			{
-				g.drawString(memoryText(), width - 3,
-						(height - capAndMenuFont.getHeight()) / 2, Graphics.TOP | Graphics.RIGHT);
-			}
 		}
 		
 		//#sijapp cond.if modules_DEBUGLOG is "true"#
@@ -1316,26 +1301,6 @@ public abstract class VirtualList
 		afterDrawCaption(g, height);
 		
 		return height;
-	}
-
-	// Свободная память для заголовка. Значение обновляется не чаще раза в
-	// две секунды и держится готовой строкой: заголовок перерисовывается
-	// часто, а и сам подсчёт, и склейка строки создают мусор — то есть
-	// индикатор портил бы ровно то, что показывает. Округление до 4 КБ
-	// убирает дрожание последней цифры.
-	private static String memoryString = "";
-	private static long memoryStamp;
-
-	private static String memoryText()
-	{
-		long now = System.currentTimeMillis();
-		if (now - memoryStamp >= 2000 || memoryString.length() == 0)
-		{
-			memoryStamp = now;
-			long kb = Runtime.getRuntime().freeMemory() / 1024;
-			memoryString = ((kb / 4) * 4) + "K";
-		}
-		return memoryString;
 	}
 
 	protected boolean isItemSelected(int index)

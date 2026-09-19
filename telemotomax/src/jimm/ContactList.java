@@ -171,7 +171,6 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 //#sijapp cond.end#
 
 		tree = new VirtualTree(null, false);
-		tree.setShowMemory(true);          // TeleMotoMax: свободная память в заголовке
 		tree.setVTCommands(this);
 		tree.setCyclingCursor(true);
 
