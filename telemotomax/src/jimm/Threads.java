@@ -31,6 +31,10 @@ public class Threads implements Runnable
 	final static public int TYPE_RECONNECT     = 2;
 	
 	private int type; 
+	private long delay = 5000;
+
+	// Пауза между попытками, когда быстрые попытки кончились, а сети нет.
+	final static public long SLOW_RECONNECT_MS = 60 * 1000;
 	
 	public Threads(int type)
 	{
@@ -48,7 +52,9 @@ public class Threads implements Runnable
 		case TYPE_RECONNECT:
 			if (!Icq.isDisconnected())
 			{
-				try {Thread.sleep(5000);} catch (Exception e) {}
+				try {Thread.sleep(delay);} catch (Exception e) {}
+				// За время паузы могли отключиться руками — тогда не лезем.
+				if (Icq.isDisconnected() || Icq.isConnected()) break;
 				ContactList.beforeConnect();
 				Icq.connect();
 			}
@@ -65,6 +71,13 @@ public class Threads implements Runnable
 	static public void reconnect()
 	{
 		Threads ri = new Threads(TYPE_RECONNECT);
+		new Thread(ri).start();
+	}
+
+	static public void reconnect(long delayMs)
+	{
+		Threads ri = new Threads(TYPE_RECONNECT);
+		ri.delay = delayMs;
 		new Thread(ri).start();
 	}
 	

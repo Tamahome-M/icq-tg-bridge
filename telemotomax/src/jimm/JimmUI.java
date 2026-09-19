@@ -620,7 +620,13 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		str	.append("\n\n").append(ResourceBundle.getString("free_heap"))
 			.append(": ").append(freeMem).append("kb\n")
 			.append(ResourceBundle.getString("total_mem")).append(": ")
-			.append(Runtime.getRuntime().totalMemory() / 1024).append("kb\n\n")
+			.append(Runtime.getRuntime().totalMemory() / 1024).append("kb\n")
+			// TeleMotoMax: по этой строке видно, тратится ли память и время
+			// на свой экранный буфер (когда телефон не двойной).
+			.append("буфер экрана: ")
+			.append(VirtualList.isScreenDoubleBuffered() ? "телефона" : "свой (медленно)")
+			.append(", прозрачность: ").append(Jimm.display.numAlphaLevels() > 2 ? "есть" : "нет")
+			.append("\n\n")
 			.append(ResourceBundle.getString("latest_ver")).append(":\n");
 		
 		aboutTextList.addBigText(str.toString(), -1, Font.STYLE_PLAIN, -1);

@@ -171,7 +171,6 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 //#sijapp cond.end#
 
 		tree = new VirtualTree(null, false);
-		tree.setShowMemory(true);          // TeleMotoMax: свободная память в заголовке
 		tree.setVTCommands(this);
 		tree.setCyclingCursor(true);
 
@@ -226,6 +225,23 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	static void resetLoginTimer()
 	{
 		lastLoginTime = System.currentTimeMillis();
+	}
+
+	// TeleMotoMax: одна мелодия (и одна вибрация) на пачку сообщений.
+	// После входа мост отдаёт накопившееся, и каждое сообщение звенело
+	// отдельно; в обычное время подряд идущие сообщения тоже сливаются.
+	private static long lastMessageAlert;
+	static boolean lastAlertAllowed;
+	private static final long LOGIN_BURST_MS = 20 * 1000;   // после входа — один раз
+	private static final long ALERT_GAP_MS = 2 * 1000;      // обычно — не чаще раза в 2 с
+
+	private static boolean messageAlertGate()
+	{
+		long now = System.currentTimeMillis();
+		long gap = (now - lastLoginTime < LOGIN_BURST_MS) ? LOGIN_BURST_MS : ALERT_GAP_MS;
+		if (now - lastMessageAlert < gap) return false;
+		lastMessageAlert = now;
+		return true;
 	}
 	
 	/* Returns reference to tree */
@@ -1160,20 +1176,6 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			MainThread.updateContactListCaption();
 	}
 
-	// TeleMotoMax: the free-memory figure in the caption is redrawn every
-	// few seconds while the list is on screen — otherwise it would change
-	// only with the next status update.
-	private static final Timer memTimer = new Timer();
-	static
-	{
-		memTimer.schedule(new TimerTask() {
-			public void run()
-			{
-				if (tree != null && tree.isActive()) tree.repaint();
-			}
-		}, 10000L, 10000L);
-	}
-
 	//Updates the title of the list
 	static public void updateTitle(int traffic)
 	{
@@ -1378,9 +1380,10 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			SplashCanvas.messageAvailable();
 
 			/* Notify user */
+			lastAlertAllowed = messageAlertGate();
 			if (!treeBuilt) needPlayMessNotif |= true;
 //#sijapp cond.if target isnot "DEFAULT" #
-			else if (!readingChat(uin)) playSoundNotification(SOUND_TYPE_MESSAGE);
+			else if (!readingChat(uin) && lastAlertAllowed) playSoundNotification(SOUND_TYPE_MESSAGE);
 //#sijapp cond.end #
 
 			/* Flag contact as having chat */

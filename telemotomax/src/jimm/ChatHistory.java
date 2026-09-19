@@ -534,7 +534,52 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		addTextToForm(from, message, url, time, red, offline, messId, attach, 1);
 	}
 
+	// TeleMotoMax: сообщения в чат, которого нет на экране, не верстаются
+	// сразу. Вёрстка — поиск смайлов по всему тексту и промер каждого слова
+	// шрифтом — идёт в потоке интерфейса и на V3 стоит десятки миллисекунд
+	// на сообщение; в оживлённых группах это и делало навигацию по списку
+	// вялой. Запись откладывается и верстается при открытии чата. Текущий
+	// чат (в том числе когда поверх него фото или плеер) верстается сразу.
+	private Vector deferred;
+
 	void addTextToForm(String from, String message, String url, long time,
+			boolean red, boolean offline, int messId, byte[] attach, int attachKind)
+	{
+		if (ChatHistory.currentChat != this && !textList.isActive())
+		{
+			if (deferred == null) deferred = new Vector();
+			int limit = maxMessages();
+			while (deferred.size() >= limit) deferred.removeElementAt(0);
+			deferred.addElement(new Object[] { from, message, url, new Long(time),
+					red ? Boolean.TRUE : Boolean.FALSE, offline ? Boolean.TRUE : Boolean.FALSE,
+					new Integer(messId), attach, new Integer(attachKind) });
+			return;
+		}
+		layout(from, message, url, time, red, offline, messId, attach, attachKind);
+	}
+
+	// Верстает отложенное — при открытии чата.
+	private void flushDeferred()
+	{
+		Vector d = deferred;
+		if (d == null) return;
+		deferred = null;
+		for (int i = 0; i < d.size(); i++)
+		{
+			Object[] r = (Object[]) d.elementAt(i);
+			layout((String) r[0], (String) r[1], (String) r[2], ((Long) r[3]).longValue(),
+					((Boolean) r[4]).booleanValue(), ((Boolean) r[5]).booleanValue(),
+					((Integer) r[6]).intValue(), (byte[]) r[7], ((Integer) r[8]).intValue());
+		}
+	}
+
+	// Сколько сообщений в чате, считая ещё не свёрстанные.
+	int messageCount()
+	{
+		return messData.size() + (deferred == null ? 0 : deferred.size());
+	}
+
+	private void layout(String from, String message, String url, long time,
 			boolean red, boolean offline, int messId, byte[] attach, int attachKind)
 	{
 		int texOffset = 0;
@@ -617,8 +662,9 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	{
 		buildMenu();
 		JimmUI.setColorScheme(textList, true, -1, false);
-		textList.activate(Jimm.display);
 		ChatHistory.currentChat = this;
+		flushDeferred();
+		textList.activate(Jimm.display);
 		ChatHistory.updateCaption_Internal(this);
 		contact.resetUnreadMessages();
 		contact.setStatusImage();
@@ -923,7 +969,7 @@ public class ChatHistory
 			newChatForm(contact, contact.getStringValue(ContactItem.CONTACTITEM_NAME));
 		ChatTextList chat = (ChatTextList) historyTable.get(uin);
 		chat.activate();
-		if (fresh && chat.getMessData().size() == 0) HistoryViewer.preloadLast(uin, chat);
+		if (fresh && chat.messageCount() == 0) HistoryViewer.preloadLast(uin, chat);
 	}
 
 	// TeleMotoMax: a history record from the bridge goes into the chat as

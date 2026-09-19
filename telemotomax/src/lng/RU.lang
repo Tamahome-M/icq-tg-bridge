@@ -365,6 +365,7 @@
 "send_img"					"Отправить фото"
 "send_message"				"Сообщение"
 "server_host"				"Имя сервера"
+"reconnect_waiting"		"ждём сеть"
 "server_port"				"Порт"
 "set_status"				"Статус"
 "set_xstatus"				"X-статус"

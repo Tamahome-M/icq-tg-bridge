@@ -95,8 +95,15 @@ class VirtualCanvas extends Canvas implements Runnable
 		currentControl.onHide();
 	}
 	
+	// TeleMotoMax: повтор клавиши не ставится в очередь, пока не отработал
+	// предыдущий. Таймер тикал каждые 50 мс независимо от того, успел ли
+	// экран перерисоваться, — на V3 перерисовка дольше, очередь копилась,
+	// и курсор ехал дальше уже после отпускания клавиши.
+	private boolean repeatPending;
+
 	public void run()
 	{
+		repeatPending = false;
 		if (timerTask == null) return;
 		currentControl.keyRepeated(lastKeyKode);
 	}
@@ -107,13 +114,16 @@ class VirtualCanvas extends Canvas implements Runnable
 		cancelKeyRepeatTask();
 		if (currentControl != null) currentControl.keyPressed(keyCode);
 		lastKeyKode = keyCode;
+		repeatPending = false;
 		timerTask = new TimerTask() {
 			public void run()
 			{
+				if (repeatPending) return;
+				repeatPending = true;
 				display.callSerially(VirtualCanvas.this);
 			}
 		};
-		repeatTimer.schedule(timerTask, 500, 50);
+		repeatTimer.schedule(timerTask, 500, 80);
 	}
 
 	protected void keyReleased(int keyCode)
@@ -994,7 +1004,25 @@ public abstract class VirtualList
 	
 	// Return game action or extended codes
 	// Thanks for Aspro for source examples
+	// TeleMotoMax: разбор клавиши (getKeyName, toLowerCase, сравнения строк)
+	// делается один раз на код, дальше — из кэша.
+	private static final int[] keyCacheCodes = new int[16];
+	private static final int[] keyCacheActions = new int[16];
+	private static int keyCacheNext;
+
 	private int getExtendedGameAction(int keyCode)
+	{
+		for (int i = 0; i < keyCacheCodes.length; i++)
+			if (keyCacheCodes[i] == keyCode && keyCacheActions[i] != 0)
+				return keyCacheActions[i];
+		int action = resolveGameAction(keyCode);
+		keyCacheCodes[keyCacheNext] = keyCode;
+		keyCacheActions[keyCacheNext] = action;
+		keyCacheNext = (keyCacheNext + 1) % keyCacheCodes.length;
+		return action;
+	}
+
+	private int resolveGameAction(int keyCode)
 	{
 		try
 		{
@@ -1177,14 +1205,6 @@ public abstract class VirtualList
 	}
 
 	//! Set caption text for list
-	// TeleMotoMax: show free memory in the caption (contact list only).
-	private boolean showMemory = false;
-
-	public void setShowMemory(boolean value)
-	{
-		showMemory = value;
-	}
-
 	public void setCaption(String capt)
 	{
 		if ((caption != null) && (caption.equals(capt))) return;
@@ -1298,13 +1318,6 @@ public abstract class VirtualList
 		} else {
 			g.setColor(capTxtColor);
 			g.drawString(caption, x, (height - capAndMenuFont.getHeight()) / 2, Graphics.TOP | Graphics.LEFT);
-			// TeleMotoMax: free heap at the right edge of the caption, so the
-			// phone's memory is visible without opening "About".
-			if (showMemory)
-			{
-				g.drawString(memoryText(), width - 3,
-						(height - capAndMenuFont.getHeight()) / 2, Graphics.TOP | Graphics.RIGHT);
-			}
 		}
 		
 		//#sijapp cond.if modules_DEBUGLOG is "true"#
@@ -1316,26 +1329,6 @@ public abstract class VirtualList
 		afterDrawCaption(g, height);
 		
 		return height;
-	}
-
-	// Свободная память для заголовка. Значение обновляется не чаще раза в
-	// две секунды и держится готовой строкой: заголовок перерисовывается
-	// часто, а и сам подсчёт, и склейка строки создают мусор — то есть
-	// индикатор портил бы ровно то, что показывает. Округление до 4 КБ
-	// убирает дрожание последней цифры.
-	private static String memoryString = "";
-	private static long memoryStamp;
-
-	private static String memoryText()
-	{
-		long now = System.currentTimeMillis();
-		if (now - memoryStamp >= 2000 || memoryString.length() == 0)
-		{
-			memoryStamp = now;
-			long kb = Runtime.getRuntime().freeMemory() / 1024;
-			memoryString = ((kb / 4) * 4) + "K";
-		}
-		return memoryString;
 	}
 
 	protected boolean isItemSelected(int index)
@@ -1841,6 +1834,14 @@ public abstract class VirtualList
 
 	static private Image bDIimage = null;
 
+	// TeleMotoMax: для «О программе» — рисует ли телефон сам через буфер
+	// или Jimm держит свой полноэкранный Image и копирует его при каждой
+	// перерисовке (это и память, и время).
+	static public boolean isScreenDoubleBuffered()
+	{
+		return virtualCanvas.isDoubleBuffered();
+	}
+
 	// protected void paint(Graphics g)
 	protected void paint(Graphics g)
 	{
@@ -2258,9 +2259,9 @@ public abstract class VirtualList
 			}
 			else 
 			{
-				//drawRect(g, capBkCOlor, transformColorLight(capBkCOlor, -80), 0, y1, width, y2, 255);
-				int[] backPic = getMenuBarBackground(width, height, transformColorLight(capBkCOlor, -32), transformColorLight(capBkCOlor, -102));
-				g.drawRGB(backPic, 0, width, 0, y1, width, height, false);
+				// TeleMotoMax: полосами fillRect, а не drawRGB — попиксельная
+				// копия массива на V3 стоила дороже всего остального кадра.
+				drawRect(g, transformColorLight(capBkCOlor, -32), transformColorLight(capBkCOlor, -102), 0, y1, width, y2, 255);
 			}
 		}
 		

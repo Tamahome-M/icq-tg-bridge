@@ -276,9 +276,12 @@ class TelegramSide:
             text = describe_message(event.message)
             if not text:
                 return
+            # Вложение — как у входящих: иначе своё фото или голосовое с
+            # другого устройства на телефоне нельзя было открыть.
             await self.on_message(peer_id, "Я", text,
                                   int(event.message.date.timestamp()),
-                                  topic_of(event.message))
+                                  topic_of(event.message),
+                                  attach=attachment_of(event.message))
         except Exception:
             log.exception("ошибка обработки своего сообщения")
 

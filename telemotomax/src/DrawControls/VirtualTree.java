@@ -266,6 +266,23 @@ public class VirtualTree extends VirtualList
 		}
 	}
 
+	// TeleMotoMax: строки дерева одной высоты — шрифт или значок статуса
+	// (16 точек + 1), что больше. В VirtualList высота считалась через
+	// полную сборку элемента (текст, картинки, цвет) и делалось это по
+	// нескольку раз на строку за каждый кадр — на V3 это была половина
+	// времени перерисовки.
+	private int rowHeight;
+
+	public int getItemHeight(int itemIndex)
+	{
+		if (rowHeight == 0)
+		{
+			int fh = getFontHeight();
+			rowHeight = (fh > 17) ? fh : 17;
+		}
+		return rowHeight;
+	}
+
 	// protected void get(int index, ListItem item)
 	protected void get(int index, ListItem item)
 	{

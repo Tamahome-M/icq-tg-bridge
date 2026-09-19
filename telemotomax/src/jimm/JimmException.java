@@ -209,10 +209,14 @@ public class JimmException extends Exception
 			SplashCanvas.setErrFlag(true);
 
 			Alert errorMsg = null;
+
+			// Переподключаться ли самим: ошибка не «неверный пароль» и
+			// подобное, отключались не руками, и переподключение включено.
+			boolean auto = Icq.isNotCriticalConnectionError(e.getErrCode())
+					&& !Icq.isDisconnected()
+					&& Options.getBoolean(Options.OPTION_RECONNECT);
 			
-			if (Icq.isNotCriticalConnectionError(e.getErrCode()) && 
-					!Icq.isDisconnected() && 
-					Icq.reconnect_attempts > 0)
+			if (auto && Icq.reconnect_attempts > 0)
 			{
 				int reconTotal = Options.getInt(Options.OPTION_RECONNECT_NUMBER);
 				SplashCanvas.setLastErrCode(e.getFullErrCode()+" "+(reconTotal-Icq.reconnect_attempts+1)+"/"+reconTotal);
@@ -230,6 +234,19 @@ public class JimmException extends Exception
 				}
 				
 				Threads.reconnect();
+			}
+			else if (auto)
+			{
+				// Попытки кончились, а сети всё нет. Jimm здесь сдавался и
+				// показывал ошибку — на GPRS обрыв на несколько минут
+				// (метро, лифт, перерегистрация) обычное дело, и телефон
+				// потом лежал «отключён», пока не нажмёшь «Подключиться».
+				// Не сдаёмся: пробуем раз в минуту, пока не получится или
+				// пока не отключат руками.
+				SplashCanvas.setLastErrCode(e.getFullErrCode() + " "
+						+ ResourceBundle.getString("reconnect_waiting"));
+				DebugLog.addText("err_code=" + e.getFullErrCode() + " (slow retry)");
+				Threads.reconnect(Threads.SLOW_RECONNECT_MS);
 			}
 			else
 			{
