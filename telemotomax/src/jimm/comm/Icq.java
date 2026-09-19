@@ -274,6 +274,12 @@ public class Icq implements Runnable
 		if (c == null) return;
 		
 		setDisconnected(true);
+
+		if (keepAliveTimerTask != null)
+		{
+			keepAliveTimerTask.cancel();      // иначе задачи копятся с каждым сеансом
+			keepAliveTimerTask = null;
+		}
 		
 		thread = null;
 		synchronized (wait) { wait.notifyAll(); }		
@@ -638,9 +644,20 @@ public class Icq implements Runnable
 						{
 							if (reqAction != null && reqAction.size() != 0)
 								newAction = (Action) reqAction.elementAt(0);
-							if (((actAction.size() > 0) && newAction
+							if (newAction != null && !newAction.isExecutable())
+							{
+								// Пока действие ждало очереди, состояние
+								// изменилось (например, второй ConnectAction
+								// после удавшегося входа). У Jimm такое
+								// действие оставалось в голове очереди
+								// навсегда и запирало всё, что за ним, —
+								// фото, история, голосовые не начинались.
+								reqAction.removeElementAt(0);
+								newAction.onEvent(Action.ON_ERROR);
+								newAction = null;
+							}
+							else if ((actAction.size() > 0) && newAction
 									.isExclusive())
-									|| (!newAction.isExecutable()))
 							{
 								newAction = null;
 							} else
@@ -809,8 +826,11 @@ public class Icq implements Runnable
 
 			}
 		}
-		catch (Exception e)
+		catch (Throwable e)
 		{
+			// Throwable, а не Exception: OutOfMemoryError главный цикл раньше
+			// просто убивал — сокет оставался открытым, клиент «в сети», а
+			// сообщений нет. Теперь это обрыв связи с переподключением.
 			DebugLog.addText ("MainThread: Exception: " + e.toString());
 			e.printStackTrace();
 

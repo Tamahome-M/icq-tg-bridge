@@ -133,6 +133,7 @@ class Session:
         self.item_to_uin: dict[int, int] = {}
         self.auth_key = b""
         self.last_seen = time.time()
+        self.last_sent = time.time()      # когда мост последний раз что-то отправил
         self.pings_seen = 0
         self.last_ping = 0.0
         self.client_name = "?"
@@ -191,6 +192,7 @@ class Session:
                 log.warning("обрыв при отправке телефону: %s", exc)
                 self.closed = True
                 return False
+        self.last_sent = time.time()
         return True
 
     async def send_snac(self, family: int, subtype: int, data: bytes = b"",
@@ -469,7 +471,11 @@ class Session:
         step = max(0.05, min(30.0, SERVICE_IDLE_TIMEOUT / 3))
         while not self.closed:
             await asyncio.sleep(step)
-            silent = time.time() - self.last_seen
+            # Пока мост сам отдаёт части ролика или голосового, телефон
+            # молчит по делу — иначе перекодирование плюс несколько частей
+            # по GPRS не укладывались в срок, и соединение рвалось на
+            # полпути.
+            silent = time.time() - max(self.last_seen, self.last_sent)
             if silent > SERVICE_IDLE_TIMEOUT:
                 log.info("соединение за аватарками %s молчит %.0f с — закрываю",
                          self.peer, silent)

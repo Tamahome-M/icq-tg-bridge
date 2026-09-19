@@ -193,7 +193,6 @@ public class SOCKETConnection extends Connection implements Runnable
 	{
 		// Required variables
 		byte[] flapHeader = new byte[6];
-		byte[] flapData;
 		byte[] rcvdPacket;
 		int bRead = 0, bReadSum;
 
@@ -235,28 +234,26 @@ public class SOCKETConnection extends Connection implements Runnable
 					throw (new JimmException(124, 0));
 				}
 
-				// Allocate memory for flap data
-				flapData = new byte[Util.getWord(flapHeader, 4)];
+				// TeleMotoMax: тело читается сразу в кадр, за заголовком —
+				// раньше сначала в отдельный массив, потом копия в кадр:
+				// для части ролика или голосового это лишние 60 КБ в куче.
+				int flapLen = Util.getWord(flapHeader, 4);
+				rcvdPacket = new byte[flapHeader.length + flapLen];
+				System.arraycopy(flapHeader, 0, rcvdPacket, 0, flapHeader.length);
 
 				// Read flap data
 				bReadSum = 0;
-				do
+				while (bReadSum < flapLen)
 				{
-					bRead = is.read(flapData, bReadSum, flapData.length
-							- bReadSum);
+					bRead = is.read(rcvdPacket, flapHeader.length + bReadSum, flapLen - bReadSum);
 					if (bRead == -1)
 						break;
 					bReadSum += bRead;
-				} while (bReadSum < flapData.length);
+				}
 				if (bRead == -1)
 					break;
 
-				// Merge flap header and data and count the data
-				rcvdPacket = new byte[flapHeader.length + flapData.length];
-				System.arraycopy(flapHeader, 0, rcvdPacket, 0,
-						flapHeader.length);
-				System.arraycopy(flapData, 0, rcvdPacket,
-						flapHeader.length, flapData.length);
+				// Count the data
 //#sijapp cond.if modules_TRAFFIC is "true" #
 				Traffic.addInTraffic(bReadSum + 57);
 				MainThread.updateContactListCaption();
@@ -297,6 +294,16 @@ public class SOCKETConnection extends Connection implements Runnable
 				JimmException.handleException(f);
 			}
 			// Reset input close flag
+		}
+		// TeleMotoMax: OutOfMemoryError на большом кадре раньше убивал приёмник
+		// молча — сокет открыт, клиент «в сети», а читать некому.
+		catch (Throwable t)
+		{
+			if (!getInputCloseFlag() && Icq.isMyConnection(this) && (this.typeNetwork == JimmException.ICQ_MAIN))
+			{
+				JimmException f = new JimmException(120, 5, this.typeNetwork);
+				JimmException.handleException(f);
+			}
 		}
 		finally
 		{
