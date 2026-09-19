@@ -95,8 +95,15 @@ class VirtualCanvas extends Canvas implements Runnable
 		currentControl.onHide();
 	}
 	
+	// TeleMotoMax: повтор клавиши не ставится в очередь, пока не отработал
+	// предыдущий. Таймер тикал каждые 50 мс независимо от того, успел ли
+	// экран перерисоваться, — на V3 перерисовка дольше, очередь копилась,
+	// и курсор ехал дальше уже после отпускания клавиши.
+	private boolean repeatPending;
+
 	public void run()
 	{
+		repeatPending = false;
 		if (timerTask == null) return;
 		currentControl.keyRepeated(lastKeyKode);
 	}
@@ -107,13 +114,16 @@ class VirtualCanvas extends Canvas implements Runnable
 		cancelKeyRepeatTask();
 		if (currentControl != null) currentControl.keyPressed(keyCode);
 		lastKeyKode = keyCode;
+		repeatPending = false;
 		timerTask = new TimerTask() {
 			public void run()
 			{
+				if (repeatPending) return;
+				repeatPending = true;
 				display.callSerially(VirtualCanvas.this);
 			}
 		};
-		repeatTimer.schedule(timerTask, 500, 50);
+		repeatTimer.schedule(timerTask, 500, 80);
 	}
 
 	protected void keyReleased(int keyCode)
