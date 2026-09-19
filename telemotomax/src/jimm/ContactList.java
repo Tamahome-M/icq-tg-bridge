@@ -1176,20 +1176,6 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			MainThread.updateContactListCaption();
 	}
 
-	// TeleMotoMax: the free-memory figure in the caption is redrawn every
-	// few seconds while the list is on screen — otherwise it would change
-	// only with the next status update.
-	private static final Timer memTimer = new Timer();
-	static
-	{
-		memTimer.schedule(new TimerTask() {
-			public void run()
-			{
-				if (tree != null && tree.isActive()) tree.repaint();
-			}
-		}, 10000L, 10000L);
-	}
-
 	//Updates the title of the list
 	static public void updateTitle(int traffic)
 	{

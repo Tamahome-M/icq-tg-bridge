@@ -1004,7 +1004,25 @@ public abstract class VirtualList
 	
 	// Return game action or extended codes
 	// Thanks for Aspro for source examples
+	// TeleMotoMax: разбор клавиши (getKeyName, toLowerCase, сравнения строк)
+	// делается один раз на код, дальше — из кэша.
+	private static final int[] keyCacheCodes = new int[16];
+	private static final int[] keyCacheActions = new int[16];
+	private static int keyCacheNext;
+
 	private int getExtendedGameAction(int keyCode)
+	{
+		for (int i = 0; i < keyCacheCodes.length; i++)
+			if (keyCacheCodes[i] == keyCode && keyCacheActions[i] != 0)
+				return keyCacheActions[i];
+		int action = resolveGameAction(keyCode);
+		keyCacheCodes[keyCacheNext] = keyCode;
+		keyCacheActions[keyCacheNext] = action;
+		keyCacheNext = (keyCacheNext + 1) % keyCacheCodes.length;
+		return action;
+	}
+
+	private int resolveGameAction(int keyCode)
 	{
 		try
 		{
@@ -2241,9 +2259,9 @@ public abstract class VirtualList
 			}
 			else 
 			{
-				//drawRect(g, capBkCOlor, transformColorLight(capBkCOlor, -80), 0, y1, width, y2, 255);
-				int[] backPic = getMenuBarBackground(width, height, transformColorLight(capBkCOlor, -32), transformColorLight(capBkCOlor, -102));
-				g.drawRGB(backPic, 0, width, 0, y1, width, height, false);
+				// TeleMotoMax: полосами fillRect, а не drawRGB — попиксельная
+				// копия массива на V3 стоила дороже всего остального кадра.
+				drawRect(g, transformColorLight(capBkCOlor, -32), transformColorLight(capBkCOlor, -102), 0, y1, width, y2, 255);
 			}
 		}
 		

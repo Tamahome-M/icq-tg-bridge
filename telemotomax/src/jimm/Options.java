@@ -664,6 +664,19 @@ public class Options
 	}
 
 	/* Option retrieval methods (no type checking!) */
+	// TeleMotoMax: ключи настроек — готовые объекты. Раньше каждое чтение
+	// настройки создавало Integer: в кадре контакт-листа таких чтений
+	// десятки, и весь этот мусор потом собирал сборщик — заметными паузами.
+	private static final Integer[] keyCache = new Integer[256];
+
+	private static Integer key(int k)
+	{
+		if (k < 0 || k >= keyCache.length) return new Integer(k);
+		Integer v = keyCache[k];
+		if (v == null) keyCache[k] = v = new Integer(k);
+		return v;
+	}
+
 	static public synchronized String getString(int key)
 	{
 		switch (key)
@@ -673,63 +686,63 @@ public class Options
 			int index = getInt(Options.OPTION_CURR_ACCOUNT) * 2;
 			return getString(accountKeys[key == OPTION_UIN ? index : index + 1]);
 		}
-		return ((String) options.get(new Integer(key)));
+		return ((String) options.get(key(key)));
 	}
 
 	static public synchronized int getInt(int key)
 	{
-		return (((Integer) options.get(new Integer(key))).intValue());
+		return (((Integer) options.get(key(key))).intValue());
 	}
 
 	static public synchronized boolean getBoolean(int key)
 	{
-		return (((Boolean) options.get(new Integer(key))).booleanValue());
+		return (((Boolean) options.get(key(key))).booleanValue());
 	}
 
 	static public synchronized long getLong(int key)
 	{
-		return (((Long) options.get(new Integer(key))).longValue());
+		return (((Long) options.get(key(key))).longValue());
 	}
 
 	/* Option setting methods (no type checking!) */
 	static public synchronized void setString(int key, String value)
 	{
 		//#sijapp cond.if modules_DEBUGLOG is "true" #
-		if (checkKeys && options.containsKey(new Integer(key)))
+		if (checkKeys && options.containsKey(key(key)))
 			System.out.println("Identical keys: " + key);
 		//#sijapp cond.end#
 
-		options.put(new Integer(key), value);
+		options.put(key(key), value);
 	}
 
 	static public synchronized void setInt(int key, int value)
 	{
 		//#sijapp cond.if modules_DEBUGLOG is "true" #
-		if (checkKeys && options.containsKey(new Integer(key)))
+		if (checkKeys && options.containsKey(key(key)))
 			System.out.println("Identical keys: " + key);
 		//#sijapp cond.end#
 
-		options.put(new Integer(key), new Integer(value));
+		options.put(key(key), new Integer(value));
 	}
 
 	static public synchronized void setBoolean(int key, boolean value)
 	{
 		//#sijapp cond.if modules_DEBUGLOG is "true" #
-		if (checkKeys && options.containsKey(new Integer(key)))
+		if (checkKeys && options.containsKey(key(key)))
 			System.out.println("Identical keys: " + key);
 		//#sijapp cond.end#
 
-		options.put(new Integer(key), new Boolean(value));
+		options.put(key(key), new Boolean(value));
 	}
 
 	static public synchronized void setLong(int key, long value)
 	{
 		//#sijapp cond.if modules_DEBUGLOG is "true" #
-		if (checkKeys && options.containsKey(new Integer(key)))
+		if (checkKeys && options.containsKey(key(key)))
 			System.out.println("Identical keys: " + key);
 		//#sijapp cond.end#
 
-		options.put(new Integer(key), new Long(value));
+		options.put(key(key), new Long(value));
 	}
 
 	/**************************************************************************/

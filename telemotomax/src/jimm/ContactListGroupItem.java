@@ -98,17 +98,23 @@ public class ContactListGroupItem implements ContactListItem
 		totalCount += totalInc;
 	}
 
+	// TeleMotoMax: строка собирается заново только когда изменились
+	// счётчики — раньше склейка шла при каждом кадре и не по разу.
+	private String textCache;
+	private int textOnline = -1, textTotal = -1;
+	private boolean textHide;
+
 	public String getText()
 	{
-		String result;
-
-		if ((onlineCount != 0)
-				&& !Options.getBoolean(Options.OPTION_CL_HIDE_OFFLINE))
-			result = name + " (" + Integer.toString(onlineCount) + "/"
-					+ Integer.toString(totalCount) + ")";
-		else
-			result = name;
-		return result;
+		boolean hide = Options.getBoolean(Options.OPTION_CL_HIDE_OFFLINE);
+		if (textCache == null || textOnline != onlineCount || textTotal != totalCount || textHide != hide)
+		{
+			textOnline = onlineCount; textTotal = totalCount; textHide = hide;
+			textCache = (onlineCount != 0 && !hide)
+					? name + " (" + Integer.toString(onlineCount) + "/" + Integer.toString(totalCount) + ")"
+					: name;
+		}
+		return textCache;
 	}
 
 	public Image getLeftImage(boolean expanded)
@@ -144,6 +150,7 @@ public class ContactListGroupItem implements ContactListItem
 	public void setName(String name)
 	{
 		this.name = new String(name);
+		textCache = null;
 	}
 
 	// Checks whether some other object is equal to this one
