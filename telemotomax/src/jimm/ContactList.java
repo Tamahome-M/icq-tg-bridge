@@ -226,6 +226,23 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	{
 		lastLoginTime = System.currentTimeMillis();
 	}
+
+	// TeleMotoMax: одна мелодия (и одна вибрация) на пачку сообщений.
+	// После входа мост отдаёт накопившееся, и каждое сообщение звенело
+	// отдельно; в обычное время подряд идущие сообщения тоже сливаются.
+	private static long lastMessageAlert;
+	static boolean lastAlertAllowed;
+	private static final long LOGIN_BURST_MS = 20 * 1000;   // после входа — один раз
+	private static final long ALERT_GAP_MS = 2 * 1000;      // обычно — не чаще раза в 2 с
+
+	private static boolean messageAlertGate()
+	{
+		long now = System.currentTimeMillis();
+		long gap = (now - lastLoginTime < LOGIN_BURST_MS) ? LOGIN_BURST_MS : ALERT_GAP_MS;
+		if (now - lastMessageAlert < gap) return false;
+		lastMessageAlert = now;
+		return true;
+	}
 	
 	/* Returns reference to tree */
 	static public VirtualList getVisibleContactListRef()
@@ -1377,9 +1394,10 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			SplashCanvas.messageAvailable();
 
 			/* Notify user */
+			lastAlertAllowed = messageAlertGate();
 			if (!treeBuilt) needPlayMessNotif |= true;
 //#sijapp cond.if target isnot "DEFAULT" #
-			else if (!readingChat(uin)) playSoundNotification(SOUND_TYPE_MESSAGE);
+			else if (!readingChat(uin) && lastAlertAllowed) playSoundNotification(SOUND_TYPE_MESSAGE);
 //#sijapp cond.end #
 
 			/* Flag contact as having chat */

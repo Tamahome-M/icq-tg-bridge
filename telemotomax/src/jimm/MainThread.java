@@ -126,7 +126,8 @@ public class MainThread implements Runnable
 		case TYPE_ADD_MSG:
 			boolean isChecked = ContactList.addMessage((Message) data[0]);
 //#sijapp cond.if target isnot "DEFAULT"#
-			if (isChecked && !ContactList.readingChat(((Message) data[0]).getSndrUin())) {
+			if (isChecked && !ContactList.readingChat(((Message) data[0]).getSndrUin())
+					&& ContactList.lastAlertAllowed) {
 				int vibraKind = Options.getInt(Options.OPTION_VIBRATOR);
 				if (vibraKind == 2) {
 					vibraKind = SplashCanvas.locked() ? 1 : 0;
