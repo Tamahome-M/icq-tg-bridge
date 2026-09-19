@@ -1806,6 +1806,14 @@ public abstract class VirtualList
 
 	static private Image bDIimage = null;
 
+	// TeleMotoMax: для «О программе» — рисует ли телефон сам через буфер
+	// или Jimm держит свой полноэкранный Image и копирует его при каждой
+	// перерисовке (это и память, и время).
+	static public boolean isScreenDoubleBuffered()
+	{
+		return virtualCanvas.isDoubleBuffered();
+	}
+
 	// protected void paint(Graphics g)
 	protected void paint(Graphics g)
 	{
