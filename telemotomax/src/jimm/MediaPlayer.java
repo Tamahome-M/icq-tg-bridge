@@ -17,6 +17,7 @@ package jimm;
 import java.io.ByteArrayInputStream;
 import java.io.OutputStream;
 import java.util.Enumeration;
+import java.util.Vector;
 
 import javax.microedition.io.Connector;
 import javax.microedition.io.file.FileConnection;
@@ -47,8 +48,122 @@ import jimm.util.ResourceBundle;
  * both the file and the player are dropped when the screen is closed.
  */
 public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
-		RequestBartAction.ProgressListener, PlayerListener
+		RequestBartAction.PartSink, PlayerListener
 {
+	// Потоковый приём: части клипа складываются в очередь, писатель в своём
+	// потоке дописывает их во временный файл (ввод-вывод не в потоке связи),
+	// после последней — запускает плеер. В куче при этом одна-две части, а
+	// не весь клип. Нет записываемого корня — части не принимаем, и
+	// RequestBartAction собирает клип в памяти, как раньше.
+	private Vector partQueue;
+	private Thread writer;
+	private OutputStream partOut;
+	private FileConnection partFc;
+	private boolean partFailed;
+	private boolean partsDone;
+	private boolean partsOk;
+
+	public synchronized boolean onBartPart(byte[] buf, int off, int len, int part, int total)
+	{
+		if (current != this || partFailed) return false;
+		if (partQueue == null)
+		{
+			String url = tempFileUrl(bartType == RequestBartAction.BART_VOICE ? ".amr" : ".3gp");
+			if (url == null) return false;
+			filePath = url;
+			partQueue = new Vector();
+			writer = new Thread() { public void run() { writeParts(); } };
+			writer.start();
+		}
+		byte[] copy = new byte[len];
+		System.arraycopy(buf, off, copy, 0, len);
+		partQueue.addElement(copy);
+		clipSize += len;
+		notifyAll();
+		return true;
+	}
+
+	public synchronized void onBartDone(boolean ok)
+	{
+		partsDone = true;
+		partsOk = ok;
+		notifyAll();
+	}
+
+	private void writeParts()
+	{
+		Exception err = null;
+		final String path = filePath;
+		try
+		{
+			partFc = (FileConnection) Connector.open(path, Connector.READ_WRITE);
+			if (partFc.exists()) partFc.delete();
+			partFc.create();
+			partOut = partFc.openOutputStream();
+			for (;;)
+			{
+				byte[] chunk;
+				synchronized (this)
+				{
+					while (partQueue.isEmpty() && !partsDone && current == this)
+					{
+						try { wait(); } catch (InterruptedException ignore) {}
+					}
+					if (current != this) break;
+					if (partQueue.isEmpty())
+					{
+						if (partsDone) break;
+						continue;
+					}
+					chunk = (byte[]) partQueue.elementAt(0);
+					partQueue.removeElementAt(0);
+				}
+				partOut.write(chunk);
+			}
+			partOut.flush();
+			partOut.close(); partOut = null;
+			partFc.close(); partFc = null;
+		}
+		catch (Exception e)
+		{
+			err = e;
+			partFailed = true;
+		}
+		try { if (partOut != null) partOut.close(); } catch (Exception ignore) {}
+		try { if (partFc != null) partFc.close(); } catch (Exception ignore) {}
+		partOut = null; partFc = null;
+		if (current != this) { deleteFile(path); return; }
+		if (err != null || !partsOk)
+		{
+			deleteTemp();
+			if (err != null) fail(err, null); else { status = failedText(); repaint(); }
+			return;
+		}
+		status = null;
+		repaint();
+		try
+		{
+			start(Manager.createPlayer(path));
+		}
+		catch (Exception e)
+		{
+			deleteTemp();
+			fail(e, null);
+		}
+	}
+
+	private static void deleteFile(String url)
+	{
+		if (url == null) return;
+		try
+		{
+			FileConnection fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
+			if (fc.exists()) fc.delete();
+			fc.close();
+		}
+		catch (Exception ignore) {}
+	}
+
 	private static MediaPlayer current;
 
 	private final JimmScreen back;
@@ -332,15 +447,11 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	private void deleteTemp()
 	{
-		if (filePath == null) return;
-		try
-		{
-			FileConnection fc = (FileConnection) Connector.open(filePath, Connector.READ_WRITE);
-			if (fc.exists()) fc.delete();
-			fc.close();
-		}
-		catch (Exception ignore) {}
+		String path = filePath;
 		filePath = null;
+		// Пока писатель дописывает части, файл удалит он сам, когда выйдет.
+		if (writer != null && writer.isAlive()) return;
+		deleteFile(path);
 	}
 
 	// Short name of an exception: "javax.microedition.media.MediaException"
@@ -509,6 +620,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	private void close()
 	{
 		if (current == this) current = null;
+		synchronized (this) { notifyAll(); }   // разбудить писателя, чтобы вышел
 		stop();                            // free the player and the temp file first
 		if (back != null) back.activate();
 		else JimmUI.backToLastScreen();

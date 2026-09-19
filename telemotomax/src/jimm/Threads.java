@@ -33,6 +33,12 @@ public class Threads implements Runnable
 	private int type; 
 	private long delay = 5000;
 
+	// Переподключение уже назначено: два обрыва подряд (сторож пингов и
+	// приёмник сокета) давали два потока, два ConnectAction и два входа —
+	// мост закрывал первый как «подключился заново», а второй ConnectAction
+	// застревал в очереди.
+	private static boolean reconnectPending;
+
 	// Пауза между попытками, когда быстрые попытки кончились, а сети нет.
 	final static public long SLOW_RECONNECT_MS = 60 * 1000;
 	
@@ -50,13 +56,20 @@ public class Threads implements Runnable
 			break;
 			
 		case TYPE_RECONNECT:
-			if (!Icq.isDisconnected())
+			try
 			{
-				try {Thread.sleep(delay);} catch (Exception e) {}
-				// За время паузы могли отключиться руками — тогда не лезем.
-				if (Icq.isDisconnected() || Icq.isConnected()) break;
-				ContactList.beforeConnect();
-				Icq.connect();
+				if (!Icq.isDisconnected())
+				{
+					try {Thread.sleep(delay);} catch (Exception e) {}
+					// За время паузы могли отключиться руками — тогда не лезем.
+					if (Icq.isDisconnected() || Icq.isConnected()) break;
+					ContactList.beforeConnect();
+					Icq.connect();
+				}
+			}
+			finally
+			{
+				synchronized (Threads.class) { reconnectPending = false; }
 			}
 			break;
 		}
@@ -70,12 +83,16 @@ public class Threads implements Runnable
 	
 	static public void reconnect()
 	{
-		Threads ri = new Threads(TYPE_RECONNECT);
-		new Thread(ri).start();
+		reconnect(5000);
 	}
 
 	static public void reconnect(long delayMs)
 	{
+		synchronized (Threads.class)
+		{
+			if (reconnectPending) return;
+			reconnectPending = true;
+		}
 		Threads ri = new Threads(TYPE_RECONNECT);
 		ri.delay = delayMs;
 		new Thread(ri).start();

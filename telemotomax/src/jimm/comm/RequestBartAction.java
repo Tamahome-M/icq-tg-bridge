@@ -49,6 +49,19 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 		void onBartProgress(int part, int total);
 	}
 
+	/**
+	 * Слушатель, который забирает части сразу, по одной: ролик или
+	 * голосовое так уходят прямо во временный файл, и в куче лежит одна
+	 * часть, а не весь клип целиком (до 240 КБ — почти всё, что есть у V3).
+	 * Вернул false — часть не принята, дальше собираем в памяти как обычно.
+	 * После последней части приходит onBart(null-или-пусто) через onBartDone.
+	 */
+	public interface PartSink extends ProgressListener
+	{
+		boolean onBartPart(byte[] buf, int off, int len, int part, int total);
+		void onBartDone(boolean ok);
+	}
+
 	public static final int STATE_ERROR = -1;
 	public static final int STATE_INIT_DONE = 0;
 	public static final int STATE_CONNECTION_ESTB = 1;
@@ -77,6 +90,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	private byte[] parts;
 	private int filled;
 	private boolean notified;         // слушателю уже сказали, чем кончилось
+	private boolean streaming;        // части уходят слушателю по одной
 
 	public RequestBartAction(String uin, int bartType, byte[] token, Listener listener)
 	{
@@ -85,7 +99,9 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 		this.bartType = bartType;
 		this.token = token;
 		this.listener = listener;
-		if (bartType == BART_VIDEO) TIMEOUT = VIDEO_TIMEOUT;
+		// Ролик и голосовое мост сначала перекодирует, потом отдаёт частями —
+		// до первой части может пройти больше минуты на GPRS.
+		if (bartType == BART_VIDEO || bartType == BART_VOICE) TIMEOUT = VIDEO_TIMEOUT;
 	}
 
 	protected void init() throws JimmException
@@ -245,7 +261,22 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 						marker += 2 + 1 + 1 + 16 + 1 + 2 + 1 + 1 + 16;
 						int dataLength = Util.getWord(buf, marker);
 						marker += 2;
-						if (total > 1)
+						if (total > 1 && listener instanceof PartSink
+								&& (streaming || parts == null)
+								&& ((PartSink) listener).onBartPart(buf, marker, dataLength, part, total))
+						{
+							streaming = true;
+							buf = null;
+							this.lastActivity = new Date();
+							if (part < total)
+							{
+								this.active = false;
+								return true;           // wait for the rest
+							}
+							notified = true;
+							((PartSink) listener).onBartDone(true);
+						}
+						else if (total > 1)
 						{
 							if (parts == null)
 							{
@@ -364,7 +395,8 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 			// не вызывает — соединение, в котором запрос пропал, закрываем
 			// здесь, иначе следующий запрос уйдёт в тот же мёртвый сокет.
 			Icq.disconnectBart(true);
-			if (listener != null) listener.onBart(null);
+			if (streaming) ((PartSink) listener).onBartDone(false);
+			else if (listener != null) listener.onBart(null);
 		}
 		return (this.state == STATE_ERROR);
 	}
@@ -387,7 +419,8 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 			if (!notified)
 			{
 				notified = true;
-				listener.onBart(null);
+				if (streaming) ((PartSink) listener).onBartDone(false);
+				else listener.onBart(null);
 			}
 			Icq.disconnectBart(true);
 			break;
