@@ -259,6 +259,7 @@
 "send_img"					"Send image"
 "send_message"				"New Message"
 "server_host"				"Hostname"
+"reconnect_waiting"		"waiting for network"
 "server_port"				"Port"
 "set_status"				"Set status"
 "set_xstatus"				"Set x-status"
