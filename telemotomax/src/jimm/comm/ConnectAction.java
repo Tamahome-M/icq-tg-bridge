@@ -615,6 +615,7 @@ public class ConnectAction extends Action
 					if ((snacPacket.getFamily() == SnacPacket.SRV_REPLYROSTEROK_FAMILY) && (snacPacket.getCommand() == SnacPacket.SRV_REPLYROSTEROK_COMMAND))
 					{
 						this.srvReplyRosterRcvd = true;
+						jimm.ContactList.rosterUnchanged();     // список берём свой
 
 						// Packet has been consumed
 						consumed = true;

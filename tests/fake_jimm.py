@@ -162,6 +162,10 @@ class FakeJimm:
         text_len = struct.unpack_from("<H", block, 51)[0]
         assert len(block) >= 53 + text_len + 8, "блок обрывается на тексте"
         raw = block[53:53 + text_len]
+        # Как ActionListener: текст короче двух байт (без завершающего
+        # нуля) Jimm молча выбрасывает и подтверждения не шлёт.
+        assert len(raw) > 1, "текст короче двух байт — Jimm его выбросит"
+        raw = raw.replace(b"\x00", b"")       # removeCr убирает нули
 
         tail = 53 + text_len + 8
         encoding = "cp1251"

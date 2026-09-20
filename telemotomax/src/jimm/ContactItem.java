@@ -500,6 +500,7 @@ public class ContactItem implements ContactListItem, JimmScreen
 		}
 		else ssData = null;
 		privacyData = stream.readLong();
+		synchronized (this) { resetRuntime(); }
 	}
 
 	public void init(int id, int group, String uin, String name,
@@ -519,32 +520,43 @@ public class ContactItem implements ContactListItem, JimmScreen
 			setBooleanValue_(ContactItem.CONTACTITEM_IS_TEMP, false);
 			setBooleanValue_(ContactItem.CONTACTITEM_HAS_CHAT, false);
 			setBooleanValue_(ContactItem.CONTACTITEM_ADDED, added);
-			setIntValue_(ContactItem.CONTACTITEM_STATUS,
-					ContactList.STATUS_OFFLINE);
-			setIntValue_(ContactItem.CONTACTITEM_CAPABILITIES,
-					Icq.CAPF_NO_INTERNAL);
-			//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-			setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH, new byte[16]);
-			setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH_READY, new byte[16]);
-			//#sijapp cond.end#
+			resetRuntime();
+		}
+	}
+
+	// TeleMotoMax: всё, что не хранится в записи контакта, — статус,
+	// приметы аватарки, адреса, клиент. Раньше это ставил только init() для
+	// контактов из полного списка; контакт, загруженный из памяти телефона
+	// (сервер ответил «список не менялся»), оставался с null вместо примет —
+	// и «Информация» о нём падала с NullPointerException, молча, в потоке
+	// интерфейса: пункт меню просто не срабатывал.
+	private void resetRuntime()
+	{
+		setIntValue_(ContactItem.CONTACTITEM_STATUS,
+				ContactList.STATUS_OFFLINE);
+		setIntValue_(ContactItem.CONTACTITEM_CAPABILITIES,
+				Icq.CAPF_NO_INTERNAL);
+		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
+		setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH, new byte[16]);
+		setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH_READY, new byte[16]);
+		//#sijapp cond.end#
 
 //#sijapp cond.if (target != "DEFAULT") & (modules_FILES = "true")#
-			setBytesArray(ContactItem.CONTACTITEM_INTERNAL_IP, new byte[4]);
-			setBytesArray(ContactItem.CONTACTITEM_EXTERNAL_IP, new byte[4]);
-			setIntValue_(ContactItem.CONTACTITEM_DC_PORT, 0);
-			setIntValue_(ContactItem.CONTACTITEM_DC_TYPE, 0);
-			setIntValue_(ContactItem.CONTACTITEM_ICQ_PROT, 0);
-			setIntValue_(ContactItem.CONTACTITEM_AUTH_COOKIE, 0);
+		setBytesArray(ContactItem.CONTACTITEM_INTERNAL_IP, new byte[4]);
+		setBytesArray(ContactItem.CONTACTITEM_EXTERNAL_IP, new byte[4]);
+		setIntValue_(ContactItem.CONTACTITEM_DC_PORT, 0);
+		setIntValue_(ContactItem.CONTACTITEM_DC_TYPE, 0);
+		setIntValue_(ContactItem.CONTACTITEM_ICQ_PROT, 0);
+		setIntValue_(ContactItem.CONTACTITEM_AUTH_COOKIE, 0);
 //#sijapp cond.end#
 
-			setIntValue_(ContactItem.CONTACTITEM_SIGNON, -1);
-			setIntValue_(ContactItem.CONTACTITEM_REG, -1);
-			online = -1;
-			setIntValue_(ContactItem.CONTACTITEM_IDLE, -1);
-			setIntValue_(ContactItem.CONTACTITEM_CLIENT, Icq.CLI_NONE);
-			setStringValue_(ContactItem.CONTACTITEM_CLIVERSION, "");
-			xStatusId = -1;
-		}
+		setIntValue_(ContactItem.CONTACTITEM_SIGNON, -1);
+		setIntValue_(ContactItem.CONTACTITEM_REG, -1);
+		online = -1;
+		setIntValue_(ContactItem.CONTACTITEM_IDLE, -1);
+		setIntValue_(ContactItem.CONTACTITEM_CLIENT, Icq.CLI_NONE);
+		setStringValue_(ContactItem.CONTACTITEM_CLIVERSION, "");
+		xStatusId = -1;
 	}
 	
 	public static void updateColorValues()
@@ -570,10 +582,10 @@ public class ContactItem implements ContactListItem, JimmScreen
 	/* Returns true if buddy icon can to be downloaded */
 	synchronized public boolean iconReady()
 	{
-		if (Util.byteArrayIsEmpty(biHash, biHash.length))
+		if (biHash == null || Util.byteArrayIsEmpty(biHash, biHash.length))
 			return false;
 		
-		if (Util.byteArrayEquals(biHash, 0, biHashDone, 0, biHash.length))
+		if (biHashDone != null && Util.byteArrayEquals(biHash, 0, biHashDone, 0, biHash.length))
 			return false;
 
 		if (buddyIcon != null)

@@ -546,6 +546,27 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	}
 	
 	// called before jimm start to connect to server
+	// TeleMotoMax: сервер ответил «список не менялся» — контакты остаются
+	// те, что в памяти (или загружены из записи телефона при старте). Полный
+	// список по приходу помечает контакты с открытыми чатами и сбрасывает
+	// дерево; здесь то же самое, иначе после переподключения жирные имена
+	// чатов пропадали бы до следующего сообщения.
+	static public void rosterUnchanged()
+	{
+		synchronized (_this)
+		{
+			for (int i = getSize() - 1; i >= 0; i--)
+			{
+				ContactItem cItem = getCItem(i);
+				cItem.setBooleanValue(ContactItem.CONTACTITEM_HAS_CHAT,
+						ChatHistory.chatHistoryExists(cItem.getStringValue(ContactItem.CONTACTITEM_UIN)));
+				ChatHistory.updateChatIfExists(cItem);
+			}
+			haveToBeCleared = false;
+			treeBuilt = false;
+		}
+	}
+
 	public static void beforeConnect()
 	{
 		treeBuilt = treeSorted = false;
