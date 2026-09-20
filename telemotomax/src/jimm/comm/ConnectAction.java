@@ -947,6 +947,7 @@ public class ConnectAction extends Action
 		switch (eventType)
 		{
 		case ON_COMPLETE:
+			jimm.ConnLog.note(quiet ? "в сети (само)" : "в сети");
 			MainThread.resetLoginTimer();
 			// Тихое переподключение не выдёргивает из чата. В остальных
 			// случаях список показать нужно: beforeConnect() его очистил, и
@@ -956,6 +957,7 @@ public class ConnectAction extends Action
 			break;
 		
 		case ON_CANCEL:
+			jimm.ConnLog.note("вход отменён");
 			Icq.disconnect(false);
 			Icq.reconnect_attempts = 0;
 			MainThread.backToLastScreenMT();

@@ -101,6 +101,7 @@ public class TimerTasks extends TimerTask
 					// продолжал бы показывать «в сети», ничего не получая.
 					if (Icq.getPingMisses() >= 2)
 					{
+						ConnLog.note("нет ответа на 2 пинга — обрыв");
 						Icq.resetPingWatch();
 						JimmException.handleException(
 								new JimmException(120, 3, JimmException.ICQ_MAIN));

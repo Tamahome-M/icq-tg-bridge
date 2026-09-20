@@ -315,6 +315,7 @@ public class MainMenu implements CommandListener, JimmScreen
 
 			case MENU_DISCONNECT:
 				/* Disconnect */
+				ConnLog.note("отключено руками");
 				Icq.disconnect(true);
 				Thread.yield();
 				/* Show the main menu */

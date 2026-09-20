@@ -56,21 +56,35 @@ public class Threads implements Runnable
 			break;
 			
 		case TYPE_RECONNECT:
+			boolean again = false;
 			try
 			{
 				if (!Icq.isDisconnected())
 				{
 					try {Thread.sleep(delay);} catch (Exception e) {}
 					// За время паузы могли отключиться руками — тогда не лезем.
-					if (Icq.isDisconnected() || Icq.isConnected()) break;
+					if (Icq.isDisconnected() || Icq.isConnected())
+					{
+						ConnLog.note(Icq.isConnected() ? "попытка отменена: уже в сети" : "попытка отменена: отключено руками");
+						break;
+					}
+					ConnLog.note("попытка входа");
 					ContactList.beforeConnect();
 					Icq.connect(true);
 				}
+			}
+			catch (Throwable t)
+			{
+				// Сама попытка упала (нет памяти, не создался поток) —
+				// раньше цепочка на этом молча обрывалась. Повторим позже.
+				ConnLog.note("попытка не началась: " + t.getClass().getName());
+				again = true;
 			}
 			finally
 			{
 				synchronized (Threads.class) { reconnectPending = false; }
 			}
+			if (again) reconnect(SLOW_RECONNECT_MS);
 			break;
 		}
 	}
