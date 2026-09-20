@@ -83,6 +83,7 @@ public class Options
 	public static final int OPTION_SRV_HOST           = 1;
 	public static final int OPTION_SRV_PORT           = 2;
 	public static final int OPTION_UI_LANGUAGE        = 3;
+	public static final int OPTION_CAMERA_SIZE        = 31;   // TeleMotoMax: размер снимка «WxH», пусто — как решит телефон
 	public static final int OPTION_MESS_NOTIF_FILE    = 4;
 	public static final int OPTION_ONLINE_NOTIF_FILE  = 5;
 	public static final int OPTION_CURRENCY           = 6;
@@ -363,6 +364,7 @@ public class Options
 		setString(Options.OPTION_UIN1, emptyString);
 		setString(Options.OPTION_PASSWORD1, emptyString);
 		setString (Options.OPTION_SRV_HOST, "login.icq.com,login.oscar.aol.com,ibucp-vip-d.blue.aol.com");
+		setString (Options.OPTION_CAMERA_SIZE, "");
 		
 		setString(Options.OPTION_SRV_PORT, "5190");
 		setBoolean(Options.OPTION_KEEP_CONN_ALIVE, true);
@@ -1153,6 +1155,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private TextField lightTimeout;
 	private TextField historyCount;     // TeleMotoMax
 	private TextField chatMessages;     // TeleMotoMax
+//#sijapp cond.if modules_CAMERA="true"#
+	private ChoiceGroup cameraSizeChoice;   // TeleMotoMax: размеры снимка, какие знает телефон
+	private String[] cameraSizes;
+//#sijapp cond.end#
 	private ChoiceGroup lightManual;
 //#sijapp cond.end#
 	private TextField txtCapOffset;
@@ -2408,6 +2414,19 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		chatMessages = new TextField(ResourceBundle.getString("chat_messages"),
 				String.valueOf(Options.getInt(Options.OPTION_CHAT_MESSAGES)), 3, TextField.NUMERIC);
 		optionsForm.append(chatMessages);
+//#sijapp cond.if modules_CAMERA="true"#
+		// Размеры снимка берём у самого телефона (video.snapshot.encodings):
+		// у каждой модели свой набор, вписывать руками бессмысленно.
+		cameraSizes = jimm.CameraShot.snapshotSizes();
+		cameraSizeChoice = new ChoiceGroup(ResourceBundle.getString("camera_size"), Choice.EXCLUSIVE);
+		cameraSizeChoice.append(ResourceBundle.getString("camera_size_default"), null);
+		for (int i = 0; i < cameraSizes.length; i++) cameraSizeChoice.append(cameraSizes[i], null);
+		String chosen = Options.getString(Options.OPTION_CAMERA_SIZE);
+		int sel = 0;
+		for (int i = 0; i < cameraSizes.length; i++) if (cameraSizes[i].equals(chosen)) sel = i + 1;
+		cameraSizeChoice.setSelectedIndex(sel, true);
+		optionsForm.append(cameraSizeChoice);
+//#sijapp cond.end#
 		optionsForm.append(chrgMessFormat);
 		
 		//#sijapp cond.if target="MIDP2" | target="SIEMENS2"#
@@ -2798,6 +2817,14 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			Options.setInt(Options.OPTION_CHAT_MESSAGES, n);
 		}
 		catch (Exception ignore) {}
+//#sijapp cond.if modules_CAMERA="true"#
+		if (cameraSizeChoice != null)
+		{
+			int sel = cameraSizeChoice.getSelectedIndex();
+			Options.setString(Options.OPTION_CAMERA_SIZE,
+					(sel > 0 && sel - 1 < cameraSizes.length) ? cameraSizes[sel - 1] : "");
+		}
+//#sijapp cond.end#
 
 		//#sijapp cond.if target="MOTOROLA" | target="MIDP2" #
 		boolean useBackLight = lightManual.isSelected(0);

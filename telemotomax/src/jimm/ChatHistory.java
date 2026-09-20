@@ -107,9 +107,14 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	static final Command cmdShowPhoto = new Command(ResourceBundle.getString("show_photo"), Command.ITEM, 3);
 	static final Command cmdPlayVideo = new Command(ResourceBundle.getString("play_video"), Command.ITEM, 3);
 	// TeleMotoMax: take a picture with the camera and send it to this chat
+//#sijapp cond.if modules_CAMERA="true"#
 	static final Command cmdCameraShot = new Command(ResourceBundle.getString("camera_shot"), Command.ITEM, 4);
+//#sijapp cond.end#
 	static final Command cmdPlayVoice = new Command(ResourceBundle.getString("play_voice"), Command.ITEM, 3);
 	static final Command cmdRecordVoice = new Command(ResourceBundle.getString("record_voice"), Command.ITEM, 4);
+//#sijapp cond.if modules_CAMERA="true"#
+	static final Command cmdRecordVideo = new Command(ResourceBundle.getString("record_video"), Command.ITEM, 4);
+//#sijapp cond.end#
 	// TeleMotoMax: chat history from the bridge on its own screen
 	static final Command cmdServerHistory = new Command(ResourceBundle.getString("server_history"), Command.ITEM, 5);
 	private static final Command cmdReplWithQuota = new Command(ResourceBundle.getString("quote", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 3);
@@ -219,8 +224,13 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		if (contact.getBooleanValue(ContactItem.CONTACTITEM_NO_AUTH))
 			textList.addCommandEx(cmdReqAuth, VirtualList.MENU_TYPE_RIGHT);
 		
+//#sijapp cond.if modules_CAMERA="true"#
 		textList.addCommandEx(cmdCameraShot, VirtualList.MENU_TYPE_RIGHT);
+//#sijapp cond.end#
 		textList.addCommandEx(cmdRecordVoice, VirtualList.MENU_TYPE_RIGHT);
+//#sijapp cond.if modules_CAMERA="true"#
+		textList.addCommandEx(cmdRecordVideo, VirtualList.MENU_TYPE_RIGHT);
+//#sijapp cond.end#
 		textList.addCommandEx(cmdServerHistory, VirtualList.MENU_TYPE_RIGHT);
 		textList.addCommandEx(cmdContactMenu, VirtualList.MENU_TYPE_RIGHT);
 		
@@ -280,10 +290,16 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		{
 			VoiceRecorder.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), this);
 		}
+//#sijapp cond.if modules_CAMERA="true"#
+		else if (c == cmdRecordVideo)
+		{
+			VideoRecorder.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), this);
+		}
 		else if (c == cmdCameraShot)
 		{
 			CameraShot.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), this);
 		}
+//#sijapp cond.end#
 		else if (c == cmdServerHistory)
 		{
 			HistoryViewer.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN),

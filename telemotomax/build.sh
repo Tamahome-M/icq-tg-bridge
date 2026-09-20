@@ -74,10 +74,13 @@ MINOR=${VERSION#*.}; MINOR=${MINOR%%.*}
 # Но на телефоне без него пропало «печатает» в обе стороны (по исходникам
 # этого не видно — где-то ещё завязка), поэтому по умолчанию он на месте.
 # TMM_MODULES=light соберёт без него, если захочется проверить снова.
-MODULES=${TMM_MODULES:-full}
+# CAMERA — снимок и «кружок» с камеры: на V3 камера из Java недоступна, и
+# пункты меню там только мешают; сборка v8 (по умолчанию: v3) их включает.
+MODULES=${TMM_MODULES:-v3}
 case "$MODULES" in
 	light) MODULES="SMILES_STD,AVATARS" ;;
-	full)  MODULES="FILES,SMILES_STD,AVATARS" ;;
+	v3|full) MODULES="FILES,SMILES_STD,AVATARS" ;;
+	v8)    MODULES="FILES,SMILES_STD,AVATARS,CAMERA" ;;
 esac
 sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION###|$STAMP|; \
      s|###TMM-VERSION-JAVA###|$VERSION|; s|###TMM-NAME###|$NAME|; \

@@ -510,6 +510,22 @@ class FakeJimm:
         r.pstr8()
         return r.u8() == 0
 
+    async def send_video_note(self, uin: int, data: bytes, seconds: int, part_size: int = 30000,
+                              timeout: float = 5.0, kind: str = "video/3gpp") -> bool:
+        """«Кружок» с камеры — как TeleMotoMax: части 10/05, раскладка голосового."""
+        raw = str(uin).encode()
+        total = max(1, (len(data) + part_size - 1) // part_size)
+        for part in range(1, total + 1):
+            chunk = data[(part - 1) * part_size:part * part_size]
+            tail = pstr8(kind.encode()) if part == 1 else b""
+            await self.send_snac(C.SSBI, C.SSBI_UPLOAD_VIDEO,
+                                 pstr8(raw) + struct.pack(">HHHH", part, total, seconds, len(chunk))
+                                 + chunk + tail)
+        ack = await self.expect(C.SSBI, C.SSBI_UPLOAD_ACK, timeout)
+        r = ack.reader()
+        r.pstr8()
+        return r.u8() == 0
+
     async def request_voice(self, uin: int, token: bytes, timeout: float = 5.0) -> bytes:
         """Голосовое по токену — как TeleMotoMax: тип 0x0083, ответ частями, склеиваем."""
         got = await self._request_bart(uin, C.BART_VOICE, token, timeout, parts=True)

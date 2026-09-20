@@ -80,6 +80,7 @@ class Bridge:
                                  self.avatar, self.icon_hash, self.fetch_attachment,
                                  self.fetch_history, self.fetch_video, self.send_camera_photo,
                                  self.fetch_voice, self.send_voice_message,
+                                 self.send_video_note,
                                  self.chat_list, self.open_chat)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
@@ -491,6 +492,33 @@ class Bridge:
         # иначе после отправки в окне чата пусто и непонятно, ушло ли.
         await self.reply(contact, f"[голосовое {seconds // 60}:{seconds % 60:02d}] отправлено"
                                   + ("" if ogg else " (файлом)"))
+        return True
+
+    async def send_video_note(self, uin: int, data: bytes, seconds: int) -> bool:
+        """«Кружок», снятый камерой телефона, — в чат. True, если ушёл.
+
+        Телефон пишет 3GP (H.263 + AMR); кружок в Telegram и MAX — квадратный
+        MP4 с H.264, поэтому перекодируем. Нет H.264 в ffmpeg или не вышло —
+        отправляем как обычное видео, чтобы запись не пропала."""
+        contact = self.storage.contact_by_uin(uin)
+        if contact is None or contact.peer_id == ASSISTANT_PEER:
+            return False
+        transcoder = self._transcoder(max(seconds, 1) + 1)
+        mp4 = await transcoder.to_note(data) if transcoder.available else None
+        if mp4 is None:
+            log.warning("кружок не перекодировался в MP4/H.264 — отправляю обычным видео")
+        try:
+            message_id = await self.side_for(contact.peer_id).send_video(
+                contact.peer_id, mp4 or data, seconds, note=mp4 is not None,
+                topic_id=contact.topic_id)
+        except Exception as exc:
+            log.exception("кружок в чат «%s» не ушёл", contact.title)
+            await self.reply(contact, f"Кружок не отправлен: {type(exc).__name__}")
+            return False
+        log.info("кружок с телефона → «%s»: %d с, %d КБ, номер %s",
+                 contact.title, seconds, len(mp4 or data) // 1024, message_id)
+        await self.reply(contact, f"[кружок {seconds // 60}:{seconds % 60:02d}] отправлен"
+                                  + ("" if mp4 else " (обычным видео)"))
         return True
 
     async def send_camera_photo(self, uin: int, data: bytes) -> bool:

@@ -384,6 +384,42 @@ async def run_voice() -> None:
     print("  голосовые: ок (слушаем частями, шлём записанное, обычному Jimm нельзя)")
 
 
+async def run_video_note() -> None:
+    """«Кружок» с телефона: части 10/05 склеиваются, длительность доходит,
+    мост подтверждает 10/03; обычному Jimm 10/05 не положено."""
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 10
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    cfg.avatars = True
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+    got: list[tuple[int, int, int]] = []
+
+    async def on_outgoing(*_):
+        return 1
+
+    async def on_video(target: int, data: bytes, seconds: int) -> bool:
+        got.append((target, len(data), seconds))
+        return len(data) > 100
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts, on_video=on_video)
+    await server.start()
+    try:
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 29)
+        await client.connect()
+        await client.bos(await client.login_md5_jimm())
+        await client.drain_for(0.3)
+        clip = bytes(range(256)) * 300                     # 76 КБ — три части
+        assert await client.send_video_note(uin, clip, 12) is True
+        assert got == [(uin, len(clip), 12)], got
+        assert await client.send_video_note(uin, b"tiny", 1) is False, "негодную запись не подтверждаем"
+        await client.close()
+    finally:
+        server._server.close()
+    print("  кружок с телефона: ок (части, длительность, подтверждение)")
+
+
 async def run_chats() -> None:
     """Весь список чатов на отдельный экран и возвращение забытого чата."""
     cfg = Config(tg_api_id=1, tg_api_hash="x")
@@ -637,6 +673,7 @@ async def main() -> None:
     await run_camera()
     await run_voice()
     await run_chats()
+    await run_video_note()
     run_history_layout()
     run_reply_routing()
     await run_stale_service()

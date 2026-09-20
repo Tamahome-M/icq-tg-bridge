@@ -546,6 +546,19 @@ public class Icq implements Runnable
 	public static void sendVoice(String uin, byte[] voice, int seconds, String type,
 			UploadProgress progress) throws JimmException
 	{
+		sendTimed(0x0004, uin, voice, seconds, type, progress);
+	}
+
+	// «Кружок» с камеры: та же раскладка, что у голосового, SNAC 10/05.
+	public static void sendVideo(String uin, byte[] clip, int seconds, String type,
+			UploadProgress progress) throws JimmException
+	{
+		sendTimed(0x0005, uin, clip, seconds, type, progress);
+	}
+
+	private static void sendTimed(int subtype, String uin, byte[] voice, int seconds, String type,
+			UploadProgress progress) throws JimmException
+	{
 		byte[] uinRaw = Util.stringToByteArray(uin);
 		// Тип записи («audio/amr») идёт хвостом первой части: мосту он
 		// подсказывает, что ему прислали, а старый мост его просто не читает.
@@ -573,7 +586,7 @@ public class Icq implements Runnable
 				Util.putByte(buf, marker, typeRaw.length); marker += 1;
 				System.arraycopy(typeRaw, 0, buf, marker, typeRaw.length);
 			}
-			sendPacket(new SnacPacket(0x0010, 0x0004, 0x00000000, new byte[0], buf));
+			sendPacket(new SnacPacket(0x0010, subtype, 0x00000000, new byte[0], buf));
 			if (progress != null) progress.onPart(part, total);
 			if (part < total) breathe();
 		}

@@ -529,6 +529,7 @@ class Session:
             (C.SSBI, C.SSBI_ICQ_REQ): self.on_icon_request,
             (C.SSBI, C.SSBI_UPLOAD): self.on_photo_upload,
             (C.SSBI, C.SSBI_UPLOAD_VOICE): self.on_voice_upload,
+            (C.SSBI, C.SSBI_UPLOAD_VIDEO): self.on_video_upload,
         }.get((s.family, s.subtype))
 
         if handler is None:
@@ -1200,6 +1201,15 @@ class Session:
 
         От снимка отличается длительностью перед куском — она нужна, чтобы
         в Telegram и MAX это было именно голосовым, а не файлом."""
+        await self._timed_upload(s, "голосовое", self.server.on_voice)
+
+    async def on_video_upload(self, s: Snac) -> None:
+        """«Кружок» с камеры телефона: части 10/05, та же раскладка, что у
+        голосового (длительность перед куском, тип записи хвостом первой
+        части), ответ 10/03."""
+        await self._timed_upload(s, "кружок", self.server.on_video)
+
+    async def _timed_upload(self, s: Snac, what: str, deliver) -> None:
         if not self.extended:
             return
         r = Reader(s.data)
@@ -1212,7 +1222,7 @@ class Session:
             # клиент ничего не приписывает — тогда тип остаётся пустым.
             kind = r.pstr8().decode("latin-1") if r.left else ""
         except Exception:
-            log.warning("негодная часть голосового от телефона")
+            log.warning("негодная часть: %s от телефона", what)
             return
         if not target.isdigit():
             return
@@ -1222,14 +1232,13 @@ class Session:
             self.upload_kind = kind
             self.upload_started = time.time()
         elif self.upload is not None and time.time() - self.upload_started > UPLOAD_TIMEOUT:
-            log.warning("части голосового идут дольше %d с — начинаю заново",
-                        UPLOAD_TIMEOUT)
+            log.warning("части (%s) идут дольше %d с — начинаю заново", what, UPLOAD_TIMEOUT)
             self.upload = None
         if self.upload is None:
             return
         self.upload += chunk
         if len(self.upload) > C.UPLOAD_MAX_BYTES:
-            log.warning("голосовое больше %d КБ — отказываюсь", C.UPLOAD_MAX_BYTES // 1024)
+            log.warning("%s больше %d КБ — отказываюсь", what, C.UPLOAD_MAX_BYTES // 1024)
             self.upload = None
             await self.send_snac(C.SSBI, C.SSBI_UPLOAD_ACK,
                                  pstr8(target.encode()) + b"\x01", request_id=s.request_id)
@@ -1237,10 +1246,10 @@ class Session:
         if part < total:
             return
         data, self.upload = bytes(self.upload), None
-        log.info("голосовое с телефона для %s: %d с, %d КБ%s — отправляю",
+        log.info("%s с телефона для %s: %d с, %d КБ%s — отправляю", what,
                  self.server.name_of(int(target)), self.upload_seconds, len(data) // 1024,
                  f", запись {self.upload_kind}" if self.upload_kind else "")
-        ok = await self.server.on_voice(int(target), data, self.upload_seconds)
+        ok = await deliver(int(target), data, self.upload_seconds)
         await self.send_snac(C.SSBI, C.SSBI_UPLOAD_ACK,
                              pstr8(target.encode()) + (b"\x00" if ok else b"\x01"),
                              request_id=s.request_id)
@@ -1448,6 +1457,7 @@ class OscarServer:
                  on_photo: Callable[[int, bytes], Awaitable[bool]] | None = None,
                  fetch_voice: Callable[[int, str], Awaitable[bytes | None]] | None = None,
                  on_voice: Callable[[int, bytes, int], Awaitable[bool]] | None = None,
+                 on_video: Callable[[int, bytes, int], Awaitable[bool]] | None = None,
                  chat_list: Callable[[], Awaitable[list]] | None = None,
                  open_chat: Callable[[int], Awaitable[bool]] | None = None):
         self.cfg = cfg
@@ -1481,6 +1491,8 @@ class OscarServer:
         self.fetch_voice = fetch_voice
         # Записанное на телефоне голосовое — отправить в чат.
         self.on_voice = on_voice or self._no_voice
+        # «Кружок» с камеры телефона — отправить в чат.
+        self.on_video = on_video or self._no_voice
         self.chat_list = chat_list or self._no_chats
         self.open_chat = open_chat or self._no_open
         self.uin = str(cfg.oscar_uin)

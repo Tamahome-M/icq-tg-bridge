@@ -516,6 +516,27 @@ class TelegramSide:
             self._own_ids[(peer_id, message_id)] = time.time()
         return message_id
 
+    async def send_video(self, peer_id: int, data: bytes, seconds: int = 0,
+                         note: bool = True, topic_id: int = 0) -> int | None:
+        """«Кружок» с камеры телефона — в чат Telegram; note=False — обычным видео."""
+        from telethon.tl.types import DocumentAttributeVideo
+        stream = io.BytesIO(data)
+        stream.name = "note.mp4" if note else "video.3gp"
+        attrs = ([DocumentAttributeVideo(duration=max(1, seconds), w=384, h=384,
+                                         round_message=True, supports_streaming=True)]
+                 if note else None)
+        self._sending[peer_id] = self._sending.get(peer_id, 0) + 1
+        try:
+            message = await self.client.send_file(
+                peer_id, file=stream, video_note=note, attributes=attrs,
+                reply_to=topic_id or None)
+        finally:
+            self._sending[peer_id] -= 1
+        message_id = getattr(message, "id", None)
+        if message_id:
+            self._own_ids[(peer_id, message_id)] = time.time()
+        return message_id
+
     async def send_photo(self, peer_id: int, data: bytes, caption: str = "",
                          topic_id: int = 0) -> int | None:
         """Снимок с камеры телефона — в чат Telegram."""
