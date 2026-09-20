@@ -122,6 +122,16 @@ public class ConnectAction extends Action
     private boolean srvReplyRosterRcvd;
 
     // Constructor
+    // TeleMotoMax: тихий вход — переподключение само по себе. Без заставки
+    // «Подключение…» с кнопкой отмены и без переключения экрана по успеху.
+    private boolean quiet;
+
+    public ConnectAction(String uin, String password, String srvHost, String srvPort, boolean quiet)
+    {
+    	this(uin, password, srvHost, srvPort);
+    	this.quiet = quiet;
+    }
+
     public ConnectAction(String uin, String password, String srvHost, String srvPort)
     {
     	super(true, false);
@@ -938,7 +948,10 @@ public class ConnectAction extends Action
 		{
 		case ON_COMPLETE:
 			MainThread.resetLoginTimer();
-			MainThread.activateContactListMT(null);
+			// Тихое переподключение не выдёргивает из чата. В остальных
+			// случаях список показать нужно: beforeConnect() его очистил, и
+			// заново он строится только при показе.
+			if (!quiet || !jimm.ChatHistory.chatOnScreen()) MainThread.activateContactListMT(null);
 			Options.safeSave(); // Save last server
 			break;
 		

@@ -193,6 +193,16 @@ public class Icq implements Runnable
 	// Connects to the ICQ network
 	static public synchronized void connect()
 	{
+		connect(false);
+	}
+
+	// quiet — переподключение само по себе. Раньше и оно показывало заставку
+	// «Подключение…» с командой «Отмена»: открыл телефон, нажал клавишу —
+	// отмена, а отмена у Jimm означает «отключился руками»: автоматика
+	// выключается насовсем, и клиент лежит «отключён», пока не нажмёшь
+	// «Подключиться». Тихий вход заставку не трогает, отмены у него нет.
+	static public synchronized void connect(boolean quiet)
+	{
 		setDisconnected(false);
 		//#sijapp cond.if target isnot "MOTOROLA"#
 		if (Options.getBoolean(Options.OPTION_SHADOW_CON))
@@ -217,7 +227,8 @@ public class Icq implements Runnable
 				Options.getString(Options.OPTION_UIN), 
 				Options.getString(Options.OPTION_PASSWORD), 
 				getFirstServerAddr(), 
-				Options.getString(Options.OPTION_SRV_PORT));
+				Options.getString(Options.OPTION_SRV_PORT),
+				quiet);
 		try
 		{
 			requestAction(act);
@@ -231,7 +242,8 @@ public class Icq implements Runnable
 		SplashCanvas.setStatusToDraw(statInfo != null ? statInfo.getImage() : null);
 		
 		// Start timer
-		SplashCanvas.addTimerTask("connecting", act, true);
+		if (quiet) SplashCanvas.addTimerTask(act);          // без заставки и отмены
+		else SplashCanvas.addTimerTask("connecting", act, true);
 
 		lastStatusChangeTime = Util.getDateString(true);
 	}
