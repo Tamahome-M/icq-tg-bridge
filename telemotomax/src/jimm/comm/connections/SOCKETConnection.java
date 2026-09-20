@@ -290,6 +290,7 @@ public class SOCKETConnection extends Connection implements Runnable
 			// Construct and handle exception (only if input close flag has not been set)
 			if (!getInputCloseFlag() && Icq.isMyConnection(this) && (this.typeNetwork == JimmException.ICQ_MAIN))
 			{
+				jimm.ConnLog.note("ошибка чтения сокета");
 				JimmException f = new JimmException(120, 1, this.typeNetwork);
 				JimmException.handleException(f);
 			}
@@ -316,6 +317,7 @@ public class SOCKETConnection extends Connection implements Runnable
 		// Sometimes Nokia emulator stops working and bRead returns -1 
 		if (bRead == -1 && !getInputCloseFlag())
 		{
+			if (this.typeNetwork == JimmException.ICQ_MAIN) jimm.ConnLog.note("сервер закрыл соединение");
 			JimmException f = new JimmException(120, 4, this.typeNetwork);
 			JimmException.handleException(f);
 		}

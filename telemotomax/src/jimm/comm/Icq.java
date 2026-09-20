@@ -737,6 +737,15 @@ public class Icq implements Runnable
 						actAction.addElement(newAction);
 					} catch (JimmException e)
 					{
+						// Пока init() ждал (Connector.open на мёртвом GPRS
+						// может висеть минуты), сеанс успели закрыть и
+						// начать новый. Ошибка старой попытки не должна
+						// рвать новую: она про соединение, которого уже нет.
+						if (Icq.thread != thread)
+						{
+							jimm.ConnLog.note("старая попытка: " + e.getFullErrCode() + ", пропущено");
+							break;
+						}
 						JimmException.handleException(e);
 						if (e.isCritical())
 							throw (e);
@@ -846,10 +855,11 @@ public class Icq implements Runnable
 			DebugLog.addText ("MainThread: Exception: " + e.toString());
 			e.printStackTrace();
 
-			if (c != null) {// Construct and handle exception
+			if (c != null && Icq.thread == thread) {// Construct and handle exception
 				// Как ошибка связи: закрыть сокет и переподключиться.
 				// Некритичный вариант оставлял открытое соединение без
 				// обработчика — «в сети», но ничего не приходит.
+				jimm.ConnLog.note("сбой цикла связи: " + e.getClass().getName());
 				JimmException f = new JimmException(141, 0, JimmException.ICQ_MAIN);
 				JimmException.handleException(f);
 			}

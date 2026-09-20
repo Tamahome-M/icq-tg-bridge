@@ -220,6 +220,7 @@ public class JimmException extends Exception
 			{
 				int reconTotal = Options.getInt(Options.OPTION_RECONNECT_NUMBER);
 				SplashCanvas.setLastErrCode(e.getFullErrCode()+" "+(reconTotal-Icq.reconnect_attempts+1)+"/"+reconTotal);
+				ConnLog.note(e.getFullErrCode() + " повтор " + (reconTotal - Icq.reconnect_attempts + 1) + "/" + reconTotal);
 				Icq.reconnect_attempts--;
 				
 				DebugLog.addText("err_code="+e.getFullErrCode());
@@ -245,11 +246,15 @@ public class JimmException extends Exception
 				// пока не отключат руками.
 				SplashCanvas.setLastErrCode(e.getFullErrCode() + " "
 						+ ResourceBundle.getString("reconnect_waiting"));
+				ConnLog.note(e.getFullErrCode() + " ждём сеть, повтор через минуту");
 				DebugLog.addText("err_code=" + e.getFullErrCode() + " (slow retry)");
 				Threads.reconnect(Threads.SLOW_RECONNECT_MS);
 			}
 			else
 			{
+				ConnLog.note(e.getFullErrCode() + " стоп"
+						+ (Icq.isDisconnected() ? " (отключено руками)" : "")
+						+ (Options.getBoolean(Options.OPTION_RECONNECT) ? "" : " (переподключение выключено)"));
 				// Unlock splash (if locked)
 				if (SplashCanvas.locked())
 					SplashCanvas.unlock(true);

@@ -626,8 +626,12 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			.append("буфер экрана: ")
 			.append(VirtualList.isScreenDoubleBuffered() ? "телефона" : "свой (медленно)")
 			.append(", прозрачность: ").append(Jimm.display.numAlphaLevels() > 2 ? "есть" : "нет")
-			.append("\n\n")
-			.append(ResourceBundle.getString("latest_ver")).append(":\n");
+			.append("\n\n");
+		// TeleMotoMax: последние события связи — чтобы «лежит отключённый»
+		// разбирался по фактам.
+		String connLog = ConnLog.text();
+		if (connLog.length() > 0) str.append("Связь:\n").append(connLog).append("\n\n");
+		str.append(ResourceBundle.getString("latest_ver")).append(":\n");
 		
 		aboutTextList.addBigText(str.toString(), -1, Font.STYLE_PLAIN, -1);
 		
