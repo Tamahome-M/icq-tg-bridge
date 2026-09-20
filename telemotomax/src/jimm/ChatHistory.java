@@ -961,6 +961,13 @@ public class ChatHistory
 	// TeleMotoMax: opens the contact's chat, creating it if needed. A chat
 	// that has nothing in it yet gets the last message from the bridge, so
 	// the screen is not empty and the conversation has its tail.
+	// TeleMotoMax: открыт ли сейчас на экране какой-нибудь чат.
+	static public boolean chatOnScreen()
+	{
+		ChatTextList chat = currentChat;
+		return chat != null && chat.isVisible();
+	}
+
 	static public synchronized void openChat(ContactItem contact)
 	{
 		String uin = contact.getStringValue(ContactItem.CONTACTITEM_UIN);

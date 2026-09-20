@@ -64,7 +64,7 @@ public class Threads implements Runnable
 					// За время паузы могли отключиться руками — тогда не лезем.
 					if (Icq.isDisconnected() || Icq.isConnected()) break;
 					ContactList.beforeConnect();
-					Icq.connect();
+					Icq.connect(true);
 				}
 			}
 			finally
