@@ -130,7 +130,30 @@ async def run_limited_roster() -> None:
     print("  ограничение списка: ок (свежие чаты, избранные, фоновые группы)")
 
 
+def run_version() -> None:
+    """Версия списка зависит от состава, а не от порядка: чаты сортируются
+    по свежести, и раньше каждое сообщение делало «новую версию»."""
+    cfg = make_config(PORT + 9)
+    storage = Storage(":memory:")
+
+    async def on_outgoing(*_):
+        return 1
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts)
+    a = [(1, "Личное", "Мама", False), (2, "Работа", "Шеф", True)]
+    stamp1, _ = server.ssi_version(sorted(a), 2)
+    stamp2, _ = server.ssi_version(sorted(reversed(a)), 2)
+    assert stamp1 == stamp2, "перестановка не должна менять версию"
+    b = [(1, "Личное", "Мама", False), (2, "Работа", "Шеф", False)]
+    import time
+    time.sleep(1.1)
+    stamp3, _ = server.ssi_version(sorted(b), 2)
+    assert stamp3 != stamp1, "смена «не беспокоить» — новая версия"
+    print("  версия списка: ок (порядок не в счёт, состав — в счёт)")
+
+
 async def main() -> None:
+    run_version()
     await run_big_roster()
     await run_small_roster()
     await run_limited_roster()
