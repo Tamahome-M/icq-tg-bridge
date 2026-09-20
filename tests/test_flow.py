@@ -69,11 +69,15 @@ async def run_case(login_mode: str) -> None:
     assert set(client.groups.values()) == {"Семья", "Друзья", "Каналы"}, client.groups
     assert client.aliases[uins["Новости дня"]] == "Новости дня", client.aliases
 
-    # Повторный запрос списка с версией: клиент ждёт полный список.
-    # Короткий ответ «не менялся» вешает Jimm на «checking roster».
+    # Повторный запрос с той же версией — короткое «не менялся»; после
+    # изменения списка — снова целиком.
     assert client.ssi_stamp and client.ssi_count, "версия контакт-листа не пришла"
+    assert await client.check_roster() == "unchanged", \
+        "на запрос с совпадающей версией нужно отвечать 13/0F"
+    storage.uin_for_peer(999001, kind="user", title="Новый", group_name="Друзья")
+    await asyncio.sleep(1.1)              # версия — метка времени в секундах
     assert await client.check_roster() == "full", \
-        "на запрос с версией нужно отдавать список целиком"
+        "после изменения списка нужно отдавать его целиком"
 
     # Запрос офлайн-сообщений: без ответа Jimm застревает на "Reading messages".
     answer = await client.offline_messages()

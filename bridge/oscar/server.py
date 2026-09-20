@@ -520,7 +520,7 @@ class Session:
             (C.PD, C.PD_RIGHTS_REQ): self.on_pd_rights,
             (C.SSI, C.SSI_RIGHTS_REQ): self.on_ssi_rights,
             (C.SSI, C.SSI_LIST_REQ): self.on_ssi_list,
-            (C.SSI, C.SSI_LIST_REQ_IF_CHANGED): self.on_ssi_list,
+            (C.SSI, C.SSI_LIST_REQ_IF_CHANGED): self.on_ssi_check,
             (C.SSI, C.SSI_ADD): self.on_ssi_add,
             (C.SSI, C.SSI_UPDATE): self.on_ssi_edit,
             (C.SSI, C.SSI_DELETE): self.on_ssi_delete,
@@ -661,15 +661,36 @@ class Session:
         items.insert(0, blocks.ssi_group(b"", 0, group_ids))
         return items
 
+    async def on_ssi_check(self, s: Snac) -> None:
+        """13/05: у клиента есть сохранённый список с версией — «изменился?».
+
+        Совпало — отвечаем коротким 13/0F, и телефон берёт список из своей
+        памяти: на GPRS это экономит несколько килобайт и пару секунд на
+        каждом входе. По коду ConnectAction 13/0F ставит srvReplyRosterRcvd
+        и вход идёт дальше — так что прежнее «клиент зависает на checking
+        roster» было неверно. Выключается roster_reuse = false.
+        """
+        r = Reader(s.data)
+        got_stamp = r.u32() if r.left >= 4 else 0
+        got_count = r.u16() if r.left >= 2 else -1
+        items = self.build_ssi()
+        stamp, count = self.server.ssi_version(self.ssi_key, len(items))
+        if (self.server.roster_reuse and got_stamp == stamp and got_count == count
+                and stamp != 0):
+            log.info("контакт-лист не менялся (версия %d, %d элементов) — "
+                     "телефон берёт свой", stamp, count)
+            await self.send_snac(C.SSI, C.SSI_LIST_UNCHANGED, b"", request_id=s.request_id)
+            return
+        log.debug("у телефона версия %d/%d, у моста %d/%d — отдаю список",
+                  got_stamp, got_count, stamp, count)
+        await self.send_ssi(items, stamp, count, s.request_id)
+
     async def on_ssi_list(self, s: Snac) -> None:
         items = self.build_ssi()
         stamp, count = self.server.ssi_version(self.ssi_key, len(items))
+        await self.send_ssi(items, stamp, count, s.request_id)
 
-        # Ответить коротким «список не менялся» (SNAC 13/0F) нельзя: Jimm
-        # ставит по нему только внутренний флаг, а переход к следующему шагу
-        # входа у него написан внутри разбора полного списка (ConnectAction,
-        # STATE_CLI_CHECKROSTER_SENT). Получив 13/0F, клиент зависает на
-        # «checking roster», поэтому всегда отдаём список целиком.
+    async def send_ssi(self, items: list[bytes], stamp: int, count: int, request_id: int) -> None:
         parts = 0
         for chunk, is_last in _chunked(items, MAX_SNAC_PAYLOAD):
             # Метку времени ставим только в последней части: по ненулевой метке
@@ -679,7 +700,7 @@ class Session:
                     + struct.pack(">I", stamp if is_last else 0))
             await self.send_snac(C.SSI, C.SSI_LIST, body,
                                  flags=0 if is_last else 0x0001,
-                                 request_id=s.request_id)
+                                 request_id=request_id)
             parts += 1
         contacts = self.server.roster()
         log.info("контакт-лист отдан: %d контактов, %d групп, %d заглушённых; "
@@ -1469,6 +1490,7 @@ class OscarServer:
         self.max_message_chars = cfg.max_message_chars
         self.alias_max_chars = getattr(cfg, "alias_max_chars", 40)
         self.idle_timeout = getattr(cfg, "idle_timeout", 360)
+        self.roster_reuse = bool(getattr(cfg, "roster_reuse", True))
         self.use_ack = getattr(cfg, "delivery_ack", True)
         self.typing_prime = getattr(cfg, "typing_prime", True)
         self.ack_timeout = getattr(cfg, "ack_timeout", 30)

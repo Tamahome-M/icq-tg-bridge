@@ -588,9 +588,9 @@ class FakeJimm:
     async def check_roster(self) -> str:
         """Спрашивает список с версией, как Jimm при входе.
 
-        Клиент ждёт здесь именно полный список: короткий ответ «не менялся»
-        (13/0F) он засчитывает флагом, но дальше по входу не идёт и остаётся
-        на «checking roster».
+        Короткий ответ «не менялся» (13/0F) клиент засчитывает флагом
+        srvReplyRosterRcvd и идёт по входу дальше со своим сохранённым
+        списком; полный список — как обычно.
         """
         await self.send_snac(C.SSI, C.SSI_LIST_REQ_IF_CHANGED,
                              struct.pack(">IH", self.ssi_stamp, self.ssi_count))
