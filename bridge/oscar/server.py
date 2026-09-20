@@ -619,6 +619,12 @@ class Session:
         """Собирает контакт-лист: группы — папки Telegram, контакты — чаты."""
         contacts = self.server.roster()
         self.item_to_uin.clear()
+        # Что в списке на самом деле, без порядка и номеров элементов: по
+        # этому считается версия. Сам список отсортирован по свежести чатов,
+        # и любое новое сообщение переставляло бы элементы — версия «менялась»
+        # при каждом входе, хотя контакты те же.
+        self.ssi_key = sorted((c.uin, c.group_name, c.title[:self.server.alias_max_chars],
+                               bool(c.muted)) for c in contacts)
 
         groups: dict[str, list[tuple[int, Contact]]] = {}
         next_item_id = 1
@@ -657,7 +663,7 @@ class Session:
 
     async def on_ssi_list(self, s: Snac) -> None:
         items = self.build_ssi()
-        stamp, count = self.server.ssi_version(items)
+        stamp, count = self.server.ssi_version(self.ssi_key, len(items))
 
         # Ответить коротким «список не менялся» (SNAC 13/0F) нельзя: Jimm
         # ставит по нему только внутренний флаг, а переход к следующему шагу
@@ -1808,17 +1814,18 @@ class OscarServer:
         log.debug("отмечено прочитанными %d сообщений", len(confirmed))
         return len(confirmed)
 
-    def ssi_version(self, items: list[bytes]) -> tuple[int, int]:
+    def ssi_version(self, key: list, count: int) -> tuple[int, int]:
         """Версия контакт-листа: метка времени последнего изменения и число
-        элементов. Метка меняется только когда меняется сам список."""
-        digest = hashlib.sha1(b"".join(items)).hexdigest()
+        элементов. Метка меняется только когда меняется состав списка —
+        контакты, их имена, группы, «не беспокоить», — а не порядок."""
+        digest = hashlib.sha1(repr(key).encode("utf-8")).hexdigest()
         if self.storage.get_meta("ssi_hash") == digest:
-            return int(self.storage.get_meta("ssi_stamp", "0") or 0), len(items)
+            return int(self.storage.get_meta("ssi_stamp", "0") or 0), count
         stamp = int(time.time())
         self.storage.set_meta("ssi_hash", digest)
         self.storage.set_meta("ssi_stamp", str(stamp))
         log.info("контакт-лист изменился, новая версия %d", stamp)
-        return stamp, len(items)
+        return stamp, count
 
     async def owner_status_changed(self, status: int) -> None:
         if status == self.owner_status:
