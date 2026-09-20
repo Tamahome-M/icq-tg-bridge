@@ -457,7 +457,7 @@ class MaxSide:
                 status=status, unread=int(_attr(chat, "new_messages", 0) or 0),
                 pinned=False, muted=self.is_muted(chat.id),
                 photo_id=zlib.crc32(photo.encode()) if photo else 0))
-        log.info("MAX: получено %d чатов", len(out))
+        log.debug("MAX: получено %d чатов", len(out))
         return out
 
     def _status_of(self, user_id: int) -> str:

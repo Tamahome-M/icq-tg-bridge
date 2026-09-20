@@ -99,7 +99,7 @@ class TelegramSide:
     async def dialogs(self) -> list[Dialog]:
         folders = await self._folders() if self.cfg.grouping == "folders" else []
         if folders:
-            log.info("папки Telegram (%d): %s", len(folders),
+            log.debug("папки Telegram (%d): %s", len(folders),
                      ", ".join(title for title, _ in folders))
         out: list[Dialog] = []
         position = 0
@@ -139,7 +139,7 @@ class TelegramSide:
         spread: dict[str, int] = {}
         for dialog in out:
             spread[dialog.group_name] = spread.get(dialog.group_name, 0) + 1
-        log.info("получено %d чатов, групп %d: %s", len(out), len(spread),
+        log.debug("получено %d чатов, групп %d: %s", len(out), len(spread),
                  ", ".join(f"{name} — {count}" for name, count in
                            sorted(spread.items(), key=lambda kv: -kv[1])))
         return out
