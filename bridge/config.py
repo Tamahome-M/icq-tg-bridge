@@ -57,6 +57,7 @@ class Config:
     allow_delete: bool = True
     allow_delete_revoke: bool = True
     roster_limit: int = 0
+    roster_reuse: bool = True          # отвечать «список не менялся» на 13/05
     alias_max_chars: int = 40
     topics_limit: int = 50
     favourites: tuple[str, ...] = ()
@@ -187,6 +188,7 @@ class Config:
             allow_delete=bool(br.get("allow_delete", True)),
             allow_delete_revoke=bool(br.get("allow_delete_revoke", True)),
             roster_limit=int(br.get("roster_limit", cls.roster_limit)),
+            roster_reuse=bool(br.get("roster_reuse", True)),
             alias_max_chars=int(br.get("alias_max_chars", cls.alias_max_chars)),
             topics_limit=int(br.get("topics_limit", cls.topics_limit)),
             favourites=tuple(str(x).strip().lower() for x in br.get("favourites", [])),
