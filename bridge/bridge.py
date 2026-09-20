@@ -649,7 +649,7 @@ class Bridge:
                      with_photo, len(self._roster))
         total = len(self.storage.contacts())
         if (self.cfg.roster_limit or self.cfg.max_roster_limit) and total > len(self._roster):
-            log.info("в контакт-лист телефона идут %d чатов из %d (roster_limit); "
+            log.debug("в контакт-лист телефона идут %d чатов из %d (roster_limit); "
                      "остальные приходят как сообщения и находятся поиском",
                      len(self._roster), total)
             if self.cfg.background_groups:
@@ -657,7 +657,7 @@ class Bridge:
                 left = sum(1 for c in self.storage.contacts()
                            if c.uin not in shown
                            and c.group_name.strip().lower() in self.cfg.background_groups)
-                log.info("из фоновых групп отложено %d чатов — появятся, когда напишут",
+                log.debug("из фоновых групп отложено %d чатов — появятся, когда напишут",
                          left)
         online = sum(1 for c in self._roster
                      if self._statuses.get(c.uin, C.STATUS_ONLINE) != C.STATUS_OFFLINE)
