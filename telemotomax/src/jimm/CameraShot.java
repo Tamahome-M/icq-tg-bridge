@@ -155,6 +155,12 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	// Размеры JPEG-снимка, которые телефон объявляет в video.snapshot.encodings
 	// («encoding=jpeg&width=640&height=480 ...»), — строками «640x480», без
 	// повторов. Пусто — телефон не говорит, тогда снимок «как есть».
+	// Обычные размеры на случай, если телефон в свойстве размеры не называет
+	// (V8 перечисляет там только форматы): getSnapshot с неподдерживаемым
+	// размером бросит исключение, и снимок уйдёт «как есть».
+	private static final String[] COMMON_SIZES =
+		{ "160x120", "320x240", "640x480", "1024x768", "1280x1024", "1600x1200", "2048x1536" };
+
 	public static String[] snapshotSizes()
 	{
 		java.util.Vector out = new java.util.Vector();
@@ -163,23 +169,25 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 			String all = System.getProperty("video.snapshot.encodings");
 			if (all != null)
 			{
+				String lower = all.toLowerCase();
 				int pos = 0;
-				while (pos < all.length())
+				while (pos < lower.length())
 				{
-					int end = all.indexOf(' ', pos);
-					if (end < 0) end = all.length();
-					String enc = all.substring(pos, end);
+					int end = lower.indexOf(' ', pos);
+					if (end < 0) end = lower.length();
+					String enc = lower.substring(pos, end);
 					pos = end + 1;
-					if (enc.indexOf("jpeg") < 0 && enc.indexOf("jpg") < 0) continue;
+					// Регистр и имя формата не важны: берём любой размер.
 					int w = enc.indexOf("width=");
 					int h = enc.indexOf("height=");
 					if (w < 0 || h < 0) continue;
 					String size = number(enc, w + 6) + "x" + number(enc, h + 7);
-					if (!out.contains(size)) out.addElement(size);
+					if (size.length() > 2 && !out.contains(size)) out.addElement(size);
 				}
 			}
 		}
 		catch (Exception ignore) {}
+		if (out.isEmpty()) return COMMON_SIZES;
 		String[] sizes = new String[out.size()];
 		out.copyInto(sizes);
 		return sizes;

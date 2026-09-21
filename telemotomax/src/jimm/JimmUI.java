@@ -626,7 +626,17 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			.append("буфер экрана: ")
 			.append(VirtualList.isScreenDoubleBuffered() ? "телефона" : "свой (медленно)")
 			.append(", прозрачность: ").append(Jimm.display.numAlphaLevels() > 2 ? "есть" : "нет")
-			.append("\n\n");
+			.append("\n");
+		// TeleMotoMax: что телефон говорит про снимки — по этому видно,
+		// какие размеры он вообще объявляет.
+		String snap = null;
+		try { snap = System.getProperty("video.snapshot.encodings"); } catch (Exception ignore) {}
+		if (snap != null && snap.length() > 0)
+		{
+			if (snap.length() > 160) snap = snap.substring(0, 160) + "…";
+			str.append("снимки: ").append(snap).append("\n");
+		}
+		str.append("\n");
 		// TeleMotoMax: последние события связи — чтобы «лежит отключённый»
 		// разбирался по фактам.
 		String connLog = ConnLog.text();
