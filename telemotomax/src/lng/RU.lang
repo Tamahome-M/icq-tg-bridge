@@ -509,8 +509,6 @@
 "file_not_sent"			"Файл не отправлен"
 "file_loading"			"Скачиваю файл..."
 "file_saved"			"Сохранено:"
-"file_link_wait"			"Прошу ссылку у моста..."
-"file_in_browser"			"Java к файлам не пускают — открываю в браузере телефона, сохраните оттуда:"
 "video_recording"			"Запись"
 "video_keys"			"выбор — запись/стоп"
 "video_waiting_bridge"			"Отправлено, жду ответ моста"

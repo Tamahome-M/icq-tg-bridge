@@ -636,14 +636,6 @@ async def run_downloads() -> None:
     text = body.decode("utf-8")
     assert 'href="/d/"' in text and 'href="/d/TeleMotoMax-V8.jad"' in text, text
 
-    # Ссылка на документ для браузера телефона: без пароля, живёт по токену.
-    link = server.link_file("отчёт.pdf", b"%PDF-1.4 test")
-    assert link.startswith("/f/") and link.endswith("/%D0%BE%D1%82%D1%87%D1%91%D1%82.pdf"), link
-    status, mime, body = await get(link)
-    assert status == 200 and mime == "application/pdf" and body == b"%PDF-1.4 test", (status, mime)
-    status, _, _ = await get("/f/nosuchtoken/x.pdf")
-    assert status == 404, status
-
     # Список: без пароля (установщик телефона его спросить не умеет), скрытых
     # файлов и подкаталогов в нём нет.
     status, mime, body = await get("/d/")

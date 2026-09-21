@@ -463,11 +463,8 @@ async def run_files() -> None:
             sent.append((target, name, len(fh.read())))
         return True
 
-    async def file_link(target: int, attach: str):
-        return "http://phone.example:8080/f/abcdef/%D0%BE%D1%82%D1%87%D1%91%D1%82.pdf"
-
     server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
-                         fetch_file=fetch_file, on_file=on_file, file_link=file_link)
+                         fetch_file=fetch_file, on_file=on_file)
     await server.start()
     try:
         client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
@@ -484,9 +481,6 @@ async def run_files() -> None:
         name, data = await client.request_file(uin, token)
         assert name == "отчёт.pdf" and data == big, (name, len(data))
         assert client.parts_seen[-1][1] == 3, client.parts_seen[-1]
-        # Флаг 0x40 — «Java к файлам не пускают»: в ответе ссылка для браузера.
-        url = await client.request_file_link(uin, token)
-        assert url.startswith("http://phone.example:8080/f/"), url
 
         # Файл с телефона: части на диск, по последней — в чат.
         assert await client.send_file(uin, big, "фото.jpg") is True
@@ -506,7 +500,7 @@ async def run_files() -> None:
         await client.close()
     finally:
         server._server.close()
-    print("  файлы: ок (документ частями с именем, ссылка для браузера, файл с телефона, потолок)")
+    print("  файлы: ок (документ частями с именем, файл с телефона в чат, потолок)")
 
 
 async def run_profiles() -> None:
