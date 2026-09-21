@@ -33,6 +33,8 @@ KEYS = {
     # контактов не тянет, V8 — тянет. Пишется в профиле как roster_limit,
     # а общее значение — [bridge] roster_limit.
     "roster_limit": "roster_limit",
+    # Файлы в обе стороны, мегабайт: на GPRS мегабайт — минуты.
+    "file_max_mb": "tmm_file_max_mb",
 }
 
 BUILTIN: dict[str, dict] = {
@@ -40,12 +42,13 @@ BUILTIN: dict[str, dict] = {
     # Платформу оба телефона называют просто «j2me», поэтому решает экран:
     # до 200 точек в ширину — v3, от 240 — v8.
     "v3": {"match": "V3", "max_width": 200, "photo_width": 176, "photo_height": 176, "photo_max_kb": 20,
-           "photo_quality": 60, "video_seconds": 10, "voice_kbps": 12.2, "history_max": 200},
+           "photo_quality": 60, "video_seconds": 10, "voice_kbps": 12.2, "history_max": 200,
+           "file_max_mb": 1},
     # Motorola V8: 240×320, кучи хватает на снимок побольше и получше, ролик
     # подлиннее и список без ограничения (0 — все чаты).
     "v8": {"match": "V8", "min_width": 240, "photo_width": 240, "photo_height": 320,
            "photo_max_kb": 60, "photo_quality": 85, "video_seconds": 30, "voice_kbps": 12.2,
-           "history_max": 400, "roster_limit": 0},
+           "history_max": 400, "roster_limit": 0, "file_max_mb": 5},
 }
 
 

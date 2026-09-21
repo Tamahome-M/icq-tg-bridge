@@ -114,6 +114,8 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	static final Command cmdRecordVoice = new Command(ResourceBundle.getString("record_voice"), Command.ITEM, 4);
 //#sijapp cond.if modules_CAMERA="true"#
 	static final Command cmdRecordVideo = new Command(ResourceBundle.getString("record_video"), Command.ITEM, 4);
+	static final Command cmdSendFile = new Command(ResourceBundle.getString("send_file"), Command.ITEM, 4);
+	static final Command cmdGetFile = new Command(ResourceBundle.getString("get_file"), Command.ITEM, 3);
 //#sijapp cond.end#
 	// TeleMotoMax: chat history from the bridge on its own screen
 	static final Command cmdServerHistory = new Command(ResourceBundle.getString("server_history"), Command.ITEM, 5);
@@ -230,6 +232,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		textList.addCommandEx(cmdRecordVoice, VirtualList.MENU_TYPE_RIGHT);
 //#sijapp cond.if modules_CAMERA="true"#
 		textList.addCommandEx(cmdRecordVideo, VirtualList.MENU_TYPE_RIGHT);
+		textList.addCommandEx(cmdSendFile, VirtualList.MENU_TYPE_RIGHT);
 //#sijapp cond.end#
 		textList.addCommandEx(cmdServerHistory, VirtualList.MENU_TYPE_RIGHT);
 		textList.addCommandEx(cmdContactMenu, VirtualList.MENU_TYPE_RIGHT);
@@ -294,6 +297,16 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		else if (c == cmdRecordVideo)
 		{
 			VideoRecorder.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), this);
+		}
+		else if (c == cmdSendFile)
+		{
+			FileSender.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), this);
+		}
+		else if (c == cmdGetFile)
+		{
+			byte[] token = currentAttach();
+			if (token != null)
+				FileDownloader.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), token, this);
 		}
 		else if (c == cmdCameraShot)
 		{
@@ -483,15 +496,22 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		textList.removeCommandEx(cmdShowPhoto);
 		textList.removeCommandEx(cmdPlayVideo);
 		textList.removeCommandEx(cmdPlayVoice);
+//#sijapp cond.if modules_CAMERA="true"#
+		textList.removeCommandEx(cmdGetFile);
+//#sijapp cond.end#
 		MessData md = messAt(textList.getCurrTextIndex());
 		if (md != null)
 		{
-			if (md.attach != null && md.attachKind != 3)
+			if (md.attach != null && (md.attachKind == 1 || md.attachKind == 2))
 				textList.addCommandEx(cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
 			if (md.attach != null && md.attachKind == 2)
 				textList.addCommandEx(cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
 			if (md.attach != null && md.attachKind == 3)
 				textList.addCommandEx(cmdPlayVoice, VirtualList.MENU_TYPE_RIGHT);
+//#sijapp cond.if modules_CAMERA="true"#
+			if (md.attach != null && md.attachKind == 4)
+				textList.addCommandEx(cmdGetFile, VirtualList.MENU_TYPE_RIGHT);
+//#sijapp cond.end#
 		}
 	}
 

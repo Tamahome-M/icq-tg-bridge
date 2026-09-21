@@ -36,6 +36,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	public static final int BART_VOICE = 0x0083;
 	public static final int BART_CHATS = 0x0084;     // весь список чатов моста
 	public static final int BART_OPEN = 0x0085;      // вернуть чат на телефон
+	public static final int BART_FILE = 0x0086;      // документ по токену, в первой части — имя
 
 	/** Who gets the bytes the service replied with (null on failure). */
 	public interface Listener
@@ -101,7 +102,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 		this.listener = listener;
 		// Ролик и голосовое мост сначала перекодирует, потом отдаёт частями —
 		// до первой части может пройти больше минуты на GPRS.
-		if (bartType == BART_VIDEO || bartType == BART_VOICE) TIMEOUT = VIDEO_TIMEOUT;
+		if (bartType == BART_VIDEO || bartType == BART_VOICE || bartType == BART_FILE) TIMEOUT = VIDEO_TIMEOUT;
 	}
 
 	protected void init() throws JimmException

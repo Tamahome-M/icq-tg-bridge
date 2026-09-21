@@ -579,6 +579,49 @@ public class Icq implements Runnable
 		sendTimed(0x0005, uin, clip, seconds, type, progress);
 	}
 
+	// Файл с телефона: части 10/08 — UIN, номер части, всего частей, общий
+	// размер (4 байта), кусок; хвостом первой части — имя файла. Читается
+	// из потока по частям: в памяти одна часть, а не весь файл.
+	public static void sendFile(String uin, java.io.InputStream in, long size, String name,
+			UploadProgress progress) throws JimmException, java.io.IOException
+	{
+		byte[] uinRaw = Util.stringToByteArray(uin);
+		byte[] nameRaw = Util.stringToByteArray(name == null ? "" : name, true);
+		if (nameRaw.length > 200) { byte[] cut = new byte[200]; System.arraycopy(nameRaw, 0, cut, 0, 200); nameRaw = cut; }
+		int total = (int) ((size + PHOTO_PART - 1) / PHOTO_PART);
+		if (total < 1) total = 1;
+		byte[] chunk = new byte[PHOTO_PART];
+		for (int part = 1; part <= total; part++)
+		{
+			int want = (int) Math.min((long) PHOTO_PART, size - (long) (part - 1) * PHOTO_PART);
+			int got = 0;
+			while (got < want)
+			{
+				int n = in.read(chunk, got, want - got);
+				if (n < 0) throw new java.io.IOException("file shorter than declared");
+				got += n;
+			}
+			int tail = (part == 1) ? 1 + nameRaw.length : 0;
+			byte[] buf = new byte[1 + uinRaw.length + 2 + 2 + 4 + 2 + got + tail];
+			int marker = 0;
+			Util.putByte(buf, marker, uinRaw.length); marker += 1;
+			System.arraycopy(uinRaw, 0, buf, marker, uinRaw.length); marker += uinRaw.length;
+			Util.putWord(buf, marker, part); marker += 2;
+			Util.putWord(buf, marker, total); marker += 2;
+			Util.putDWord(buf, marker, size); marker += 4;
+			Util.putWord(buf, marker, got); marker += 2;
+			System.arraycopy(chunk, 0, buf, marker, got); marker += got;
+			if (tail > 0)
+			{
+				Util.putByte(buf, marker, nameRaw.length); marker += 1;
+				System.arraycopy(nameRaw, 0, buf, marker, nameRaw.length);
+			}
+			sendPacket(new SnacPacket(0x0010, 0x0008, 0x00000000, new byte[0], buf));
+			if (progress != null) progress.onPart(part, total);
+			if (part < total) breathe();
+		}
+	}
+
 	private static void sendTimed(int subtype, String uin, byte[] voice, int seconds, String type,
 			UploadProgress progress) throws JimmException
 	{
