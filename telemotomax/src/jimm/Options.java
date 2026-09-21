@@ -1156,8 +1156,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private TextField historyCount;     // TeleMotoMax
 	private TextField chatMessages;     // TeleMotoMax
 //#sijapp cond.if modules_CAMERA="true"#
-	private ChoiceGroup cameraSizeChoice;   // TeleMotoMax: размеры снимка, какие знает телефон
-	private String[] cameraSizes;
+	private String[] cameraSizes;           // TeleMotoMax: размеры снимка в разделе «Камера»
 //#sijapp cond.end#
 	private ChoiceGroup lightManual;
 //#sijapp cond.end#
@@ -2171,10 +2170,27 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				camRes.append (width + " x " + height, null);
 			}
 		}
+//#sijapp cond.if modules_CAMERA="true"#
+		// TeleMotoMax: разрешение для снимка в чат — из того же списка, что
+		// знает CameraShot (размеры из свойства, а если телефон их не
+		// называет, как V8 с одним «encoding=jpeg», — обычный набор), и
+		// с пунктом «как решит телефон». Хранится строкой «WxH», а не
+		// номером в списке, который у каждого телефона свой.
+		camRes.deleteAll();
+		cameraSizes = jimm.CameraShot.snapshotSizes();
+		camRes.append(ResourceBundle.getString("camera_size_default"), null);
+		for (int i = 0; i < cameraSizes.length; i++) camRes.append(cameraSizes[i], null);
+		String chosen = Options.getString(Options.OPTION_CAMERA_SIZE);
+		int sel = 0;
+		for (int i = 0; i < cameraSizes.length; i++) if (cameraSizes[i].equals(chosen)) sel = i + 1;
+		try { camRes.setSelectedIndex(sel, true); } catch (Exception e) {}
+		try { if (camEnc.size() > 0) camEnc.setSelectedIndex(Options.getInt(Options.OPTION_CAMERA_ENCODING), true); } catch (Exception e) {}
+//#sijapp cond.else#
 		try {
 			if (camRes.size() > 0) camRes.setSelectedIndex(Options.getInt(Options.OPTION_CAMERA_RES), true);
 			if (camEnc.size() > 0) camEnc.setSelectedIndex(Options.getInt(Options.OPTION_CAMERA_ENCODING), true);
 		} catch (Exception e) {}
+//#sijapp cond.end#
 		// clCamDevGroup.setSelectedIndex(Options.getInt(Options.OPTION_CAMERA_LOCATOR), true);
 		
 		optionsForm.append(camEnc);
@@ -2414,19 +2430,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		chatMessages = new TextField(ResourceBundle.getString("chat_messages"),
 				String.valueOf(Options.getInt(Options.OPTION_CHAT_MESSAGES)), 3, TextField.NUMERIC);
 		optionsForm.append(chatMessages);
-//#sijapp cond.if modules_CAMERA="true"#
-		// Размеры снимка берём у самого телефона (video.snapshot.encodings):
-		// у каждой модели свой набор, вписывать руками бессмысленно.
-		cameraSizes = jimm.CameraShot.snapshotSizes();
-		cameraSizeChoice = new ChoiceGroup(ResourceBundle.getString("camera_size"), Choice.EXCLUSIVE);
-		cameraSizeChoice.append(ResourceBundle.getString("camera_size_default"), null);
-		for (int i = 0; i < cameraSizes.length; i++) cameraSizeChoice.append(cameraSizes[i], null);
-		String chosen = Options.getString(Options.OPTION_CAMERA_SIZE);
-		int sel = 0;
-		for (int i = 0; i < cameraSizes.length; i++) if (cameraSizes[i].equals(chosen)) sel = i + 1;
-		cameraSizeChoice.setSelectedIndex(sel, true);
-		optionsForm.append(cameraSizeChoice);
-//#sijapp cond.end#
+
 		optionsForm.append(chrgMessFormat);
 		
 		//#sijapp cond.if target="MIDP2" | target="SIEMENS2"#
@@ -2703,7 +2707,14 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	{
 		//Options.setInt(Options.OPTION_CAMERA_LOCATOR, clCamDevGroup.getSelectedIndex());
 		Options.setInt(Options.OPTION_CAMERA_ENCODING, camEnc.getSelectedIndex());
+//#sijapp cond.if modules_CAMERA="true"#
+		int sel = camRes.getSelectedIndex();
+		Options.setString(Options.OPTION_CAMERA_SIZE,
+				(sel > 0 && cameraSizes != null && sel - 1 < cameraSizes.length) ? cameraSizes[sel - 1] : "");
+		Options.setInt(Options.OPTION_CAMERA_RES, 0);
+//#sijapp cond.else#
 		Options.setInt(Options.OPTION_CAMERA_RES, camRes.getSelectedIndex());
+//#sijapp cond.end#
 	}
 //#sijapp cond.end#	
 	
@@ -2817,14 +2828,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			Options.setInt(Options.OPTION_CHAT_MESSAGES, n);
 		}
 		catch (Exception ignore) {}
-//#sijapp cond.if modules_CAMERA="true"#
-		if (cameraSizeChoice != null)
-		{
-			int sel = cameraSizeChoice.getSelectedIndex();
-			Options.setString(Options.OPTION_CAMERA_SIZE,
-					(sel > 0 && sel - 1 < cameraSizes.length) ? cameraSizes[sel - 1] : "");
-		}
-//#sijapp cond.end#
 
 		//#sijapp cond.if target="MOTOROLA" | target="MIDP2" #
 		boolean useBackLight = lightManual.isSelected(0);
