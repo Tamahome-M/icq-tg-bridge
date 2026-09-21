@@ -535,6 +535,10 @@ public class ConnectAction extends Action
 					)
 				);
 				
+				// TeleMotoMax: какой телефон — сразу, до запроса контакт-листа:
+				// по профилю мост решает и сколько чатов в него класть.
+				try { Icq.sendClientInfo(Icq.c); } catch (Exception ignore) {}
+
 				this.state = ConnectAction.STATE_CLI_WANT_CAPS_SENT;
 			}
        
@@ -877,9 +881,6 @@ public class ConnectAction extends Action
             // STATE_CLI_STATUS_INFO_SENT
 			else if (this.state == ConnectAction.STATE_CLI_STATUS_INFO_SENT)
 			{
-				// TeleMotoMax: какой телефон — до «клиент готов».
-				try { Icq.sendClientInfo(Icq.c); } catch (Exception ignore) {}
-
 				// Send a CLI_READY packet
 				SnacPacket reply2 = new SnacPacket(SnacPacket.CLI_READY_FAMILY, SnacPacket.CLI_READY_COMMAND, 0x00000000, new byte[0], ConnectAction.CLI_READY_DATA);
 				Icq.c.sendPacket(reply2);

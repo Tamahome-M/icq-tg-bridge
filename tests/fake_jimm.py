@@ -46,6 +46,9 @@ class FakeJimm:
         self.attachments: list[tuple[int, bytes, int]] = []   # (uin, токен, вид вложения)
         self.parts_seen: list[tuple[int, int]] = []       # части ответов службы 0x10
         self.errors: list[tuple[int, int]] = []
+        # Сведения о телефоне (платформа, ширина, высота, куча): если заданы,
+        # уходят при входе сразу после списка семейств, как у TeleMotoMax.
+        self.device: tuple[str, int, int, int] | None = None
 
     async def connect(self) -> None:
         self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
@@ -266,6 +269,8 @@ class FakeJimm:
 
         await self.send_snac(C.OSERVICE, C.CLI_VERSIONS,
                              b"".join(struct.pack(">HH", f, v) for f, v in C.FAMILY_VERSIONS.items()))
+        if self.device is not None:
+            await self.client_info(*self.device)
         await self.expect(C.OSERVICE, C.SRV_VERSIONS)
 
         await self.send_snac(C.OSERVICE, C.RATE_REQ)

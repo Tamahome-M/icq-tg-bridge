@@ -388,8 +388,11 @@ voice_kbps = 12.2
 # ролик 30 с, история 400). Профиль подходит, если платформа содержит
 # match (без учёта регистра) или экран не уже min_width. Свой профиль с
 # тем же именем дополняет встроенный, с новым — добавляется. Можно
-# переопределять: photo_width, photo_height, photo_max_kb, video_seconds,
-# voice_seconds, voice_kbps, history_max. Обычному Jimm и старому
+# переопределять: photo_width, photo_height, photo_max_kb, photo_quality
+# (качество JPEG, с которого начинать: 0 — обычное 75, у v8 — 85; дальше
+# всё равно снижается, пока не уложится в photo_max_kb), video_seconds,
+# voice_seconds, voice_kbps, history_max, roster_limit (у v8 — 0, все
+# чаты; общее — в [bridge]). Обычному Jimm и старому
 # TeleMotoMax профили не достаются — у них общие настройки.
 # В журнале при входе: «телефон: MotoV8, экран 240×320, куча 8 МБ —
 # профиль «v8»».

@@ -23,19 +23,26 @@ KEYS = {
     "photo_width": "tmm_photo_width",
     "photo_height": "tmm_photo_height",
     "photo_max_kb": "tmm_photo_max_kb",
+    "photo_quality": "tmm_photo_quality",
     "video_seconds": "tmm_video_seconds",
     "voice_seconds": "tmm_voice_seconds",
     "voice_kbps": "tmm_voice_kbps",
     "history_max": "tmm_history_max",
+    # Ограничение контакт-листа тоже своё у каждого телефона: V3 сотни
+    # контактов не тянет, V8 — тянет. Пишется в профиле как roster_limit,
+    # а общее значение — [bridge] roster_limit.
+    "roster_limit": "roster_limit",
 }
 
 BUILTIN: dict[str, dict] = {
     # Motorola V3: маленький экран, меньше мегабайта кучи, MMAPI без видео.
     "v3": {"match": "V3", "photo_width": 176, "photo_height": 176, "photo_max_kb": 20,
-           "video_seconds": 10, "voice_kbps": 12.2, "history_max": 200},
-    # Motorola V8: 240×320, кучи хватает на снимок побольше и ролик подлиннее.
+           "photo_quality": 0, "video_seconds": 10, "voice_kbps": 12.2, "history_max": 200},
+    # Motorola V8: 240×320, кучи хватает на снимок побольше и получше, ролик
+    # подлиннее и список без ограничения (0 — все чаты).
     "v8": {"match": "V8", "min_width": 240, "photo_width": 240, "photo_height": 320,
-           "photo_max_kb": 60, "video_seconds": 30, "voice_kbps": 12.2, "history_max": 400},
+           "photo_max_kb": 60, "photo_quality": 85, "video_seconds": 30, "voice_kbps": 12.2,
+           "history_max": 400, "roster_limit": 0},
 }
 
 

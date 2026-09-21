@@ -15,6 +15,7 @@ from . import emoji, history, policy
 from .access import AccessControl
 from . import photos
 from .photos import PhotoStore
+from . import profiles
 from .render import Item, RenderStore, Transcoder
 from .webserver import PhotoServer
 from .config import Config
@@ -80,7 +81,7 @@ class Bridge:
                                  self.avatar, self.icon_hash, self.fetch_attachment,
                                  self.fetch_history, self.fetch_video, self.send_camera_photo,
                                  self.fetch_voice, self.send_voice_message,
-                                 self.send_video_note,
+                                 self.send_video_note, self._reload_roster,
                                  self.chat_list, self.open_chat)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
@@ -173,7 +174,7 @@ class Bridge:
         # потолок с Telegram их бы просто вытеснил.
         from_max = [c for c in everyone if self.max is not None and is_max_peer(c.peer_id)]
         rest = [c for c in everyone if c not in from_max]
-        roster = (limit_contacts(rest, self.cfg.roster_limit, self.cfg.background_groups, since)
+        roster = (limit_contacts(rest, self.tmm("roster_limit"), self.cfg.background_groups, since)
                   + limit_contacts(from_max, self.cfg.max_roster_limit,
                                    self.cfg.background_groups, since))
         self._roster = sorted(roster, key=lambda c: (c.position, c.uin))
@@ -420,10 +421,11 @@ class Bridge:
     def tmm(self, key: str):
         """Настройка [telemotomax] с учётом профиля телефона, который сейчас
         подключён: photo_width, video_seconds, voice_kbps и т. п."""
-        session = self.oscar.session
+        oscar = getattr(self, "oscar", None)
+        session = oscar.session if oscar is not None else None
         if session is not None and session.profile and key in session.profile:
             return session.profile[key]
-        return getattr(self.cfg, "tmm_" + key)
+        return getattr(self.cfg, profiles.KEYS.get(key, "tmm_" + key))
 
     async def fetch_attachment(self, uin: int, attach: str) -> bytes | None:
         """Снимок из сообщения для TeleMotoMax — ужатый под экран телефона.
@@ -438,7 +440,7 @@ class Bridge:
         if not raw:
             return None
         got = photos.shrink(raw, self.tmm("photo_width"), self.tmm("photo_height"),
-                            self.tmm("photo_max_kb") * 1024)
+                            self.tmm("photo_max_kb") * 1024, self.tmm("photo_quality"))
         if got is None:
             return None
         data, width, height = got

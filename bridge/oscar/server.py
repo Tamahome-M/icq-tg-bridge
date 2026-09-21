@@ -918,6 +918,8 @@ class Session:
         else:
             self.profile_name, self.profile = "", {}
             log.info("телефон: %s — подходящего профиля нет, общие настройки", self.device)
+        if self.server.on_profile is not None and self.server.session is self:
+            self.server.on_profile()        # контакт-лист под этот профиль
 
     async def on_client_ready(self, s: Snac) -> None:
         if self.ready:
@@ -1482,6 +1484,7 @@ class OscarServer:
                  fetch_voice: Callable[[int, str], Awaitable[bytes | None]] | None = None,
                  on_voice: Callable[[int, bytes, int], Awaitable[bool]] | None = None,
                  on_video: Callable[[int, bytes, int], Awaitable[bool]] | None = None,
+                 on_profile: Callable[[], None] | None = None,
                  chat_list: Callable[[], Awaitable[list]] | None = None,
                  open_chat: Callable[[int], Awaitable[bool]] | None = None):
         self.cfg = cfg
@@ -1517,6 +1520,9 @@ class OscarServer:
         self.on_voice = on_voice or self._no_voice
         # «Кружок» с камеры телефона — отправить в чат.
         self.on_video = on_video or self._no_voice
+        # Профиль телефона выбран (или сессия сменилась) — мост перечитывает
+        # контакт-лист с ограничением этого профиля.
+        self.on_profile = on_profile
         self.chat_list = chat_list or self._no_chats
         self.open_chat = open_chat or self._no_open
         self.uin = str(cfg.oscar_uin)
@@ -1749,6 +1755,8 @@ class OscarServer:
                 log.info("старое соединение заменено, в очередь вернулось %d сообщений",
                          returned)
         self.session = session
+        if self.on_profile is not None:
+            self.on_profile()               # новый сеанс — пока без профиля, общие настройки
         # Умеет ли клиент подтверждать, выясняем заново для каждого сеанса:
         # прошлое решение могло относиться к другой сборке или к зависшему
         # телефону, а первое подтверждение приходит быстро.

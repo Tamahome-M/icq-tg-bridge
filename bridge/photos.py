@@ -41,8 +41,11 @@ class Photo:
 
 
 def shrink(raw: bytes, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT,
-           max_bytes: int = DEFAULT_MAX_BYTES) -> tuple[bytes, int, int] | None:
-    """Ужимает картинку под экран телефона: данные, ширина, высота."""
+           max_bytes: int = DEFAULT_MAX_BYTES, quality: int = 0) -> tuple[bytes, int, int] | None:
+    """Ужимает картинку под экран телефона: данные, ширина, высота.
+
+    quality — с какого качества JPEG начинать (0 — с обычного, 75); дальше
+    качество снижается ступенями, пока снимок не уложится в max_bytes."""
     if not raw:
         log.warning("картинка пустая, пропускаю")
         return None
@@ -60,7 +63,11 @@ def shrink(raw: bytes, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT,
 
     image.thumbnail((width, height), Image.LANCZOS)
     data = b""
-    for quality in QUALITY_STEPS:
+    steps = QUALITY_STEPS
+    if quality:
+        quality = max(10, min(95, int(quality)))
+        steps = (quality,) + tuple(q for q in QUALITY_STEPS if q < quality)
+    for quality in steps:
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG", quality=quality, optimize=True,
                    progressive=False)      # старые браузеры не любят прогрессивный JPEG

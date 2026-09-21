@@ -123,6 +123,7 @@ class Config:
     tmm_photo_width: int = 176
     tmm_photo_height: int = 176
     tmm_photo_max_kb: int = 20
+    tmm_photo_quality: int = 0         # 0 — обычное (75), выше — качественнее и тяжелее
     tmm_video_seconds: int = 10
     tmm_voice_seconds: int = 60
     tmm_history_max: int = 200
@@ -256,6 +257,7 @@ class Config:
             tmm_photo_width=int(tm.get("photo_width", cls.tmm_photo_width)),
             tmm_photo_height=int(tm.get("photo_height", cls.tmm_photo_height)),
             tmm_photo_max_kb=int(tm.get("photo_max_kb", cls.tmm_photo_max_kb)),
+            tmm_photo_quality=int(tm.get("photo_quality", cls.tmm_photo_quality)),
             tmm_video_seconds=int(tm.get("video_seconds", cls.tmm_video_seconds)),
             tmm_voice_seconds=int(tm.get("voice_seconds", cls.tmm_voice_seconds)),
             tmm_history_max=int(tm.get("history_max", cls.tmm_history_max)),

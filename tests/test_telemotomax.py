@@ -403,29 +403,55 @@ async def run_profiles() -> None:
     cfg = Config(tg_api_id=1, tg_api_hash="x")
     cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 11
     cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    cfg.roster_limit = 2                      # общее ограничение — как для V3
     storage = Storage(":memory:")
-    storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+    for n in range(5):
+        storage.uin_for_peer(600 + n, kind="user", title=f"Чат {n}", group_name="Личные")
 
     async def on_outgoing(*_):
         return 1
 
-    server = OscarServer(cfg, storage, on_outgoing, storage.contacts)
+    # Контакт-лист с ограничением профиля: как в Bridge._reload_roster.
+    from bridge.db import limit_contacts
+    state = {"limit": cfg.roster_limit}
+
+    def roster():
+        return limit_contacts(storage.contacts(), state["limit"])
+
+    server = OscarServer(cfg, storage, on_outgoing, roster)
+
+    def on_profile():
+        s = server.session
+        state["limit"] = (s.profile.get("roster_limit", cfg.roster_limit)
+                          if s is not None and s.profile else cfg.roster_limit)
+    server.on_profile = on_profile
     await server.start()
     try:
+        # Обычный Jimm: общее ограничение, 2 чата.
         client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
-        client.tmm_version = (0, 29)
         await client.connect()
         await client.bos(await client.login_md5_jimm())
-        await client.client_info("MotoV8", 240, 320, 8192)
+        await client.drain_for(0.3)
+        assert len(client.contacts) == 2, len(client.contacts)
+        await client.close()
+        await asyncio.sleep(0.2)
+
+        # V8: сведения уходят до запроса списка — профиль без ограничения.
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 29)
+        client.device = ("MotoV8", 240, 320, 8192)
+        await client.connect()
+        await client.bos(await client.login_md5_jimm())
         await client.drain_for(0.3)
         session = server.session
         assert session is not None and session.profile_name == "v8", session and session.profile_name
-        assert session.profile["photo_height"] == 320
+        assert session.profile["photo_height"] == 320 and session.profile["photo_quality"] == 85
         assert str(session.device).startswith("MotoV8, экран 240×320"), str(session.device)
+        assert len(client.contacts) == 5, f"профиль v8 без ограничения, а чатов {len(client.contacts)}"
         await client.close()
     finally:
         server._server.close()
-    print("  профили телефонов: ок (v3/v8, по экрану, из конфига поверх встроенного)")
+    print("  профили телефонов: ок (v3/v8, по экрану, из конфига, roster_limit по профилю)")
 
 
 async def run_video_note() -> None:
