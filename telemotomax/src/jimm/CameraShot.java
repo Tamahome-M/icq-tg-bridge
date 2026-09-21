@@ -74,9 +74,13 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		new Thread() {
 			public void run()
 			{
+				// Плеер, который не удалось довести до видоискателя, закрываем
+				// тут же: у Motorola число плееров на приложение ограничено,
+				// и каждая незакрытая попытка приближала «too many players» —
+				// после чего не открывались ни камера, ни микрофон.
+				Player p = null;
 				try
 				{
-					Player p;
 					try { p = Manager.createPlayer("capture://image"); }
 					catch (Exception first) { p = Manager.createPlayer("capture://video"); }
 					p.realize();
@@ -95,6 +99,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 				}
 				catch (Exception e)
 				{
+					if (p != null) { try { p.close(); } catch (Exception ig) {} }
 					failed(e);
 				}
 			}

@@ -135,13 +135,20 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 		Exception last = null;
 		for (int i = 0; i < LOCATORS.length; i++)
 		{
+			Player p = null;
 			try
 			{
-				Player p = Manager.createPlayer(LOCATORS[i]);
+				p = Manager.createPlayer(LOCATORS[i]);
 				p.realize();
 				return p;
 			}
-			catch (Exception e) { last = e; }
+			catch (Exception e)
+			{
+				// Создался, но не открылся — закрыть, иначе каждая попытка
+				// с очередным адресом оставляла плеер висеть.
+				if (p != null) { try { p.close(); } catch (Exception ig) {} }
+				last = e;
+			}
 		}
 		throw last != null ? last : new Exception("no microphone");
 	}

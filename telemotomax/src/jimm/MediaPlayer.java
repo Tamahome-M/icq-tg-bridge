@@ -396,6 +396,22 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	private void start(Player p) throws Exception
 	{
+		try
+		{
+			startInternal(p);
+		}
+		catch (Exception e)
+		{
+			// Не завёлся — закрыть сразу, а не держать до выхода с экрана:
+			// вторая попытка (из памяти) создаёт ещё один плеер.
+			try { p.close(); } catch (Exception ig) {}
+			if (player == p) player = null;
+			throw e;
+		}
+	}
+
+	private void startInternal(Player p) throws Exception
+	{
 		player = p;
 		player.realize();
 		VideoControl vc = (bartType == RequestBartAction.BART_VOICE)
