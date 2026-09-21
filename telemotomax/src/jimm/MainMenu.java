@@ -168,6 +168,12 @@ public class MainMenu implements CommandListener, JimmScreen
 		if (Jimm.getPhoneVendor() == Device.PHONE_SONYERICSSON) 
 			JimmUI.addTextListItem(list, "minimize", menuIcons.elementAt(9), MENU_MINIMIZE, true, -1, Font.STYLE_PLAIN);
 		//#sijapp cond.end#
+		//#sijapp cond.if target is "MOTOROLA" #
+		// TeleMotoMax: «Свернуть» — уйти в фон, не закрывая соединение. На
+		// MotoMAGX (V8) красная клавиша предлагает только выход; сворачивание
+		// делается изнутри — см. Jimm.setMinimized.
+		JimmUI.addTextListItem(list, "minimize", null, MENU_MINIMIZE, true, -1, Font.STYLE_PLAIN);
+		//#sijapp cond.end#
 		
 		JimmUI.addTextListItem(list, "exit", menuIcons.elementAt(10), MENU_EXIT, true, -1, Font.STYLE_PLAIN);
 
@@ -382,7 +388,7 @@ public class MainMenu implements CommandListener, JimmScreen
 				JimmUI.about();
 				break;
 
-			//#sijapp cond.if target is "MIDP2"#
+			//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA"#
 			case MENU_MINIMIZE:
 				/* Minimize Jimm (if supported) */
 				Jimm.setMinimized(true);
