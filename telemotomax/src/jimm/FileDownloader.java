@@ -98,7 +98,12 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 			return;
 		}
 		if (onBartPart(data, 0, data.length, 1, 1)) onBartDone(true);
-		else { status = ResourceBundle.getString("file_failed") + " (no root)"; repaint(); }
+		else
+		{
+			status = ResourceBundle.getString("file_failed") + " некуда писать\nкорни: "
+					+ (rootsSeen.length() > 0 ? rootsSeen : "нет") + "\n" + rootsError;
+			repaint();
+		}
 	}
 
 	public synchronized boolean onBartPart(byte[] buf, int off, int len, int part, int total)
@@ -191,31 +196,57 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 		return url.startsWith("file://") ? url.substring(7) : url;
 	}
 
-	// Куда сохранять: первый корень, куда можно писать, папка tmm/.
+	// Что телефон ответил, когда искали, куда писать: корни и последняя
+	// ошибка — показываются на экране, если места не нашлось.
+	private static String rootsSeen = "";
+	private static String rootsError = "";
+
+	// Куда сохранять. Пробуем по очереди на каждом корне: папку tmm/, потом
+	// сам корень — и не спрашиваем canWrite (на Motorola он врёт), а честно
+	// создаём файл: получилось — сюда и пишем.
 	private static String targetUrl(String name)
 	{
 		String safe = name.replace('/', '_').replace('\\', '_');
 		if (safe.length() == 0) safe = "file.bin";
+		rootsSeen = "";
+		rootsError = "";
 		try
 		{
 			Enumeration roots = FileSystemRegistry.listRoots();
 			while (roots.hasMoreElements())
 			{
 				String root = (String) roots.nextElement();
+				rootsSeen += (rootsSeen.length() > 0 ? ", " : "") + root;
 				while (root.length() > 0 && root.charAt(0) == '/') root = root.substring(1);
-				String dir = "file:///" + root + "tmm/";
-				try
+				if (root.length() > 0 && !root.endsWith("/")) root += "/";
+				String[] dirs = { "file:///" + root + "tmm/", "file:///" + root };
+				for (int i = 0; i < dirs.length; i++)
 				{
-					FileConnection d = (FileConnection) Connector.open(dir, Connector.READ_WRITE);
-					if (!d.exists()) d.mkdir();
-					boolean ok = d.canWrite();
-					d.close();
-					if (ok) return dir + safe;
+					String url = dirs[i] + safe;
+					try
+					{
+						if (i == 0)
+						{
+							FileConnection d = (FileConnection) Connector.open(dirs[0], Connector.READ_WRITE);
+							try { if (!d.exists()) d.mkdir(); } finally { d.close(); }
+						}
+						FileConnection fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
+						try
+						{
+							if (fc.exists()) fc.delete();
+							fc.create();
+						}
+						finally { fc.close(); }
+						return url;
+					}
+					catch (Exception e)
+					{
+						rootsError = shortName(e);
+					}
 				}
-				catch (Exception ignore) {}
 			}
 		}
-		catch (Exception ignore) {}
+		catch (Exception e) { rootsError = shortName(e); }
 		return null;
 	}
 
