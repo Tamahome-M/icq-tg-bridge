@@ -18,6 +18,7 @@ from typing import Awaitable, Callable
 
 from ..access import AccessControl
 from ..db import Contact, Storage
+from .. import profiles
 from . import blocks
 from . import const as C
 from .proto import (Reader, Snac, flap, pstr8, pstr16, roast_password, snac,
@@ -140,6 +141,10 @@ class Session:
         # Версия TeleMotoMax (старший, младший), если подключился он: такому
         # клиенту можно слать то, чего обычный Jimm не поймёт.
         self.tmm_version: tuple[int, int] | None = None
+        # Что за телефон (TeleMotoMax присылает после входа) и его профиль.
+        self.device: profiles.Device | None = None
+        self.profile_name = ""
+        self.profile: dict = {}
         # Снимок или голосовое, которые телефон шлёт по частям.
         self.upload: bytearray | None = None
         self.upload_seconds = 0
@@ -517,6 +522,7 @@ class Session:
             (C.ICBM, C.ICBM_CLIENT_ACK): self.on_icbm_client_ack,
             (C.ICBM, C.ICBM_CLIENT_EVENT): self.on_icbm_typing,
             (C.OSERVICE, C.SERVICE_REQUEST): self.on_service_request,
+            (C.OSERVICE, C.CLIENT_INFO): self.on_client_info,
             (C.PD, C.PD_RIGHTS_REQ): self.on_pd_rights,
             (C.SSI, C.SSI_RIGHTS_REQ): self.on_ssi_rights,
             (C.SSI, C.SSI_LIST_REQ): self.on_ssi_list,
@@ -529,6 +535,7 @@ class Session:
             (C.SSBI, C.SSBI_ICQ_REQ): self.on_icon_request,
             (C.SSBI, C.SSBI_UPLOAD): self.on_photo_upload,
             (C.SSBI, C.SSBI_UPLOAD_VOICE): self.on_voice_upload,
+            (C.SSBI, C.SSBI_UPLOAD_VIDEO): self.on_video_upload,
         }.get((s.family, s.subtype))
 
         if handler is None:
@@ -894,6 +901,26 @@ class Session:
         body = struct.pack("<H", len(inner)) + inner
         await self.send_snac(C.ICQ, C.ICQ_FROM_SERVER, tlv(0x0001, body))
 
+    async def on_client_info(self, s: Snac) -> None:
+        """01/F2 от TeleMotoMax: платформа, экран, куча. По ним — профиль."""
+        r = Reader(s.data)
+        try:
+            platform = r.pstr8().decode("utf-8", "replace")
+            width, height = r.u16(), r.u16()
+            memory = r.u32() if r.left >= 4 else 0
+        except Exception:
+            return
+        self.device = profiles.Device(platform, width, height, memory)
+        chosen = profiles.choose(self.device, self.server.cfg.tmm_profiles)
+        if chosen:
+            self.profile_name, self.profile = chosen
+            log.info("телефон: %s — профиль «%s»", self.device, self.profile_name)
+        else:
+            self.profile_name, self.profile = "", {}
+            log.info("телефон: %s — подходящего профиля нет, общие настройки", self.device)
+        if self.server.on_profile is not None and self.server.session is self:
+            self.server.on_profile()        # контакт-лист под этот профиль
+
     async def on_client_ready(self, s: Snac) -> None:
         if self.ready:
             return
@@ -1200,6 +1227,15 @@ class Session:
 
         От снимка отличается длительностью перед куском — она нужна, чтобы
         в Telegram и MAX это было именно голосовым, а не файлом."""
+        await self._timed_upload(s, "голосовое", self.server.on_voice)
+
+    async def on_video_upload(self, s: Snac) -> None:
+        """«Кружок» с камеры телефона: части 10/05, та же раскладка, что у
+        голосового (длительность перед куском, тип записи хвостом первой
+        части), ответ 10/03."""
+        await self._timed_upload(s, "кружок", self.server.on_video)
+
+    async def _timed_upload(self, s: Snac, what: str, deliver) -> None:
         if not self.extended:
             return
         r = Reader(s.data)
@@ -1212,7 +1248,7 @@ class Session:
             # клиент ничего не приписывает — тогда тип остаётся пустым.
             kind = r.pstr8().decode("latin-1") if r.left else ""
         except Exception:
-            log.warning("негодная часть голосового от телефона")
+            log.warning("негодная часть: %s от телефона", what)
             return
         if not target.isdigit():
             return
@@ -1222,14 +1258,13 @@ class Session:
             self.upload_kind = kind
             self.upload_started = time.time()
         elif self.upload is not None and time.time() - self.upload_started > UPLOAD_TIMEOUT:
-            log.warning("части голосового идут дольше %d с — начинаю заново",
-                        UPLOAD_TIMEOUT)
+            log.warning("части (%s) идут дольше %d с — начинаю заново", what, UPLOAD_TIMEOUT)
             self.upload = None
         if self.upload is None:
             return
         self.upload += chunk
         if len(self.upload) > C.UPLOAD_MAX_BYTES:
-            log.warning("голосовое больше %d КБ — отказываюсь", C.UPLOAD_MAX_BYTES // 1024)
+            log.warning("%s больше %d КБ — отказываюсь", what, C.UPLOAD_MAX_BYTES // 1024)
             self.upload = None
             await self.send_snac(C.SSBI, C.SSBI_UPLOAD_ACK,
                                  pstr8(target.encode()) + b"\x01", request_id=s.request_id)
@@ -1237,10 +1272,10 @@ class Session:
         if part < total:
             return
         data, self.upload = bytes(self.upload), None
-        log.info("голосовое с телефона для %s: %d с, %d КБ%s — отправляю",
+        log.info("%s с телефона для %s: %d с, %d КБ%s — отправляю", what,
                  self.server.name_of(int(target)), self.upload_seconds, len(data) // 1024,
                  f", запись {self.upload_kind}" if self.upload_kind else "")
-        ok = await self.server.on_voice(int(target), data, self.upload_seconds)
+        ok = await deliver(int(target), data, self.upload_seconds)
         await self.send_snac(C.SSBI, C.SSBI_UPLOAD_ACK,
                              pstr8(target.encode()) + (b"\x00" if ok else b"\x01"),
                              request_id=s.request_id)
@@ -1448,6 +1483,8 @@ class OscarServer:
                  on_photo: Callable[[int, bytes], Awaitable[bool]] | None = None,
                  fetch_voice: Callable[[int, str], Awaitable[bytes | None]] | None = None,
                  on_voice: Callable[[int, bytes, int], Awaitable[bool]] | None = None,
+                 on_video: Callable[[int, bytes, int], Awaitable[bool]] | None = None,
+                 on_profile: Callable[[], None] | None = None,
                  chat_list: Callable[[], Awaitable[list]] | None = None,
                  open_chat: Callable[[int], Awaitable[bool]] | None = None):
         self.cfg = cfg
@@ -1481,6 +1518,11 @@ class OscarServer:
         self.fetch_voice = fetch_voice
         # Записанное на телефоне голосовое — отправить в чат.
         self.on_voice = on_voice or self._no_voice
+        # «Кружок» с камеры телефона — отправить в чат.
+        self.on_video = on_video or self._no_voice
+        # Профиль телефона выбран (или сессия сменилась) — мост перечитывает
+        # контакт-лист с ограничением этого профиля.
+        self.on_profile = on_profile
         self.chat_list = chat_list or self._no_chats
         self.open_chat = open_chat or self._no_open
         self.uin = str(cfg.oscar_uin)
@@ -1713,6 +1755,8 @@ class OscarServer:
                 log.info("старое соединение заменено, в очередь вернулось %d сообщений",
                          returned)
         self.session = session
+        if self.on_profile is not None:
+            self.on_profile()               # новый сеанс — пока без профиля, общие настройки
         # Умеет ли клиент подтверждать, выясняем заново для каждого сеанса:
         # прошлое решение могло относиться к другой сборке или к зависшему
         # телефону, а первое подтверждение приходит быстро.

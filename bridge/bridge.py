@@ -15,6 +15,7 @@ from . import emoji, history, policy
 from .access import AccessControl
 from . import photos
 from .photos import PhotoStore
+from . import profiles
 from .render import Item, RenderStore, Transcoder
 from .webserver import PhotoServer
 from .config import Config
@@ -80,6 +81,7 @@ class Bridge:
                                  self.avatar, self.icon_hash, self.fetch_attachment,
                                  self.fetch_history, self.fetch_video, self.send_camera_photo,
                                  self.fetch_voice, self.send_voice_message,
+                                 self.send_video_note, self._reload_roster,
                                  self.chat_list, self.open_chat)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
@@ -133,7 +135,10 @@ class Bridge:
                                             render=self.render,
                                             password=cfg.photos_password,
                                             downloads_dir=cfg.downloads_dir,
-                                            downloads_protected=cfg.downloads_protected)
+                                            downloads_protected=cfg.downloads_protected,
+                                            client_dir=os.path.join(
+                                                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                                "telemotomax", "dist"))
 
     # --- контакт-лист ---------------------------------------------------
 
@@ -169,7 +174,7 @@ class Bridge:
         # потолок с Telegram их бы просто вытеснил.
         from_max = [c for c in everyone if self.max is not None and is_max_peer(c.peer_id)]
         rest = [c for c in everyone if c not in from_max]
-        roster = (limit_contacts(rest, self.cfg.roster_limit, self.cfg.background_groups, since)
+        roster = (limit_contacts(rest, self.tmm("roster_limit"), self.cfg.background_groups, since)
                   + limit_contacts(from_max, self.cfg.max_roster_limit,
                                    self.cfg.background_groups, since))
         self._roster = sorted(roster, key=lambda c: (c.position, c.uin))
@@ -413,6 +418,15 @@ class Bridge:
             info.setdefault("network", self.network_of(contact.peer_id))
         return info
 
+    def tmm(self, key: str):
+        """Настройка [telemotomax] с учётом профиля телефона, который сейчас
+        подключён: photo_width, video_seconds, voice_kbps и т. п."""
+        oscar = getattr(self, "oscar", None)
+        session = oscar.session if oscar is not None else None
+        if session is not None and session.profile and key in session.profile:
+            return session.profile[key]
+        return getattr(self.cfg, profiles.KEYS.get(key, "tmm_" + key))
+
     async def fetch_attachment(self, uin: int, attach: str) -> bytes | None:
         """Снимок из сообщения для TeleMotoMax — ужатый под экран телефона.
 
@@ -425,8 +439,8 @@ class Bridge:
         raw = await self.side_for(contact.peer_id).photo_bytes(contact.peer_id, int(ident))
         if not raw:
             return None
-        got = photos.shrink(raw, self.cfg.tmm_photo_width, self.cfg.tmm_photo_height,
-                            self.cfg.tmm_photo_max_kb * 1024)
+        got = photos.shrink(raw, self.tmm("photo_width"), self.tmm("photo_height"),
+                            self.tmm("photo_max_kb") * 1024, self.tmm("photo_quality"))
         if got is None:
             return None
         data, width, height = got
@@ -440,7 +454,7 @@ class Bridge:
                           self.cfg.render_audio_seconds, self.cfg.render_timeout,
                           self.cfg.render_dir, self.cfg.render_video_codec,
                           self.cfg.render_video_kbps, self.cfg.render_video_fps,
-                          self.cfg.tmm_voice_kbps)
+                          self.tmm("voice_kbps"))
 
     async def fetch_voice(self, uin: int, attach: str) -> bytes | None:
         """Голосовое из сообщения — AMR в 3GP, который телефон умеет играть."""
@@ -448,7 +462,7 @@ class Bridge:
         kind, _, ident = attach.partition(":")
         if contact is None or kind != "voice" or not ident.isdigit():
             return None
-        transcoder = self._transcoder(self.cfg.tmm_voice_seconds)
+        transcoder = self._transcoder(self.tmm("voice_seconds"))
         if not transcoder.available:
             log.warning("голосовое для «%s»: ffmpeg %r не найден",
                         contact.title, self.cfg.render_ffmpeg)
@@ -472,7 +486,7 @@ class Bridge:
         contact = self.storage.contact_by_uin(uin)
         if contact is None or contact.peer_id == ASSISTANT_PEER:
             return False
-        transcoder = self._transcoder(self.cfg.tmm_voice_seconds)
+        transcoder = self._transcoder(self.tmm("voice_seconds"))
         ogg = await transcoder.to_ogg(data) if transcoder.available else None
         if ogg is None:
             log.warning("голосовое не перекодировалось в OGG — отправляю файлом; "
@@ -491,6 +505,33 @@ class Bridge:
         # иначе после отправки в окне чата пусто и непонятно, ушло ли.
         await self.reply(contact, f"[голосовое {seconds // 60}:{seconds % 60:02d}] отправлено"
                                   + ("" if ogg else " (файлом)"))
+        return True
+
+    async def send_video_note(self, uin: int, data: bytes, seconds: int) -> bool:
+        """«Кружок», снятый камерой телефона, — в чат. True, если ушёл.
+
+        Телефон пишет 3GP (H.263 + AMR); кружок в Telegram и MAX — квадратный
+        MP4 с H.264, поэтому перекодируем. Нет H.264 в ffmpeg или не вышло —
+        отправляем как обычное видео, чтобы запись не пропала."""
+        contact = self.storage.contact_by_uin(uin)
+        if contact is None or contact.peer_id == ASSISTANT_PEER:
+            return False
+        transcoder = self._transcoder(max(seconds, 1) + 1)
+        mp4 = await transcoder.to_note(data) if transcoder.available else None
+        if mp4 is None:
+            log.warning("кружок не перекодировался в MP4/H.264 — отправляю обычным видео")
+        try:
+            message_id = await self.side_for(contact.peer_id).send_video(
+                contact.peer_id, mp4 or data, seconds, note=mp4 is not None,
+                topic_id=contact.topic_id)
+        except Exception as exc:
+            log.exception("кружок в чат «%s» не ушёл", contact.title)
+            await self.reply(contact, f"Кружок не отправлен: {type(exc).__name__}")
+            return False
+        log.info("кружок с телефона → «%s»: %d с, %d КБ, номер %s",
+                 contact.title, seconds, len(mp4 or data) // 1024, message_id)
+        await self.reply(contact, f"[кружок {seconds // 60}:{seconds % 60:02d}] отправлен"
+                                  + ("" if mp4 else " (обычным видео)"))
         return True
 
     async def send_camera_photo(self, uin: int, data: bytes) -> bool:
@@ -519,9 +560,9 @@ class Bridge:
         kind, _, ident = attach.partition(":")
         if contact is None or kind != "video" or not ident.isdigit():
             return None
-        if self.cfg.tmm_video_seconds <= 0:
+        if self.tmm("video_seconds") <= 0:
             return None
-        transcoder = self._transcoder(self.cfg.tmm_video_seconds)
+        transcoder = self._transcoder(self.tmm("video_seconds"))
         if not transcoder.available:
             log.warning("ролик для «%s»: ffmpeg %r не найден", contact.title, self.cfg.render_ffmpeg)
             return None
@@ -533,7 +574,7 @@ class Bridge:
         data = await transcoder.convert(raw, "video")
         if data:
             log.info("ролик для «%s»: первые %d с, %d КБ", contact.title,
-                     self.cfg.tmm_video_seconds, len(data) // 1024)
+                     self.tmm("video_seconds"), len(data) // 1024)
         return data
 
     async def fetch_history(self, uin: int, count: int,
@@ -551,7 +592,7 @@ class Bridge:
         if contact is None or contact.peer_id == ASSISTANT_PEER:
             return None
         count = min(count or 20, self.cfg.history_limit)
-        cap = max(self.cfg.history_limit, self.cfg.tmm_history_max)
+        cap = max(self.cfg.history_limit, self.tmm("history_max"))
         # На одно сообщение больше, чем нужно: по нему и видно, осталось ли
         # что листать дальше.
         want = min(offset + count + 1, cap)

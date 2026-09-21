@@ -255,6 +255,28 @@ class Transcoder:
                  "-t", str(self.audio_seconds), "-vn", "-c:a", codec]
                 + rate + quality + extra + ["-f", "ogg", dst])
 
+    def note_args(self, src: str, dst: str, vcodec: str) -> list[str]:
+        """Кружок для Telegram и MAX: квадрат, MP4, H.264 (libx264) и AAC.
+        Кадр режется до квадрата по меньшей стороне и ужимается до 384."""
+        vf = "crop='min(iw,ih)':'min(iw,ih)',scale=384:384,fps=24"
+        video = ([vcodec, "-preset", "veryfast", "-profile:v", "baseline",
+                  "-pix_fmt", "yuv420p"] if vcodec == "libx264" else [vcodec])
+        return ([self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
+                 "-t", str(self.video_seconds), "-vf", vf, "-c:v"] + video
+                + ["-b:v", "400k", "-c:a", "aac", "-ar", "44100", "-ac", "1", "-b:a", "64k",
+                   "-movflags", "+faststart", "-f", "mp4", dst])
+
+    async def to_note(self, raw: bytes) -> bytes | None:
+        """Запись с камеры телефона — в квадратный MP4/H.264 для кружка.
+        Без libx264 в ffmpeg кружка не будет: Telegram показывает круглым
+        только H.264."""
+        if not raw:
+            return None
+        if "libx264" not in await self.encoders():
+            log.warning("в ffmpeg нет libx264 — кружок отправлю обычным видео")
+            return None
+        return await self.convert(raw, "note", "libx264")
+
     async def to_ogg(self, raw: bytes) -> bytes | None:
         """Запись с телефона — в OGG для Telegram и MAX.
 
@@ -303,7 +325,7 @@ class Transcoder:
                 log.warning("ffmpeg %r не найден — %s не перекодирую", self.ffmpeg, kind)
             return None
 
-        ext = {"audio": "amr", "ogg": "ogg"}.get(kind, "3gp")
+        ext = {"audio": "amr", "ogg": "ogg", "note": "mp4"}.get(kind, "3gp")
         stamp = _token()
         src = os.path.join(self.workdir, f"in-{stamp}")
         dst = os.path.join(self.workdir, f"out-{stamp}.{ext}")
@@ -313,6 +335,8 @@ class Transcoder:
             args = self.voice_args(src, dst)
         elif kind == "ogg":
             args = self.ogg_args(src, dst, codec)
+        elif kind == "note":
+            args = self.note_args(src, dst, codec)
         else:
             args = self.audio_args(src, dst)
         try:

@@ -535,6 +535,10 @@ public class ConnectAction extends Action
 					)
 				);
 				
+				// TeleMotoMax: какой телефон — сразу, до запроса контакт-листа:
+				// по профилю мост решает и сколько чатов в него класть.
+				try { Icq.sendClientInfo(Icq.c); } catch (Exception ignore) {}
+
 				this.state = ConnectAction.STATE_CLI_WANT_CAPS_SENT;
 			}
        

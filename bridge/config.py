@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .db import UIN_BASE
 
@@ -123,10 +123,15 @@ class Config:
     tmm_photo_width: int = 176
     tmm_photo_height: int = 176
     tmm_photo_max_kb: int = 20
+    tmm_photo_quality: int = 0         # 0 — обычное (75), выше — качественнее и тяжелее
     tmm_video_seconds: int = 10
     tmm_voice_seconds: int = 60
     tmm_history_max: int = 200
     tmm_voice_kbps: float = 12.2
+    # Профили телефонов: имя → {match, min_width, photo_width, ...}. Мост
+    # выбирает профиль по сведениям, которые TeleMotoMax присылает при
+    # входе, и берёт из него настройки вместо общих tmm_*.
+    tmm_profiles: dict = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -252,10 +257,13 @@ class Config:
             tmm_photo_width=int(tm.get("photo_width", cls.tmm_photo_width)),
             tmm_photo_height=int(tm.get("photo_height", cls.tmm_photo_height)),
             tmm_photo_max_kb=int(tm.get("photo_max_kb", cls.tmm_photo_max_kb)),
+            tmm_photo_quality=int(tm.get("photo_quality", cls.tmm_photo_quality)),
             tmm_video_seconds=int(tm.get("video_seconds", cls.tmm_video_seconds)),
             tmm_voice_seconds=int(tm.get("voice_seconds", cls.tmm_voice_seconds)),
             tmm_history_max=int(tm.get("history_max", cls.tmm_history_max)),
             tmm_voice_kbps=float(tm.get("voice_kbps", cls.tmm_voice_kbps)),
+            tmm_profiles={str(k): dict(v) for k, v in (tm.get("profile") or {}).items()
+                          if isinstance(v, dict)},
             emoji_to_text=bool(br.get("emoji_to_text", True)),
             text_to_emoji=bool(br.get("text_to_emoji", True)),
             offline_queue_per_chat=int(br.get("offline_queue_per_chat", cls.offline_queue_per_chat)),

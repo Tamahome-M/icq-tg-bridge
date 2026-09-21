@@ -180,6 +180,10 @@ Author(s): Manuel Linsmayer, Andreas Rossbacher
 		<condition property="modules/AVATARS" value="true">
 			<contains string="${modules}" substring="AVATARS" />
 		</condition>
+		<!-- TeleMotoMax: камера (снимок и «кружок»); на V3 её нет -->
+		<condition property="modules/CAMERA" value="true">
+			<contains string="${modules}" substring="CAMERA" />
+		</condition>
 		<condition property="modules/PIM" value="true">
 			<contains string="${modules}" substring="PIM" />
 		</condition>
@@ -231,6 +235,7 @@ Author(s): Manuel Linsmayer, Andreas Rossbacher
 			<define name="modules_LOCATION" value="${modules/LOCATION}" />
 			<define name="modules_ANTISPAM" value="${modules/ANTISPAM}" />
 			<define name="modules_AVATARS" value="${modules/AVATARS}" />
+			<define name="modules_CAMERA" value="${modules/CAMERA}" />
 			<define name="modules_PIM" value="${modules/PIM}" />
 		</sijapp>
 		<replace dir="${build}/init/src" encoding="UTF-8">

@@ -33,6 +33,7 @@ import jimm.util.ResourceBundle;
  * takes the shot, "Back" leaves. The picture is sent in parts over the main
  * connection (SNAC 10/02) and the bridge answers 10/03 — sent or not.
  */
+//#sijapp cond.if modules_CAMERA="true"#
 public class CameraShot extends Canvas implements CommandListener, JimmScreen
 {
 	/** Столько ждём от моста ответа «ушло или нет». */
@@ -151,6 +152,46 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		return name;
 	}
 
+	// Размеры JPEG-снимка, которые телефон объявляет в video.snapshot.encodings
+	// («encoding=jpeg&width=640&height=480 ...»), — строками «640x480», без
+	// повторов. Пусто — телефон не говорит, тогда снимок «как есть».
+	public static String[] snapshotSizes()
+	{
+		java.util.Vector out = new java.util.Vector();
+		try
+		{
+			String all = System.getProperty("video.snapshot.encodings");
+			if (all != null)
+			{
+				int pos = 0;
+				while (pos < all.length())
+				{
+					int end = all.indexOf(' ', pos);
+					if (end < 0) end = all.length();
+					String enc = all.substring(pos, end);
+					pos = end + 1;
+					if (enc.indexOf("jpeg") < 0 && enc.indexOf("jpg") < 0) continue;
+					int w = enc.indexOf("width=");
+					int h = enc.indexOf("height=");
+					if (w < 0 || h < 0) continue;
+					String size = number(enc, w + 6) + "x" + number(enc, h + 7);
+					if (!out.contains(size)) out.addElement(size);
+				}
+			}
+		}
+		catch (Exception ignore) {}
+		String[] sizes = new String[out.size()];
+		out.copyInto(sizes);
+		return sizes;
+	}
+
+	private static String number(String s, int from)
+	{
+		int to = from;
+		while (to < s.length() && Character.isDigit(s.charAt(to))) to++;
+		return s.substring(from, to);
+	}
+
 	// Snapshot and send: both are slow, so they run on their own thread.
 	private void shoot()
 	{
@@ -163,8 +204,23 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 			{
 				byte[] shot = null;
 				Exception err = null;
-				try { shot = video.getSnapshot("encoding=jpeg"); }
-				catch (Exception e) { err = e; }
+				// Размер из настроек — если телефон его знает; иначе как есть.
+				String size = Options.getString(Options.OPTION_CAMERA_SIZE);
+				if (size != null && size.length() > 0)
+				{
+					int x = size.indexOf('x');
+					try
+					{
+						shot = video.getSnapshot("encoding=jpeg&width=" + size.substring(0, x)
+								+ "&height=" + size.substring(x + 1));
+					}
+					catch (Exception e) { err = e; }
+				}
+				if (shot == null)
+				{
+					try { shot = video.getSnapshot("encoding=jpeg"); err = null; }
+					catch (Exception e) { if (err == null) err = e; }
+				}
 				if (shot == null)
 				{
 					try { shot = video.getSnapshot(null); err = null; }
@@ -299,3 +355,4 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		return isShown();
 	}
 }
+//#sijapp cond.end#

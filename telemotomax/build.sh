@@ -74,10 +74,13 @@ MINOR=${VERSION#*.}; MINOR=${MINOR%%.*}
 # Но на телефоне без него пропало «печатает» в обе стороны (по исходникам
 # этого не видно — где-то ещё завязка), поэтому по умолчанию он на месте.
 # TMM_MODULES=light соберёт без него, если захочется проверить снова.
-MODULES=${TMM_MODULES:-full}
+# CAMERA — снимок и «кружок» с камеры: на V3 камера из Java недоступна, и
+# пункты меню там только мешают; сборка v8 (по умолчанию: v3) их включает.
+MODULES=${TMM_MODULES:-v3}
 case "$MODULES" in
 	light) MODULES="SMILES_STD,AVATARS" ;;
-	full)  MODULES="FILES,SMILES_STD,AVATARS" ;;
+	v3|full) MODULES="FILES,SMILES_STD,AVATARS" ;;
+	v8)    MODULES="FILES,SMILES_STD,AVATARS,CAMERA" ;;
 esac
 sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION###|$STAMP|; \
      s|###TMM-VERSION-JAVA###|$VERSION|; s|###TMM-NAME###|$NAME|; \
@@ -109,3 +112,16 @@ lines = [f"MIDlet-Jar-Size: {size}" if l.startswith("MIDlet-Jar-Size:") else l f
 open(jad, "w", encoding="utf-8").write("\n".join(lines) + "\n")
 PY
 say "Готово: $WORK/out/TeleMotoMax.jar ($(wc -c < "$WORK/out/TeleMotoMax.jar") байт), TeleMotoMax.jad"
+
+# TMM_DIST=1 — положить сборку в telemotomax/dist (в репозиторий): оттуда её
+# раздаёт веб-сервер моста в разделе «Загрузки», и после обновления моста
+# на VPS свежий клиент ставится на телефон по ссылке http://…/d/. Сборка
+# v8 ложится как TeleMotoMax-V8.jar/.jad, v3 — как TeleMotoMax.jar/.jad.
+if [ -n "${TMM_DIST:-}" ]; then
+	DIST="$HERE/dist"; mkdir -p "$DIST"
+	case "${TMM_MODULES:-v3}" in v8) BASE=TeleMotoMax-V8 ;; *) BASE=TeleMotoMax ;; esac
+	cp "$WORK/out/TeleMotoMax.jar" "$DIST/$BASE.jar"
+	sed "s|^MIDlet-Jar-URL: .*|MIDlet-Jar-URL: $BASE.jar|" "$WORK/out/TeleMotoMax.jad" > "$DIST/$BASE.jad"
+	say "В репозиторий: telemotomax/dist/$BASE.jar"
+fi
+

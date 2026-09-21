@@ -932,6 +932,21 @@ class MaxSide:
             self._own_ids[(chat_id, message_id)] = time.time()
         return int(_attr(message, "time", 0) or 0) or message_id or None
 
+    async def send_video(self, peer_id: int, data: bytes, seconds: int = 0,
+                         note: bool = True, topic_id: int = 0) -> int | None:
+        """«Кружок» с камеры телефона — в чат MAX; note=False — обычным видео."""
+        from pymax import Video, VideoNote
+        chat_id = from_peer(peer_id)
+        if note:
+            attach = VideoNote(data, name="note.mp4", duration=max(1, seconds) * 1000)
+        else:
+            attach = Video(data, name="video.3gp")
+        message = await self.client.send_message(chat_id, None, attachments=[attach])
+        message_id = int(_attr(message, "id", 0) or 0)
+        if message_id:
+            self._own_ids[(chat_id, message_id)] = time.time()
+        return int(_attr(message, "time", 0) or 0) or message_id or None
+
     async def send_photo(self, peer_id: int, data: bytes, caption: str = "",
                          topic_id: int = 0) -> int | None:
         """Снимок с камеры телефона — в чат MAX."""

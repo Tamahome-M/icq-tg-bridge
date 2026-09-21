@@ -77,10 +77,12 @@ async def main() -> None:
     assert length == photo.size, (length, photo.size)
 
     for bad_url in (f"http://127.0.0.1:{PORT}/p/zzzzzz.jpg",
-                    f"http://127.0.0.1:{PORT}/etc/passwd",
-                    f"http://127.0.0.1:{PORT}/"):
+                    f"http://127.0.0.1:{PORT}/etc/passwd"):
         status, _, _ = await loop.run_in_executor(None, fetch, bad_url)
         assert status == 404, f"{bad_url} -> {status}"
+    # Корень — главная со ссылками на разделы.
+    status, _, _ = await loop.run_in_executor(None, fetch, f"http://127.0.0.1:{PORT}/")
+    assert status == 200, status
 
     await server.stop()
 

@@ -542,6 +542,11 @@ public class SplashCanvas extends Canvas implements CommandListener
 		return _this.getWidth();
 	}
 
+	public static int getAreaHeight()
+	{
+		return _this.getHeight();
+	}
+
 	private static TimerTasks lastTimerTask;
 	private static Action lastAction;
 	
