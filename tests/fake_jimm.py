@@ -59,6 +59,11 @@ class FakeJimm:
     async def send_snac(self, family: int, subtype: int, data: bytes = b"", req: int = 0) -> None:
         await self.send_flap(2, snac(family, subtype, data, 0, req))
 
+    async def client_info(self, platform: str, width: int, height: int, memory_kb: int) -> None:
+        """Как TeleMotoMax после входа: платформа, экран, куча (01/F2)."""
+        await self.send_snac(C.OSERVICE, C.CLIENT_INFO,
+                             pstr8(platform.encode("utf-8")) + struct.pack(">HHI", width, height, memory_kb))
+
     async def recv_flap(self, timeout: float = 5.0) -> tuple[int, bytes]:
         header = await asyncio.wait_for(self.reader.readexactly(6), timeout)
         assert header[0] == 0x2A, f"не FLAP: {header!r}"

@@ -89,7 +89,8 @@ class PhotoServer:
     def __init__(self, store: PhotoStore, host: str, port: int,
                  access: AccessControl | None = None,
                  render: RenderStore | None = None, password: str = "",
-                 downloads_dir: str = "", downloads_protected: bool = False):
+                 downloads_dir: str = "", downloads_protected: bool = False,
+                 client_dir: str = ""):
         self.store = store
         self.render = render
         self.host = host
@@ -101,6 +102,10 @@ class PhotoServer:
         # а установщик телефона, и пароля он спросить не умеет.
         self.downloads_dir = downloads_dir
         self.downloads_protected = downloads_protected
+        # Сборки TeleMotoMax из репозитория (telemotomax/dist): раздел
+        # «Загрузки» показывает их всегда, даже если [downloads] dir пуст —
+        # клиент ставится на телефон именно отсюда, по ссылке на JAD.
+        self.client_dir = client_dir if client_dir and os.path.isdir(client_dir) else ""
         self._sessions: dict[str, float] = {}       # cookie -> срок
         self._server: asyncio.AbstractServer | None = None
 
@@ -182,7 +187,7 @@ class PhotoServer:
 
         set_cookie = ""
         url_token = ""
-        open_area = path.startswith("/d/") and self.downloads_dir and not self.downloads_protected
+        open_area = path.startswith("/d/") and self.download_dirs and not self.downloads_protected
         if self.password and not open_area:
             ok, set_cookie, url_token = self._authorized(host, params, headers)
             if not ok:
@@ -366,7 +371,7 @@ class PhotoServer:
             with open(file_path, "rb") as fh:
                 return fh.read(), "image/jpeg", "картинка"
 
-        if path.startswith("/d/") and self.downloads_dir:
+        if path.startswith("/d/") and self.download_dirs:
             return self._download(path[len("/d/"):])
 
         if self.render is None:
@@ -391,13 +396,17 @@ class PhotoServer:
 
     # --- загрузки ---------------------------------------------------------
 
-    def _download_names(self) -> list[str]:
+    @property
+    def download_dirs(self) -> list[str]:
+        return [d for d in (self.client_dir, self.downloads_dir) if d]
+
+    def _download_names(self, folder: str) -> list[str]:
         try:
-            names = os.listdir(self.downloads_dir)
+            names = os.listdir(folder)
         except OSError:
             return []
         return sorted(n for n in names if not n.startswith(".")
-                      and os.path.isfile(os.path.join(self.downloads_dir, n)))
+                      and os.path.isfile(os.path.join(folder, n)))
 
     def _download(self, name: str) -> tuple[bytes, str, str] | None:
         """Файл из каталога загрузок или их список — только по имени файла,
@@ -407,8 +416,13 @@ class PhotoServer:
             return self._downloads_index(), f"{MIME_PAGE}; charset=utf-8", "загрузки"
         if "/" in name or "\\" in name or name.startswith(".") or name in (".", ".."):
             return None
-        path = os.path.join(self.downloads_dir, name)
-        if not os.path.isfile(path):
+        path = ""
+        for folder in self.download_dirs:
+            candidate = os.path.join(folder, name)
+            if os.path.isfile(candidate):
+                path = candidate
+                break
+        if not path:
             return None
         mime = DOWNLOAD_TYPES.get(os.path.splitext(name)[1].lower(),
                                   "application/octet-stream")
@@ -417,11 +431,23 @@ class PhotoServer:
 
     def _downloads_index(self) -> bytes:
         rows = []
-        for name in self._download_names():
-            size = os.path.getsize(os.path.join(self.downloads_dir, name))
-            shown = f"{size // 1024 or 1} КБ" if size < 1024 * 1024 else f"{size / 1048576:.1f} МБ"
-            rows.append(f'<p><a href="/d/{quote(name)}">{html.escape(name)}</a> '
-                        f'<small>({shown})</small></p>')
+        for folder, title in ((self.client_dir, "Клиент TeleMotoMax"),
+                              (self.downloads_dir, "Файлы")):
+            if not folder:
+                continue
+            names = self._download_names(folder)
+            if not names:
+                continue
+            if self.client_dir and self.downloads_dir:
+                rows.append(f"<p><b>{title}</b></p>")
+            for name in names:
+                size = os.path.getsize(os.path.join(folder, name))
+                shown = f"{size // 1024 or 1} КБ" if size < 1024 * 1024 else f"{size / 1048576:.1f} МБ"
+                note = ""
+                if name.endswith(".jad"):
+                    note = " — V8, с камерой" if "V8" in name else (" — V3" if name.startswith("TeleMotoMax") else "")
+                rows.append(f'<p><a href="/d/{quote(name)}">{html.escape(name)}</a> '
+                            f'<small>({shown}){html.escape(note)}</small></p>')
         if not rows:
             rows.append("<p>Пусто.</p>")
         return (

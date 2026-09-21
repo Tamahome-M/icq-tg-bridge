@@ -45,6 +45,7 @@ CLI_VERSIONS = 0x0017
 SRV_VERSIONS = 0x0018
 SET_STATUS = 0x001E
 SERVICE_REQUEST = 0x0004    # клиент просит адрес дополнительного сервиса
+CLIENT_INFO = 0x00F2        # TeleMotoMax: платформа, экран, куча — по ним мост выбирает профиль
 SERVICE_REDIRECT = 0x0005   # ответ: куда идти за этим сервисом
 SRV_MOTD = 0x0013
 

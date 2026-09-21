@@ -230,7 +230,16 @@ TMM_MODULES=light telemotomax/build.sh ~/tmm-build "TMM Light"
   Telegram (`video_note`) или MAX (`VideoNote`). В ffmpeg моста нужен
   `libx264`, иначе уйдёт обычным видео. Ответ `10/03` — ушло или нет.
 
-Готовые сборки лежат рядом: `TeleMotoMax.jar` (V3) и `TeleMotoMax-V8.jar`.
+Готовые сборки — в `telemotomax/dist/` (`TMM_DIST=1 telemotomax/build.sh`
+кладёт их туда): `TeleMotoMax.jar` (V3) и `TeleMotoMax-V8.jar`. Веб-сервер
+моста раздаёт их в разделе «Загрузки» (`/d/`) — ставить на телефон по
+ссылке на JAD.
+
+После входа клиент сообщает мосту платформу (`microedition.platform`),
+размер экрана и кучу (SNAC `01/F2`), и мост берёт **профиль телефона**:
+размер снимка, длину ролика, битрейт голосового, глубину истории — см.
+`[telemotomax.profile.*]` в `config.example.toml`. На V3 и V8 с одним и тем
+же мостом снимки приходят под свой экран.
 
 ## Расширения протокола
 

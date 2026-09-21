@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .db import UIN_BASE
 
@@ -127,6 +127,10 @@ class Config:
     tmm_voice_seconds: int = 60
     tmm_history_max: int = 200
     tmm_voice_kbps: float = 12.2
+    # Профили телефонов: имя → {match, min_width, photo_width, ...}. Мост
+    # выбирает профиль по сведениям, которые TeleMotoMax присылает при
+    # входе, и берёт из него настройки вместо общих tmm_*.
+    tmm_profiles: dict = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -256,6 +260,8 @@ class Config:
             tmm_voice_seconds=int(tm.get("voice_seconds", cls.tmm_voice_seconds)),
             tmm_history_max=int(tm.get("history_max", cls.tmm_history_max)),
             tmm_voice_kbps=float(tm.get("voice_kbps", cls.tmm_voice_kbps)),
+            tmm_profiles={str(k): dict(v) for k, v in (tm.get("profile") or {}).items()
+                          if isinstance(v, dict)},
             emoji_to_text=bool(br.get("emoji_to_text", True)),
             text_to_emoji=bool(br.get("text_to_emoji", True)),
             offline_queue_per_chat=int(br.get("offline_queue_per_chat", cls.offline_queue_per_chat)),

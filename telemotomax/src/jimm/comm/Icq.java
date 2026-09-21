@@ -344,6 +344,29 @@ public class Icq implements Runnable
 	// или сломанное закрываем сразу: иначе следующий запрос уйдёт в мёртвый
 	// сокет и повиснет до таймаута, а сам сокет останется занимать место —
 	// у телефона их немного, и однажды новое соединение просто не откроется.
+	// TeleMotoMax: сведения о телефоне для моста (SNAC 01/F2) — платформа,
+	// экран, куча. По ним мост выбирает профиль: размер снимка, длину
+	// ролика, битрейт голосового. Обычный Jimm такого не шлёт, мост без
+	// обработчика такой SNAC просто пропустит.
+	static public void sendClientInfo(Connection conn) throws JimmException
+	{
+		String platform = jimm.Jimm.microeditionPlatform;
+		if (platform == null) platform = "";
+		byte[] raw = Util.stringToByteArray(platform, true);
+		if (raw.length > 60) { byte[] cut = new byte[60]; System.arraycopy(raw, 0, cut, 0, 60); raw = cut; }
+		int w = 0, h = 0;
+		try { w = jimm.SplashCanvas.getAreaWidth(); h = jimm.SplashCanvas.getAreaHeight(); } catch (Exception ignore) {}
+		long mem = Runtime.getRuntime().totalMemory() / 1024;
+		byte[] buf = new byte[1 + raw.length + 2 + 2 + 4];
+		int m = 0;
+		Util.putByte(buf, m, raw.length); m += 1;
+		System.arraycopy(raw, 0, buf, m, raw.length); m += raw.length;
+		Util.putWord(buf, m, w); m += 2;
+		Util.putWord(buf, m, h); m += 2;
+		Util.putDWord(buf, m, mem);
+		conn.sendPacket(new SnacPacket(0x0001, 0x00F2, 0x00000000, new byte[0], buf));
+	}
+
 	// Кому сообщить, чем кончилось соединение со службой.
 	public interface BartConnectListener
 	{

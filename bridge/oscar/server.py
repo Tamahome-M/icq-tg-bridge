@@ -18,6 +18,7 @@ from typing import Awaitable, Callable
 
 from ..access import AccessControl
 from ..db import Contact, Storage
+from .. import profiles
 from . import blocks
 from . import const as C
 from .proto import (Reader, Snac, flap, pstr8, pstr16, roast_password, snac,
@@ -140,6 +141,10 @@ class Session:
         # Версия TeleMotoMax (старший, младший), если подключился он: такому
         # клиенту можно слать то, чего обычный Jimm не поймёт.
         self.tmm_version: tuple[int, int] | None = None
+        # Что за телефон (TeleMotoMax присылает после входа) и его профиль.
+        self.device: profiles.Device | None = None
+        self.profile_name = ""
+        self.profile: dict = {}
         # Снимок или голосовое, которые телефон шлёт по частям.
         self.upload: bytearray | None = None
         self.upload_seconds = 0
@@ -517,6 +522,7 @@ class Session:
             (C.ICBM, C.ICBM_CLIENT_ACK): self.on_icbm_client_ack,
             (C.ICBM, C.ICBM_CLIENT_EVENT): self.on_icbm_typing,
             (C.OSERVICE, C.SERVICE_REQUEST): self.on_service_request,
+            (C.OSERVICE, C.CLIENT_INFO): self.on_client_info,
             (C.PD, C.PD_RIGHTS_REQ): self.on_pd_rights,
             (C.SSI, C.SSI_RIGHTS_REQ): self.on_ssi_rights,
             (C.SSI, C.SSI_LIST_REQ): self.on_ssi_list,
@@ -894,6 +900,24 @@ class Session:
         inner = struct.pack("<IHH", uin, resp_type, seq) + data
         body = struct.pack("<H", len(inner)) + inner
         await self.send_snac(C.ICQ, C.ICQ_FROM_SERVER, tlv(0x0001, body))
+
+    async def on_client_info(self, s: Snac) -> None:
+        """01/F2 от TeleMotoMax: платформа, экран, куча. По ним — профиль."""
+        r = Reader(s.data)
+        try:
+            platform = r.pstr8().decode("utf-8", "replace")
+            width, height = r.u16(), r.u16()
+            memory = r.u32() if r.left >= 4 else 0
+        except Exception:
+            return
+        self.device = profiles.Device(platform, width, height, memory)
+        chosen = profiles.choose(self.device, self.server.cfg.tmm_profiles)
+        if chosen:
+            self.profile_name, self.profile = chosen
+            log.info("телефон: %s — профиль «%s»", self.device, self.profile_name)
+        else:
+            self.profile_name, self.profile = "", {}
+            log.info("телефон: %s — подходящего профиля нет, общие настройки", self.device)
 
     async def on_client_ready(self, s: Snac) -> None:
         if self.ready:

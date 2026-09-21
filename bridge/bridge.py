@@ -134,7 +134,10 @@ class Bridge:
                                             render=self.render,
                                             password=cfg.photos_password,
                                             downloads_dir=cfg.downloads_dir,
-                                            downloads_protected=cfg.downloads_protected)
+                                            downloads_protected=cfg.downloads_protected,
+                                            client_dir=os.path.join(
+                                                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                                "telemotomax", "dist"))
 
     # --- контакт-лист ---------------------------------------------------
 
@@ -414,6 +417,14 @@ class Bridge:
             info.setdefault("network", self.network_of(contact.peer_id))
         return info
 
+    def tmm(self, key: str):
+        """Настройка [telemotomax] с учётом профиля телефона, который сейчас
+        подключён: photo_width, video_seconds, voice_kbps и т. п."""
+        session = self.oscar.session
+        if session is not None and session.profile and key in session.profile:
+            return session.profile[key]
+        return getattr(self.cfg, "tmm_" + key)
+
     async def fetch_attachment(self, uin: int, attach: str) -> bytes | None:
         """Снимок из сообщения для TeleMotoMax — ужатый под экран телефона.
 
@@ -426,8 +437,8 @@ class Bridge:
         raw = await self.side_for(contact.peer_id).photo_bytes(contact.peer_id, int(ident))
         if not raw:
             return None
-        got = photos.shrink(raw, self.cfg.tmm_photo_width, self.cfg.tmm_photo_height,
-                            self.cfg.tmm_photo_max_kb * 1024)
+        got = photos.shrink(raw, self.tmm("photo_width"), self.tmm("photo_height"),
+                            self.tmm("photo_max_kb") * 1024)
         if got is None:
             return None
         data, width, height = got
@@ -441,7 +452,7 @@ class Bridge:
                           self.cfg.render_audio_seconds, self.cfg.render_timeout,
                           self.cfg.render_dir, self.cfg.render_video_codec,
                           self.cfg.render_video_kbps, self.cfg.render_video_fps,
-                          self.cfg.tmm_voice_kbps)
+                          self.tmm("voice_kbps"))
 
     async def fetch_voice(self, uin: int, attach: str) -> bytes | None:
         """Голосовое из сообщения — AMR в 3GP, который телефон умеет играть."""
@@ -449,7 +460,7 @@ class Bridge:
         kind, _, ident = attach.partition(":")
         if contact is None or kind != "voice" or not ident.isdigit():
             return None
-        transcoder = self._transcoder(self.cfg.tmm_voice_seconds)
+        transcoder = self._transcoder(self.tmm("voice_seconds"))
         if not transcoder.available:
             log.warning("голосовое для «%s»: ffmpeg %r не найден",
                         contact.title, self.cfg.render_ffmpeg)
@@ -473,7 +484,7 @@ class Bridge:
         contact = self.storage.contact_by_uin(uin)
         if contact is None or contact.peer_id == ASSISTANT_PEER:
             return False
-        transcoder = self._transcoder(self.cfg.tmm_voice_seconds)
+        transcoder = self._transcoder(self.tmm("voice_seconds"))
         ogg = await transcoder.to_ogg(data) if transcoder.available else None
         if ogg is None:
             log.warning("голосовое не перекодировалось в OGG — отправляю файлом; "
@@ -547,9 +558,9 @@ class Bridge:
         kind, _, ident = attach.partition(":")
         if contact is None or kind != "video" or not ident.isdigit():
             return None
-        if self.cfg.tmm_video_seconds <= 0:
+        if self.tmm("video_seconds") <= 0:
             return None
-        transcoder = self._transcoder(self.cfg.tmm_video_seconds)
+        transcoder = self._transcoder(self.tmm("video_seconds"))
         if not transcoder.available:
             log.warning("ролик для «%s»: ffmpeg %r не найден", contact.title, self.cfg.render_ffmpeg)
             return None
@@ -561,7 +572,7 @@ class Bridge:
         data = await transcoder.convert(raw, "video")
         if data:
             log.info("ролик для «%s»: первые %d с, %d КБ", contact.title,
-                     self.cfg.tmm_video_seconds, len(data) // 1024)
+                     self.tmm("video_seconds"), len(data) // 1024)
         return data
 
     async def fetch_history(self, uin: int, count: int,
@@ -579,7 +590,7 @@ class Bridge:
         if contact is None or contact.peer_id == ASSISTANT_PEER:
             return None
         count = min(count or 20, self.cfg.history_limit)
-        cap = max(self.cfg.history_limit, self.cfg.tmm_history_max)
+        cap = max(self.cfg.history_limit, self.tmm("history_max"))
         # На одно сообщение больше, чем нужно: по нему и видно, осталось ли
         # что листать дальше.
         want = min(offset + count + 1, cap)

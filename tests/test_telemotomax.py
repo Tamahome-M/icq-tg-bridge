@@ -384,6 +384,50 @@ async def run_voice() -> None:
     print("  голосовые: ок (слушаем частями, шлём записанное, обычному Jimm нельзя)")
 
 
+async def run_profiles() -> None:
+    """Профиль телефона: по сведениям 01/F2 мост выбирает настройки —
+    встроенный v8 по платформе или ширине экрана, свой из конфига
+    поверх встроенного; без сведений — общие настройки."""
+    from bridge import profiles
+    d8 = profiles.Device("MotoV8", 240, 320, 8192)
+    assert profiles.choose(d8, {})[0] == "v8"
+    assert profiles.choose(profiles.Device("j2me", 240, 320), {})[0] == "v8", "по ширине экрана"
+    assert profiles.choose(profiles.Device("MotoV3", 176, 220, 900), {})[0] == "v3"
+    assert profiles.choose(profiles.Device("Nokia", 128, 160), {}) is None
+    name, prof = profiles.choose(d8, {"v8": {"photo_max_kb": 90}})
+    assert name == "v8" and prof["photo_max_kb"] == 90 and prof["photo_width"] == 240, prof
+    name, prof = profiles.choose(profiles.Device("SonyEricsson", 176, 208),
+                                 {"se": {"match": "sony", "video_seconds": 5}})
+    assert name == "se" and prof["video_seconds"] == 5
+
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 11
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    storage = Storage(":memory:")
+    storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+
+    async def on_outgoing(*_):
+        return 1
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts)
+    await server.start()
+    try:
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 29)
+        await client.connect()
+        await client.bos(await client.login_md5_jimm())
+        await client.client_info("MotoV8", 240, 320, 8192)
+        await client.drain_for(0.3)
+        session = server.session
+        assert session is not None and session.profile_name == "v8", session and session.profile_name
+        assert session.profile["photo_height"] == 320
+        assert str(session.device).startswith("MotoV8, экран 240×320"), str(session.device)
+        await client.close()
+    finally:
+        server._server.close()
+    print("  профили телефонов: ок (v3/v8, по экрану, из конфига поверх встроенного)")
+
+
 async def run_video_note() -> None:
     """«Кружок» с телефона: части 10/05 склеиваются, длительность доходит,
     мост подтверждает 10/03; обычному Jimm 10/05 не положено."""
@@ -674,6 +718,7 @@ async def main() -> None:
     await run_voice()
     await run_chats()
     await run_video_note()
+    await run_profiles()
     run_history_layout()
     run_reply_routing()
     await run_stale_service()

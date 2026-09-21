@@ -604,9 +604,19 @@ async def run_downloads() -> None:
     with open(os.path.join(work, "outside.txt"), "w") as fh:
         fh.write("снаружи")
 
+    # Сборки клиента из репозитория — отдельным разделом, всегда.
+    dist = os.path.join(work, "dist")
+    os.makedirs(dist)
+    for name in ("TeleMotoMax.jad", "TeleMotoMax-V8.jad"):
+        with open(os.path.join(dist, name), "w") as fh:
+            fh.write(f"MIDlet-Name: TeleMotoMax\nMIDlet-Jar-URL: {name[:-4]}.jar\n")
+    with open(os.path.join(dist, "TeleMotoMax-V8.jar"), "wb") as fh:
+        fh.write(b"PK\x03\x04" + b"8" * 100)
+
     port = PORT + 3
     server = PhotoServer(PhotoStore(os.path.join(work, "photos")), "127.0.0.1", port,
-                         AccessControl(), password="s3cret", downloads_dir=files)
+                         AccessControl(), password="s3cret", downloads_dir=files,
+                         client_dir=dist)
     await server.start()
 
     async def get(path: str) -> tuple[int, str, bytes]:
@@ -627,6 +637,9 @@ async def run_downloads() -> None:
     text = body.decode("utf-8")
     assert 'href="/d/jimm.jad"' in text and 'href="/d/jimm.jar"' in text, text
     assert ".secret" not in text and "sub" not in text, text
+    assert 'href="/d/TeleMotoMax-V8.jad"' in text and "V8, с камерой" in text, text
+    status, mime, body = await get("/d/TeleMotoMax-V8.jar")
+    assert status == 200 and len(body) == 104, (status, len(body))
 
     status, mime, body = await get("/d/jimm.jad")
     assert status == 200 and mime == "text/vnd.sun.j2me.app-descriptor", (status, mime)
