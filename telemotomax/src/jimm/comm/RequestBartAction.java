@@ -138,7 +138,17 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 		System.arraycopy(uinRaw, 0, buf, 1, uinLength);
 		Util.putByte(buf, 1 + uinLength, 0x01);
 		Util.putWord(buf, 2 + uinLength, bartType);
-		Util.putByte(buf, 4 + uinLength, 0x01);
+		// Флаги приметы: у Jimm всегда 0x01. Для ролика TeleMotoMax добавляет
+		// выбор поворота: 0x20 — всегда боком, 0x10 — никогда, ничего — авто
+		// (мост сам смотрит на исходник). Старый мост лишние биты не читает.
+		int flags = 0x01;
+		if (bartType == BART_VIDEO)
+		{
+			int mode = jimm.Options.getInt(jimm.Options.OPTION_VIDEO_ROTATE);
+			if (mode == 1) flags |= 0x20;
+			else if (mode == 2) flags |= 0x10;
+		}
+		Util.putByte(buf, 4 + uinLength, flags);
 		Util.putByte(buf, 5 + uinLength, 0x10);
 		System.arraycopy(token, 0, buf, 6 + uinLength, 16);
 		SnacPacket request = new SnacPacket(0x0010, 0x0006, 0x0006, new byte[0], buf);

@@ -1381,10 +1381,10 @@ class Session:
             target = r.pstr8().decode("latin-1")
             r.u8()                                   # число примет, у Jimm всегда одна
             bart_type = r.u16()
-            r.u8()                                   # флаги
+            flags = r.u8()                           # у Jimm 0x01; TeleMotoMax: 0x20/0x10 — ролик боком всегда/никогда
             token = r.read(r.u8())
         except Exception:
-            bart_type, token = C.BART_ICON, b""
+            bart_type, token, flags = C.BART_ICON, b"", 0
         if not target.isdigit():
             return
         if bart_type != C.BART_ICON:
@@ -1452,7 +1452,8 @@ class Session:
             return
         if bart_type in (C.BART_VIDEO, C.BART_VOICE) and self.extended:
             voice = bart_type == C.BART_VOICE
-            got = await (self.server.voice(token) if voice else self.server.video(token))
+            rotate = "always" if flags & 0x20 else ("never" if flags & 0x10 else "auto")
+            got = await (self.server.voice(token) if voice else self.server.video(token, rotate))
             what = "голосовое" if voice else "ролик"
             if not got:
                 log.info("%s по токену %s не найдено или не перекодировалось",
@@ -1592,7 +1593,7 @@ class OscarServer:
                  fetch_attachment: Callable[[int, str], Awaitable[bytes | None]] | None = None,
                  fetch_history: Callable[..., Awaitable[
                      tuple[list[tuple[str, str]], bool] | None]] | None = None,
-                 fetch_video: Callable[[int, str], Awaitable[bytes | None]] | None = None,
+                 fetch_video: Callable[[int, str, str], Awaitable[bytes | None]] | None = None,
                  on_photo: Callable[[int, bytes], Awaitable[bool]] | None = None,
                  fetch_voice: Callable[[int, str], Awaitable[bytes | None]] | None = None,
                  on_voice: Callable[[int, bytes, int], Awaitable[bool]] | None = None,
@@ -1783,9 +1784,11 @@ class OscarServer:
             log.exception("история для %s не собралась", self.name_of(uin))
             return None
 
-    async def video(self, token: bytes) -> bytes | None:
-        """Ролик по токену вложения — перекодированный под телефон, или None."""
-        return await self._media(token, "video:", self.fetch_video, "ролик")
+    async def video(self, token: bytes, rotate: str = "auto") -> bytes | None:
+        """Ролик по токену вложения — перекодированный под телефон, или None.
+        rotate — «auto», «always», «never»: класть ли кадр боком."""
+        return await self._media(token, "video:",
+                                 lambda uin, attach: self.fetch_video(uin, attach, rotate), "ролик")
 
     async def voice(self, token: bytes) -> bytes | None:
         """Голосовое по токену — AMR в 3GP, который телефон умеет играть."""
