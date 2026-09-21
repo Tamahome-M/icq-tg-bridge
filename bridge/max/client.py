@@ -134,6 +134,8 @@ def media_kind(msg) -> str:
             return "video"
         if kind == "AUDIO":
             return "voice"
+        if kind == "FILE":
+            return "file"
     return ""
 
 
@@ -632,7 +634,7 @@ class MaxSide:
                 sender = self._user_name(await self._user(sender_id)) or ""
             kind = media_kind(message)
             attach = (f"{kind}:{_attr(message, 'id', 0)}"
-                      if kind in ("photo", "video", "voice") else "")
+                      if kind in ("photo", "video", "voice", "file") else "")
             shown = await self.on_message(to_peer(chat_id), sender, text, ts, 0, attach=attach)
             if self.cfg.mark_read and shown and not mine:
                 try:
@@ -954,6 +956,42 @@ class MaxSide:
         chat_id = from_peer(peer_id)
         message = await self.client.send_message(
             chat_id, caption or None, attachments=[Photo(data, name="camera.jpg")])
+        message_id = int(_attr(message, "id", 0) or 0)
+        if message_id:
+            self._own_ids[(chat_id, message_id)] = time.time()
+        return int(_attr(message, "time", 0) or 0) or message_id or None
+
+    async def file_bytes(self, peer_id: int, message_id: int,
+                         max_bytes: int) -> tuple[str, bytes] | None:
+        """Документ из сообщения MAX: имя и содержимое по ссылке сервера."""
+        chat_id = from_peer(peer_id)
+        try:
+            msg = await self.client.get_message(chat_id, message_id)
+        except Exception as exc:
+            log.warning("MAX: сообщение %s в чате %s не нашлось: %s", message_id, chat_id, exc)
+            return None
+        attach = None
+        for candidate in _attr(msg, "attaches", []) or []:
+            if _enum_value(_attr(candidate, "type", "")).upper() == "FILE":
+                attach = candidate
+                break
+        if attach is None:
+            return None
+        size = int(_attr(attach, "size", 0) or 0)
+        if max_bytes and size > max_bytes:
+            log.info("MAX: файл %d КБ больше потолка — пропускаю", size // 1024)
+            return None
+        data = await self._download(_attr(attach, "url", "") or "")
+        if not data or (max_bytes and len(data) > max_bytes):
+            return None
+        return (_attr(attach, "name", "") or "file.bin"), data
+
+    async def send_document(self, peer_id: int, path: str, name: str,
+                            topic_id: int = 0) -> int | None:
+        """Файл с телефона — в чат MAX."""
+        from pymax import File
+        chat_id = from_peer(peer_id)
+        message = await self.client.send_message(chat_id, None, attachments=[File(path=path, name=name)])
         message_id = int(_attr(message, "id", 0) or 0)
         if message_id:
             self._own_ids[(chat_id, message_id)] = time.time()

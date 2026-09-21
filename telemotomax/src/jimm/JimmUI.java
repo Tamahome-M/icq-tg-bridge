@@ -1101,6 +1101,36 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		}
 	}
 
+	// TeleMotoMax: несколько строк текста в Canvas, с переносом по словам и
+	// по «\n» — для экранов отправки и скачивания файлов.
+	static public void drawWrapped(javax.microedition.lcdui.Graphics g, String text, int x, int y,
+			int width, Font font)
+	{
+		int step = font.getHeight();
+		int start = 0;
+		while (start < text.length())
+		{
+			int nl = text.indexOf('\n', start);
+			int end = (nl < 0) ? text.length() : nl;
+			String para = text.substring(start, end);
+			start = end + 1;
+			while (para.length() > 0)
+			{
+				int fit = para.length();
+				while (fit > 1 && font.stringWidth(para.substring(0, fit)) > width) fit--;
+				if (fit < para.length())
+				{
+					int space = para.lastIndexOf(' ', fit);
+					if (space > 0) fit = space;
+				}
+				g.drawString(para.substring(0, fit), x, y, javax.microedition.lcdui.Graphics.TOP
+						| javax.microedition.lcdui.Graphics.LEFT);
+				y += step;
+				para = para.substring(fit).trim();
+			}
+		}
+	}
+
 	static private String[] last_user_info;
 	static private ContactItem lastUserInfoContact;
 

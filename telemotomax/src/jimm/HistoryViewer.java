@@ -127,7 +127,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 				// Вид вложения — как в полной истории: бит 2 — видео,
 				// бит 4 — голосовое, иначе фото. Раньше голосовое здесь
 				// считалось фото, и в чате была кнопка «Показать фото».
-				int kind = (flag & 4) != 0 ? 3 : ((flag & 2) != 0 ? 2 : 1);
+				int kind = ((flag & 6) == 6) ? 4 : ((flag & 4) != 0 ? 3 : ((flag & 2) != 0 ? 2 : 1));
 				ChatHistory.addHistoryLine(uin, text, photo, kind);
 			}
 		};
@@ -306,7 +306,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 				}
 				newTexts.addElement(text);
 				newTokens.addElement(token);
-				int kind = (flag & 4) != 0 ? 3 : ((flag & 2) != 0 ? 2 : 1);
+				int kind = ((flag & 6) == 6) ? 4 : ((flag & 4) != 0 ? 3 : ((flag & 2) != 0 ? 2 : 1));
 				if ((flag & 8) != 0) kind += 8;
 				newKinds.addElement(new Integer(kind));
 			}
@@ -414,10 +414,13 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		if (currentToken() != null)
 		{
 			int kind = currentKind();
-			// У голосового картинки нет — только «Прослушать», как в чате.
-			if (kind != 3) list.addCommandEx(ChatTextList.cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
+			// У голосового и файла картинки нет — только своё действие.
+			if (kind == 1 || kind == 2) list.addCommandEx(ChatTextList.cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
 			if (kind == 2) list.addCommandEx(ChatTextList.cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
 			if (kind == 3) list.addCommandEx(ChatTextList.cmdPlayVoice, VirtualList.MENU_TYPE_RIGHT);
+//#sijapp cond.if modules_CAMERA="true"#
+			if (kind == 4) list.addCommandEx(ChatTextList.cmdGetFile, VirtualList.MENU_TYPE_RIGHT);
+//#sijapp cond.end#
 		}
 	}
 
@@ -433,6 +436,9 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		byte[] token = currentToken();
 		if (token == null) return;
 		int kind = currentKind();
+//#sijapp cond.if modules_CAMERA="true"#
+		if (kind == 4) { FileDownloader.show(uin, token, this); return; }
+//#sijapp cond.end#
 		if (kind == 3) MediaPlayer.showVoice(uin, token, this);
 		else PhotoViewer.show(uin, token, this);
 	}
@@ -441,6 +447,14 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 
 	public void commandAction(Command c, Displayable d)
 	{
+//#sijapp cond.if modules_CAMERA="true"#
+		if (c == ChatTextList.cmdGetFile)
+		{
+			byte[] token = currentToken();
+			if (token != null) FileDownloader.show(uin, token, this);
+			return;
+		}
+//#sijapp cond.end#
 		if (c == ChatTextList.cmdShowPhoto)
 		{
 			byte[] token = currentToken();

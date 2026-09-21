@@ -166,6 +166,7 @@ public class ActionListener
 //#sijapp cond.if modules_CAMERA="true"#
 				jimm.CameraShot.photoSent(uin, ok);
 				jimm.VideoRecorder.videoSent(uin, ok);
+				jimm.FileSender.fileSent(uin, ok);
 //#sijapp cond.end#
 				return;
 			}
@@ -543,9 +544,9 @@ public class ActionListener
 					int extType = Util.getWord(buf, extMarker);
 					byte[] extData = Util.getTlv(buf, extMarker);
 					if (extData == null) break;
-					// kind 1 = photo, 2 = video preview, 3 = voice message
+					// kind 1 = photo, 2 = video preview, 3 = voice message, 4 = file
 					if ((extType == 0x9001) && (extData.length == 17)
-							&& (extData[0] >= 1) && (extData[0] <= 3))
+							&& (extData[0] >= 1) && (extData[0] <= 4))
 					{
 						attachToken = new byte[16];
 						System.arraycopy(extData, 1, attachToken, 0, 16);

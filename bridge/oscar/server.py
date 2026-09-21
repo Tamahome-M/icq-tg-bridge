@@ -149,6 +149,12 @@ class Session:
         self.upload: bytearray | None = None
         self.upload_seconds = 0
         self.upload_kind = ""           # чем телефон записал голосовое
+        # Файл с телефона: части пишутся на диск, а не копятся в памяти.
+        self.file_path = ""
+        self.file_name = ""
+        self.file_size = 0
+        self.file_got = 0
+        self.file_started = 0.0
         self.close_reason = ""
         self.sent_messages = 0        # телефону
         self.got_messages = 0         # от телефона
@@ -246,6 +252,7 @@ class Session:
         else:
             log.debug("соединение %s закрыто до входа: %s", self.peer, self.close_reason)
         self.server.session_gone(self)
+        self._drop_file_upload()
         for task in list(self._tasks):
             if task is not asyncio.current_task():
                 task.cancel()
@@ -536,6 +543,7 @@ class Session:
             (C.SSBI, C.SSBI_UPLOAD): self.on_photo_upload,
             (C.SSBI, C.SSBI_UPLOAD_VOICE): self.on_voice_upload,
             (C.SSBI, C.SSBI_UPLOAD_VIDEO): self.on_video_upload,
+            (C.SSBI, C.SSBI_UPLOAD_FILE): self.on_file_upload,
         }.get((s.family, s.subtype))
 
         if handler is None:
@@ -1100,6 +1108,8 @@ class Session:
                     kind = C.ATTACH_VIDEO
                 elif attach.startswith("voice:"):
                     kind = C.ATTACH_VOICE
+                elif attach.startswith("file:"):
+                    kind = C.ATTACH_FILE
                 extra = tlv(C.TLV_TMM_ATTACH, bytes([kind]) + token)
                 log.info("телефону ← %s: вложение %s, токен %s",
                          self.server.name_of(uin), attach, token[:4].hex())
@@ -1174,6 +1184,89 @@ class Session:
                   self.server.service_address(self.writer))
         await self.send_snac(C.OSERVICE, C.SERVICE_REDIRECT, body,
                              request_id=s.request_id)
+
+    async def on_file_upload(self, s: Snac) -> None:
+        """Файл с телефона: части 10/08 — UIN, номер части, всего частей,
+        общий размер (4 байта), кусок; хвостом первой части — имя файла.
+        Части пишутся во временный файл на диске, по последней мост
+        отправляет документ в чат и отвечает 10/03."""
+        if not self.extended:
+            return
+        r = Reader(s.data)
+        try:
+            target = r.pstr8().decode("latin-1")
+            part, total = r.u16(), r.u16()
+            size = r.u32()
+            chunk = r.read(r.u16())
+            name = r.pstr8().decode("utf-8", "replace") if r.left else ""
+        except Exception:
+            log.warning("негодная часть файла от телефона")
+            return
+        if not target.isdigit():
+            return
+        limit = int(self.profile.get("file_max_mb", self.server.cfg.tmm_file_max_mb)) * 1024 * 1024
+        if part == 1:
+            self._drop_file_upload()
+            if size > limit:
+                log.warning("файл «%s» с телефона %d КБ больше потолка %d МБ — отказываюсь",
+                            name, size // 1024, limit // 1024 // 1024)
+                await self.send_snac(C.SSBI, C.SSBI_UPLOAD_ACK,
+                                     pstr8(target.encode()) + b"\x01", request_id=s.request_id)
+                return
+            self.file_name = os.path.basename(name.replace("\\", "/")) or "file.bin"
+            self.file_size = size
+            self.file_got = 0
+            self.file_started = time.time()
+            self.file_path = os.path.join(self.server.upload_dir,
+                                          f"up-{os.urandom(6).hex()}-{self.file_name}")
+            try:
+                os.makedirs(self.server.upload_dir, exist_ok=True)
+                with open(self.file_path, "wb"):
+                    pass
+            except OSError:
+                log.exception("не могу завести файл для приёма")
+                self.file_path = ""
+                return
+        elif self.file_path and time.time() - self.file_started > UPLOAD_TIMEOUT:
+            log.warning("части файла идут дольше %d с — начинаю заново", UPLOAD_TIMEOUT)
+            self._drop_file_upload()
+        if not self.file_path:
+            return
+        with open(self.file_path, "ab") as fh:
+            fh.write(chunk)
+        self.file_got += len(chunk)
+        if self.file_got > limit:
+            log.warning("файл с телефона вырос больше потолка — отказываюсь")
+            self._drop_file_upload()
+            await self.send_snac(C.SSBI, C.SSBI_UPLOAD_ACK,
+                                 pstr8(target.encode()) + b"\x01", request_id=s.request_id)
+            return
+        if part < total:
+            return
+        path, name = self.file_path, self.file_name
+        self.file_path = ""
+        log.info("файл «%s» с телефона для %s: %d КБ — отправляю",
+                 name, self.server.name_of(int(target)), self.file_got // 1024)
+        ok = False
+        try:
+            if self.server.on_file is not None:
+                ok = await self.server.on_file(int(target), path, name)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        await self.send_snac(C.SSBI, C.SSBI_UPLOAD_ACK,
+                             pstr8(target.encode()) + (b"\x00" if ok else b"\x01"),
+                             request_id=s.request_id)
+
+    def _drop_file_upload(self) -> None:
+        if self.file_path:
+            try:
+                os.unlink(self.file_path)
+            except OSError:
+                pass
+        self.file_path = ""
 
     async def on_photo_upload(self, s: Snac) -> None:
         """Снимок с камеры телефона: части 10/02, ответ 10/03.
@@ -1376,6 +1469,26 @@ class Session:
                                             request_id=s.request_id):
                     return
             return
+        if bart_type == C.BART_FILE and self.extended:
+            got = await self.server.file(token)
+            if not got:
+                log.info("файл по токену %s не найден или не скачался", token[:4].hex())
+                await self.send_error(C.SSBI, 0x0001, s.request_id)
+                return
+            name, data = got
+            # Имя — хвостом… нет, головой первой части: клиент открывает
+            # файл до того, как начнёт писать в него первый кусок.
+            data = pstr8(name.encode("utf-8")[:200]) + data
+            parts = [data[i:i + C.VIDEO_PART_BYTES] for i in range(0, len(data), C.VIDEO_PART_BYTES)]
+            log.info("файл «%s» для %s отдан: %d байт в %d частях",
+                     name, self.server.name_of(target), len(data), len(parts))
+            for index, chunk in enumerate(parts, start=1):
+                if not await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
+                                            blocks.icon_reply(int(target), token, chunk, C.BART_FILE,
+                                                              index, len(parts)),
+                                            request_id=s.request_id):
+                    return
+            return
         if bart_type == C.BART_PHOTO:
             got = await self.server.attachment(token)
             if got is None:
@@ -1485,6 +1598,8 @@ class OscarServer:
                  on_voice: Callable[[int, bytes, int], Awaitable[bool]] | None = None,
                  on_video: Callable[[int, bytes, int], Awaitable[bool]] | None = None,
                  on_profile: Callable[[], None] | None = None,
+                 fetch_file: Callable[[int, str], Awaitable[tuple[str, bytes] | None]] | None = None,
+                 on_file: Callable[[int, str, str], Awaitable[bool]] | None = None,
                  chat_list: Callable[[], Awaitable[list]] | None = None,
                  open_chat: Callable[[int], Awaitable[bool]] | None = None):
         self.cfg = cfg
@@ -1523,6 +1638,10 @@ class OscarServer:
         # Профиль телефона выбран (или сессия сменилась) — мост перечитывает
         # контакт-лист с ограничением этого профиля.
         self.on_profile = on_profile
+        # Документ из чата по токену (имя, байты) и файл с телефона (путь
+        # на диске моста, имя) — в чат.
+        self.fetch_file = fetch_file
+        self.on_file = on_file
         self.chat_list = chat_list or self._no_chats
         self.open_chat = open_chat or self._no_open
         self.uin = str(cfg.oscar_uin)
@@ -1533,6 +1652,8 @@ class OscarServer:
         self.alias_max_chars = getattr(cfg, "alias_max_chars", 40)
         self.idle_timeout = getattr(cfg, "idle_timeout", 360)
         self.roster_reuse = bool(getattr(cfg, "roster_reuse", True))
+        # Куда складывать файлы с телефона, пока идут части.
+        self.upload_dir = getattr(cfg, "render_dir", "/tmp") or "/tmp"
         self.use_ack = getattr(cfg, "delivery_ack", True)
         self.typing_prime = getattr(cfg, "typing_prime", True)
         self.ack_timeout = getattr(cfg, "ack_timeout", 30)
@@ -1636,6 +1757,9 @@ class OscarServer:
         if attach.startswith("voice:"):
             if self.fetch_voice is None:
                 return None
+        elif attach.startswith("file:"):
+            if self.fetch_file is None:
+                return None
         elif self.fetch_attachment is None:
             return None
         now = time.time()
@@ -1666,6 +1790,10 @@ class OscarServer:
     async def voice(self, token: bytes) -> bytes | None:
         """Голосовое по токену — AMR в 3GP, который телефон умеет играть."""
         return await self._media(token, "voice:", self.fetch_voice, "голосовое")
+
+    async def file(self, token: bytes) -> tuple[str, bytes] | None:
+        """Документ по токену: имя и содержимое, как есть."""
+        return await self._media(token, "file:", self.fetch_file, "файл")
 
     async def _media(self, token: bytes, prefix: str, fetch, what: str) -> bytes | None:
         got = self.attachments.get(token)

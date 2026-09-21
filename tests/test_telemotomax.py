@@ -384,6 +384,74 @@ async def run_voice() -> None:
     print("  голосовые: ок (слушаем частями, шлём записанное, обычному Jimm нельзя)")
 
 
+async def run_files() -> None:
+    """Файлы в обе стороны: документ из чата — частями с именем в первой
+    части; файл с телефона — на диск моста и в чат; потолок профиля."""
+    import tempfile
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 12
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    cfg.avatars = True
+    cfg.render_dir = tempfile.mkdtemp(prefix="tmm-up-")
+    cfg.tmm_file_max_mb = 1
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+    big = bytes(range(256)) * 600                       # 150 КБ — три части
+    sent: list[tuple[int, str, int]] = []
+
+    async def on_outgoing(*_):
+        return 1
+
+    async def fetch_file(target: int, attach: str):
+        assert attach == "file:4242", attach
+        return "отчёт.pdf", big
+
+    async def on_file(target: int, path: str, name: str) -> bool:
+        import os
+        with open(path, "rb") as fh:
+            sent.append((target, name, len(fh.read())))
+        return True
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
+                         fetch_file=fetch_file, on_file=on_file)
+    await server.start()
+    try:
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 33)
+        await client.connect()
+        await client.bos(await client.login_md5_jimm())
+        await client.drain_for(0.3)
+
+        # Документ в сообщении — вложение вида 4 с токеном.
+        await server.deliver(uin, "[файл отчёт.pdf]", attach="file:4242")
+        await client.drain_for(0.5)
+        assert client.attachments and client.attachments[-1][2] == 4, client.attachments
+        token = client.attachments[-1][1]
+        name, data = await client.request_file(uin, token)
+        assert name == "отчёт.pdf" and data == big, (name, len(data))
+        assert client.parts_seen[-1][1] == 3, client.parts_seen[-1]
+
+        # Файл с телефона: части на диск, по последней — в чат.
+        assert await client.send_file(uin, big, "фото.jpg") is True
+        assert sent == [(uin, "фото.jpg", len(big))], sent
+        import os
+        assert not [n for n in os.listdir(cfg.render_dir) if n.startswith("up-")], "временный файл не убран"
+        # Больше потолка — отказ на первой же части.
+        assert await client.send_file(uin, b"x" * 100, "big.bin") is True
+        huge_declared = 2 * 1024 * 1024
+        raw = str(uin).encode()
+        await client.send_snac(C.SSBI, C.SSBI_UPLOAD_FILE,
+                               pstr8(raw) + struct.pack(">HHIH", 1, 300, huge_declared, 10) + b"0123456789"
+                               + pstr8(b"huge.bin"))
+        ack = await client.expect(C.SSBI, C.SSBI_UPLOAD_ACK)
+        r = ack.reader(); r.pstr8()
+        assert r.u8() == 1, "файл больше потолка нужно отвергать"
+        await client.close()
+    finally:
+        server._server.close()
+    print("  файлы: ок (документ частями с именем, файл с телефона в чат, потолок)")
+
+
 async def run_profiles() -> None:
     """Профиль телефона: по сведениям 01/F2 мост выбирает настройки —
     встроенный v8 по платформе или ширине экрана, свой из конфига
@@ -747,6 +815,7 @@ async def main() -> None:
     await run_chats()
     await run_video_note()
     await run_profiles()
+    await run_files()
     run_history_layout()
     run_reply_routing()
     await run_stale_service()

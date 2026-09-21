@@ -82,6 +82,7 @@ class Bridge:
                                  self.fetch_history, self.fetch_video, self.send_camera_photo,
                                  self.fetch_voice, self.send_voice_message,
                                  self.send_video_note, self._reload_roster,
+                                 self.fetch_file, self.send_document,
                                  self.chat_list, self.open_chat)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
@@ -534,6 +535,39 @@ class Bridge:
                                   + ("" if mp4 else " (обычным видео)"))
         return True
 
+    async def fetch_file(self, uin: int, attach: str) -> tuple[str, bytes] | None:
+        """Документ из сообщения — имя и содержимое, как есть, не больше
+        file_max_mb профиля телефона."""
+        contact = self.storage.contact_by_uin(uin)
+        kind, _, ident = attach.partition(":")
+        if contact is None or kind != "file" or not ident.isdigit():
+            return None
+        limit = int(self.tmm("file_max_mb")) * 1024 * 1024
+        got = await self.side_for(contact.peer_id).file_bytes(contact.peer_id, int(ident), limit)
+        if not got:
+            return None
+        name, data = got
+        log.info("файл «%s» из «%s»: %d КБ", name, contact.title, len(data) // 1024)
+        return name, data
+
+    async def send_document(self, uin: int, path: str, name: str) -> bool:
+        """Файл с телефона (лежит на диске моста) — в чат документом."""
+        contact = self.storage.contact_by_uin(uin)
+        if contact is None or contact.peer_id == ASSISTANT_PEER:
+            return False
+        try:
+            size = os.path.getsize(path)
+            message_id = await self.side_for(contact.peer_id).send_document(
+                contact.peer_id, path, name, topic_id=contact.topic_id)
+        except Exception as exc:
+            log.exception("файл «%s» в чат «%s» не ушёл", name, contact.title)
+            await self.reply(contact, f"Файл не отправлен: {type(exc).__name__}")
+            return False
+        log.info("файл «%s» с телефона → «%s»: %d КБ, номер %s",
+                 name, contact.title, size // 1024, message_id)
+        await self.reply(contact, f"[файл {name}, {max(1, size // 1024)} КБ] отправлен")
+        return True
+
     async def send_camera_photo(self, uin: int, data: bytes) -> bool:
         """Снимок с камеры телефона — в чат. True, если ушёл."""
         contact = self.storage.contact_by_uin(uin)
@@ -609,7 +643,7 @@ class Bridge:
             line = f"[{i.when.astimezone():%d.%m %H:%M}] {i.who}: {i.text}"
             if self.cfg.emoji_to_text:
                 line = emoji.to_text(line)
-            has_picture = i.kind in ("photo", "video", "voice") and i.msg_id
+            has_picture = i.kind in ("photo", "video", "voice", "file") and i.msg_id
             out.append((line, f"{i.kind}:{i.msg_id}" if has_picture else "", i.who == "Я"))
         log.info("история «%s» для TeleMotoMax: %d сообщений%s, с фото %d%s",
                  contact.title, len(items),

@@ -554,6 +554,47 @@ class TelegramSide:
             self._own_ids[(peer_id, message_id)] = time.time()
         return message_id
 
+    async def file_bytes(self, peer_id: int, message_id: int,
+                         max_bytes: int) -> tuple[str, bytes] | None:
+        """Документ из сообщения: имя файла и содержимое, как есть."""
+        try:
+            msgs = await self.client.get_messages(peer_id, ids=[message_id])
+        except Exception:
+            log.warning("сообщение %s в чате %s не нашлось", message_id, peer_id)
+            return None
+        msg = msgs[0] if msgs else None
+        if msg is None or media_kind(msg) != "file":
+            return None
+        file = getattr(msg, "file", None)
+        size = getattr(file, "size", 0) or 0
+        if max_bytes and size > max_bytes:
+            log.info("файл %d КБ больше потолка %d КБ — не качаю", size // 1024, max_bytes // 1024)
+            return None
+        name = getattr(file, "name", None) or f"file{getattr(file, 'ext', '') or ''}"
+        try:
+            data = await msg.download_media(file=bytes)
+        except Exception:
+            log.warning("файл из сообщения %s не скачался", message_id, exc_info=True)
+            return None
+        return (name, data) if data else None
+
+    async def send_document(self, peer_id: int, path: str, name: str,
+                            topic_id: int = 0) -> int | None:
+        """Файл с телефона — в чат Telegram документом, под своим именем."""
+        from telethon.tl.types import DocumentAttributeFilename
+        self._sending[peer_id] = self._sending.get(peer_id, 0) + 1
+        try:
+            message = await self.client.send_file(
+                peer_id, file=path, force_document=True,
+                attributes=[DocumentAttributeFilename(file_name=name)],
+                reply_to=topic_id or None)
+        finally:
+            self._sending[peer_id] -= 1
+        message_id = getattr(message, "id", None)
+        if message_id:
+            self._own_ids[(peer_id, message_id)] = time.time()
+        return message_id
+
     async def video_bytes(self, peer_id: int, message_id: int, max_bytes: int) -> bytes | None:
         """Сам ролик из сообщения — как есть; перекодирует мост."""
         try:
@@ -794,6 +835,8 @@ def attachment_of(msg) -> str:
     kind = media_kind(msg)
     if kind in ("photo", "video", "voice"):
         return f"{kind}:{msg.id}"
+    if kind == "file":
+        return f"file:{msg.id}"
     return ""
 
 
@@ -809,6 +852,11 @@ def media_kind(msg) -> str:
         return "audio"
     if getattr(msg, "gif", None):
         return "video"
+    # Документ: любое вложение-файл, кроме стикеров, — его можно скачать
+    # на телефон как есть.
+    document = getattr(msg, "document", None)
+    if document is not None and not getattr(msg, "sticker", None):
+        return "file"
     return ""
 
 

@@ -60,9 +60,10 @@ def icon_reply(uin: int, icon_hash: bytes, image: bytes,
 def history_records(rows: list[tuple[str, str]], max_bytes: int, token_for) -> bytes:
     """Записи истории для TeleMotoMax: длина текста (2 байта), UTF-8, флаг
     и, если бит 1 флага взведён, 16-байтный токен вложения; бит 2 —
-    это видео (превью и ролик), бит 3 — голосовое, бит 4 — сообщение наше
-    (клиент красит его как исходящее), без них — фото. Не влезает — теряем
-    самое старое (записи идут от старых к новым)."""
+    это видео (превью и ролик), бит 3 — голосовое, оба разом (0x07) —
+    документ, бит 4 — сообщение наше (клиент красит его как исходящее),
+    без них — фото. Не влезает — теряем самое старое (записи идут от
+    старых к новым)."""
     encoded: list[bytes] = []
     for row in rows:
         text, attach = row[0], row[1]
@@ -77,6 +78,8 @@ def history_records(rows: list[tuple[str, str]], max_bytes: int, token_for) -> b
                 flag = 0x03
             elif attach.startswith("voice:"):
                 flag = 0x05
+            elif attach.startswith("file:"):
+                flag = 0x07               # биты 2 и 4 разом — документ
             rec += bytes([flag | mark]) + token
         else:
             rec += bytes([mark])
