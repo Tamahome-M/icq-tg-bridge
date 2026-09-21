@@ -58,6 +58,8 @@ DOWNLOAD_TYPES = {
     ".3gp": "video/3gpp", ".mp4": "video/mp4", ".amr": "audio/amr", ".mp3": "audio/mpeg",
     ".mid": "audio/midi", ".midi": "audio/midi", ".wav": "audio/x-wav",
     ".zip": "application/zip", ".sis": "application/vnd.symbian.install",
+    ".der": "application/x-x509-ca-cert", ".cer": "application/x-x509-ca-cert",
+    ".crt": "application/x-x509-ca-cert",
     ".pdf": "application/pdf", ".doc": "application/msword",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xls": "application/vnd.ms-excel",
