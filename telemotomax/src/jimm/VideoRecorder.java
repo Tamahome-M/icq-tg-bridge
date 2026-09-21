@@ -89,9 +89,10 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 		new Thread() {
 			public void run()
 			{
+				Player p = null;
 				try
 				{
-					Player p = Manager.createPlayer("capture://video");
+					p = Manager.createPlayer("capture://video");
 					p.realize();
 					VideoControl vc = (VideoControl) p.getControl("VideoControl");
 					if (vc == null) throw new Exception("no VideoControl");
@@ -108,6 +109,8 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 				}
 				catch (Exception e)
 				{
+					// Незакрытый плеер копит «too many players» — см. CameraShot.
+					if (p != null) { try { p.close(); } catch (Exception ig) {} }
 					failed(e);
 				}
 			}

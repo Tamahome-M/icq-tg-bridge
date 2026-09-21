@@ -393,7 +393,9 @@ async def run_profiles() -> None:
     assert profiles.choose(d8, {})[0] == "v8"
     assert profiles.choose(profiles.Device("j2me", 240, 320), {})[0] == "v8", "по ширине экрана"
     assert profiles.choose(profiles.Device("MotoV3", 176, 220, 900), {})[0] == "v3"
-    assert profiles.choose(profiles.Device("Nokia", 128, 160), {}) is None
+    assert profiles.choose(profiles.Device("Nokia", 128, 160), {})[0] == "v3", "узкий экран — v3"
+    assert profiles.choose(profiles.Device("Nokia", 208, 208), {}) is None, "между v3 и v8 — общие"
+    assert profiles.choose(profiles.Device("j2me", 176, 220, 900), {})[0] == "v3", "V3 зовёт себя j2me"
     name, prof = profiles.choose(d8, {"v8": {"photo_max_kb": 90}})
     assert name == "v8" and prof["photo_max_kb"] == 90 and prof["photo_width"] == 240, prof
     name, prof = profiles.choose(profiles.Device("SonyEricsson", 176, 208),

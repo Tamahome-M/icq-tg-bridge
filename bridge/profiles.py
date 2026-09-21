@@ -8,8 +8,9 @@ TeleMotoMax при входе присылает платформу (`microediti
 
 Встроенные профили — для двух известных телефонов; в `config.toml` их можно
 подправить или добавить свои (`[telemotomax.profile.<имя>]`). Профиль
-подходит, если платформа содержит `match` (без учёта регистра) или экран
-не уже `min_width`; первый подошедший — по порядку: сначала из конфига,
+подходит, если платформа содержит `match` (без учёта регистра), экран не
+уже `min_width` или не шире `max_width`; первый подошедший — по порядку:
+сначала из конфига,
 потом встроенные. Без сведений от телефона (обычный Jimm или старый
 TeleMotoMax) действуют общие настройки.
 """
@@ -36,7 +37,9 @@ KEYS = {
 
 BUILTIN: dict[str, dict] = {
     # Motorola V3: маленький экран, меньше мегабайта кучи, MMAPI без видео.
-    "v3": {"match": "V3", "photo_width": 176, "photo_height": 176, "photo_max_kb": 20,
+    # Платформу оба телефона называют просто «j2me», поэтому решает экран:
+    # до 200 точек в ширину — v3, от 240 — v8.
+    "v3": {"match": "V3", "max_width": 200, "photo_width": 176, "photo_height": 176, "photo_max_kb": 20,
            "photo_quality": 60, "video_seconds": 10, "voice_kbps": 12.2, "history_max": 200},
     # Motorola V8: 240×320, кучи хватает на снимок побольше и получше, ролик
     # подлиннее и список без ограничения (0 — все чаты).
@@ -69,6 +72,9 @@ def matches(profile: dict, device: Device) -> bool:
         return True
     min_width = int(profile.get("min_width", 0) or 0)
     if min_width and device.width and device.width >= min_width:
+        return True
+    max_width = int(profile.get("max_width", 0) or 0)
+    if max_width and device.width and device.width <= max_width:
         return True
     return False
 

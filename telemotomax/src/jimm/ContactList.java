@@ -1431,6 +1431,33 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	////////////////////////////////////
 	
 	private static Vector soundQueue = new Vector();
+
+	// TeleMotoMax: плеер уведомления закрывается по концу звука; если телефон
+	// конец не сообщил, закроем сами через несколько секунд — иначе плеер
+	// висит, playerFree не сбрасывается, и звуков больше нет до перезапуска.
+	private static final Timer soundTimer = new Timer();
+	private static TimerTask soundWatch;
+
+	private static void watchPlayer(final Player p)
+	{
+		if (soundWatch != null) soundWatch.cancel();
+		soundWatch = new TimerTask() {
+			public void run()
+			{
+				try
+				{
+					if (p.getState() != Player.CLOSED)
+					{
+						p.removePlayerListener(_this);
+						p.close();
+					}
+				}
+				catch (Exception ignore) {}
+				if (!playerFree) playerFree = true;
+			}
+		};
+		soundTimer.schedule(soundWatch, 8000L);
+	}
 	
 	private static void startPlayer(Player player)
 	{
@@ -1545,8 +1572,10 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			updateStopTime(p);
 			p.addPlayerListener(_this);
 			playerFree = false;
-		} catch (MediaException e)
+			watchPlayer(p);
+		} catch (Exception e)
 		{
+			try { p.close(); } catch (Exception ig) {}     // иначе плеер течёт
 			return null;
 		}
 		return p;
