@@ -1470,6 +1470,18 @@ class Session:
                                             request_id=s.request_id):
                     return
             return
+        if bart_type == C.BART_FILE and self.extended and flags & 0x40:
+            # Телефону Java к файлам не пускают — он просит ссылку и открывает
+            # её в своём браузере, тот качает с полными правами.
+            url = await self.server.file_url(token)
+            if not url:
+                log.info("ссылка на файл по токену %s не получилась", token[:4].hex())
+                await self.send_error(C.SSBI, 0x0001, s.request_id)
+                return
+            await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
+                                 blocks.icon_reply(int(target), token, url.encode("utf-8"), C.BART_FILE),
+                                 request_id=s.request_id)
+            return
         if bart_type == C.BART_FILE and self.extended:
             got = await self.server.file(token)
             if not got:
@@ -1602,7 +1614,8 @@ class OscarServer:
                  fetch_file: Callable[[int, str], Awaitable[tuple[str, bytes] | None]] | None = None,
                  on_file: Callable[[int, str, str], Awaitable[bool]] | None = None,
                  chat_list: Callable[[], Awaitable[list]] | None = None,
-                 open_chat: Callable[[int], Awaitable[bool]] | None = None):
+                 open_chat: Callable[[int], Awaitable[bool]] | None = None,
+                 file_link: Callable[[int, str], Awaitable[str | None]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -1643,6 +1656,8 @@ class OscarServer:
         # на диске моста, имя) — в чат.
         self.fetch_file = fetch_file
         self.on_file = on_file
+        # Ссылка на документ для браузера телефона (когда Java к файлам не пускают).
+        self.file_link = file_link
         self.chat_list = chat_list or self._no_chats
         self.open_chat = open_chat or self._no_open
         self.uin = str(cfg.oscar_uin)
@@ -1797,6 +1812,10 @@ class OscarServer:
     async def file(self, token: bytes) -> tuple[str, bytes] | None:
         """Документ по токену: имя и содержимое, как есть."""
         return await self._media(token, "file:", self.fetch_file, "файл")
+
+    async def file_url(self, token: bytes) -> str | None:
+        """Ссылка на документ для браузера телефона."""
+        return await self._media(token, "file:", self.file_link, "ссылка на файл")
 
     async def _media(self, token: bytes, prefix: str, fetch, what: str) -> bytes | None:
         got = self.attachments.get(token)
