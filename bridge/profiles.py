@@ -37,7 +37,7 @@ KEYS = {
 BUILTIN: dict[str, dict] = {
     # Motorola V3: маленький экран, меньше мегабайта кучи, MMAPI без видео.
     "v3": {"match": "V3", "photo_width": 176, "photo_height": 176, "photo_max_kb": 20,
-           "photo_quality": 0, "video_seconds": 10, "voice_kbps": 12.2, "history_max": 200},
+           "photo_quality": 60, "video_seconds": 10, "voice_kbps": 12.2, "history_max": 200},
     # Motorola V8: 240×320, кучи хватает на снимок побольше и получше, ролик
     # подлиннее и список без ограничения (0 — все чаты).
     "v8": {"match": "V8", "min_width": 240, "photo_width": 240, "photo_height": 320,
