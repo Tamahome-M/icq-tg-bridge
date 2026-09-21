@@ -361,8 +361,6 @@
 "file_not_sent"			"File not sent"
 "file_loading"			"Downloading file..."
 "file_saved"			"Saved:"
-"file_link_wait"			"Asking the bridge for a link..."
-"file_in_browser"			"Java has no file access — opening in the phone browser, save it there:"
 "video_recording"			"Recording"
 "video_keys"			"fire — start/stop"
 "video_waiting_bridge"			"Sent, waiting for the bridge"

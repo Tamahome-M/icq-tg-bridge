@@ -561,17 +561,6 @@ class FakeJimm:
         name_len = data[0]
         return data[1:1 + name_len].decode("utf-8"), data[1 + name_len:]
 
-    async def request_file_link(self, uin: int, token: bytes, timeout: float = 5.0) -> str:
-        """Ссылка на документ для браузера — как TeleMotoMax, у которого Java
-        к файлам не пускают: флаг 0x40 в запросе, в ответе URL."""
-        was = self.bart_flags
-        self.bart_flags = was | 0x40
-        try:
-            got = await self._request_bart(uin, C.BART_FILE, token, timeout)
-        finally:
-            self.bart_flags = was
-        return got["image"].decode("utf-8")
-
     async def request_voice(self, uin: int, token: bytes, timeout: float = 5.0) -> bytes:
         """Голосовое по токену — как TeleMotoMax: тип 0x0083, ответ частями, склеиваем."""
         got = await self._request_bart(uin, C.BART_VOICE, token, timeout, parts=True)

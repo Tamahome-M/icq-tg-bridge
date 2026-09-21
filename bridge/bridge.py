@@ -83,7 +83,7 @@ class Bridge:
                                  self.fetch_voice, self.send_voice_message,
                                  self.send_video_note, self._reload_roster,
                                  self.fetch_file, self.send_document,
-                                 self.chat_list, self.open_chat, file_link=self.file_link)
+                                 self.chat_list, self.open_chat)
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
@@ -551,17 +551,6 @@ class Bridge:
         name, data = got
         log.info("файл «%s» из «%s»: %d КБ", name, contact.title, len(data) // 1024)
         return name, data
-
-    async def file_link(self, uin: int, attach: str) -> str | None:
-        """Ссылка на документ для браузера телефона: тот же документ, что
-        отдал бы fetch_file, только по HTTP с мини-сервера."""
-        got = await self.fetch_file(uin, attach)
-        if not got or self.photo_server is None:
-            return None
-        name, data = got
-        url = self.web_url(self.photo_server.link_file(name, data))
-        log.info("файл «%s» — ссылка для браузера телефона: %s", name, url)
-        return url
 
     async def send_document(self, uin: int, path: str, name: str) -> bool:
         """Файл с телефона (лежит на диске моста) — в чат документом."""
