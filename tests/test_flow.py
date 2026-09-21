@@ -87,11 +87,13 @@ async def run_case(login_mode: str) -> None:
     # Отправка идёт фоном, клиент по ходу подтверждает получение.
     await server.deliver(uins["Мама"], "Привет! Как дела? ёжик")
     await server.deliver(uins["Новости дня"], "x" * 2000)
+    await server.deliver(uins["Мама"], "1")      # один символ — Jimm требует завершающий ноль
     await client.drain_for(2.0)
 
     texts = [t for _, t in client.received]
     assert set(client.channels) == {2}, f"ждали доставку каналом 2, было {client.channels}"
     assert "Привет! Как дела? ёжик" in texts, texts[:3]
+    assert "1" in texts, "сообщение из одного символа не дошло"
     assert sum(1 for t in texts if t.startswith("xxx")) == 3, "длинное не разбилось на 3 части"
     assert uins["Мама"] in client.online_uins, "не пришло уведомление об онлайне"
     assert client.statuses[uins["Мама"]] == C.STATUS_ONLINE

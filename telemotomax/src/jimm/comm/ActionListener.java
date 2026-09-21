@@ -743,8 +743,10 @@ public class ActionListener
 					System.arraycopy(msg2Buf, msg2Marker, rawText, 0, textLen);
 					msg2Marker += textLen;
 					// Plain message or URL message
+					// TeleMotoMax: > 0, а не > 1 — у Jimm сообщение из одного
+					// символа без завершающего нуля молча пропадало.
 					if (((msgType == 0x0001) || (msgType == 0x0004))
-							&& (rawText.length > 1))
+							&& (rawText.length > 0))
 					{
 
 						// Skip FOREGROUND and BACKGROUND

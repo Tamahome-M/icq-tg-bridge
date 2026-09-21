@@ -159,6 +159,11 @@ def channel2_message(cookie: bytes, text: str, url: str = "") -> bytes:
     msg_type = MSG_TYPE_URL if url else MSG_TYPE_PLAIN
     payload = (text.encode("utf-8") + URL_SEPARATOR + url.encode("utf-8")
                if url else text.encode("utf-8"))
+    # Завершающий ноль — как в оригинальном ICQ и как шлёт сам Jimm. Без
+    # него сообщение из одного символа («1») клиент молча выбрасывал:
+    # ActionListener берёт текст только при rawText.length > 1. Ноль при
+    # разборе он убирает (removeCr), так что на экране его нет.
+    payload += b"\x00"
     block = (
         struct.pack("<H", 0x001B)      # длина заголовка
         + struct.pack("<H", 0x0008)    # версия протокола
