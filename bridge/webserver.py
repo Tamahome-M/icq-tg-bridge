@@ -233,10 +233,10 @@ class PhotoServer:
             extra.append(f'Content-Disposition: inline; filename="{name}"')
         sent = await self._reply(writer, status, mime, part, head_only, extra=extra)
         if sent:
-            log.info("отдано: %s %s (%d байт%s)", what, path[:48], len(part), note)
+            log.info("отдано %s: %s %s (%d байт%s)", host, what, path[:48], len(part), note)
         else:
-            log.warning("%s %s: клиент оборвал приём, %d байт не дошли",
-                        what, path[:48], writer.transport.get_write_buffer_size())
+            log.warning("%s %s: клиент %s оборвал приём, %d байт не дошли",
+                        what, path[:48], host, writer.transport.get_write_buffer_size())
 
     # --- пароль -----------------------------------------------------------
 
