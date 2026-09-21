@@ -187,7 +187,10 @@ class PhotoServer:
 
         set_cookie = ""
         url_token = ""
-        open_area = path.startswith("/d/") and self.download_dirs and not self.downloads_protected
+        # Главная и загрузки — без пароля: на главной только ссылки, а JAR по
+        # ссылке из JAD качает установщик телефона, пароля он спросить не умеет.
+        open_area = ((path.startswith("/d/") and self.download_dirs and not self.downloads_protected)
+                     or path.rstrip("/") in ("", "/index"))
         if self.password and not open_area:
             ok, set_cookie, url_token = self._authorized(host, params, headers)
             if not ok:
@@ -371,6 +374,9 @@ class PhotoServer:
             with open(file_path, "rb") as fh:
                 return fh.read(), "image/jpeg", "картинка"
 
+        if path.rstrip("/") in ("", "/index"):
+            return self._home(), f"{MIME_PAGE}; charset=utf-8", "главная"
+
         if path.startswith("/d/") and self.download_dirs:
             return self._download(path[len("/d/"):])
 
@@ -393,6 +399,33 @@ class PhotoServer:
         if body is not None:
             return body, page_mime, "страница"
         return None
+
+    # --- главная ----------------------------------------------------------
+
+    def _home(self) -> bytes:
+        """Что здесь есть: ссылки на разделы, чтобы не набирать адреса руками."""
+        rows = []
+        if self.download_dirs:
+            note = ""
+            if self.client_dir:
+                jads = [n for n in self._download_names(self.client_dir) if n.endswith(".jad")]
+                if jads:
+                    note = " — " + ", ".join(
+                        f'<a href="/d/{quote(n)}">{html.escape(n[:-4])}</a>' for n in jads)
+            rows.append(f'<p><a href="/d/">Загрузки</a>{note}</p>')
+        if self.render is not None and self.render.index_enabled:
+            rows.append('<p><a href="/r/">Страницы переписки</a> <small>(по паролю)</small></p>')
+        if not rows:
+            rows.append("<p>Разделов нет.</p>")
+        return (
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            '<!DOCTYPE html PUBLIC "-//WAPFORUM//DTD XHTML Mobile 1.0//EN" '
+            '"http://www.wapforum.org/DTD/xhtml-mobile10.dtd">\n'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+            '<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>'
+            "<title>Мост</title></head><body><p><b>Мост</b></p>"
+            + "".join(rows) + "</body></html>\n"
+        ).encode("utf-8", "xmlcharrefreplace")
 
     # --- загрузки ---------------------------------------------------------
 

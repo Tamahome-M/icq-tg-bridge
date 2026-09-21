@@ -630,6 +630,12 @@ async def run_downloads() -> None:
         mime = next((l.split(":", 1)[1].strip() for l in lines if l.lower().startswith("content-type")), "")
         return int(lines[0].split()[1]), mime, body
 
+    # Главная — без пароля, со ссылками на разделы и на JAD клиента.
+    status, mime, body = await get("/")
+    assert status == 200, status
+    text = body.decode("utf-8")
+    assert 'href="/d/"' in text and 'href="/d/TeleMotoMax-V8.jad"' in text, text
+
     # Список: без пароля (установщик телефона его спросить не умеет), скрытых
     # файлов и подкаталогов в нём нет.
     status, mime, body = await get("/d/")
