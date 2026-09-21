@@ -87,13 +87,15 @@ sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION
      s|###TMM-MODULES###|$MODULES|" "$HERE/build.properties" > src/build.properties
 sed -i "s|TMM_VERSION_MAJOR = .*;|TMM_VERSION_MAJOR = $MAJOR;|; \
         s|TMM_VERSION_MINOR = .*;|TMM_VERSION_MINOR = $MINOR;|" src/src/jimm/comm/Icq.java
-# Сборка с камерой (V8) объявляет в JAD, какие закрытые API ей нужны:
-# файлы (JSR-75), снимок, запись. Без этой строки MotoMAGX даже не
-# спрашивает, а бросает SecurityException: Application not authorized —
-# «Скачать файл» отвечал «корни: нет». Необязательные (-Opt): телефон,
-# который их не даст, всё равно поставит приложение.
+# Сборка с камерой (V8) объявляет в JAD, какие закрытые API ей нужны.
+# Файлы (JSR-75) — как обязательные (MIDlet-Permissions): с необязательными
+# (-Opt) MotoMAGX всё равно отвечал SecurityException: Application not
+# authorized, а обязательные он переводит в «спросить у владельца» — либо
+# честно отказывается ставить, если домен их не даёт вовсе. Снимок и
+# запись работали и так — их оставляем необязательными.
 case "$MODULES" in *CAMERA*)
-	printf 'MIDlet-Permissions-Opt: javax.microedition.io.Connector.file.read,javax.microedition.io.Connector.file.write,javax.microedition.media.control.VideoControl.getSnapshot,javax.microedition.media.control.RecordControl\n' >> src/res/MANIFEST.MF ;;
+	printf 'MIDlet-Permissions: javax.microedition.io.Connector.file.read,javax.microedition.io.Connector.file.write\n' >> src/res/MANIFEST.MF
+	printf 'MIDlet-Permissions-Opt: javax.microedition.media.control.VideoControl.getSnapshot,javax.microedition.media.control.RecordControl\n' >> src/res/MANIFEST.MF ;;
 esac
 say "Версия: $STAMP (способность TMM:$MAJOR.$MINOR, имя «$NAME», модули $MODULES)"
 cd src
