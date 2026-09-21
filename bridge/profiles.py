@@ -54,9 +54,11 @@ BUILTIN: dict[str, dict] = {
     "v8": {"match": "V8", "min_width": 240, "photo_width": 240, "photo_height": 320,
            "photo_max_kb": 60, "photo_quality": 85, "video_seconds": 30, "voice_kbps": 12.2,
            "history_max": 400, "roster_limit": 0, "file_max_mb": 5,
-           # Экран 240×320: кадр 320×240 боком заполняет его целиком;
-           # это уже MPEG-4 (H.263 такого кадра не знает), битрейт повыше.
-           "video_width": 320, "video_height": 240, "video_rotate": True, "video_kbps": 192},
+           # Кадр остаётся QCIF — на GPRS ролик 320×240 весил в четыре
+           # раза больше и плеер его не взял; повёрнутый QCIF (144×176) —
+           # те же 99 макроблоков, MPEG-4 Level 0, плеер растянет на
+           # экран сам. Битрейт — общий из [render].
+           "video_rotate": True},
 }
 
 
