@@ -286,6 +286,12 @@ class Transcoder:
             # H.263 знает только стандартные кадры; повёрнутый или иной
             # размер — это уже MPEG-4.
             codec = "mpeg4"
+        codec_args = list(VIDEO_CODECS[codec])
+        if codec == "mpeg4" and width * height > 176 * 144:
+            # Simple Profile Level 0 — это QCIF и не больше: кадр 320×240 с
+            # таким заголовком плеер телефона отвергал («MediaException:
+            # convert»). До CIF (352×288) — Level 3.
+            codec_args = ["-c:v", "mpeg4", "-profile:v", "0", "-level", "3", "-vtag", "mp4v"]
         # Кадр дополняем полями до ровного размера: плеер телефона ждёт
         # именно объявленный размер.
         scale = (f"{rotate}scale={width}:{height}:force_original_aspect_ratio=decrease,"
@@ -293,7 +299,7 @@ class Transcoder:
         kbps = f"{self.video_kbps}k"
         return ([self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
                  "-t", str(self.video_seconds), "-vf", scale, "-r", str(self.video_fps)]
-                + VIDEO_CODECS[codec]
+                + codec_args
                 # Ровный битрейт под потолок уровня: без maxrate кодер даёт
                 # пики выше, чем плеер готов принять.
                 + ["-b:v", kbps, "-maxrate", kbps, "-bufsize", kbps,
