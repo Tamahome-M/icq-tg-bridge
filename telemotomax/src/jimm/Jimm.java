@@ -178,6 +178,7 @@ public class Jimm extends MIDlet
 		// Return if MIDlet has already been initialized
 		if (Jimm.jimm != null)
 		{
+			ConnLog.note("развёрнуто");
 			showWorkScreen();
 			return;
 		}
@@ -356,10 +357,12 @@ public class Jimm extends MIDlet
 		new Timer().schedule(new TimerTasks(TimerTasks.TYPE_MINUTE), 60*1000, 60*1000);
 	}
 
-	// Pause
+	// Pause: система увела мидлет в фон (звонок, «Домой», свёртывание).
+	// Ничего не рвём — соединение и потоки продолжают жить; отметка в
+	// журнале «Связь», чтобы было видно, зовёт ли телефон pauseApp вообще.
 	public void pauseApp()
 	{
-		// Do nothing
+		ConnLog.note("pauseApp: в фоне");
 	}
 
 	// Destroy Jimm
@@ -470,13 +473,20 @@ public class Jimm extends MIDlet
 			MainMenu.activateMenu();
 	}
 
-	//#sijapp cond.if target is "MIDP2" #
+	//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA" #
 	// Set the minimize state of midlet
 	static public void setMinimized(boolean mini)
 	{
 		if (mini)
 		{
-			Jimm.display.setCurrent(null);
+			// Два способа уйти в фон — какой из них понимает телефон, тот и
+			// сработает: MIDP-овский setCurrent(null) (Sony Ericsson) и
+			// notifyPaused() — «мидлет приостановлен» для системы, при
+			// котором потоки и соединение живут (Motorola, Nokia S40).
+			// Возврат — через список приложений: startApp() покажет экран.
+			ConnLog.note("свёрнуто");
+			try { Jimm.display.setCurrent(null); } catch (Exception ignore) {}
+			try { if (jimm != null) jimm.notifyPaused(); } catch (Exception ignore) {}
 		} else
 		{
 			Displayable disp = Jimm.display.getCurrent();
