@@ -170,7 +170,8 @@ class Transcoder:
                  audio_seconds: int = 300, timeout: int = 120,
                  workdir: str = "/tmp", video_codec: str = "h263",
                  video_kbps: int = VIDEO_KBPS, video_fps: int = VIDEO_FPS,
-                 voice_kbps: float = 12.2):
+                 voice_kbps: float = 12.2, video_size: tuple[int, int] = (VIDEO_WIDTH, VIDEO_HEIGHT),
+                 video_rotate: bool = False):
         self.ffmpeg = ffmpeg
         self.video_seconds = video_seconds
         self.audio_seconds = audio_seconds
@@ -180,6 +181,8 @@ class Transcoder:
         self.video_kbps = video_kbps
         self.video_fps = video_fps
         self.voice_kbps = amr_rate(voice_kbps)
+        self.video_size = (max(16, int(video_size[0])), max(16, int(video_size[1])))
+        self.video_rotate = bool(video_rotate)
 
     @property
     def available(self) -> bool:
@@ -221,14 +224,76 @@ class Transcoder:
                 return codec
         return None
 
+    async def probe_size(self, raw: bytes) -> tuple[int, int] | None:
+        """Видимый размер кадра исходника: ширина и высота с учётом тега
+        поворота (телефонные ролики часто сняты «боком» и помечены
+        rotate=90 — на экране они вертикальные)."""
+        if not raw:
+            return None
+        probe = os.path.join(os.path.dirname(self.ffmpeg) or "", "ffprobe") \
+            if os.path.sep in self.ffmpeg else "ffprobe"
+        stamp = _token()
+        src = os.path.join(self.workdir, f"probe-{stamp}")
+        try:
+            os.makedirs(self.workdir, exist_ok=True)
+            with open(src, "wb") as fh:
+                fh.write(raw)
+            proc = await asyncio.create_subprocess_exec(
+                probe, "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height:stream_tags=rotate:stream_side_data=rotation",
+                "-of", "default=noprint_wrappers=1", src,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+            width = height = 0
+            rotation = 0
+            for line in out.decode("utf-8", "replace").splitlines():
+                key, _, value = line.partition("=")
+                value = value.strip()
+                try:
+                    if key == "width":
+                        width = int(value)
+                    elif key == "height":
+                        height = int(value)
+                    elif key in ("TAG:rotate", "rotation"):
+                        rotation = int(float(value))
+                except ValueError:
+                    pass
+            if not width or not height:
+                return None
+            if abs(rotation) % 180 == 90:
+                width, height = height, width
+            return width, height
+        except Exception as exc:
+            log.warning("не смог узнать размер ролика: %s", exc)
+            return None
+        finally:
+            try:
+                os.unlink(src)
+            except OSError:
+                pass
+
     def video_args(self, src: str, dst: str) -> list[str]:
-        # Кадр дополняем полями до ровного QCIF: H.263 других размеров не знает.
-        scale = (f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,"
-                 f"pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2")
+        width, height = self.video_size
+        codec = self.video_codec
+        # Кадр «боком»: ролик поворачивается на 90°, и на вертикальном экране
+        # телефона его смотрят, повернув сам телефон, — картинка во всю
+        # ширину, а не полоска посередине. Размер кадра при этом тоже
+        # становится вертикальным.
+        rotate = "transpose=1," if self.video_rotate else ""
+        if self.video_rotate:
+            width, height = height, width
+        if codec == "h263" and (width, height) not in ((176, 144), (352, 288), (128, 96)):
+            # H.263 знает только стандартные кадры; повёрнутый или иной
+            # размер — это уже MPEG-4.
+            codec = "mpeg4"
+        # Кадр дополняем полями до ровного размера: плеер телефона ждёт
+        # именно объявленный размер.
+        scale = (f"{rotate}scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2")
         kbps = f"{self.video_kbps}k"
         return ([self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
                  "-t", str(self.video_seconds), "-vf", scale, "-r", str(self.video_fps)]
-                + VIDEO_CODECS[self.video_codec]
+                + VIDEO_CODECS[codec]
                 # Ровный битрейт под потолок уровня: без maxrate кодер даёт
                 # пики выше, чем плеер готов принять.
                 + ["-b:v", kbps, "-maxrate", kbps, "-bufsize", kbps,

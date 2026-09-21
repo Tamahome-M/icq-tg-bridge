@@ -200,6 +200,7 @@ public class Options
 	// TeleMotoMax: how many messages "History from server" asks for
 	public static final int OPTION_HISTORY_COUNT    = 113;   // 64..127 — числовые ключи
 	public static final int OPTION_CHAT_MESSAGES    = 114;   // сколько сообщений держит чат
+	public static final int OPTION_VIDEO_ROTATE     = 115;   // ролик боком: 0 авто, 1 всегда, 2 никогда
 	// TeleMotoMax: раз выключили цветной текст сообщений у тех, кто обновился
 	// со старой сборки (в новых установках он и так выключен).
 	public static final int OPTION_PLAIN_TEXT_DONE  = 170;   // 128..191 — флаги
@@ -419,6 +420,7 @@ public class Options
 		//#sijapp cond.end #
 		setInt    (Options.OPTION_HISTORY_COUNT,     10);
 		setInt    (Options.OPTION_CHAT_MESSAGES,     15);
+		setInt    (Options.OPTION_VIDEO_ROTATE,      0);
 
 		setBoolean(Options.OPTION_CP1251_HACK, ResourceBundle.langAvailable[0]
 				.equals("RU") || ResourceBundle.langAvailable[0].equals("BE") );
@@ -1102,6 +1104,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup autoConnectChoiceGroup;
 	private TextField reconnectNumberTextField;
 	private ChoiceGroup uiLanguageChoiceGroup;
+	private ChoiceGroup videoRotateChoice;     // TeleMotoMax
 	private ChoiceGroup choiceInterfaceMisc;
 	private ChoiceGroup clSortByChoiceGroup;
 	private ChoiceGroup chrgChat;
@@ -2424,6 +2427,15 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		optionsForm.append(clSortByChoiceGroup);
 
 		if (chrgChat.size() != 0) optionsForm.append(chrgChat);
+		// TeleMotoMax: ролик боком. «Авто» — мост сам смотрит, широкий ли
+		// исходник; свой выбор уходит мосту в запросе ролика.
+		videoRotateChoice = new ChoiceGroup(ResourceBundle.getString("video_rotate"), Choice.EXCLUSIVE);
+		videoRotateChoice.append(ResourceBundle.getString("video_rotate_auto"), null);
+		videoRotateChoice.append(ResourceBundle.getString("video_rotate_always"), null);
+		videoRotateChoice.append(ResourceBundle.getString("video_rotate_never"), null);
+		try { videoRotateChoice.setSelectedIndex(Options.getInt(Options.OPTION_VIDEO_ROTATE), true); }
+		catch (Exception ignore) {}
+		optionsForm.append(videoRotateChoice);
 		historyCount = new TextField(ResourceBundle.getString("history_count"),
 				String.valueOf(Options.getInt(Options.OPTION_HISTORY_COUNT)), 3, TextField.NUMERIC);
 		optionsForm.append(historyCount);
@@ -2751,6 +2763,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		if (ResourceBundle.langAvailable.length > 1)
 			Options.setString(Options.OPTION_UI_LANGUAGE,
 					ResourceBundle.langAvailable[uiLanguageChoiceGroup.getSelectedIndex()]);
+		if (videoRotateChoice != null)
+			Options.setInt(Options.OPTION_VIDEO_ROTATE, videoRotateChoice.getSelectedIndex());
 
 		int idx = 0;
 		

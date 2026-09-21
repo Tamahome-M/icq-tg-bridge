@@ -151,7 +151,7 @@ async def run_photos() -> None:
     short = bytes(range(256)) * 150                    # 38 400 байт
     videos: list[str] = []
 
-    async def fetch_short(target: int, attach: str):
+    async def fetch_short(target: int, attach: str, rotate: str = "auto"):
         videos.append(attach)
         return short
 
@@ -164,7 +164,7 @@ async def run_photos() -> None:
 
     # Длинный ролик — частями по 60 КБ, клиент склеивает байт в байт.
     clip = bytes(range(256)) * 500                     # 128 000 байт
-    async def fetch_clip(target: int, attach: str):
+    async def fetch_clip(target: int, attach: str, rotate: str = "auto"):
         return clip
     server.fetch_video = fetch_clip
     client.parts_seen.clear()
@@ -382,6 +382,57 @@ async def run_voice() -> None:
     await plain.close()
     server._server.close()
     print("  голосовые: ок (слушаем частями, шлём записанное, обычному Jimm нельзя)")
+
+
+async def run_video_rotate() -> None:
+    """Выбор «ролик боком» доходит от телефона до добытчика ролика: флаги
+    запроса 0x20/0x10 → «always»/«never», без них — «auto»."""
+    from bridge.render import Transcoder
+    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg.oscar_host, cfg.oscar_port = "127.0.0.1", PORT + 13
+    cfg.oscar_uin, cfg.oscar_password = "100500", "s3cret"
+    cfg.avatars = True
+    storage = Storage(":memory:")
+    uin = storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+    seen: list[str] = []
+
+    async def on_outgoing(*_):
+        return 1
+
+    async def fetch_attachment(target: int, attach: str):
+        return b"\xff\xd8\xff" + b"0" * 100
+
+    async def fetch_video(target: int, attach: str, rotate: str = "auto"):
+        seen.append(rotate)
+        return b"\x00\x00\x00\x18ftyp3gp4" + b"0" * 500
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
+                         fetch_attachment=fetch_attachment, fetch_video=fetch_video)
+    await server.start()
+    try:
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 37)
+        await client.connect()
+        await client.bos(await client.login_md5_jimm())
+        await client.drain_for(0.3)
+        await server.deliver(uin, "[видео] ролик", attach="video:7")
+        await client.drain_for(0.5)
+        token = client.attachments[-1][1]
+        for flags, want in ((0x01, "auto"), (0x21, "always"), (0x11, "never")):
+            client.bart_flags = flags
+            await client.request_video(uin, token)
+        assert seen == ["auto", "always", "never"], seen
+        await client.close()
+    finally:
+        server._server.close()
+    # Аргументы ffmpeg: боком — MPEG-4 и вертикальный кадр; QCIF — H.263.
+    t = Transcoder("ffmpeg", 30, video_codec="h263", video_size=(320, 240), video_rotate=True)
+    args = " ".join(t.video_args("in", "out"))
+    assert "transpose=1" in args and "scale=240:320" in args and "-c:v mpeg4" in args, args
+    t = Transcoder("ffmpeg", 10)
+    args = " ".join(t.video_args("in", "out"))
+    assert "transpose" not in args and "-c:v h263" in args, args
+    print("  ролик боком: ок (флаг запроса → always/never/auto, кадр и кодек)")
 
 
 async def run_files() -> None:
@@ -816,6 +867,7 @@ async def main() -> None:
     await run_video_note()
     await run_profiles()
     await run_files()
+    await run_video_rotate()
     run_history_layout()
     run_reply_routing()
     await run_stale_service()

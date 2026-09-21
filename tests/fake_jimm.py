@@ -49,6 +49,7 @@ class FakeJimm:
         # Сведения о телефоне (платформа, ширина, высота, куча): если заданы,
         # уходят при входе сразу после списка семейств, как у TeleMotoMax.
         self.device: tuple[str, int, int, int] | None = None
+        self.bart_flags = 0x01           # флаги запроса к службе (TeleMotoMax: поворот ролика)
 
     async def connect(self) -> None:
         self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
@@ -611,7 +612,7 @@ class FakeJimm:
             await self.send_snac(C.OSERVICE, C.CLI_READY, b"")
 
             body = (pstr8(str(uin).encode()) + b"\x01" + struct.pack(">H", bart_type)
-                    + b"\x01" + bytes([len(digest)]) + digest)
+                    + bytes([self.bart_flags]) + bytes([len(digest)]) + digest)
             await self.send_snac(C.SSBI, C.SSBI_ICQ_REQ, body)
             chunks: list[bytes] = []
             got_uin = 0

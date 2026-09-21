@@ -454,8 +454,10 @@ class Bridge:
         return Transcoder(self.cfg.render_ffmpeg, seconds,
                           self.cfg.render_audio_seconds, self.cfg.render_timeout,
                           self.cfg.render_dir, self.cfg.render_video_codec,
-                          self.cfg.render_video_kbps, self.cfg.render_video_fps,
-                          self.tmm("voice_kbps"))
+                          self.tmm("video_kbps"), self.cfg.render_video_fps,
+                          self.tmm("voice_kbps"),
+                          (self.tmm("video_width"), self.tmm("video_height")),
+                          self.tmm("video_rotate"))
 
     async def fetch_voice(self, uin: int, attach: str) -> bytes | None:
         """Голосовое из сообщения — AMR в 3GP, который телефон умеет играть."""
@@ -585,7 +587,7 @@ class Bridge:
         await self.reply(contact, "[фото] отправлено")
         return True
 
-    async def fetch_video(self, uin: int, attach: str) -> bytes | None:
+    async def fetch_video(self, uin: int, attach: str, rotate: str = "auto") -> bytes | None:
         """Первые секунды ролика для TeleMotoMax — 3GP под плеер телефона.
 
         Ролик качается и перекодируется только по запросу клиента; тем же
@@ -605,6 +607,19 @@ class Bridge:
         if not raw:
             return None
         os.makedirs(self.cfg.render_dir, exist_ok=True)
+        # Боком или нет: «always»/«never» — как сказал телефон; «auto» —
+        # только если профиль это разрешает и исходник широкий (портретный
+        # ролик или кружок на вертикальном экране и так смотрятся как надо).
+        if rotate == "always":
+            transcoder.video_rotate = True
+        elif rotate == "never":
+            transcoder.video_rotate = False
+        elif transcoder.video_rotate:
+            size = await transcoder.probe_size(raw)
+            transcoder.video_rotate = bool(size and size[0] > size[1])
+            log.info("ролик для «%s»: исходник %s — %s", contact.title,
+                     f"{size[0]}×{size[1]}" if size else "размер неизвестен",
+                     "кладу боком" if transcoder.video_rotate else "оставляю как есть")
         data = await transcoder.convert(raw, "video")
         if data:
             log.info("ролик для «%s»: первые %d с, %d КБ", contact.title,

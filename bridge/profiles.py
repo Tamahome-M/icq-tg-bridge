@@ -26,6 +26,11 @@ KEYS = {
     "photo_max_kb": "tmm_photo_max_kb",
     "photo_quality": "tmm_photo_quality",
     "video_seconds": "tmm_video_seconds",
+    # Кадр ролика для телефона и поворот «боком»; битрейт — общий из [render].
+    "video_width": "tmm_video_width",
+    "video_height": "tmm_video_height",
+    "video_rotate": "tmm_video_rotate",
+    "video_kbps": "render_video_kbps",
     "voice_seconds": "tmm_voice_seconds",
     "voice_kbps": "tmm_voice_kbps",
     "history_max": "tmm_history_max",
@@ -48,7 +53,10 @@ BUILTIN: dict[str, dict] = {
     # подлиннее и список без ограничения (0 — все чаты).
     "v8": {"match": "V8", "min_width": 240, "photo_width": 240, "photo_height": 320,
            "photo_max_kb": 60, "photo_quality": 85, "video_seconds": 30, "voice_kbps": 12.2,
-           "history_max": 400, "roster_limit": 0, "file_max_mb": 5},
+           "history_max": 400, "roster_limit": 0, "file_max_mb": 5,
+           # Экран 240×320: кадр 320×240 боком заполняет его целиком;
+           # это уже MPEG-4 (H.263 такого кадра не знает), битрейт повыше.
+           "video_width": 320, "video_height": 240, "video_rotate": True, "video_kbps": 192},
 }
 
 
