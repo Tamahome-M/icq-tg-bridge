@@ -87,6 +87,14 @@ sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION
      s|###TMM-MODULES###|$MODULES|" "$HERE/build.properties" > src/build.properties
 sed -i "s|TMM_VERSION_MAJOR = .*;|TMM_VERSION_MAJOR = $MAJOR;|; \
         s|TMM_VERSION_MINOR = .*;|TMM_VERSION_MINOR = $MINOR;|" src/src/jimm/comm/Icq.java
+# Сборка с камерой (V8) объявляет в JAD, какие закрытые API ей нужны:
+# файлы (JSR-75), снимок, запись. Без этой строки MotoMAGX даже не
+# спрашивает, а бросает SecurityException: Application not authorized —
+# «Скачать файл» отвечал «корни: нет». Необязательные (-Opt): телефон,
+# который их не даст, всё равно поставит приложение.
+case "$MODULES" in *CAMERA*)
+	printf 'MIDlet-Permissions-Opt: javax.microedition.io.Connector.file.read,javax.microedition.io.Connector.file.write,javax.microedition.media.control.VideoControl.getSnapshot,javax.microedition.media.control.RecordControl\n' >> src/res/MANIFEST.MF ;;
+esac
 say "Версия: $STAMP (способность TMM:$MAJOR.$MINOR, имя «$NAME», модули $MODULES)"
 cd src
 
@@ -108,7 +116,15 @@ with zipfile.ZipFile(jar) as src, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED
 os.replace(tmp, jar)
 size = os.path.getsize(jar)
 lines = open(jad, encoding="utf-8").read().splitlines()
-lines = [f"MIDlet-Jar-Size: {size}" if l.startswith("MIDlet-Jar-Size:") else l for l in lines]
+# JAD делается из манифеста, а манифест переносит длинные строки (72 байта,
+# продолжение с пробела). В JAD переносов не бывает — склеиваем обратно.
+joined = []
+for l in lines:
+    if l.startswith(" ") and joined:
+        joined[-1] += l[1:]
+    else:
+        joined.append(l)
+lines = [f"MIDlet-Jar-Size: {size}" if l.startswith("MIDlet-Jar-Size:") else l for l in joined]
 open(jad, "w", encoding="utf-8").write("\n".join(lines) + "\n")
 PY
 say "Готово: $WORK/out/TeleMotoMax.jar ($(wc -c < "$WORK/out/TeleMotoMax.jar") байт), TeleMotoMax.jad"
