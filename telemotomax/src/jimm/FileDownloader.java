@@ -64,15 +64,27 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 		setCommandListener(this);
 	}
 
+	// Java к файлам не пускают (на MOTOMAGX JSR-75 закрыт для неподписанных
+	// приложений, и владелец этого не изменит) — тогда просим у моста ссылку
+	// и отдаём её браузеру телефона: тот качает и сохраняет с полными правами.
+	private boolean viaBrowser;
+
 	static public void show(String uin, byte[] token, JimmScreen back)
 	{
 		FileDownloader dl = new FileDownloader(uin, back);
-		dl.status = ResourceBundle.getString("file_loading");
 		current = dl;
 		Jimm.display.setCurrent(dl);
+		// Есть ли куда писать — проверяем до запроса, а не после первой
+		// части: иначе 60 КБ скачались бы впустую.
+		dl.viaBrowser = (targetUrl("tmm_probe.tmp") == null);
+		if (!dl.viaBrowser) deleteFile(probeUrl);
+		dl.status = ResourceBundle.getString(dl.viaBrowser ? "file_link_wait" : "file_loading");
+		dl.repaint();
 		try
 		{
-			Icq.requestAction(new RequestBartAction(uin, RequestBartAction.BART_FILE, token, dl));
+			RequestBartAction act = new RequestBartAction(uin, RequestBartAction.BART_FILE, token, dl);
+			if (dl.viaBrowser) act.setFlags(0x40);
+			Icq.requestAction(act);
 		}
 		catch (JimmException e)
 		{
@@ -87,13 +99,24 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 		repaint();
 	}
 
-	// Ответ целиком (если части не пошли потоком) — тоже в файл.
+	// Ответ целиком (если части не пошли потоком) — тоже в файл; в режиме
+	// браузера ответ — это ссылка.
 	public void onBart(byte[] data)
 	{
 		if (current != this) return;
 		if (data == null)
 		{
-			status = ResourceBundle.getString("file_failed");
+			status = ResourceBundle.getString("file_failed") + (viaBrowser ? "" : "\n" + rootsError);
+			repaint();
+			return;
+		}
+		if (viaBrowser)
+		{
+			String url = Util.byteArrayToString(data, 0, data.length, true);
+			boolean ok = false;
+			try { Jimm.jimm.platformRequest(url); ok = true; }
+			catch (Exception e) { status = ResourceBundle.getString("file_failed") + " " + shortName(e); }
+			if (ok) status = ResourceBundle.getString("file_in_browser") + "\n" + url;
 			repaint();
 			return;
 		}
@@ -108,7 +131,7 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 
 	public synchronized boolean onBartPart(byte[] buf, int off, int len, int part, int total)
 	{
-		if (current != this || failed) return false;
+		if (current != this || failed || viaBrowser) return false;
 		if (partQueue == null)
 		{
 			// Первая часть: имя файла в голове.
@@ -200,6 +223,7 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 	// ошибка — показываются на экране, если места не нашлось.
 	private static String rootsSeen = "";
 	private static String rootsError = "";
+	private static String probeUrl;
 
 	// Куда сохранять. Пробуем по очереди на каждом корне: папку tmm/, потом
 	// сам корень — и не спрашиваем canWrite (на Motorola он врёт), а честно
@@ -237,6 +261,7 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 							fc.create();
 						}
 						finally { fc.close(); }
+						probeUrl = url;
 						return url;
 					}
 					catch (Exception e)

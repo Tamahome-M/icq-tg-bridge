@@ -92,6 +92,12 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	private int filled;
 	private boolean notified;         // слушателю уже сказали, чем кончилось
 	private boolean streaming;        // части уходят слушателю по одной
+	private int extraFlags;           // свои биты во флагах приметы (0x40 — ссылку на файл)
+
+	public void setFlags(int flags)
+	{
+		extraFlags = flags;
+	}
 
 	public RequestBartAction(String uin, int bartType, byte[] token, Listener listener)
 	{
@@ -141,7 +147,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 		// Флаги приметы: у Jimm всегда 0x01. Для ролика TeleMotoMax добавляет
 		// выбор поворота: 0x20 — всегда боком, 0x10 — никогда, ничего — авто
 		// (мост сам смотрит на исходник). Старый мост лишние биты не читает.
-		int flags = 0x01;
+		int flags = 0x01 | extraFlags;
 		if (bartType == BART_VIDEO)
 		{
 			int mode = jimm.Options.getInt(jimm.Options.OPTION_VIDEO_ROTATE);

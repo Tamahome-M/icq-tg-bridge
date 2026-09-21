@@ -58,6 +58,12 @@ DOWNLOAD_TYPES = {
     ".3gp": "video/3gpp", ".mp4": "video/mp4", ".amr": "audio/amr", ".mp3": "audio/mpeg",
     ".mid": "audio/midi", ".midi": "audio/midi", ".wav": "audio/x-wav",
     ".zip": "application/zip", ".sis": "application/vnd.symbian.install",
+    ".pdf": "application/pdf", ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".rtf": "application/rtf", ".csv": "text/csv", ".ogg": "audio/ogg", ".opus": "audio/ogg",
+    ".apk": "application/vnd.android.package-archive", ".7z": "application/x-7z-compressed",
     ".thm": "application/vnd.eri.thm", ".cab": "application/vnd.ms-cab-compressed",
 }
 
@@ -85,6 +91,10 @@ def _parse_range(value: str, size: int) -> tuple[int, int] | None:
     return start, min(end, size - 1)
 
 
+FILE_LINK_TTL = 3600             # сколько живёт ссылка на документ для браузера телефона
+FILE_LINK_LIMIT = 50             # и сколько документов держим в памяти
+
+
 class PhotoServer:
     def __init__(self, store: PhotoStore, host: str, port: int,
                  access: AccessControl | None = None,
@@ -107,6 +117,11 @@ class PhotoServer:
         # клиент ставится на телефон именно отсюда, по ссылке на JAD.
         self.client_dir = client_dir if client_dir and os.path.isdir(client_dir) else ""
         self._sessions: dict[str, float] = {}       # cookie -> срок
+        # Документы для скачивания браузером телефона: токен → (имя, байты,
+        # когда). На MOTOMAGX Java-приложению без подписи файлы закрыты
+        # вовсе, а браузер телефона качает и сохраняет с полными правами —
+        # клиент открывает такую ссылку через platformRequest. Час жизни.
+        self.file_links: dict[str, tuple[str, bytes, float]] = {}
         self._server: asyncio.AbstractServer | None = None
 
     async def start(self) -> None:
@@ -190,6 +205,7 @@ class PhotoServer:
         # Главная и загрузки — без пароля: на главной только ссылки, а JAR по
         # ссылке из JAD качает установщик телефона, пароля он спросить не умеет.
         open_area = ((path.startswith("/d/") and self.download_dirs and not self.downloads_protected)
+                     or path.startswith("/f/")
                      or path.rstrip("/") in ("", "/index"))
         if self.password and not open_area:
             ok, set_cookie, url_token = self._authorized(host, params, headers)
@@ -377,6 +393,17 @@ class PhotoServer:
         if path.rstrip("/") in ("", "/index"):
             return self._home(), f"{MIME_PAGE}; charset=utf-8", "главная"
 
+        if path.startswith("/f/"):
+            token = path[len("/f/"):].split("/", 1)[0]
+            got = self.file_links.get(token)
+            if got is None or time.time() - got[2] > FILE_LINK_TTL:
+                self.file_links.pop(token, None)
+                return None
+            name, data, _ = got
+            mime = DOWNLOAD_TYPES.get(os.path.splitext(name)[1].lower(),
+                                      "application/octet-stream")
+            return data, mime, "файл"
+
         if path.startswith("/d/") and self.download_dirs:
             return self._download(path[len("/d/"):])
 
@@ -399,6 +426,17 @@ class PhotoServer:
         if body is not None:
             return body, page_mime, "страница"
         return None
+
+    def link_file(self, name: str, data: bytes) -> str:
+        """Путь одноразовой ссылки на документ для браузера телефона."""
+        now = time.time()
+        for old in [t for t, (_, _, made) in self.file_links.items() if now - made > FILE_LINK_TTL]:
+            self.file_links.pop(old, None)
+        while len(self.file_links) >= FILE_LINK_LIMIT:
+            self.file_links.pop(next(iter(self.file_links)))
+        token = os.urandom(8).hex()
+        self.file_links[token] = (name, data, now)
+        return f"/f/{token}/{quote(name)}"
 
     # --- главная ----------------------------------------------------------
 
