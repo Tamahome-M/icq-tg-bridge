@@ -94,8 +94,11 @@ sed -i "s|TMM_VERSION_MAJOR = .*;|TMM_VERSION_MAJOR = $MAJOR;|; \
 # честно отказывается ставить, если домен их не даёт вовсе. Снимок и
 # запись работали и так — их оставляем необязательными.
 case "$MODULES" in *CAMERA*)
-	printf 'MIDlet-Permissions: javax.microedition.io.Connector.file.read,javax.microedition.io.Connector.file.write\n' >> src/res/MANIFEST.MF
-	printf 'MIDlet-Permissions-Opt: javax.microedition.media.control.VideoControl.getSnapshot,javax.microedition.media.control.RecordControl\n' >> src/res/MANIFEST.MF ;;
+	# Все разрешения — необязательные (-Opt): обязательные для неподписанной
+	# сборки дают молчаливый отказ в установке на MOTOMAGX, а подписанной
+	# телефон выдаёт и необязательные по политике её домена. Строка одна и в
+	# манифесте, и в JAD: у подписанного приложения они обязаны совпадать.
+	printf 'MIDlet-Permissions-Opt: javax.microedition.io.Connector.file.read,javax.microedition.io.Connector.file.write,javax.microedition.media.control.VideoControl.getSnapshot,javax.microedition.media.control.RecordControl\n' >> src/res/MANIFEST.MF ;;
 esac
 say "Версия: $STAMP (способность TMM:$MAJOR.$MINOR, имя «$NAME», модули $MODULES)"
 cd src
@@ -113,8 +116,24 @@ strip = {"xstatus.png", "micons.png", "clicons.png", "logo.png"}
 tmp = jar + ".tmp"
 with zipfile.ZipFile(jar) as src, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
     for item in src.infolist():
-        if item.filename not in strip:
-            dst.writestr(item, src.read(item.filename))
+        if item.filename in strip:
+            continue
+        data = src.read(item.filename)
+        if item.filename == "META-INF/MANIFEST.MF":
+            # MIDlet-Jar-URL и MIDlet-Jar-Size — атрибуты JAD, в манифесте
+            # им не место: у подписанного приложения атрибуты JAD обязаны
+            # совпадать с манифестом, а эти два в JAD другие (имя V8-сборки,
+            # настоящий размер) — установка отвергалась молча.
+            lines, out = data.decode("utf-8").replace("\r", "").split("\n"), []
+            skip = False
+            for l in lines:
+                if l.startswith(" ") and skip:
+                    continue
+                skip = l.startswith("MIDlet-Jar-URL:") or l.startswith("MIDlet-Jar-Size:")
+                if not skip:
+                    out.append(l)
+            data = "\r\n".join(out).encode("utf-8")
+        dst.writestr(item, data)
 os.replace(tmp, jar)
 size = os.path.getsize(jar)
 lines = open(jad, encoding="utf-8").read().splitlines()

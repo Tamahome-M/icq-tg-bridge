@@ -43,13 +43,12 @@ SIG=$(openssl dgst -sha1 -sign "$KEYS/signer.key" "$JAR" | openssl base64 -A)
 CERT1=$(openssl base64 -A < "$KEYS/signer.der")
 CERT2=$(openssl base64 -A < "$KEYS/ca.der")
 
-# Старые строки подписи убираем, новые дописываем; MIDlet-Permissions —
-# обязательные для подписанного приложения (JSR-118, файлы + камера).
-grep -v '^MIDlet-Certificate-\|^MIDlet-Jar-RSA-SHA1\|^MIDlet-Permissions' "$JAD" > "$JAD.tmp"
+# Старые строки подписи убираем, новые дописываем. Разрешения в JAD не
+# трогаем: у подписанного приложения каждый атрибут JAD обязан совпадать с
+# манифестом в JAR, иначе установка молча отвергается (JSR-118, 905).
+grep -v '^MIDlet-Certificate-\|^MIDlet-Jar-RSA-SHA1' "$JAD" > "$JAD.tmp"
 {
 	cat "$JAD.tmp"
-	echo "MIDlet-Permissions: javax.microedition.io.Connector.file.read,javax.microedition.io.Connector.file.write,javax.microedition.io.Connector.socket,javax.microedition.io.Connector.http"
-	echo "MIDlet-Permissions-Opt: javax.microedition.media.control.VideoControl.getSnapshot,javax.microedition.media.control.RecordControl"
 	echo "MIDlet-Certificate-1-1: $CERT1"
 	echo "MIDlet-Certificate-1-2: $CERT2"
 	echo "MIDlet-Jar-RSA-SHA1: $SIG"
