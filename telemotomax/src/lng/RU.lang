@@ -340,6 +340,7 @@
 "media_video_seconds"			"Видео: длина, с"
 "media_voice_kbps"			"Голосовое: битрейт, кбит/с"
 "media_voice_seconds"			"Голосовое: длина, с"
+"media_mem_kb"			"Ролик в памяти, КБ (0 — по куче)"
 "options_hotkeys"			"Горячие клавиши"
 "options_network"			"Сеть"
 "options_signaling"			"Оповещения"

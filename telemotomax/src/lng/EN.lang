@@ -226,6 +226,7 @@
 "media_video_seconds"			"Video: length, s"
 "media_voice_kbps"			"Voice: bitrate, kbps"
 "media_voice_seconds"			"Voice: length, s"
+"media_mem_kb"			"Clip in memory, KB (0 — by heap)"
 "options_hotkeys"			"Hotkeys"
 "options_network"			"Network"
 "options_signaling"			"Signaling"
