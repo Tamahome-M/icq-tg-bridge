@@ -82,8 +82,17 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 				Player p = null;
 				try
 				{
-					try { p = Manager.createPlayer("capture://image"); locator = "image"; }
-					catch (Exception first) { p = Manager.createPlayer("capture://video"); locator = "video"; }
+					// Источник камеры у Motorola — capture://camera («Java ME
+					// Developer Guide for MOTOMAGX»: camera player с getSnapshot);
+					// capture://image — по MMAPI; capture://video — видеопоток,
+					// на V8 открывался только он, а снимок с него — кадр
+					// видеозахвата, не сенсора.
+					try { p = Manager.createPlayer("capture://camera"); locator = "camera"; }
+					catch (Exception noCamera)
+					{
+						try { p = Manager.createPlayer("capture://image"); locator = "image"; }
+						catch (Exception noImage) { p = Manager.createPlayer("capture://video"); locator = "video"; }
+					}
 					p.realize();
 					VideoControl vc = (VideoControl) p.getControl("VideoControl");
 					if (vc == null) throw new Exception("no VideoControl");
@@ -161,43 +170,53 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	// Размеры JPEG-снимка, которые телефон объявляет в video.snapshot.encodings
 	// («encoding=jpeg&width=640&height=480 ...»), — строками «640x480», без
 	// повторов. Пусто — телефон не говорит, тогда снимок «как есть».
-	// Обычные размеры на случай, если телефон в свойстве размеры не называет
-	// (V8 перечисляет там только форматы). Только 4:3 и не больше 2 МП —
-	// камера V8; неподдерживаемый размер телефон не отвергает, а отдаёт
-	// битый кадр, поэтому лишнего в списке лучше не держать.
+	// Размеры фото самой камеры V8 (таблица photoSizeTable в ezx_camera.cfg
+	// прошивки, портрет: ширина×высота) — 240×320, 480×640, 960×1280,
+	// 1200×1600 — плюс кадры видеозахвата из kvm. Неподдерживаемый размер
+	// V8 не отвергает, а отдаёт битый кадр (640×480 — «завёрнутая» картинка
+	// с зелёным низом) или пустоту (1024×768): в списке только то, что
+	// телефон знает; что из этого даёт настоящий кадр — видно в «Связи».
 	private static final String[] COMMON_SIZES =
-		{ "160x120", "320x240", "640x480", "1024x768", "1280x960", "1600x1200" };
+		{ "1200x1600", "960x1280", "480x640", "320x240", "240x320", "160x120" };
 
 	public static String[] snapshotSizes()
 	{
 		java.util.Vector out = new java.util.Vector();
-		try
-		{
-			String all = System.getProperty("video.snapshot.encodings");
-			if (all != null)
-			{
-				String lower = all.toLowerCase();
-				int pos = 0;
-				while (pos < lower.length())
-				{
-					int end = lower.indexOf(' ', pos);
-					if (end < 0) end = lower.length();
-					String enc = lower.substring(pos, end);
-					pos = end + 1;
-					// Регистр и имя формата не важны: берём любой размер.
-					int w = enc.indexOf("width=");
-					int h = enc.indexOf("height=");
-					if (w < 0 || h < 0) continue;
-					String size = number(enc, w + 6) + "x" + number(enc, h + 7);
-					if (size.length() > 2 && !out.contains(size)) out.addElement(size);
-				}
-			}
-		}
-		catch (Exception ignore) {}
-		if (out.isEmpty()) return COMMON_SIZES;
+		// video.snapshot.encodings у V8 — только «encoding=jpeg»; размеры он
+		// называет в video.encodings (кадры видеозахвата). Фото-размеры
+		// камеры телефон в свойствах не называет вовсе — добавляем свои.
+		sizesFrom("video.snapshot.encodings", out);
+		if (out.isEmpty()) sizesFrom("video.encodings", out);
+		for (int i = 0; i < COMMON_SIZES.length; i++)
+			if (!out.contains(COMMON_SIZES[i])) out.addElement(COMMON_SIZES[i]);
 		String[] sizes = new String[out.size()];
 		out.copyInto(sizes);
 		return sizes;
+	}
+
+	private static void sizesFrom(String property, java.util.Vector out)
+	{
+		try
+		{
+			String all = System.getProperty(property);
+			if (all == null) return;
+			String lower = all.toLowerCase();
+			int pos = 0;
+			while (pos < lower.length())
+			{
+				int end = lower.indexOf(' ', pos);
+				if (end < 0) end = lower.length();
+				String enc = lower.substring(pos, end);
+				pos = end + 1;
+				// Регистр и имя формата не важны: берём любой размер.
+				int w = enc.indexOf("width=");
+				int h = enc.indexOf("height=");
+				if (w < 0 || h < 0) continue;
+				String size = number(enc, w + 6) + "x" + number(enc, h + 7);
+				if (size.length() > 2 && !out.contains(size)) out.addElement(size);
+			}
+		}
+		catch (Exception ignore) {}
 	}
 
 	// Размер JPEG по заголовку кадра (SOF), без раскодирования: «640x480»
@@ -253,29 +272,25 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 				{
 					int x = size.indexOf('x');
 					String w = size.substring(0, x), h = size.substring(x + 1);
-					// Сначала переводим на этот размер сам видоискатель: у
-					// Motorola кадр снимка идёт от размера показа, и размер
-					// только в строке getSnapshot давал на V8 «завёрнутую»
-					// картинку с зелёным низом — буфер под 640×480, кадр в
-					// нём 240×320 (пустой YUV и есть зелёный). Больше экрана
-					// — можно, лишнее телефон обрежет; откажет — снимаем как
-					// раньше.
-					try
-					{
-						video.setDisplaySize(Integer.parseInt(w), Integer.parseInt(h));
-						how = "показ " + size + ", ";
-					}
-					catch (Exception e) { how = "показ не " + size + ", "; }
 					try
 					{
 						shot = video.getSnapshot("encoding=jpeg&width=" + w + "&height=" + h);
 					}
 					catch (Exception e) { err = e; }
+					// V8 на неподдерживаемый размер не бросает исключение, а
+					// отдаёт пустой массив (1024×768 — «?, 0 КБ») — это не
+					// снимок, идём к следующей попытке.
+					if (shot != null && jpegSize(shot) == null)
+					{
+						ConnLog.note("снимок " + size + ": не JPEG, " + shot.length + " Б — без размера");
+						shot = null;
+					}
 				}
 				if (shot == null)
 				{
 					try { shot = video.getSnapshot("encoding=jpeg"); err = null; }
 					catch (Exception e) { if (err == null) err = e; }
+					if (shot != null && jpegSize(shot) == null) shot = null;
 				}
 				if (shot == null)
 				{
