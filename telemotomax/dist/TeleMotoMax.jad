@@ -5,7 +5,7 @@ MIDlet-Name: TeleMotoMax
 MIDlet-Version: 0.53
 MIDlet-Vendor: icq-tg-bridge
 MIDlet-Jar-URL: TeleMotoMax.jar
-MIDlet-Jar-Size: 236054
+MIDlet-Jar-Size: 236267
 MIDlet-Icon: icon.png
 MicroEdition-Profile: MIDP-2.0
 MicroEdition-Configuration: CLDC-1.0
