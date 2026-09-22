@@ -51,6 +51,8 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	private boolean flash;             // белый кадр на миг — снимок сделан
 	private String progress;           // состояние справа в верхней полосе
 	private String locator = "?";      // какой источник открылся: camera, image или video
+	private static final Command cmdProbe = new Command(ResourceBundle.getString("cam_probe"), Command.ITEM, 2);
+	private boolean probing;
 
 	private CameraShot(String uin, JimmScreen back)
 	{
@@ -58,6 +60,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		this.back = back;
 		setFullScreenMode(true);
 		addCommand(JimmUI.cmdBack);
+		addCommand(cmdProbe);
 		setCommandListener(this);
 	}
 
@@ -168,7 +171,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		catch (Exception e) { return "?"; }
 	}
 
-	private static String shortName(Exception e)
+	private static String shortName(Throwable e)
 	{
 		if (e == null) return "?";
 		String name = e.getClass().getName();
@@ -418,7 +421,11 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 				CameraHud.bottom(g, w, h, ResourceBundle.getString("cam_hint_shoot"),
 						ResourceBundle.getString("cam_hint_back"));
 		}
-		if (status != null) CameraHud.box(g, w, h, status, details);
+		if (status != null)
+		{
+			if (details != null && details.length > 4) CameraHud.list(g, w, h, status, details);
+			else CameraHud.box(g, w, h, status, details);
+		}
 	}
 
 	protected void keyPressed(int keyCode)
@@ -427,6 +434,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		int action = 0;
 		try { action = getGameAction(keyCode); } catch (Exception ignore) {}
 		if (action == FIRE || keyCode == KEY_NUM5) shoot();
+		else if (keyCode == KEY_POUND) probe();
 	}
 
 	private void stopCamera()
@@ -442,7 +450,75 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 
 	public void commandAction(Command c, Displayable d)
 	{
+		if (c == cmdProbe) { probe(); return; }
 		close();
+	}
+
+	// Проба: что телефон отдаёт на каждый вариант строки getSnapshot — по
+	// одному снимку за круг это не выяснить. Ничего не отправляет; итог —
+	// на экране и в «Связи» (размер по заголовку JPEG, пусто, исключение).
+	private static final String[] PROBES = {
+		"encoding=jpeg",
+		"encoding=jpeg&width=480&height=640",
+		"encoding=jpeg&width=640&height=480",
+		"encoding=jpeg&width=320&height=240",
+		"encoding=jpeg&width=960&height=1280",
+		"encoding=jpeg&width=1200&height=1600",
+		"encoding=image/jpeg&width=480&height=640",
+		"width=480&height=640",
+		"encoding=rgb565&width=480&height=640",
+		"encoding=png",
+	};
+
+	private void probe()
+	{
+		if (video == null || sending || probing) return;
+		probing = true;
+		status = ResourceBundle.getString("cam_probing");
+		details = null;
+		repaint();
+		new Thread() {
+			public void run()
+			{
+				String[] out = new String[PROBES.length + 2];
+				out[0] = "video.encodings: " + longProperty("video.encodings");
+				out[1] = "показ " + getWidth() + "x" + getHeight() + ", " + locator;
+				for (int i = 0; i < PROBES.length; i++)
+				{
+					String what = PROBES[i];
+					String res;
+					try
+					{
+						byte[] shot = video.getSnapshot(what);
+						if (shot == null) res = "null";
+						else if (shot.length == 0) res = "пусто";
+						else
+						{
+							String size = jpegSize(shot);
+							res = (size == null ? "не JPEG" : size) + ", " + shot.length + " Б";
+						}
+					}
+					catch (Throwable t) { res = shortName(t); }
+					out[i + 2] = what.replace('&', ' ') + " -> " + res;
+					ConnLog.note("проба " + out[i + 2]);
+					if (video == null) break;
+				}
+				probing = false;
+				status = ResourceBundle.getString("cam_probe_done");
+				details = out;
+				repaint();
+			}
+		}.start();
+	}
+
+	private static String longProperty(String name)
+	{
+		try
+		{
+			String v = System.getProperty(name);
+			return v == null ? "нет" : v;
+		}
+		catch (Exception e) { return "?"; }
 	}
 
 	private void close()

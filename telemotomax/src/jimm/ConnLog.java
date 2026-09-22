@@ -24,7 +24,7 @@ import jimm.comm.Util;
  */
 public final class ConnLog
 {
-	private static final int SIZE = 8;
+	private static final int SIZE = 24;     // проба камеры пишет с десяток строк
 	private static final String[] lines = new String[SIZE];
 	private static int next;
 
