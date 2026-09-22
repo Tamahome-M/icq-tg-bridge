@@ -522,6 +522,14 @@ public class Icq implements Runnable
 
 	public static void sendPhoto(String uin, byte[] photo) throws JimmException
 	{
+		sendPhoto(uin, photo, null);
+	}
+
+	// Снимок 1200×1600 — это 150–250 КБ, по GPRS минуты; экран камеры
+	// показывает, сколько частей уже ушло.
+	public static void sendPhoto(String uin, byte[] photo, UploadProgress progress)
+			throws JimmException
+	{
 		byte[] uinRaw = Util.stringToByteArray(uin);
 		int total = (photo.length + PHOTO_PART - 1) / PHOTO_PART;
 		if (total < 1) total = 1;
@@ -539,6 +547,7 @@ public class Icq implements Runnable
 			Util.putWord(buf, marker, size); marker += 2;
 			System.arraycopy(photo, from, buf, marker, size);
 			sendPacket(new SnacPacket(0x0010, 0x0002, 0x00000000, new byte[0], buf));
+			if (progress != null) progress.onPart(part, total);
 			if (part < total) breathe();
 		}
 	}

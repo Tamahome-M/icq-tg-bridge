@@ -48,7 +48,9 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	private String status;
 	private String[] details;          // что телефон отвечает про съёмку
 	private boolean sending;
-	private String locator = "?";      // какой источник открылся: image или video
+	private boolean flash;             // белый кадр на миг — снимок сделан
+	private String progress;           // состояние справа в верхней полосе
+	private String locator = "?";      // какой источник открылся: camera, image или video
 
 	private CameraShot(String uin, JimmScreen back)
 	{
@@ -258,7 +260,8 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	{
 		if (video == null || sending) return;
 		sending = true;
-		status = ResourceBundle.getString("camera_sending");
+		status = null;
+		progress = ResourceBundle.getString("cam_shooting");
 		repaint();
 		new Thread() {
 			public void run()
@@ -298,6 +301,13 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 					catch (Exception e) { if (err == null) err = e; }
 				}
 				stopCamera();
+				// Вспышка на экране — снимок сделан: видоискатель уже закрыт,
+				// белый кадр на чёрном виден отчётливо.
+				flash = true;
+				repaint();
+				try { Thread.sleep(150); } catch (Exception ignore) {}
+				flash = false;
+				repaint();
 				if (shot == null)
 				{
 					sending = false;
@@ -312,8 +322,17 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 						+ (size != null && size.length() > 0 ? ", просили " + size : "") + ")");
 				try
 				{
-					Icq.sendPhoto(uin, shot);
-					status = ResourceBundle.getString("camera_sending") + " " + info;
+					final String sent = info;
+					progress = sent;
+					repaint();
+					Icq.sendPhoto(uin, shot, new Icq.UploadProgress() {
+						public void onPart(int part, int total)
+						{
+							progress = sent + " \u00b7 " + part + "/" + total;
+							repaint();
+						}
+					});
+					progress = ResourceBundle.getString("cam_wait_bridge");
 					waitForBridge();
 				}
 				catch (Exception e)
@@ -360,33 +379,32 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 
 	protected void paint(Graphics g)
 	{
+		int w = getWidth(), h = getHeight();
+		if (flash)
+		{
+			g.setColor(0xFFFFFF);
+			g.fillRect(0, 0, w, h);
+			return;
+		}
+		// Видоискатель рисует телефон; без него — чёрный фон.
 		if (video == null)
 		{
 			g.setColor(0x000000);
-			g.fillRect(0, 0, getWidth(), getHeight());
+			g.fillRect(0, 0, w, h);
 		}
-		if (status != null)
+		String left = ResourceBundle.getString("cam_photo");
+		if (sending)
+			CameraHud.top(g, w, left, progress, CameraHud.WARN);
+		else
 		{
-			Font font = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
-			g.setFont(font);
-			int step = font.getHeight();
-			int lines = 1 + (details == null ? 0 : details.length);
-			int top = getHeight() - lines * step - 4;
-			g.setColor(0x000000);
-			g.fillRect(0, top, getWidth(), lines * step + 4);
-			g.setColor(0xFFFFFF);
-			int y = top + step;
-			g.drawString(status, 2, y, Graphics.LEFT | Graphics.BASELINE);
-			if (details != null)
-			{
-				g.setColor(0xC0C0C0);
-				for (int i = 0; i < details.length; i++)
-				{
-					y += step;
-					g.drawString(details[i], 2, y, Graphics.LEFT | Graphics.BASELINE);
-				}
-			}
+			String size = Options.getString(Options.OPTION_CAMERA_SIZE);
+			if (size == null || size.length() == 0) size = ResourceBundle.getString("camera_size_default");
+			CameraHud.top(g, w, left, size, CameraHud.DIM);
+			if (video != null && status == null)
+				CameraHud.bottom(g, w, h, ResourceBundle.getString("cam_hint_shoot"),
+						ResourceBundle.getString("cam_hint_back"));
 		}
+		if (status != null) CameraHud.box(g, w, h, status, details);
 	}
 
 	protected void keyPressed(int keyCode)
