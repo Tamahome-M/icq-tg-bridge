@@ -89,12 +89,19 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 					// capture://image — по MMAPI; capture://video — видеопоток,
 					// на V8 открывался только он, а снимок с него — кадр
 					// видеозахвата, не сенсора.
-					try { p = Manager.createPlayer("capture://camera"); locator = "camera"; }
-					catch (Exception noCamera)
+					// Кто из них не открылся и почему — в «Связь»: по одному
+					// «capture://video» в журнале не понять, отвергает ли V8
+					// сам локатор или что-то ещё.
+					String[] tries = { "capture://camera", "capture://image", "capture://video" };
+					String why = "";
+					for (int i = 0; i < tries.length && p == null; i++)
 					{
-						try { p = Manager.createPlayer("capture://image"); locator = "image"; }
-						catch (Exception noImage) { p = Manager.createPlayer("capture://video"); locator = "video"; }
+						try { p = Manager.createPlayer(tries[i]); locator = tries[i].substring(10); }
+						catch (Exception e) { why += tries[i].substring(10) + ": " + shortName(e) + "; "; }
 					}
+					if (p == null) throw new Exception(why);
+					if (why.length() > 0)
+						ConnLog.note("камера: " + why + "открылся " + locator + "; capture: " + captureTypes());
 					p.realize();
 					VideoControl vc = (VideoControl) p.getControl("VideoControl");
 					if (vc == null) throw new Exception("no VideoControl");
@@ -120,9 +127,9 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 
 	// The camera refused: show what the phone itself says about capture, so
 	// it is clear whether a MIDlet may use it here at all.
-	private void failed(Exception e)
+	// Что телефон объявляет для протокола capture (типы содержимого).
+	private static String captureTypes()
 	{
-		status = ResourceBundle.getString("camera_failed") + " " + shortName(e);
 		String types = "";
 		try
 		{
@@ -133,6 +140,13 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		catch (Exception ex) { types = shortName(ex); }
 		if (types.length() == 0) types = "нет";
 		if (types.length() > 60) types = types.substring(0, 60);
+		return types;
+	}
+
+	private void failed(Exception e)
+	{
+		status = ResourceBundle.getString("camera_failed") + " " + shortName(e);
+		String types = captureTypes();
 		details = new String[] {
 			"снимки: " + property("video.snapshot.encodings"),
 			"видео: " + property("supports.video.capture")
