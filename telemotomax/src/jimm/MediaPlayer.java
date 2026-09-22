@@ -438,28 +438,12 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	}
 
 	// A writable temp file URL, or null if no root is available.
+	// Место под временный файл — честным созданием (TempFiles): canWrite()
+	// на несуществующем файле V8 отвечает «нет» при живом доступе к файлам,
+	// и плеер говорил «no writable root», а из памяти MP4 он не играет.
 	private static String tempFileUrl(String ext)
 	{
-		try
-		{
-			Enumeration roots = FileSystemRegistry.listRoots();
-			while (roots.hasMoreElements())
-			{
-				String root = (String) roots.nextElement();
-				while (root.length() > 0 && root.charAt(0) == '/') root = root.substring(1);
-				String url = "file:///" + root + "tmm_media" + ext;
-				try
-				{
-					FileConnection fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
-					boolean ok = fc.canWrite();
-					fc.close();
-					if (ok) return url;
-				}
-				catch (Exception ignore) {}
-			}
-		}
-		catch (Exception ignore) {}
-		return null;
+		return TempFiles.writableUrl("tmm_media" + ext);
 	}
 
 	private void deleteTemp()

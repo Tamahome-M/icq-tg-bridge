@@ -267,29 +267,11 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 		}
 	}
 
+	// Место под запись — честным созданием файла (TempFiles): canWrite() на
+	// несуществующем файле V8 отвечает «нет» при живом доступе к файлам.
 	private static String tempFileUrl()
 	{
-		try
-		{
-			java.util.Enumeration roots = FileSystemRegistry.listRoots();
-			while (roots.hasMoreElements())
-			{
-				String root = (String) roots.nextElement();
-				while (root.length() > 0 && root.charAt(0) == '/') root = root.substring(1);
-				String url = "file:///" + root + "tmm_note.3gp";
-				try
-				{
-					FileConnection fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
-					boolean ok = fc.canWrite();
-					if (ok && fc.exists()) fc.delete();
-					fc.close();
-					if (ok) return url;
-				}
-				catch (Exception ignore) {}
-			}
-		}
-		catch (Exception ignore) {}
-		return null;
+		return TempFiles.writableUrl("tmm_note.3gp");
 	}
 
 	private void deleteTemp()
