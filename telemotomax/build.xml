@@ -171,9 +171,6 @@ Author(s): Manuel Linsmayer, Andreas Rossbacher
 		<condition property="modules/PROXY" value="true">
 			<contains string="${modules}" substring="PROXY" />
 		</condition>
-		<condition property="modules/FILES" value="true">
-			<contains string="${modules}" substring="FILES" />
-		</condition>
 		<condition property="modules/ANTISPAM" value="true">
 			<contains string="${modules}" substring="ANTISPAM" />
 		</condition>
@@ -186,17 +183,6 @@ Author(s): Manuel Linsmayer, Andreas Rossbacher
 		</condition>
 		<condition property="modules/PIM" value="true">
 			<contains string="${modules}" substring="PIM" />
-		</condition>
-		<condition property="files_dir" value="res/${graphics_dir}/MODULES/FILES">
-			<and>
-			<contains string="${modules}" substring="FILES" />
-				<OR>
-					<contains string="${target}" substring="MIDP2"/>
-					<contains string="${target}" substring="SIEMENS2"/>
-					<contains string="${target}" substring="MOTOROLA"/>
-					<contains string="${target}" substring="RIM"/>
-				</OR>
-			</and>
 		</condition>
 		<condition property="modules/SMILES_STD" value="true">
 			<contains string="${modules}" substring="SMILES_STD" />
@@ -229,7 +215,6 @@ Author(s): Manuel Linsmayer, Andreas Rossbacher
 			<define name="modules_DEBUGLOG" value="${modules/DEBUGLOG}" />
 			<define name="modules_HISTORY" value="${modules/HISTORY}" />
 			<define name="modules_PROXY" value="${modules/PROXY}" />
-			<define name="modules_FILES" value="${modules/FILES}" />
 			<define name="modules_SMILES_STD" value="${modules/SMILES_STD}" />
 			<define name="modules_SMILES_ANI" value="${modules/SMILES_ANI}" />
 			<define name="modules_LOCATION" value="${modules/LOCATION}" />
@@ -326,7 +311,6 @@ Author(s): Manuel Linsmayer, Andreas Rossbacher
 		</copy>
 		<copy todir="${build}/res" flatten="false" includeEmptyDirs="false" failonerror="false">
 			<fileset dir="${smiles_dir}" />
-			<fileset dir="${files_dir}" />
 		</copy>
 	</target>
 	

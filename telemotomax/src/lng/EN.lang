@@ -233,7 +233,6 @@
 "opt_camres"				"Resolution"
 "opt_camenc"				"Encoding"
 "password"					"Password"
-"captcha"					"Enter code:"
 "page_down"                 "Page down"
 "page_up"                   "Page up"
 "phone"						"Tel."
@@ -485,10 +484,6 @@
 "neon_theme"                "Neon"
 
 // Registration strings
-"register_new"				"Register"
-"register_request_image"	"Req.image"
-"register_request_send"		"Send"
-"register_notice"			"Warning! On registration complete, you need to fill userdata. Else other peoples can't add/find you."
 
 // MOTOROLA strings
 "backlight_timeout"			"Backlight timeout (sec)"
@@ -630,37 +625,6 @@
 "error_171"					"Could not fetch meta info (#171.EXT)"
 "error_172"					"Error while saving the options (#172.EXT)"
 
-//#sijapp cond.if modules_FILES is "true"#
-// Camera errors
-"error_180"					"Error creating the VideoControl (#180.EXT)"
-"error_181"					"Viewfinder initialization error (#181.EXT)"
-"error_182"					"Viewfinder start error (#182.EXT)"
-"error_183"					"Snapshot error (#183.EXT)"
-"error_185"					"Taking pictures not supported (#185.EXT)"
-
-// File transfer errors
-"error_190"					"File transfer with < ICQv8 clients not supported (#190.EXT)"
-"error_191"					"Error reading the file. Possibly not supported (#191.EXT)"
-"error_192"					"Error reading the file. File not found, or not supported (#192.EXT)"
-"error_193"					"Error accessing file system for browsing. Security error (#193.EXT)"
-"error_194"					"Wrong answer from filetransfer server (#194.EXT)"
-"error_195"					"Impossible to parse filetransfer server data (#195.EXT)"
-"error_196"					"I/O error during filetransfer (#196.EXT)"
-
-"background_ext"			"External"
-"background_empty"			"not specified"
-"ft_caption"				"Filetransfer"
-"ft_cam"					"Send camera image"
-"ft_link"					"Last file link"
-"ft_name"					"Send file"  
-"ft_transfer"				"Transferring..."
-"ft_type"					"File transfer"
-"ft_type_web"				"Through web-server"
-"ft_type_net"				"Through net"
-"ft_web_ask"				"File will be uploaded into web server. Contact will receive link to the file. \n\nDo you want to continue?"
-"ft_web_yes"				"* Yes, continue with transfer through web"
-"ft_web_no"					"* No, use standard way"
-//#sijapp cond.end#
   
 // HTTP Connection errors
 "error_220"					"Server did not accept HTTP request (#220.EXT)"

@@ -519,33 +519,6 @@ public class SOCKSConnection extends Connection implements Runnable
 
 	}
 
-	//#sijapp cond.if target!="DEFAULT" & modules_FILES="true"#
-
-	// Return the port this connection is running on
-	public int getLocalPort()
-	{
-		try
-		{
-			return (this.sc.getLocalPort());
-		} catch (IOException e)
-		{
-			return (0);
-		}
-	}
-
-	// Return the ip this connection is running on
-	public byte[] getLocalIP()
-	{
-		try
-		{
-			return (Util.ipToByteArray(this.sc.getLocalAddress()));
-		} catch (IOException e)
-		{
-			return (new byte[4]);
-		}
-	}
-
-	//#sijapp cond.end#
 
 	// Main loop
 	public void run()

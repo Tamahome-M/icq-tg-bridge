@@ -86,11 +86,7 @@ public class Packet
 	{
 
 		// Check length (min. 6 bytes)
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-		if (len < 2)
-//#sijapp cond.else#
-//#		if (len < 6)
-//#sijapp cond.end#		    
+		if (len < 6)
 		{
 			throw (new JimmException(130, 0));
 		}
@@ -98,11 +94,7 @@ public class Packet
 		// Verify FLAP.ID
 		if (Util.getByte(buf, off) != 0x2A)
 		{
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-			return (DCPacket.parse(buf, off, len));
-//#sijapp cond.else#
-//#			throw (new JimmException(130, 1));
-//#sijapp cond.end#
+			throw (new JimmException(130, 1));
 		}
 
 		// Get and verify FLAP.CHANNEL

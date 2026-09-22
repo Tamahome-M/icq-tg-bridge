@@ -1835,25 +1835,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			if (si != null && si.testFlag(StatusInfo.FLAG_HAVE_DESCR))
 				addTextListItem(tlContactMenu, "reqstatmsg", null, USER_MENU_STATUS_MESSAGE, true, -1, Font.STYLE_PLAIN);		
 			
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-			addTextListItem(tlContactMenu, "ft_caption", null, -1, true, -2, Font.STYLE_BOLD);
-			if (((status != ContactList.STATUS_OFFLINE) 
-					&& contact.getIntValue(ContactItem.CONTACTITEM_ICQ_PROT) >= 8) ||
-					(Options.getInt(Options.OPTION_FT_MODE) == Options.FS_MODE_WEB))
-			{
-				addTextListItem(tlContactMenu, "ft_name", null, USER_MENU_FILE_TRANS, true, -1, Font.STYLE_PLAIN);
-				
-				if (lastFileTransferLink != null)
-					addTextListItem(tlContactMenu, "ft_link", null, USER_MENU_FILE_TRANS_LINK, true, -1, Font.STYLE_PLAIN); 
-				
-//#sijapp cond.if target isnot "MOTOROLA"#
-				if (System.getProperty("video.snapshot.encodings") != null)
-				{
-					addTextListItem(tlContactMenu, "ft_cam", null, USER_MENU_CAM_TRANS, true, -1, Font.STYLE_PLAIN);
-				}
-//#sijapp cond.end#
-			}
-//#sijapp cond.end#
 			
 			addTextListItem(tlContactMenu, "group_lists", null, -1, true, -2, Font.STYLE_BOLD);
 			addTextListItem(tlContactMenu, "remove", null, USER_MENU_USER_REMOVE, true, -1, Font.STYLE_PLAIN);
@@ -1905,32 +1886,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			requestContactStatusMess(clciContactMenu);
 			break;
 
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-			case USER_MENU_FILE_TRANS:
-				/* Send a filetransfer with a file given by path */
-				{
-					FileTransfer ft = new FileTransfer(FileTransfer.FT_TYPE_FILE_BY_NAME, clciContactMenu);
-					ft.startFT();
-				}
-				break;
-				
-			case USER_MENU_FILE_TRANS_LINK:
-				sendMessage(lastFileTransferLink, clciContactMenu);
-				ChatHistory.activateIfExists(clciContactMenu);
-				break;
-
-			//#sijapp cond.if target isnot "MOTOROLA" #
-			case USER_MENU_CAM_TRANS:
-				/* Send a filetransfer with a camera image
-				 We can only make file transfers with ICQ clients prot V8 and up */
-				{
-					FileTransfer ft = new FileTransfer(FileTransfer.FT_TYPE_CAMERA_SNAPSHOT, clciContactMenu);
-					ft.startFT();
-				}
-				break;
-			//#sijapp cond.end#
-
-//#sijapp cond.end#
 			
 			case USER_MENU_USER_REMOVE:
 				removeContactMessageBox = showMessageBox
@@ -2133,50 +2088,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		if (idleTime > 0)
 			clInfoData[JimmUI.UI_IDLE_TIME] = Util.longitudeToString(idleTime);
 		
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-
-		/* Client version */
-		int clientVers = cItem.getIntValue(ContactItem.CONTACTITEM_CLIENT);
-		if (clientVers != Icq.CLI_NONE)
-			clInfoData[JimmUI.UI_ICQ_CLIENT] = Icq.getClientString((byte) clientVers)
-					+ " " + cItem.getStringValue(ContactItem.CONTACTITEM_CLIVERSION);
-
-		/* ICQ protocol version */
-		clInfoData[JimmUI.UI_ICQ_VERS] = Integer
-				.toString(cItem.getIntValue(ContactItem.CONTACTITEM_ICQ_PROT));
-
-		/* Internal IP */
-		clInfoData[JimmUI.UI_INT_IP] = Util
-				.ipToString(cItem.getBytesArray(ContactItem.CONTACTITEM_INTERNAL_IP));
-
-		/* External IP */
-		clInfoData[JimmUI.UI_EXT_IP] = Util
-				.ipToString(cItem.getBytesArray(ContactItem.CONTACTITEM_EXTERNAL_IP));
-
-		/* Port */
-		int port = cItem.getIntValue(ContactItem.CONTACTITEM_DC_PORT);
-		if (port != 0)
-			clInfoData[JimmUI.UI_PORT] = Integer.toString(port);
-		
-		StringBuffer capsStr = new StringBuffer("\n");
-		int caps = cItem.getIntValue(ContactItem.CONTACTITEM_CAPABILITIES);
-		if ((caps & Icq.CAPF_AIM_SERVERRELAY) != 0) capsStr.append("Type-2 messages\n");
-		if ((caps & Icq.CAPF_UTF8_INTERNAL)   != 0) capsStr.append("Utf-8 messages\n");
-		if ((caps & Icq.CAPF_RICHTEXT)        != 0) capsStr.append("Rich text messages\n");
-		if ((caps & Icq.CAPF_HTMLMESSAGES)    != 0) capsStr.append("Html messages\n");
-		if ((caps & Icq.CAPF_AIMICON)         != 0) capsStr.append("AIM Icon\n");
-		if ((caps & Icq.CAPF_AIMCHAT)         != 0) capsStr.append("AIM Chat\n");
-		if ((caps & Icq.CAPF_XTRAZ)           != 0) capsStr.append("X-traz\n");
-		if ((caps & Icq.CAPF_AIMFILE)         != 0) capsStr.append("AIM File\n");
-		if ((caps & Icq.CAPF_AIMIMIMAGE)      != 0) capsStr.append("AIM Image\n");
-		if ((caps & Icq.CAPF_AVATAR)          != 0) capsStr.append("Avatars\n");
-		if ((caps & Icq.CAPF_DIRECT)          != 0) capsStr.append("Direct connect\n");
-		if ((caps & Icq.CAPF_TYPING)          != 0) capsStr.append("Typing notify\n");
-		if ((caps & Icq.CAPF_AUDIO)           != 0) capsStr.append("Audio\n");
-		if ((caps & Icq.CAPF_VIDEO)           != 0) capsStr.append("Video\n");
-		clInfoData[UI_CAPS] = capsStr.toString(); 
-		
-//#sijapp cond.end#
 
 		JimmUI.fillUserInfo(clInfoData, tlist);
 		JimmUI.showInfoTextList(tlist);

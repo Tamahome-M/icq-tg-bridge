@@ -90,9 +90,6 @@ public class Jimm extends MIDlet
 	// Chat history object
 	private ChatHistory ch;
 
-//#sijapp cond.if target is "MOTOROLA" & (modules_FILES="true"|modules_HISTORY="true")#
-	static public final boolean supports_JSR75;
-//#sijapp cond.end#
 
 	// Timer object
 	private static Timer timer = new Timer();
@@ -156,20 +153,6 @@ public class Jimm extends MIDlet
 		phoneType = Device.PHONE_MOTOROLA;
 //#sijapp cond.end#				
 
-//#sijapp cond.if target is "MOTOROLA" & (modules_FILES="true"|modules_HISTORY="true")#
-		boolean jsr75 = false;
-		try
-		{
-			jsr75 = Class.forName("javax.microedition.io.file.FileConnection") != null;
-		}
-		catch (ClassNotFoundException cnfe)
-		{
-		}
-		finally
-		{
-			supports_JSR75 = jsr75;
-		}
-//#sijapp cond.end#
 	}
 
 	// Start Jimm

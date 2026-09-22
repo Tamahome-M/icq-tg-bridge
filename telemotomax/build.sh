@@ -69,18 +69,17 @@ rm -rf src && mkdir src && cp -r "$HERE/src" "$HERE/res" "$HERE/util" "$HERE/bui
 STAMP="$VERSION.$(date +%y%m%d)"
 MAJOR=${VERSION%%.*}
 MINOR=${VERSION#*.}; MINOR=${MINOR%%.*}
-# Набор модулей Jimm. FILES — это передача файлов и прямые соединения
-# между клиентами, мосту они не нужны, и без модуля сборка легче на 22 КБ.
-# Но на телефоне без него пропало «печатает» в обе стороны (по исходникам
-# этого не видно — где-то ещё завязка), поэтому по умолчанию он на месте.
-# TMM_MODULES=light соберёт без него, если захочется проверить снова.
-# CAMERA — снимок и «кружок» с камеры: на V3 камера из Java недоступна, и
-# пункты меню там только мешают; сборка v8 (по умолчанию: v3) их включает.
+# Набор модулей Jimm. FILES (передача файлов и прямые соединения между
+# клиентами ICQ) вырезан из исходников целиком: с мостом он не нужен, а на
+# KVM код лежит в той же куче, что и данные. Раньше без него пропадало
+# «печатает» — разбор способностей контакта сидел в том же блоке; теперь
+# он общий. У V3 нет и смайлов: ICQ-смайлы в переписке из Telegram/MAX —
+# редкость, а набор картинок держал ~32 КБ кучи. CAMERA — снимок, кружок и
+# файлы с карты (JSR-75): на V3 недоступно, сборка v8 включает.
 MODULES=${TMM_MODULES:-v3}
 case "$MODULES" in
-	light) MODULES="SMILES_STD,AVATARS" ;;
-	v3|full) MODULES="FILES,SMILES_STD,AVATARS" ;;
-	v8)    MODULES="FILES,SMILES_STD,AVATARS,CAMERA" ;;
+	v3)    MODULES="AVATARS" ;;
+	v8)    MODULES="SMILES_STD,AVATARS,CAMERA" ;;
 esac
 sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION###|$STAMP|; \
      s|###TMM-VERSION-JAVA###|$VERSION|; s|###TMM-NAME###|$NAME|; \
@@ -112,6 +111,9 @@ cd src
 
 say "Сборка"
 ant -q clean dist 2>&1 | grep -v '\[langs\]' || true
+# clean стёр прошлый JAR — если его нет и сейчас, сборка не прошла; иначе в
+# out/ и в dist/ уехал бы старый JAR под новым номером версии.
+[ -f dist/bin/Jimm.jar ] || { printf '\033[1;31m==\033[0m Сборка не прошла — см. ошибки выше\n' >&2; exit 1; }
 mkdir -p "$WORK/out" && cp dist/bin/Jimm.jar "$WORK/out/TeleMotoMax.jar" \
     && cp dist/bin/Jimm.jad "$WORK/out/TeleMotoMax.jad"
 

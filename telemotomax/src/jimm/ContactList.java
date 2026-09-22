@@ -1046,23 +1046,6 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		//#sijapp cond.end#
 
 		// Update DC values
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-		if (dcType != -1)
-		{
-			cItem.setBytesArray(ContactItem.CONTACTITEM_INTERNAL_IP,
-					internalIP);
-			cItem.setBytesArray(ContactItem.CONTACTITEM_EXTERNAL_IP,
-					externalIP);
-			cItem.setIntValue(ContactItem.CONTACTITEM_DC_PORT,
-					(int) dcPort);
-			cItem.setIntValue(ContactItem.CONTACTITEM_DC_TYPE,
-					dcType);
-			cItem.setIntValue(ContactItem.CONTACTITEM_ICQ_PROT,
-					icqProt);
-			cItem.setIntValue(ContactItem.CONTACTITEM_AUTH_COOKIE,
-					authCookie);
-		}
-//#sijapp cond.end#
 
 		// Update time values
 		cItem.setIntValue(ContactItem.CONTACTITEM_SIGNON, signon);
