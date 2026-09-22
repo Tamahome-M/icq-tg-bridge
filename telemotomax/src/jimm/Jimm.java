@@ -608,7 +608,11 @@ public class Jimm extends MIDlet
 		wakeBacklight(false);
 	}
 
-	/** force — не считаясь с пятисекундной паузой: держим свет во время ролика. */
+	/**
+	 * force — не считаясь с пятисекундной паузой и не заводя поток: так зовут
+	 * из своего потока (подсветка во время ролика), а куча V3 мала, чтобы
+	 * плодить по потоку каждые четыре секунды.
+	 */
 	public static void wakeBacklight(boolean force)
 	{
 //#sijapp cond.if target="MOTOROLA" | target="MIDP2"#
@@ -622,13 +626,14 @@ public class Jimm extends MIDlet
 			if (!force && now - lastFlash < 5000) return;
 			lastFlash = now;
 		}
-		new Thread() {
-			public void run()
-			{
-				try { display.flashBacklight(1000 * Math.max(3, Options.getInt(Options.OPTION_LIGHT_TIMEOUT))); }
-				catch (Throwable ignore) {}
-			}
-		}.start();
+		if (force) { flash(); return; }
+		new Thread() { public void run() { flash(); } }.start();
+	}
+
+	private static void flash()
+	{
+		try { display.flashBacklight(1000 * Math.max(3, Options.getInt(Options.OPTION_LIGHT_TIMEOUT))); }
+		catch (Throwable ignore) {}
 //#sijapp cond.end#
 	}
 	
