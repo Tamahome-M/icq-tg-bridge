@@ -42,6 +42,7 @@ SEARCH_LIMIT = 10                # столько результатов отд�
 TG_RETRY_START = 5               # через сколько поднимать связь с Telegram
 TG_RETRY_MAX = 300               # и когда сдаваться, чтобы мост перезапустила служба
 SEARCH_ALL_LIMIT = 50            # а столько — на поиск без запроса, «покажи всё»
+CATCH_UP_AT_ONCE = 6             # столько чатов разом догружаем при старте
 # Telegram повторяет «печатает» каждые несколько секунд, а Jimm сам индикатор
 # не гасит — снимаем его по молчанию.
 TYPING_TIMEOUT = 8
@@ -1161,18 +1162,29 @@ class Bridge:
         if not self.cfg.catch_up:
             return
         self._reload_roster()          # отметки «доставлено» берём свежими
+        wanted = [c for c in self._roster
+                  if c.last_ts > 0 and self._unread.get((c.peer_id, c.topic_id), 0) > 0]
+        if not wanted:
+            return
+        # Чаты опрашиваются разом, по нескольку за раз: по одному это
+        # секунда-другая на чат, и на десятке непрочитанных мост «поднимался»
+        # почти минуту. Больше CATCH_UP_AT_ONCE сразу не просим — у Telegram
+        # свои пределы на частоту запросов.
+        started = time.monotonic()
+        gate = asyncio.Semaphore(CATCH_UP_AT_ONCE)
+
+        async def fetch(contact):
+            async with gate:
+                try:
+                    return contact, await self.side_for(contact.peer_id).missed(
+                        contact.peer_id, contact.last_ts,
+                        self.cfg.offline_queue_per_chat, contact.topic_id)
+                except Exception:
+                    log.exception("не удалось догрузить чат %r", contact.title)
+                    return contact, []
+
         total = 0
-        for contact in self._roster:
-            if (contact.last_ts <= 0
-                    or self._unread.get((contact.peer_id, contact.topic_id), 0) <= 0):
-                continue
-            try:
-                missed = await self.side_for(contact.peer_id).missed(contact.peer_id, contact.last_ts,
-                                                    self.cfg.offline_queue_per_chat,
-                                                    contact.topic_id)
-            except Exception:
-                log.exception("не удалось догрузить чат %r", contact.title)
-                continue
+        for contact, missed in await asyncio.gather(*(fetch(c) for c in wanted)):
             for ts, sender, text in missed:
                 if sender:
                     text = f"{sender}: {text}"
@@ -1182,8 +1194,8 @@ class Bridge:
                                    ts=ts)
                 self.storage.note_delivered(contact.peer_id, ts, contact.topic_id)
                 total += 1
-        if total:
-            log.info("догружено %d пропущенных сообщений", total)
+        log.info("догружено %d пропущенных сообщений из %d чатов за %.1f с",
+                 total, len(wanted), time.monotonic() - started)
 
     async def run_command(self, contact: Contact, command: history.Command) -> None:
         """Выполняет команду, набранную в окне чата на телефоне."""
@@ -1386,7 +1398,10 @@ class Bridge:
         if self.max is not None:
             await self.max.start()
         await self.refresh_roster()
-        await self.catch_up()
+        # Догрузка пропущенного идёт в своём потоке: она ходит в Telegram и
+        # MAX за каждым непрочитанным чатом, и телефону незачем ждать её,
+        # чтобы подключиться — накопленное он получит очередью, как обычно.
+        catch_up = asyncio.create_task(self.catch_up())
         await self.oscar.start()
         if self.photo_server is not None:
             await self.photo_server.start()
@@ -1397,6 +1412,7 @@ class Bridge:
         if self.render is not None:
             self.render.cleanup()
         self._refresh_task = asyncio.create_task(self._refresh_loop())
+        self._catch_up_task = catch_up          # держим ссылку: иначе задачу соберёт сборщик
         log.info("мост готов, ждём подключения Jimm")
         try:
             await self._keep_telegram()
