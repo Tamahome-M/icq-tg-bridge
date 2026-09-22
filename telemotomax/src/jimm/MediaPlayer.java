@@ -157,7 +157,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			// Плеер не взял файл — пробуем из памяти, как при однопакетном
 			// ответе: на V8 из памяти играет не всё, но клип уже у нас.
 			Exception streamErr = null;
-			byte[] clip = readFile(path, 512 * 1024);
+			byte[] clip = readFile(path, memoryLimit());
 			if (clip != null) streamErr = playFromStream(clip);
 			deleteTemp();
 			if (clip == null || streamErr != null)
@@ -170,6 +170,18 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		}
 	}
 
+	// Сколько можно прочитать в память: половина свободной кучи, но не
+	// больше двух мегабайт. Куча V8 — около мегабайта, и ролик в 900 КБ в
+	// неё не ляжет (плееру тоже нужно место); у V3 её ещё меньше. Числом
+	// это не угадать — спрашиваем телефон.
+	private static int memoryLimit()
+	{
+		long free = Runtime.getRuntime().freeMemory();
+		long limit = free / 2;
+		if (limit > 2 * 1024 * 1024) limit = 2 * 1024 * 1024;
+		return (int) limit;
+	}
+
 	/** Файл целиком, если он не больше предела; иначе null. */
 	private static byte[] readFile(String url, int limit)
 	{
@@ -179,7 +191,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		{
 			fc = (FileConnection) Connector.open(url, Connector.READ);
 			long size = fc.fileSize();
-			if (size <= 0 || size > limit) return null;
+			if (size <= 0 || size > limit) return null;      // в кучу не ляжет
 			byte[] buf = new byte[(int) size];
 			in = fc.openInputStream();
 			int got = 0;
