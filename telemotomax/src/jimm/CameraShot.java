@@ -51,8 +51,6 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	private boolean flash;             // белый кадр на миг — снимок сделан
 	private String progress;           // состояние справа в верхней полосе
 	private String locator = "?";      // какой источник открылся: camera, image или video
-	private static final Command cmdProbe = new Command(ResourceBundle.getString("cam_probe"), Command.ITEM, 2);
-	private boolean probing;
 
 	private CameraShot(String uin, JimmScreen back)
 	{
@@ -60,7 +58,6 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		this.back = back;
 		setFullScreenMode(true);
 		addCommand(JimmUI.cmdBack);
-		addCommand(cmdProbe);
 		setCommandListener(this);
 	}
 
@@ -92,10 +89,10 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 					// capture://image — по MMAPI; capture://video — видеопоток,
 					// на V8 открывался только он, а снимок с него — кадр
 					// видеозахвата, не сенсора.
-					// Кто из них не открылся и почему — в «Связь»: по одному
-					// «capture://video» в журнале не понять, отвергает ли V8
-					// сам локатор или что-то ещё.
-					String[] tries = { "capture://camera", "capture://image", "capture://video" };
+					// На V8 Java знает только capture://video (аудио, радио, видео —
+					// весь список локаторов kvm): камера — это он. camera/image —
+					// на случай другого телефона.
+					String[] tries = { "capture://video", "capture://camera", "capture://image" };
 					String why = "";
 					for (int i = 0; i < tries.length && p == null; i++)
 					{
@@ -103,8 +100,6 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 						catch (Exception e) { why += tries[i].substring(10) + ": " + shortName(e) + "; "; }
 					}
 					if (p == null) throw new Exception(why);
-					if (why.length() > 0)
-						ConnLog.note("камера: " + why + "открылся " + locator + "; capture: " + captureTypes());
 					p.realize();
 					VideoControl vc = (VideoControl) p.getControl("VideoControl");
 					if (vc == null) throw new Exception("no VideoControl");
@@ -189,14 +184,12 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	// Размеры JPEG-снимка, которые телефон объявляет в video.snapshot.encodings
 	// («encoding=jpeg&width=640&height=480 ...»), — строками «640x480», без
 	// повторов. Пусто — телефон не говорит, тогда снимок «как есть».
-	// Размеры фото самой камеры V8 (таблица photoSizeTable в ezx_camera.cfg
-	// прошивки, портрет: ширина×высота) — 240×320, 480×640, 960×1280,
-	// 1200×1600 — плюс кадры видеозахвата из kvm. Неподдерживаемый размер
-	// V8 не отвергает, а отдаёт битый кадр (640×480 — «завёрнутая» картинка
-	// с зелёным низом) или пустоту (1024×768): в списке только то, что
-	// телефон знает; что из этого даёт настоящий кадр — видно в «Связи».
+	// Что V8 принимает (getSnapshot с размером, capture://video, проверено
+	// 2026-09-22): 960×1280 — целый кадр, 291 КБ, — 480×640, 640×480,
+	// 320×240, 240×320; 1200×1600 отвергает («Invalid snapshot size»),
+	// 1024×768 отдаёт пустой массив.
 	private static final String[] COMMON_SIZES =
-		{ "1200x1600", "960x1280", "480x640", "320x240", "240x320", "160x120" };
+		{ "960x1280", "480x640", "640x480", "320x240", "240x320", "160x120" };
 
 	public static String[] snapshotSizes()
 	{
@@ -421,11 +414,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 				CameraHud.bottom(g, w, h, ResourceBundle.getString("cam_hint_shoot"),
 						ResourceBundle.getString("cam_hint_back"));
 		}
-		if (status != null)
-		{
-			if (details != null && details.length > 4) CameraHud.list(g, w, h, status, details);
-			else CameraHud.box(g, w, h, status, details);
-		}
+		if (status != null) CameraHud.box(g, w, h, status, details);
 	}
 
 	protected void keyPressed(int keyCode)
@@ -434,7 +423,6 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		int action = 0;
 		try { action = getGameAction(keyCode); } catch (Exception ignore) {}
 		if (action == FIRE || keyCode == KEY_NUM5) shoot();
-		else if (keyCode == KEY_POUND) probe();
 	}
 
 	private void stopCamera()
@@ -450,91 +438,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 
 	public void commandAction(Command c, Displayable d)
 	{
-		if (c == cmdProbe) { probe(); return; }
 		close();
-	}
-
-	// Проба: что телефон отдаёт на каждый вариант строки getSnapshot — по
-	// одному снимку за круг это не выяснить. Ничего не отправляет; итог —
-	// на экране и в «Связи» (размер по заголовку JPEG, пусто, исключение).
-	private static final String[] PROBES = {
-		"encoding=jpeg",
-		"encoding=jpeg&width=480&height=640",
-		"encoding=jpeg&width=640&height=480",
-		"encoding=jpeg&width=320&height=240",
-		"encoding=jpeg&width=960&height=1280",
-		"encoding=jpeg&width=1200&height=1600",
-		"encoding=image/jpeg&width=480&height=640",
-		"width=480&height=640",
-		"encoding=rgb565&width=480&height=640",
-		"encoding=png",
-	};
-
-	private void probe()
-	{
-		if (video == null || sending || probing) return;
-		probing = true;
-		status = ResourceBundle.getString("cam_probing");
-		details = null;
-		repaint();
-		new Thread() {
-			public void run()
-			{
-				String[] out = new String[PROBES.length + 2];
-				out[0] = "video.encodings: " + longProperty("video.encodings");
-				out[1] = "показ " + getWidth() + "x" + getHeight() + ", " + locator;
-				for (int i = 0; i < PROBES.length; i++)
-				{
-					String what = PROBES[i];
-					String res;
-					try
-					{
-						byte[] shot = video.getSnapshot(what);
-						if (shot == null) res = "null";
-						else if (shot.length == 0) res = "пусто";
-						else
-						{
-							String size = jpegSize(shot);
-							res = (size == null ? "не JPEG" : size) + ", " + shot.length + " Б";
-						}
-					}
-					catch (Throwable t) { res = shortName(t); }
-					out[i + 2] = what.replace('&', ' ') + " -> " + res;
-					ConnLog.note("проба " + out[i + 2]);
-					if (video == null) break;
-				}
-				probing = false;
-				status = ResourceBundle.getString("cam_probe_done");
-				details = out;
-				repaint();
-				// Отчёт — в этот же чат сообщением: читать с экрана телефона
-				// и фотографировать его не надо.
-				StringBuffer sb = new StringBuffer("Проба камеры:");
-				for (int i = 0; i < out.length; i++) if (out[i] != null) sb.append('\n').append(out[i]);
-				sendToChat(sb.toString());
-			}
-		}.start();
-	}
-
-	// Текст в тот чат, из которого открыт экран: журнал и отчёты — туда.
-	private void sendToChat(String text)
-	{
-		try
-		{
-			ContactItem contact = ContactList.getItembyUIN(uin);
-			if (contact != null) JimmUI.sendMessage(text, contact);
-		}
-		catch (Exception ignore) {}
-	}
-
-	private static String longProperty(String name)
-	{
-		try
-		{
-			String v = System.getProperty(name);
-			return v == null ? "нет" : v;
-		}
-		catch (Exception e) { return "?"; }
 	}
 
 	private void close()

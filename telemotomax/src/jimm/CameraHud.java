@@ -93,27 +93,6 @@ final class CameraHud
 		}
 	}
 
-	/** Длинный отчёт (проба камеры): с самого верха, мелким, сколько влезет. */
-	static void list(Graphics g, int width, int height, String title, String[] lines)
-	{
-		g.setColor(BAND);
-		g.fillRect(0, 0, width, height);
-		g.setFont(FONT);
-		g.setColor(TEXT);
-		g.drawString(title, 2, 2, Graphics.LEFT | Graphics.TOP);
-		g.setFont(SMALL);
-		g.setColor(DIM);
-		int step = SMALL.getHeight();
-		int y = 4 + FONT.getHeight();
-		for (int i = 0; i < lines.length && y + step <= height; i++, y += step)
-		{
-			String s = lines[i];
-			// Не влезает — режем: экран узкий, а строки пробы длинные.
-			while (s.length() > 1 && SMALL.stringWidth(s) > width - 4) s = s.substring(0, s.length() - 1);
-			g.drawString(s, 2, y, Graphics.LEFT | Graphics.TOP);
-		}
-	}
-
 	/** «0:07» — секунды как минуты:секунды. */
 	static String mmss(int secs)
 	{

@@ -385,7 +385,12 @@ public class Options
 		setString(Options.OPTION_UIN1, emptyString);
 		setString(Options.OPTION_PASSWORD1, emptyString);
 		setString (Options.OPTION_SRV_HOST, "login.icq.com,login.oscar.aol.com,ibucp-vip-d.blue.aol.com");
+//#sijapp cond.if modules_CAMERA="true"#
+		// V8 (проба 2026-09-22): 960×1280 — целый кадр, 291 КБ; больше Java не даёт.
+		setString (Options.OPTION_CAMERA_SIZE, "960x1280");
+//#sijapp cond.else#
 		setString (Options.OPTION_CAMERA_SIZE, "");
+//#sijapp cond.end#
 		setString (Options.OPTION_MEDIA_PHOTO_SIZE, "");
 		setString (Options.OPTION_MEDIA_VIDEO_SIZE, "");
 		
