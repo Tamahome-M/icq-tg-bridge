@@ -210,6 +210,7 @@ public class Options
 	public static final int OPTION_MEDIA_VIDEO_SECONDS  = 119;   // длина ролика
 	public static final int OPTION_MEDIA_VOICE_KBPS10   = 120;   // битрейт голосового ×10 (122 — 12.2)
 	public static final int OPTION_MEDIA_VOICE_SECONDS  = 121;   // длина голосового
+	public static final int OPTION_PHOTO_ROTATE         = 122;   // фото боком: 0 авто, 1 всегда, 2 никогда
 
 	/** «WxH» из настройки «Медиа» как {w, h}; пусто или негодно — null. */
 	public static int[] mediaSize(int key)
@@ -454,6 +455,7 @@ public class Options
 		setInt    (Options.OPTION_MEDIA_VIDEO_SECONDS, 0);
 		setInt    (Options.OPTION_MEDIA_VOICE_KBPS10,  0);
 		setInt    (Options.OPTION_MEDIA_VOICE_SECONDS, 0);
+		setInt    (Options.OPTION_PHOTO_ROTATE,        0);
 
 		setBoolean(Options.OPTION_CP1251_HACK, ResourceBundle.langAvailable[0]
 				.equals("RU") || ResourceBundle.langAvailable[0].equals("BE") );
@@ -1139,6 +1141,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private TextField reconnectNumberTextField;
 	private ChoiceGroup uiLanguageChoiceGroup;
 	private ChoiceGroup videoRotateChoice;     // TeleMotoMax, раздел «Медиа»
+	private ChoiceGroup photoRotateChoice;
 	private ChoiceGroup mediaPhotoSize, mediaPhotoQuality, mediaPhotoKb;
 	private ChoiceGroup mediaVideoSize, mediaVideoKbps, mediaVideoSeconds;
 	private ChoiceGroup mediaVoiceKbps, mediaVoiceSeconds;
@@ -2814,11 +2817,18 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		videoRotateChoice.append(ResourceBundle.getString("video_rotate_never"), null);
 		try { videoRotateChoice.setSelectedIndex(Options.getInt(Options.OPTION_VIDEO_ROTATE), true); }
 		catch (Exception ignore) {}
+		photoRotateChoice = new ChoiceGroup(ResourceBundle.getString("photo_rotate"), Choice.EXCLUSIVE);
+		photoRotateChoice.append(ResourceBundle.getString("video_rotate_auto"), null);
+		photoRotateChoice.append(ResourceBundle.getString("video_rotate_always"), null);
+		photoRotateChoice.append(ResourceBundle.getString("video_rotate_never"), null);
+		try { photoRotateChoice.setSelectedIndex(Options.getInt(Options.OPTION_PHOTO_ROTATE), true); }
+		catch (Exception ignore) {}
 		mediaVoiceKbps = mediaChoice("media_voice_kbps", MEDIA_VOICE_KBPS10, Options.getInt(Options.OPTION_MEDIA_VOICE_KBPS10), true);
 		mediaVoiceSeconds = mediaChoice("media_voice_seconds", MEDIA_VOICE_SECS, Options.getInt(Options.OPTION_MEDIA_VOICE_SECONDS), false);
 		optionsForm.append(mediaPhotoSize);
 		optionsForm.append(mediaPhotoQuality);
 		optionsForm.append(mediaPhotoKb);
+		optionsForm.append(photoRotateChoice);
 		optionsForm.append(mediaVideoSize);
 		optionsForm.append(mediaVideoKbps);
 		optionsForm.append(mediaVideoSeconds);
@@ -2836,6 +2846,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		Options.setInt(Options.OPTION_MEDIA_VIDEO_KBPS, mediaValue(mediaVideoKbps, MEDIA_VIDEO_KBPS));
 		Options.setInt(Options.OPTION_MEDIA_VIDEO_SECONDS, mediaValue(mediaVideoSeconds, MEDIA_VIDEO_SECS));
 		Options.setInt(Options.OPTION_VIDEO_ROTATE, videoRotateChoice.getSelectedIndex());
+		Options.setInt(Options.OPTION_PHOTO_ROTATE, photoRotateChoice.getSelectedIndex());
 		Options.setInt(Options.OPTION_MEDIA_VOICE_KBPS10, mediaValue(mediaVoiceKbps, MEDIA_VOICE_KBPS10));
 		Options.setInt(Options.OPTION_MEDIA_VOICE_SECONDS, mediaValue(mediaVoiceSeconds, MEDIA_VOICE_SECS));
 		jimm.comm.Icq.resendClientInfo();

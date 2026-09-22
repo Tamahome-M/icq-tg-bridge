@@ -1520,7 +1520,9 @@ class Session:
                     return
             return
         if bart_type == C.BART_PHOTO:
-            got = await self.server.attachment(token)
+            # «Фото боком» — те же флаги, что у ролика: 0x20 всегда, 0x10 никогда.
+            rotate = "always" if flags & 0x20 else ("never" if flags & 0x10 else "auto")
+            got = await self.server.attachment(token, rotate)
             if got is None:
                 log.info("снимок по токену %s не найден или не скачался", token[:4].hex())
                 await self.send_error(C.SSBI, 0x0001, s.request_id)
@@ -1619,7 +1621,7 @@ class OscarServer:
                  on_privacy: Callable[[int, bool], Awaitable[None]] | None = None,
                  avatar: Callable[[int], Awaitable[tuple[bytes, bytes] | None]] | None = None,
                  icon_hash: Callable[[int], bytes | None] | None = None,
-                 fetch_attachment: Callable[[int, str], Awaitable[bytes | None]] | None = None,
+                 fetch_attachment: Callable[[int, str, str], Awaitable[bytes | None]] | None = None,
                  fetch_history: Callable[..., Awaitable[
                      tuple[list[tuple[str, str]], bool] | None]] | None = None,
                  fetch_video: Callable[[int, str, str], Awaitable[bytes | None]] | None = None,
@@ -1840,8 +1842,9 @@ class OscarServer:
             log.exception("%s %s для %s не досталось", what, attach, self.name_of(uin))
             return None
 
-    async def attachment(self, token: bytes) -> bytes | None:
-        """Снимок по токену — готовый под экран телефона, или None."""
+    async def attachment(self, token: bytes, rotate: str = "auto") -> bytes | None:
+        """Снимок по токену — готовый под экран телефона, или None;
+        rotate — класть ли боком («auto», «always», «never»)."""
         got = self.attachments.get(token)
         if got is None or self.fetch_attachment is None:
             return None
@@ -1850,7 +1853,7 @@ class OscarServer:
             self.attachments.pop(token, None)
             return None
         try:
-            return await self.fetch_attachment(uin, attach)
+            return await self.fetch_attachment(uin, attach, rotate)
         except Exception:
             log.exception("снимок %s для %s не достался", attach, self.name_of(uin))
             return None

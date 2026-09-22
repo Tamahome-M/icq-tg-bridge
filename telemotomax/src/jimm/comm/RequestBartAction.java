@@ -148,9 +148,11 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 		// выбор поворота: 0x20 — всегда боком, 0x10 — никогда, ничего — авто
 		// (мост сам смотрит на исходник). Старый мост лишние биты не читает.
 		int flags = 0x01 | extraFlags;
-		if (bartType == BART_VIDEO)
+		// «Боком»: ролик — по своей настройке, снимок — по своей; флаги те же.
+		if (bartType == BART_VIDEO || bartType == BART_PHOTO)
 		{
-			int mode = jimm.Options.getInt(jimm.Options.OPTION_VIDEO_ROTATE);
+			int mode = jimm.Options.getInt(bartType == BART_VIDEO
+					? jimm.Options.OPTION_VIDEO_ROTATE : jimm.Options.OPTION_PHOTO_ROTATE);
 			if (mode == 1) flags |= 0x20;
 			else if (mode == 2) flags |= 0x10;
 		}

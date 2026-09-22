@@ -94,7 +94,7 @@ async def run_photos() -> None:
     async def on_outgoing(*_):
         return 1
 
-    async def fetch_attachment(target: int, attach: str):
+    async def fetch_attachment(target: int, attach: str, rotate: str = "auto"):
         asked.append((target, attach))
         from bridge import photos
         got = photos.shrink(small_jpeg(), cfg.tmm_photo_width, cfg.tmm_photo_height,
@@ -214,7 +214,7 @@ async def run_history() -> None:
                 for i in whole[start:end]]
         return rows, start > 0
 
-    async def fetch_attachment(target: int, attach: str):
+    async def fetch_attachment(target: int, attach: str, rotate: str = "auto"):
         fetched.append(attach)
         return small_jpeg()[:3000]
 
@@ -399,7 +399,10 @@ async def run_video_rotate() -> None:
     async def on_outgoing(*_):
         return 1
 
-    async def fetch_attachment(target: int, attach: str):
+    seen_photo = []
+
+    async def fetch_attachment(target: int, attach: str, rotate: str = "auto"):
+        seen_photo.append(rotate)
         return b"\xff\xd8\xff" + b"0" * 100
 
     async def fetch_video(target: int, attach: str, rotate: str = "auto"):
@@ -422,6 +425,11 @@ async def run_video_rotate() -> None:
             client.bart_flags = flags
             await client.request_video(uin, token)
         assert seen == ["auto", "always", "never"], seen
+        # «Фото боком» — те же флаги, но у снимка.
+        for flags in (0x01, 0x21, 0x11):
+            client.bart_flags = flags
+            await client.request_photo(uin, token)
+        assert seen_photo == ["auto", "always", "never"], seen_photo
         await client.close()
     finally:
         server._server.close()
