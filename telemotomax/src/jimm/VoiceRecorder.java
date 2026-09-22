@@ -242,6 +242,7 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 					Icq.sendVoice(uin, data, secs, type, new Icq.UploadProgress() {
 						public void onPart(int part, int total)
 						{
+							Jimm.wakeBacklight();
 							sentPart = part;
 							sentTotal = total;
 							repaint();

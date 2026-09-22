@@ -338,6 +338,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 					Icq.sendPhoto(uin, shot, new Icq.UploadProgress() {
 						public void onPart(int part, int total)
 						{
+							Jimm.wakeBacklight();
 							progress = sent + " \u00b7 " + part + "/" + total;
 							repaint();
 						}

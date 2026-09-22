@@ -110,6 +110,7 @@ public class FileSender extends Canvas implements CommandListener, JimmScreen
 					Icq.sendFile(uin, in, size, fileName, new Icq.UploadProgress() {
 						public void onPart(int part, int parts)
 						{
+							Jimm.wakeBacklight();
 							status = ResourceBundle.getString("file_sending") + " " + part + "/" + parts
 									+ " (" + (total / 1024) + " КБ)";
 							repaint();

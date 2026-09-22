@@ -219,6 +219,7 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 					Icq.sendVideo(uin, data, secs, type, new Icq.UploadProgress() {
 						public void onPart(int part, int total)
 						{
+							Jimm.wakeBacklight();
 							sentParts = part; totalParts = total;
 							progress = (size / 1024) + " КБ \u00b7 " + part + "/" + total;
 							repaint();
