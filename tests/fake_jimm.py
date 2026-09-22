@@ -581,8 +581,11 @@ class FakeJimm:
         got = await self._request_bart(uin, C.BART_VOICE, token, timeout, parts=True)
         return got["image"]
 
-    async def request_video(self, uin: int, token: bytes, timeout: float = 5.0) -> bytes:
+    async def request_video(self, uin: int, token: bytes, timeout: float = 5.0,
+                            segment: int = 0) -> bytes:
         """Ролик по токену — как TeleMotoMax: тип 0x0082, ответ частями, склеиваем."""
+        if segment:
+            token = token + bytes([segment])          # как TeleMotoMax при «Дальше»
         got = await self._request_bart(uin, C.BART_VIDEO, token, timeout, parts=True)
         return got["image"]
 

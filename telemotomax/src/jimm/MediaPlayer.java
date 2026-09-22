@@ -244,6 +244,10 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	private String filePath;           // temp file URL, or null if played from memory
 	private int clipSize;
 	private int waited;              // секунд ждём первую часть (мост качает)
+	private byte[] token;            // примета вложения: нужна, чтобы просить следующий кусок
+	private String uin;
+	private int segment;             // какой кусок ролика смотрим (0 — первый)
+	private static final Command cmdNext = new Command(ResourceBundle.getString("video_next"), Command.ITEM, 2);
 	private boolean paused;
 	private boolean finished;
 	private boolean ticking;
@@ -260,27 +264,51 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	static public void show(String uin, byte[] token, JimmScreen back)
 	{
+		// Пока телефон ничего не грузит: мост качает ролик из Telegram или
+		// MAX и перекодирует его — об этом и пишем, «Загрузка видео»
+		// начнётся, когда пойдут части.
 		open(uin, token, back, RequestBartAction.BART_VIDEO, "video/3gpp",
-				ResourceBundle.getString("video_loading"));
+				ResourceBundle.getString("media_preparing"));
 	}
 
 	static public void showVoice(String uin, byte[] token, JimmScreen back)
 	{
 		open(uin, token, back, RequestBartAction.BART_VOICE, "audio/3gpp",
-				ResourceBundle.getString("voice_loading2"));
+				ResourceBundle.getString("media_preparing_voice"));
 	}
 
 	static private void open(String uin, byte[] token, JimmScreen back,
 			int bartType, String mime, String waiting)
 	{
+		open(uin, token, back, bartType, mime, waiting, 0);
+	}
+
+	// segment — какой кусок ролика просить: мост режет длинный ролик по
+	// «Видео: длина» из настроек, а «Дальше» просит следующий кусок.
+	static private void open(String uin, byte[] token, JimmScreen back,
+			int bartType, String mime, String waiting, int segment)
+	{
 		MediaPlayer viewer = new MediaPlayer(back, bartType, mime);
-		viewer.status = waiting;
+		viewer.uin = uin;
+		viewer.token = token;
+		viewer.segment = segment;
+		if (bartType == RequestBartAction.BART_VIDEO) viewer.addCommand(cmdNext);
+		viewer.status = waiting + (segment > 0 ? " (" + (segment + 1) + ")" : "");
 		current = viewer;
 		Jimm.display.setCurrent(viewer);
 		viewer.tickWaiting();
 		try
 		{
-			Icq.requestAction(new RequestBartAction(uin, bartType, token, viewer));
+			byte[] ask = token;
+			if (segment > 0)
+			{
+				// Номер куска — лишним байтом за приметой: старый мост такой
+				// приметы не найдёт и честно ответит ошибкой.
+				ask = new byte[token.length + 1];
+				System.arraycopy(token, 0, ask, 0, token.length);
+				ask[token.length] = (byte) segment;
+			}
+			Icq.requestAction(new RequestBartAction(uin, bartType, ask, viewer));
 		}
 		catch (JimmException e)
 		{
@@ -341,7 +369,8 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		if (current != this) return;
 		if (data == null)
 		{
-			status = failedText();
+			// На последнем куске мост отвечает ошибкой: ролик кончился.
+			status = segment > 0 ? ResourceBundle.getString("video_end") : failedText();
 			repaint();
 			return;
 		}
@@ -725,11 +754,28 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		int action = 0;
 		try { action = getGameAction(keyCode); } catch (Exception ignore) {}
 		if (action == FIRE || keyCode == KEY_NUM5 || keyCode == KEY_NUM0) close();
+		else if (keyCode == KEY_NUM3 && bartType == RequestBartAction.BART_VIDEO) next();
 	}
 
 	public void commandAction(Command c, Displayable d)
 	{
+		if (c == cmdNext) { next(); return; }
 		close();
+	}
+
+	// Следующий кусок ролика: тот же экран, тот же токен, номер куска на
+	// единицу больше. Мост режет по «Видео: длина» из настроек «Медиа»:
+	// целиком длинный ролик по GPRS ехал бы десятки минут.
+	private void next()
+	{
+		if (token == null || bartType != RequestBartAction.BART_VIDEO) return;
+		String uin = this.uin, mime = this.mime;
+		byte[] tok = this.token;
+		int nextSegment = this.segment + 1;
+		JimmScreen where = this.back;
+		close();
+		open(uin, tok, where, RequestBartAction.BART_VIDEO, mime,
+				ResourceBundle.getString("media_preparing"), nextSegment);
 	}
 
 	private void close()

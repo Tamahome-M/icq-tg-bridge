@@ -272,7 +272,9 @@ class Transcoder:
             except OSError:
                 pass
 
-    def video_args(self, src: str, dst: str) -> list[str]:
+    def video_args(self, src: str, dst: str, start: int = 0) -> list[str]:
+        """start — с какой секунды резать: телефон смотрит ролик кусками
+        по video_seconds и просит следующий кнопкой «Дальше»."""
         width, height = self.video_size
         codec = self.video_codec
         # Кадр «боком»: ролик поворачивается на 90°, и на вертикальном экране
@@ -297,7 +299,10 @@ class Transcoder:
         scale = (f"{rotate}scale={width}:{height}:force_original_aspect_ratio=decrease,"
                  f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2")
         kbps = f"{self.video_kbps}k"
-        return ([self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
+        # -ss перед -i: ffmpeg доматывает по ключевым кадрам, не разбирая
+        # всё до нужной секунды, — на длинном ролике это разница в минуты.
+        seek = ["-ss", str(start)] if start > 0 else []
+        return ([self.ffmpeg, "-y", "-loglevel", "error"] + seek + ["-i", src,
                  "-t", str(self.video_seconds), "-vf", scale, "-r", str(self.video_fps)]
                 + codec_args
                 # Ровный битрейт под потолок уровня: без maxrate кодер даёт
@@ -411,8 +416,9 @@ class Transcoder:
                 "-b:a", f"{self.voice_kbps}k",
                 "-movflags", "+faststart", "-f", "3gp", dst]
 
-    async def convert(self, raw: bytes, kind: str, codec: str = "libopus") -> bytes | None:
-        """Перегоняет видео в 3GP, звук — в AMR."""
+    async def convert(self, raw: bytes, kind: str, codec: str = "libopus",
+                      start: int = 0) -> bytes | None:
+        """Перегоняет видео в 3GP, звук — в AMR; start — с какой секунды."""
         if not raw or not self.available:
             if raw and not self.available:
                 log.warning("ffmpeg %r не найден — %s не перекодирую", self.ffmpeg, kind)
@@ -423,7 +429,7 @@ class Transcoder:
         src = os.path.join(self.workdir, f"in-{stamp}")
         dst = os.path.join(self.workdir, f"out-{stamp}.{ext}")
         if kind == "video":
-            args = self.video_args(src, dst)
+            args = self.video_args(src, dst, start)
         elif kind == "voice":
             args = self.voice_args(src, dst)
         elif kind == "ogg":

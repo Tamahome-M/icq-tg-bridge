@@ -1154,7 +1154,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private static final int[] MEDIA_QUALITIES = { 40, 50, 60, 70, 80, 90, 95 };
 	private static final int[] MEDIA_PHOTO_KBS = { 20, 40, 60, 100, 150, 250 };
 	private static final int[] MEDIA_VIDEO_KBPS = { 32, 48, 64, 96, 128, 192, 256, 384 };
-	private static final int[] MEDIA_VIDEO_SECS = { 5, 10, 15, 20, 30, 60, 120 };
+	private static final int[] MEDIA_VIDEO_SECS = { 5, 10, 15, 20, 30, 60, 120, 180, 300 };
 	private static final int[] MEDIA_VOICE_KBPS10 = { 48, 52, 59, 67, 74, 80, 102, 122 };   // режимы AMR-NB ×10
 	private static final int[] MEDIA_VOICE_SECS = { 30, 60, 120, 300, 600 };
 	private ChoiceGroup choiceInterfaceMisc;

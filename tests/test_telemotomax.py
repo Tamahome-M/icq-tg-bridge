@@ -151,7 +151,7 @@ async def run_photos() -> None:
     short = bytes(range(256)) * 150                    # 38 400 байт
     videos: list[str] = []
 
-    async def fetch_short(target: int, attach: str, rotate: str = "auto"):
+    async def fetch_short(target: int, attach: str, rotate: str = "auto", segment: int = 0):
         videos.append(attach)
         return short
 
@@ -164,7 +164,7 @@ async def run_photos() -> None:
 
     # Длинный ролик — частями по 60 КБ, клиент склеивает байт в байт.
     clip = bytes(range(256)) * 500                     # 128 000 байт
-    async def fetch_clip(target: int, attach: str, rotate: str = "auto"):
+    async def fetch_clip(target: int, attach: str, rotate: str = "auto", segment: int = 0):
         return clip
     server.fetch_video = fetch_clip
     client.parts_seen.clear()
@@ -400,13 +400,15 @@ async def run_video_rotate() -> None:
         return 1
 
     seen_photo = []
+    seen_segment = []
 
     async def fetch_attachment(target: int, attach: str, rotate: str = "auto"):
         seen_photo.append(rotate)
         return b"\xff\xd8\xff" + b"0" * 100
 
-    async def fetch_video(target: int, attach: str, rotate: str = "auto"):
+    async def fetch_video(target: int, attach: str, rotate: str = "auto", segment: int = 0):
         seen.append(rotate)
+        seen_segment.append(segment)
         return b"\x00\x00\x00\x18ftyp3gp4" + b"0" * 500
 
     server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
@@ -430,6 +432,11 @@ async def run_video_rotate() -> None:
             client.bart_flags = flags
             await client.request_photo(uin, token)
         assert seen_photo == ["auto", "always", "never"], seen_photo
+        # «Дальше»: номер куска — лишним байтом за приметой.
+        client.bart_flags = 0x01
+        assert seen_segment == [0, 0, 0], seen_segment
+        await client.request_video(uin, token, segment=2)
+        assert seen_segment[-1] == 2, seen_segment
         await client.close()
     finally:
         server._server.close()
