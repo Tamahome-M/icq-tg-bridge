@@ -1417,6 +1417,12 @@ class Session:
         if not target.isdigit():
             return
         if bart_type != C.BART_ICON:
+            # Запрос виден сразу: между ним и ответом мост качает и
+            # перекодирует — по журналу должно быть понятно, что телефон
+            # попросил и сколько это заняло, даже если ответа так и не будет.
+            log.info("телефон просит %s для %s%s", C.BART_NAMES.get(bart_type, f"примету 0x{bart_type:04x}"),
+                     self.server.name_of(int(target)),
+                     "" if flags in (0, 1) else f", флаги 0x{flags:02x}")
             log.debug("запрос приметы 0x%04x от %s, сессия %s", bart_type, self.peer,
                       "расширенная" if self.extended else "обычная")
             if not self.extended:
