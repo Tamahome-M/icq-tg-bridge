@@ -424,8 +424,15 @@ class Bridge:
         подключён: photo_width, video_seconds, voice_kbps и т. п."""
         oscar = getattr(self, "oscar", None)
         session = oscar.session if oscar is not None else None
-        if session is not None and session.profile and key in session.profile:
-            return session.profile[key]
+        if session is not None:
+            # Что владелец выбрал в настройках телефона («Медиа») — важнее
+            # профиля: он видит результат на своём экране, а профиль — общая
+            # прикидка по модели.
+            media = getattr(session, "media", None)
+            if media and key in media:
+                return media[key]
+            if session.profile and key in session.profile:
+                return session.profile[key]
         return getattr(self.cfg, profiles.KEYS.get(key, "tmm_" + key))
 
     async def fetch_attachment(self, uin: int, attach: str) -> bytes | None:
