@@ -1420,9 +1420,10 @@ class Session:
             # Запрос виден сразу: между ним и ответом мост качает и
             # перекодирует — по журналу должно быть понятно, что телефон
             # попросил и сколько это заняло, даже если ответа так и не будет.
-            log.info("телефон просит %s для %s%s", C.BART_NAMES.get(bart_type, f"примету 0x{bart_type:04x}"),
+            log.info("телефон просит %s для %s%s%s", C.BART_NAMES.get(bart_type, f"примету 0x{bart_type:04x}"),
                      self.server.name_of(int(target)),
-                     "" if flags in (0, 1) else f", флаги 0x{flags:02x}")
+                     "" if flags in (0, 1) else f", флаги 0x{flags:02x}",
+                     f", кусок {token[16] + 1}" if len(token) > 16 and token[16] else "")
             log.debug("запрос приметы 0x%04x от %s, сессия %s", bart_type, self.peer,
                       "расширенная" if self.extended else "обычная")
             if not self.extended:
@@ -1488,7 +1489,13 @@ class Session:
         if bart_type in (C.BART_VIDEO, C.BART_VOICE) and self.extended:
             voice = bart_type == C.BART_VOICE
             rotate = "always" if flags & 0x20 else ("never" if flags & 0x10 else "auto")
-            got = await (self.server.voice(token) if voice else self.server.video(token, rotate))
+            # Кусок ролика: телефон дописывает к токену байт с номером куска
+            # («Дальше»). Токен вложения — ровно 16 байт, так что лишний
+            # байт ни с чем не спутать.
+            segment = token[16] if len(token) > 16 else 0
+            token = token[:16]
+            got = await (self.server.voice(token) if voice
+                         else self.server.video(token, rotate, segment))
             what = "голосовое" if voice else "ролик"
             if not got:
                 log.info("%s по токену %s не найдено или не перекодировалось",
@@ -1821,11 +1828,13 @@ class OscarServer:
             log.exception("история для %s не собралась", self.name_of(uin))
             return None
 
-    async def video(self, token: bytes, rotate: str = "auto") -> bytes | None:
+    async def video(self, token: bytes, rotate: str = "auto", segment: int = 0) -> bytes | None:
         """Ролик по токену вложения — перекодированный под телефон, или None.
-        rotate — «auto», «always», «never»: класть ли кадр боком."""
+        rotate — «auto», «always», «never»: класть ли кадр боком; segment —
+        какой кусок по счёту («Дальше» в плеере телефона)."""
         return await self._media(token, "video:",
-                                 lambda uin, attach: self.fetch_video(uin, attach, rotate), "ролик")
+                                 lambda uin, attach: self.fetch_video(uin, attach, rotate, segment),
+                                 "ролик")
 
     async def voice(self, token: bytes) -> bytes | None:
         """Голосовое по токену — AMR в 3GP, который телефон умеет играть."""

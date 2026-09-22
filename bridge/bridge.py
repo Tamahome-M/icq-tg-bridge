@@ -651,11 +651,14 @@ class Bridge:
         await self.reply(contact, "[фото] отправлено")
         return True
 
-    async def fetch_video(self, uin: int, attach: str, rotate: str = "auto") -> bytes | None:
-        """Первые секунды ролика для TeleMotoMax — 3GP под плеер телефона.
+    async def fetch_video(self, uin: int, attach: str, rotate: str = "auto",
+                          segment: int = 0) -> bytes | None:
+        """Кусок ролика для TeleMotoMax — 3GP под плеер телефона.
 
         Ролик качается и перекодируется только по запросу клиента; тем же
-        ffmpeg и с тем же кодеком, что страница !render, но короче."""
+        ffmpeg и с тем же кодеком, что страница !render, но короче. segment —
+        какой кусок по счёту: телефон смотрит длинный ролик по video_seconds
+        и просит следующий кнопкой «Дальше»."""
         contact = self.storage.contact_by_uin(uin)
         kind, _, ident = attach.partition(":")
         if contact is None or kind != "video" or not ident.isdigit():
@@ -684,10 +687,16 @@ class Bridge:
             log.info("ролик для «%s»: исходник %s — %s", contact.title,
                      f"{size[0]}×{size[1]}" if size else "размер неизвестен",
                      "широкий, кладу боком" if transcoder.video_rotate else "боком не кладу")
-        data = await transcoder.convert(raw, "video")
+        seconds = self.tmm("video_seconds")
+        start = max(0, int(segment)) * seconds
+        data = await transcoder.convert(raw, "video", start=start)
         if data:
-            log.info("ролик для «%s» готов: первые %d с, %d КБ", contact.title,
-                     self.tmm("video_seconds"), len(data) // 1024)
+            log.info("ролик для «%s» готов: %s, %d КБ", contact.title,
+                     f"секунды {start}–{start + seconds}" if start else f"первые {seconds} с",
+                     len(data) // 1024)
+        elif start:
+            log.info("ролик для «%s»: с секунды %d ничего не вышло — видимо, конец",
+                     contact.title, start)
         return data
 
     async def fetch_history(self, uin: int, count: int,
