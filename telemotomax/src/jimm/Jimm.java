@@ -605,6 +605,12 @@ public class Jimm extends MIDlet
 
 	public static void wakeBacklight()
 	{
+		wakeBacklight(false);
+	}
+
+	/** force — не считаясь с пятисекундной паузой: держим свет во время ролика. */
+	public static void wakeBacklight(boolean force)
+	{
 //#sijapp cond.if target="MOTOROLA" | target="MIDP2"#
 		// Зовут из потока связи, притом из synchronized-метода приёма частей:
 		// flashBacklight — вызов интерфейса, и если он ждёт поток отрисовки,
@@ -613,7 +619,7 @@ public class Jimm extends MIDlet
 		long now = System.currentTimeMillis();
 		synchronized (Jimm.class)
 		{
-			if (now - lastFlash < 5000) return;
+			if (!force && now - lastFlash < 5000) return;
 			lastFlash = now;
 		}
 		new Thread() {

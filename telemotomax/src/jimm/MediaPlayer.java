@@ -81,6 +81,11 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		partQueue.addElement(copy);
 		clipSize += len;
 		notifyAll();
+		// Части идут прямо в файл, минуя onBartProgress, — счётчик на
+		// экране обновляем сами, иначе за всю загрузку не меняется ничего.
+		waited = 0;
+		status = waitingText() + " " + part + "/" + total + ", " + (clipSize / 1024) + " КБ";
+		repaint();
 		return true;
 	}
 
@@ -238,6 +243,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	private Player player;
 	private String filePath;           // temp file URL, or null if played from memory
 	private int clipSize;
+	private int waited;              // секунд ждём первую часть (мост качает)
 	private boolean paused;
 	private boolean finished;
 	private boolean ticking;
@@ -271,6 +277,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		viewer.status = waiting;
 		current = viewer;
 		Jimm.display.setCurrent(viewer);
+		viewer.tickWaiting();
 		try
 		{
 			Icq.requestAction(new RequestBartAction(uin, bartType, token, viewer));
@@ -284,8 +291,48 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	public void onBartProgress(int part, int total)
 	{
 		if (current != this) return;
+		waited = 0;
 		status = waitingText() + " " + part + "/" + total;
 		repaint();
+	}
+
+	// Подсветка на время просмотра: гасить её телефон начинает по своему
+	// сроку, а нажимать клавиши во время ролика некому. Держим, подновляя
+	// раз в несколько секунд, пока экран наш и плеер жив.
+	private void keepLit()
+	{
+		new Thread() {
+			public void run()
+			{
+				while (current == MediaPlayer.this && player != null)
+				{
+					Jimm.wakeBacklight(true);
+					try { Thread.sleep(4000); } catch (Exception ignore) {}
+				}
+			}
+		}.start();
+	}
+
+	// Пока не пришла первая часть, мост качает вложение и перекодирует его
+	// — на медленной сети это минуты. Без отсчёта экран выглядит повисшим,
+	// поэтому показываем, сколько ждём; с первой частью счётчик частей
+	// заменяет отсчёт.
+	private void tickWaiting()
+	{
+		new Thread() {
+			public void run()
+			{
+				String waiting = status;
+				while (current == MediaPlayer.this && partQueue == null && player == null)
+				{
+					try { Thread.sleep(1000); } catch (Exception ignore) {}
+					if (current != MediaPlayer.this || partQueue != null || player != null) return;
+					waited++;
+					status = waiting + " " + waited + " с";
+					repaint();
+				}
+			}
+		}.start();
 	}
 
 	// Called from the comm thread with the whole clip (or null).
@@ -497,6 +544,10 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			try { player.addPlayerListener(this); } catch (Exception ignore) {}
 		}
 		player.start();
+		// Пока идёт ролик, по клавишам не нажимают — подсветка гаснет на
+		// середине. Держим её включённой, пока плеер играет; при выходе с
+		// экрана возвращаем телефону обычный режим.
+		keepLit();
 		if (bartType == RequestBartAction.BART_VOICE) tick();
 	}
 
