@@ -504,6 +504,7 @@
 "video_rotate_never"			"никогда"
 "send_file"			"Отправить файл"
 "send_media"			"Отправить фото/видео"
+"send_log"			"Журнал связи в чат"
 "get_file"			"Скачать файл"
 "file_sending"			"Отправляю файл"
 "file_failed"			"Файл не получен:"

@@ -507,8 +507,24 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 				status = ResourceBundle.getString("cam_probe_done");
 				details = out;
 				repaint();
+				// Отчёт — в этот же чат сообщением: читать с экрана телефона
+				// и фотографировать его не надо.
+				StringBuffer sb = new StringBuffer("Проба камеры:");
+				for (int i = 0; i < out.length; i++) if (out[i] != null) sb.append('\n').append(out[i]);
+				sendToChat(sb.toString());
 			}
 		}.start();
+	}
+
+	// Текст в тот чат, из которого открыт экран: журнал и отчёты — туда.
+	private void sendToChat(String text)
+	{
+		try
+		{
+			ContactItem contact = ContactList.getItembyUIN(uin);
+			if (contact != null) JimmUI.sendMessage(text, contact);
+		}
+		catch (Exception ignore) {}
 	}
 
 	private static String longProperty(String name)

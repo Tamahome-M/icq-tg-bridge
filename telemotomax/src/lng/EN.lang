@@ -356,6 +356,7 @@
 "video_rotate_never"			"never"
 "send_file"			"Send file"
 "send_media"			"Send photo/video"
+"send_log"			"Send connection log to chat"
 "get_file"			"Download file"
 "file_sending"			"Sending file"
 "file_failed"			"File failed:"
