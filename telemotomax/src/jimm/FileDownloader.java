@@ -118,6 +118,8 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 		}
 	}
 
+	private int firstPart;           // размер первой части: по нему виден весь объём
+
 	public synchronized boolean onBartPart(byte[] buf, int off, int len, int part, int total)
 	{
 		if (current != this || failed) return false;
@@ -142,6 +144,10 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 		partQueue.addElement(copy);
 		got += len;
 		notifyAll();
+		if (part == 1) firstPart = len;
+		status = ResourceBundle.getString("file_loading") + " " + part + "/" + total + ", "
+				+ MediaPlayer.loaded(got, firstPart, part, total);
+		repaint();
 		return true;
 	}
 
