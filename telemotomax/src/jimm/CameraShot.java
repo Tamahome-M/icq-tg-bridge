@@ -48,6 +48,9 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	private String status;
 	private String[] details;          // что телефон отвечает про съёмку
 	private boolean sending;
+	private boolean flash;             // белый кадр на миг — снимок сделан
+	private String progress;           // состояние справа в верхней полосе
+	private String locator = "?";      // какой источник открылся: camera, image или video
 
 	private CameraShot(String uin, JimmScreen back)
 	{
@@ -81,8 +84,17 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 				Player p = null;
 				try
 				{
-					try { p = Manager.createPlayer("capture://image"); }
-					catch (Exception first) { p = Manager.createPlayer("capture://video"); }
+					// Источник камеры у Motorola — capture://camera («Java ME
+					// Developer Guide for MOTOMAGX»: camera player с getSnapshot);
+					// capture://image — по MMAPI; capture://video — видеопоток,
+					// на V8 открывался только он, а снимок с него — кадр
+					// видеозахвата, не сенсора.
+					try { p = Manager.createPlayer("capture://camera"); locator = "camera"; }
+					catch (Exception noCamera)
+					{
+						try { p = Manager.createPlayer("capture://image"); locator = "image"; }
+						catch (Exception noImage) { p = Manager.createPlayer("capture://video"); locator = "video"; }
+					}
 					p.realize();
 					VideoControl vc = (VideoControl) p.getControl("VideoControl");
 					if (vc == null) throw new Exception("no VideoControl");
@@ -160,42 +172,80 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	// Размеры JPEG-снимка, которые телефон объявляет в video.snapshot.encodings
 	// («encoding=jpeg&width=640&height=480 ...»), — строками «640x480», без
 	// повторов. Пусто — телефон не говорит, тогда снимок «как есть».
-	// Обычные размеры на случай, если телефон в свойстве размеры не называет
-	// (V8 перечисляет там только форматы): getSnapshot с неподдерживаемым
-	// размером бросит исключение, и снимок уйдёт «как есть».
+	// Размеры фото самой камеры V8 (таблица photoSizeTable в ezx_camera.cfg
+	// прошивки, портрет: ширина×высота) — 240×320, 480×640, 960×1280,
+	// 1200×1600 — плюс кадры видеозахвата из kvm. Неподдерживаемый размер
+	// V8 не отвергает, а отдаёт битый кадр (640×480 — «завёрнутая» картинка
+	// с зелёным низом) или пустоту (1024×768): в списке только то, что
+	// телефон знает; что из этого даёт настоящий кадр — видно в «Связи».
 	private static final String[] COMMON_SIZES =
-		{ "160x120", "320x240", "640x480", "1024x768", "1280x1024", "1600x1200", "2048x1536" };
+		{ "1200x1600", "960x1280", "480x640", "320x240", "240x320", "160x120" };
 
 	public static String[] snapshotSizes()
 	{
 		java.util.Vector out = new java.util.Vector();
-		try
-		{
-			String all = System.getProperty("video.snapshot.encodings");
-			if (all != null)
-			{
-				String lower = all.toLowerCase();
-				int pos = 0;
-				while (pos < lower.length())
-				{
-					int end = lower.indexOf(' ', pos);
-					if (end < 0) end = lower.length();
-					String enc = lower.substring(pos, end);
-					pos = end + 1;
-					// Регистр и имя формата не важны: берём любой размер.
-					int w = enc.indexOf("width=");
-					int h = enc.indexOf("height=");
-					if (w < 0 || h < 0) continue;
-					String size = number(enc, w + 6) + "x" + number(enc, h + 7);
-					if (size.length() > 2 && !out.contains(size)) out.addElement(size);
-				}
-			}
-		}
-		catch (Exception ignore) {}
-		if (out.isEmpty()) return COMMON_SIZES;
+		// video.snapshot.encodings у V8 — только «encoding=jpeg»; размеры он
+		// называет в video.encodings (кадры видеозахвата). Фото-размеры
+		// камеры телефон в свойствах не называет вовсе — добавляем свои.
+		sizesFrom("video.snapshot.encodings", out);
+		if (out.isEmpty()) sizesFrom("video.encodings", out);
+		for (int i = 0; i < COMMON_SIZES.length; i++)
+			if (!out.contains(COMMON_SIZES[i])) out.addElement(COMMON_SIZES[i]);
 		String[] sizes = new String[out.size()];
 		out.copyInto(sizes);
 		return sizes;
+	}
+
+	private static void sizesFrom(String property, java.util.Vector out)
+	{
+		try
+		{
+			String all = System.getProperty(property);
+			if (all == null) return;
+			String lower = all.toLowerCase();
+			int pos = 0;
+			while (pos < lower.length())
+			{
+				int end = lower.indexOf(' ', pos);
+				if (end < 0) end = lower.length();
+				String enc = lower.substring(pos, end);
+				pos = end + 1;
+				// Регистр и имя формата не важны: берём любой размер.
+				int w = enc.indexOf("width=");
+				int h = enc.indexOf("height=");
+				if (w < 0 || h < 0) continue;
+				String size = number(enc, w + 6) + "x" + number(enc, h + 7);
+				if (size.length() > 2 && !out.contains(size)) out.addElement(size);
+			}
+		}
+		catch (Exception ignore) {}
+	}
+
+	// Размер JPEG по заголовку кадра (SOF), без раскодирования: «640x480»
+	// или null. Идём по маркерам: у сегментов с длиной перескакиваем её,
+	// у SOI и RSTn длины нет.
+	static String jpegSize(byte[] d)
+	{
+		try
+		{
+			int i = 2;
+			while (i + 9 < d.length)
+			{
+				if ((d[i] & 0xFF) != 0xFF) { i++; continue; }
+				int m = d[i + 1] & 0xFF;
+				if (m == 0xFF) { i++; continue; }
+				if (m == 0xD8 || m == 0x01 || (m >= 0xD0 && m <= 0xD7)) { i += 2; continue; }
+				if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC)
+				{
+					int h = ((d[i + 5] & 0xFF) << 8) | (d[i + 6] & 0xFF);
+					int w = ((d[i + 7] & 0xFF) << 8) | (d[i + 8] & 0xFF);
+					return w + "x" + h;
+				}
+				i += 2 + (((d[i + 2] & 0xFF) << 8) | (d[i + 3] & 0xFF));
+			}
+		}
+		catch (Exception ignore) {}
+		return null;
 	}
 
 	private static String number(String s, int from)
@@ -210,29 +260,40 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	{
 		if (video == null || sending) return;
 		sending = true;
-		status = ResourceBundle.getString("camera_sending");
+		status = null;
+		progress = ResourceBundle.getString("cam_shooting");
 		repaint();
 		new Thread() {
 			public void run()
 			{
 				byte[] shot = null;
 				Exception err = null;
+				String how = "";
 				// Размер из настроек — если телефон его знает; иначе как есть.
 				String size = Options.getString(Options.OPTION_CAMERA_SIZE);
 				if (size != null && size.length() > 0)
 				{
 					int x = size.indexOf('x');
+					String w = size.substring(0, x), h = size.substring(x + 1);
 					try
 					{
-						shot = video.getSnapshot("encoding=jpeg&width=" + size.substring(0, x)
-								+ "&height=" + size.substring(x + 1));
+						shot = video.getSnapshot("encoding=jpeg&width=" + w + "&height=" + h);
 					}
 					catch (Exception e) { err = e; }
+					// V8 на неподдерживаемый размер не бросает исключение, а
+					// отдаёт пустой массив (1024×768 — «?, 0 КБ») — это не
+					// снимок, идём к следующей попытке.
+					if (shot != null && jpegSize(shot) == null)
+					{
+						ConnLog.note("снимок " + size + ": не JPEG, " + shot.length + " Б — без размера");
+						shot = null;
+					}
 				}
 				if (shot == null)
 				{
 					try { shot = video.getSnapshot("encoding=jpeg"); err = null; }
 					catch (Exception e) { if (err == null) err = e; }
+					if (shot != null && jpegSize(shot) == null) shot = null;
 				}
 				if (shot == null)
 				{
@@ -240,17 +301,38 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 					catch (Exception e) { if (err == null) err = e; }
 				}
 				stopCamera();
+				// Вспышка на экране — снимок сделан: видоискатель уже закрыт,
+				// белый кадр на чёрном виден отчётливо.
+				flash = true;
+				repaint();
+				try { Thread.sleep(150); } catch (Exception ignore) {}
+				flash = false;
+				repaint();
 				if (shot == null)
 				{
 					sending = false;
 					failed(err);
 					return;
 				}
+				// Что вышло на самом деле — по заголовку JPEG, не по настройке:
+				// телефон может молча дать другой размер (или «тот», но битый).
+				String got = jpegSize(shot);
+				String info = (got == null ? "?" : got) + ", " + (shot.length / 1024) + " КБ";
+				ConnLog.note("снимок " + info + " (" + how + "capture://" + locator
+						+ (size != null && size.length() > 0 ? ", просили " + size : "") + ")");
 				try
 				{
-					Icq.sendPhoto(uin, shot);
-					status = ResourceBundle.getString("camera_sending")
-							+ " " + (shot.length / 1024) + " КБ";
+					final String sent = info;
+					progress = sent;
+					repaint();
+					Icq.sendPhoto(uin, shot, new Icq.UploadProgress() {
+						public void onPart(int part, int total)
+						{
+							progress = sent + " \u00b7 " + part + "/" + total;
+							repaint();
+						}
+					});
+					progress = ResourceBundle.getString("cam_wait_bridge");
 					waitForBridge();
 				}
 				catch (Exception e)
@@ -297,33 +379,32 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 
 	protected void paint(Graphics g)
 	{
+		int w = getWidth(), h = getHeight();
+		if (flash)
+		{
+			g.setColor(0xFFFFFF);
+			g.fillRect(0, 0, w, h);
+			return;
+		}
+		// Видоискатель рисует телефон; без него — чёрный фон.
 		if (video == null)
 		{
 			g.setColor(0x000000);
-			g.fillRect(0, 0, getWidth(), getHeight());
+			g.fillRect(0, 0, w, h);
 		}
-		if (status != null)
+		String left = ResourceBundle.getString("cam_photo");
+		if (sending)
+			CameraHud.top(g, w, left, progress, CameraHud.WARN);
+		else
 		{
-			Font font = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
-			g.setFont(font);
-			int step = font.getHeight();
-			int lines = 1 + (details == null ? 0 : details.length);
-			int top = getHeight() - lines * step - 4;
-			g.setColor(0x000000);
-			g.fillRect(0, top, getWidth(), lines * step + 4);
-			g.setColor(0xFFFFFF);
-			int y = top + step;
-			g.drawString(status, 2, y, Graphics.LEFT | Graphics.BASELINE);
-			if (details != null)
-			{
-				g.setColor(0xC0C0C0);
-				for (int i = 0; i < details.length; i++)
-				{
-					y += step;
-					g.drawString(details[i], 2, y, Graphics.LEFT | Graphics.BASELINE);
-				}
-			}
+			String size = Options.getString(Options.OPTION_CAMERA_SIZE);
+			if (size == null || size.length() == 0) size = ResourceBundle.getString("camera_size_default");
+			CameraHud.top(g, w, left, size, CameraHud.DIM);
+			if (video != null && status == null)
+				CameraHud.bottom(g, w, h, ResourceBundle.getString("cam_hint_shoot"),
+						ResourceBundle.getString("cam_hint_back"));
 		}
+		if (status != null) CameraHud.box(g, w, h, status, details);
 	}
 
 	protected void keyPressed(int keyCode)

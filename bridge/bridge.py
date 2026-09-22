@@ -570,6 +570,33 @@ class Bridge:
         await self.reply(contact, f"[файл {name}, {max(1, size // 1024)} КБ] отправлен")
         return True
 
+    @staticmethod
+    def jpeg_size(data: bytes) -> str:
+        """«640x480» по заголовку JPEG (SOF), без раскодирования; «?» если
+        заголовок не нашёлся. Нужен в журнале: телефон может отдать не тот
+        размер, что просили в настройках, — по нему и разбираться."""
+        i = 2
+        try:
+            while i + 9 < len(data):
+                if data[i] != 0xFF:
+                    i += 1
+                    continue
+                m = data[i + 1]
+                if m == 0xFF:
+                    i += 1
+                    continue
+                if m in (0xD8, 0x01) or 0xD0 <= m <= 0xD7:
+                    i += 2
+                    continue
+                if 0xC0 <= m <= 0xCF and m not in (0xC4, 0xC8, 0xCC):
+                    h = (data[i + 5] << 8) | data[i + 6]
+                    w = (data[i + 7] << 8) | data[i + 8]
+                    return f"{w}x{h}"
+                i += 2 + ((data[i + 2] << 8) | data[i + 3])
+        except IndexError:
+            pass
+        return "?"
+
     async def send_camera_photo(self, uin: int, data: bytes) -> bool:
         """Снимок с камеры телефона — в чат. True, если ушёл."""
         contact = self.storage.contact_by_uin(uin)
@@ -582,8 +609,8 @@ class Bridge:
             log.exception("снимок в чат «%s» не ушёл", contact.title)
             await self.reply(contact, f"Снимок не отправлен: {type(exc).__name__}")
             return False
-        log.info("снимок с камеры → «%s»: %d КБ, номер %s",
-                 contact.title, len(data) // 1024, message_id)
+        log.info("снимок с камеры → «%s»: %s, %d КБ, номер %s",
+                 contact.title, self.jpeg_size(data), len(data) // 1024, message_id)
         await self.reply(contact, "[фото] отправлено")
         return True
 
