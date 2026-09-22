@@ -548,6 +548,7 @@
 "cam_probe"			"Проба камеры"
 "cam_probing"			"проба..."
 "cam_probe_done"			"Проба: что отдаёт телефон"
+"cam_probe_send"			"Проба со снимками в чат"
 "video_loading"				"Загрузка видео..."
 "video_failed"				"Видео недоступно"
 "server_history"				"История с сервера"

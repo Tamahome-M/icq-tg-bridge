@@ -52,6 +52,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	private String progress;           // состояние справа в верхней полосе
 	private String locator = "?";      // какой источник открылся: camera, image или video
 	private static final Command cmdProbe = new Command(ResourceBundle.getString("cam_probe"), Command.ITEM, 2);
+	private static final Command cmdProbeSend = new Command(ResourceBundle.getString("cam_probe_send"), Command.ITEM, 3);
 	private boolean probing;
 
 	private CameraShot(String uin, JimmScreen back)
@@ -61,6 +62,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		setFullScreenMode(true);
 		addCommand(JimmUI.cmdBack);
 		addCommand(cmdProbe);
+		addCommand(cmdProbeSend);
 		setCommandListener(this);
 	}
 
@@ -189,14 +191,12 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	// Размеры JPEG-снимка, которые телефон объявляет в video.snapshot.encodings
 	// («encoding=jpeg&width=640&height=480 ...»), — строками «640x480», без
 	// повторов. Пусто — телефон не говорит, тогда снимок «как есть».
-	// Размеры фото самой камеры V8 (таблица photoSizeTable в ezx_camera.cfg
-	// прошивки, портрет: ширина×высота) — 240×320, 480×640, 960×1280,
-	// 1200×1600 — плюс кадры видеозахвата из kvm. Неподдерживаемый размер
-	// V8 не отвергает, а отдаёт битый кадр (640×480 — «завёрнутая» картинка
-	// с зелёным низом) или пустоту (1024×768): в списке только то, что
-	// телефон знает; что из этого даёт настоящий кадр — видно в «Связи».
+	// Что V8 принял по пробе (getSnapshot с размером, capture://video):
+	// 960×1280, 480×640, 640×480, 320×240, 240×320 — с заголовком в этот
+	// размер; 1200×1600 — «Invalid snapshot size», 1024×768 — пустой
+	// массив. Целый ли кадр у каждого — проба со снимками («*»).
 	private static final String[] COMMON_SIZES =
-		{ "1200x1600", "960x1280", "480x640", "320x240", "240x320", "160x120" };
+		{ "960x1280", "480x640", "640x480", "320x240", "240x320", "160x120" };
 
 	public static String[] snapshotSizes()
 	{
@@ -384,6 +384,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	{
 		CameraShot shot = current;
 		if (shot == null || !shot.uin.equals(uin)) return;
+		if (shot.probing) return;          // проба шлёт несколько снимков подряд
 		shot.sending = false;
 		if (ok)
 		{
@@ -435,6 +436,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		try { action = getGameAction(keyCode); } catch (Exception ignore) {}
 		if (action == FIRE || keyCode == KEY_NUM5) shoot();
 		else if (keyCode == KEY_POUND) probe();
+		else if (keyCode == KEY_STAR) probeSend();
 	}
 
 	private void stopCamera()
@@ -451,6 +453,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	public void commandAction(Command c, Displayable d)
 	{
 		if (c == cmdProbe) { probe(); return; }
+		if (c == cmdProbeSend) { probeSend(); return; }
 		close();
 	}
 
@@ -525,6 +528,65 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 			if (contact != null) JimmUI.sendMessage(text, contact);
 		}
 		catch (Exception ignore) {}
+	}
+
+	// Проба со снимками: размеры, которые телефон принял по заголовку, но
+	// про которые не ясно, целый ли кадр (640×480 когда-то приходил
+	// «завёрнутым»), — снимаем и отправляем в чат подряд, сравнивать глазами.
+	private static final String[] PROBE_SEND = {
+		"encoding=jpeg&width=480&height=640",
+		"encoding=jpeg&width=640&height=480",
+		"encoding=jpeg&width=960&height=1280",
+	};
+
+	private void probeSend()
+	{
+		if (video == null || sending || probing) return;
+		probing = true;
+		sending = true;
+		status = null;
+		details = null;
+		progress = ResourceBundle.getString("cam_probing");
+		repaint();
+		new Thread() {
+			public void run()
+			{
+				StringBuffer report = new StringBuffer("Проба со снимками:");
+				for (int i = 0; i < PROBE_SEND.length && video != null; i++)
+				{
+					String what = PROBE_SEND[i];
+					String res;
+					try
+					{
+						byte[] shot = video.getSnapshot(what);
+						String size = (shot == null) ? null : jpegSize(shot);
+						if (size == null) res = "нет JPEG";
+						else
+						{
+							final String tag = size + ", " + (shot.length / 1024) + " КБ";
+							progress = tag;
+							repaint();
+							Icq.sendPhoto(uin, shot, new Icq.UploadProgress() {
+								public void onPart(int part, int total)
+								{
+									progress = tag + " \u00b7 " + part + "/" + total;
+									repaint();
+								}
+							});
+							res = tag + " — ушло";
+						}
+					}
+					catch (Throwable t) { res = shortName(t); }
+					report.append('\n').append(what.replace('&', ' ')).append(" -> ").append(res);
+					ConnLog.note("проба " + what.replace('&', ' ') + " -> " + res);
+				}
+				probing = false;
+				sending = false;
+				status = ResourceBundle.getString("cam_probe_done");
+				repaint();
+				sendToChat(report.toString());
+			}
+		}.start();
 	}
 
 	private static String longProperty(String name)

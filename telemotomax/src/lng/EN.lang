@@ -400,6 +400,7 @@
 "cam_probe"			"Camera probe"
 "cam_probing"			"probing..."
 "cam_probe_done"			"Probe: what the phone returns"
+"cam_probe_send"			"Probe: send snapshots to chat"
 "video_loading"				"Loading video..."
 "video_failed"				"Video unavailable"
 "server_history"				"History from server"
