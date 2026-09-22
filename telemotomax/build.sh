@@ -166,6 +166,14 @@ if [ -n "${TMM_DIST:-}" ]; then
 	case "${TMM_MODULES:-v3}" in v8) BASE=TeleMotoMax-V8 ;; *) BASE=TeleMotoMax ;; esac
 	cp "$WORK/out/TeleMotoMax.jar" "$DIST/$BASE.jar"
 	sed "s|^MIDlet-Jar-URL: .*|MIDlet-Jar-URL: $BASE.jar|" "$WORK/out/TeleMotoMax.jad" > "$DIST/$BASE.jad"
+	# Сборка V8 в репозитории — подписанная: на V8 файлы (JSR-75) даёт
+	# только доверенное приложение, а телефон доверяет корню из
+	# telemotomax/sign-keys (см. README, «Своя подпись»). V3 остаётся без
+	# подписи — там этот корень не прописан, и подписанный JAD чужим
+	# корнем P2K может и не принять. Ключи — тестовые, лежат рядом.
+	if [ "$BASE" = TeleMotoMax-V8 ] && [ -f "$HERE/sign-keys/ca.key" ]; then
+		sh "$HERE/sign.sh" "$DIST/$BASE.jad" | sed 's/^/   /'
+	fi
 	say "В репозиторий: telemotomax/dist/$BASE.jar"
 fi
 

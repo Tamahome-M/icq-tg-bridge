@@ -390,9 +390,13 @@ rm -f /ezxlocal/download/java/.policy/._policy.txt \
 `/home/.autorun/` (штатный автозапуск SAedition для NoGUI-сценариев).
 
 Готовые сборки — в `telemotomax/dist/` (`TMM_DIST=1 telemotomax/build.sh`
-кладёт их туда): `TeleMotoMax.jar` (V3) и `TeleMotoMax-V8.jar`. Веб-сервер
-моста раздаёт их в разделе «Загрузки» (`/d/`) — ставить на телефон по
-ссылке на JAD.
+кладёт их туда): `TeleMotoMax.jar` (V3) и `TeleMotoMax-V8.jar`. Сборка V8
+в `dist/` **уже подписана** ключами из `sign-keys/` — `build.sh` с
+`TMM_DIST=1` подписывает её сам; V3 остаётся без подписи (там корень не
+прописан). Веб-сервер моста раздаёт их в разделе «Загрузки» (`/d/`) —
+ставить на телефон по ссылке на JAD; после `tools/update-from-github.sh`
+на VPS с телефона по `/d/TeleMotoMax-V8.jad` ставится именно доверенная
+сборка.
 
 После входа клиент сообщает мосту платформу (`microedition.platform`),
 размер экрана и кучу (SNAC `01/F2`), и мост берёт **профиль телефона**:
