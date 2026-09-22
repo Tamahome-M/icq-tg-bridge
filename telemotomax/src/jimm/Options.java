@@ -211,6 +211,7 @@ public class Options
 	public static final int OPTION_MEDIA_VOICE_KBPS10   = 120;   // битрейт голосового ×10 (122 — 12.2)
 	public static final int OPTION_MEDIA_VOICE_SECONDS  = 121;   // длина голосового
 	public static final int OPTION_PHOTO_ROTATE         = 122;   // фото боком: 0 авто, 1 всегда, 2 никогда
+	public static final int OPTION_MEDIA_MEM_KB         = 123;   // сколько КБ ролика читать в память, 0 — по куче
 
 	/** «WxH» из настройки «Медиа» как {w, h}; пусто или негодно — null. */
 	public static int[] mediaSize(int key)
@@ -456,6 +457,7 @@ public class Options
 		setInt    (Options.OPTION_MEDIA_VOICE_KBPS10,  0);
 		setInt    (Options.OPTION_MEDIA_VOICE_SECONDS, 0);
 		setInt    (Options.OPTION_PHOTO_ROTATE,        0);
+		setInt    (Options.OPTION_MEDIA_MEM_KB,        0);
 
 		setBoolean(Options.OPTION_CP1251_HACK, ResourceBundle.langAvailable[0]
 				.equals("RU") || ResourceBundle.langAvailable[0].equals("BE") );
@@ -1145,6 +1147,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup mediaPhotoSize, mediaPhotoQuality, mediaPhotoKb;
 	private ChoiceGroup mediaVideoSize, mediaVideoKbps, mediaVideoSeconds;
 	private ChoiceGroup mediaVoiceKbps, mediaVoiceSeconds;
+	private TextField mediaMemKb;
 	// Значения списков «Медиа»; первый пункт каждого — «как в профиле моста».
 	private static final String[] MEDIA_PHOTO_SIZES = { "176x176", "176x220", "240x320", "320x240", "480x640", "640x480" };
 	private static final String[] MEDIA_VIDEO_SIZES = { "176x144", "144x176", "240x180", "320x240", "240x320", "480x640", "640x480" };
@@ -2835,6 +2838,13 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		optionsForm.append(videoRotateChoice);
 		optionsForm.append(mediaVoiceKbps);
 		optionsForm.append(mediaVoiceSeconds);
+		// Клиентская настройка, мосту не уходит: сколько ролика класть в
+		// память, если плеер не смог взять его файлом. Куча динамическая —
+		// свободное место меряется в текущей куче и скачет, поэтому число
+		// лучше задать самому; 0 — считать по куче.
+		mediaMemKb = new TextField(ResourceBundle.getString("media_mem_kb"),
+				String.valueOf(Options.getInt(Options.OPTION_MEDIA_MEM_KB)), 5, TextField.NUMERIC);
+		optionsForm.append(mediaMemKb);
 	}
 
 	private void readMediaOptions()
@@ -2849,6 +2859,12 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		Options.setInt(Options.OPTION_PHOTO_ROTATE, photoRotateChoice.getSelectedIndex());
 		Options.setInt(Options.OPTION_MEDIA_VOICE_KBPS10, mediaValue(mediaVoiceKbps, MEDIA_VOICE_KBPS10));
 		Options.setInt(Options.OPTION_MEDIA_VOICE_SECONDS, mediaValue(mediaVoiceSeconds, MEDIA_VOICE_SECS));
+		try
+		{
+			int kb = Integer.parseInt(mediaMemKb.getString().trim());
+			Options.setInt(Options.OPTION_MEDIA_MEM_KB, Math.max(0, Math.min(8192, kb)));
+		}
+		catch (Exception ignore) {}
 		jimm.comm.Icq.resendClientInfo();
 	}
 

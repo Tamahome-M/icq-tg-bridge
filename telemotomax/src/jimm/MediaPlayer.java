@@ -170,14 +170,19 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		}
 	}
 
-	// Сколько можно прочитать в память: половина свободной кучи, но не
-	// больше двух мегабайт. Куча V8 — около мегабайта, и ролик в 900 КБ в
-	// неё не ляжет (плееру тоже нужно место); у V3 её ещё меньше. Числом
-	// это не угадать — спрашиваем телефон.
+	// Сколько можно прочитать в память, если плеер не взял файл. Настройка
+	// «Ролик в памяти, КБ» (Медиа) — сколько сказали, столько и берём.
+	// Ноль — считать самим, но честно: куча динамическая, freeMemory()
+	// показывает свободное место в нынешней куче (она ещё может подрасти) и
+	// скачет от сборки мусора, поэтому сначала зовём gc, берём половину и не
+	// больше двух мегабайт. У V8 куча около мегабайта, у V3 меньше.
 	private static int memoryLimit()
 	{
-		long free = Runtime.getRuntime().freeMemory();
-		long limit = free / 2;
+		int kb = 0;
+		try { kb = Options.getInt(Options.OPTION_MEDIA_MEM_KB); } catch (Exception ignore) {}
+		if (kb > 0) return kb * 1024;
+		try { System.gc(); } catch (Throwable ignore) {}
+		long limit = Runtime.getRuntime().freeMemory() / 2;
 		if (limit > 2 * 1024 * 1024) limit = 2 * 1024 * 1024;
 		return (int) limit;
 	}
