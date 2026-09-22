@@ -84,7 +84,9 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		// Части идут прямо в файл, минуя onBartProgress, — счётчик на
 		// экране обновляем сами, иначе за всю загрузку не меняется ничего.
 		waited = 0;
-		status = waitingText() + " " + part + "/" + total + ", " + (clipSize / 1024) + " КБ";
+		if (part == 1) firstPart = len;
+		status = waitingText() + " " + part + "/" + total + ", "
+				+ loaded(clipSize, firstPart, part, total);
 		repaint();
 		return true;
 	}
@@ -244,6 +246,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	private String filePath;           // temp file URL, or null if played from memory
 	private int clipSize;
 	private int waited;              // секунд ждём первую часть (мост качает)
+	private int firstPart;           // размер первой части: по нему виден весь объём
 	private byte[] token;            // примета вложения: нужна, чтобы просить следующий кусок
 	private String uin;
 	private int segment;             // какой кусок ролика смотрим (0 — первый)
@@ -613,6 +616,18 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			name += ": " + msg;
 		}
 		return name;
+	}
+
+	/**
+	 * «48/120 КБ» — сколько принято из скольких. Точного объёма мост не
+	 * присылает, но все части, кроме последней, одного размера, значит по
+	 * первой он известен; на последней части объём уже точный.
+	 */
+	static String loaded(long got, int firstPart, int part, int total)
+	{
+		long whole = (part >= total || firstPart <= 0) ? got : (long) firstPart * total;
+		if (whole < got) whole = got;
+		return (got / 1024) + "/" + (whole / 1024) + " КБ";
 	}
 
 	private String waitingText()
