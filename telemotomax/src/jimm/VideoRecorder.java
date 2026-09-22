@@ -63,6 +63,7 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 	private boolean recording;
 	private boolean sending;
 	private int sentParts, totalParts;
+	private String progress;                 // состояние справа в верхней полосе
 
 	private VideoRecorder(String uin, JimmScreen back)
 	{
@@ -121,7 +122,7 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 	{
 		if (player == null || recording || sending) return;
 		recording = true;
-		status = ResourceBundle.getString("video_recording");
+		status = null;
 		repaint();
 		new Thread() {
 			public void run()
@@ -162,8 +163,7 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 				while (recording && current == VideoRecorder.this)
 				{
 					int secs = seconds();
-					status = ResourceBundle.getString("video_recording") + " " + secs + "/" + MAX_SECONDS;
-					repaint();
+					repaint();          // таймер и мигающая точка — в paint
 					if (secs >= MAX_SECONDS) { stopAndSend(); return; }
 					try { Thread.sleep(500); } catch (Exception ignore) {}
 				}
@@ -183,7 +183,8 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 		recording = false;
 		sending = true;
 		final int secs = Math.max(1, seconds());
-		status = ResourceBundle.getString("camera_sending");
+		status = null;
+		progress = ResourceBundle.getString("camera_sending");
 		repaint();
 		new Thread() {
 			public void run()
@@ -212,14 +213,13 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 						public void onPart(int part, int total)
 						{
 							sentParts = part; totalParts = total;
-							status = ResourceBundle.getString("camera_sending") + " " + part + "/" + total
-									+ " (" + (size / 1024) + " КБ)";
+							progress = (size / 1024) + " КБ \u00b7 " + part + "/" + total;
 							repaint();
 						}
 					});
 					data = null;
 					deleteTemp();
-					status = ResourceBundle.getString("video_waiting_bridge");
+					progress = ResourceBundle.getString("cam_wait_bridge");
 					waitForBridge();
 				}
 				catch (Exception e)
@@ -364,41 +364,34 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 
 	protected void paint(Graphics g)
 	{
-		// Видоискатель рисует телефон; поверх — только строка состояния.
-		if (video == null || status != null || details != null)
+		int w = getWidth(), h = getHeight();
+		// Видоискатель рисует телефон; без него — чёрный фон.
+		if (video == null)
 		{
-			Font font = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
-			g.setFont(font);
-			int step = font.getHeight();
-			if (video == null)
-			{
-				g.setColor(0x000000);
-				g.fillRect(0, 0, getWidth(), getHeight());
-			}
-			else
-			{
-				g.setColor(0x000000);
-				g.fillRect(0, 0, getWidth(), step + 4);
-			}
-			g.setColor(0xFFFFFF);
-			if (status != null) g.drawString(status, getWidth() / 2, 2, Graphics.HCENTER | Graphics.TOP);
-			if (details != null)
-			{
-				int y = getHeight() / 2;
-				for (int i = 0; i < details.length; i++)
-				{
-					g.drawString(details[i], 2, y, Graphics.LEFT | Graphics.TOP);
-					y += step;
-				}
-			}
+			g.setColor(0x000000);
+			g.fillRect(0, 0, w, h);
 		}
+		String left = ResourceBundle.getString("cam_note");
+		if (recording)
+		{
+			// Идёт запись: красная мигающая точка, таймер, чем остановить.
+			String t = CameraHud.mmss(seconds()) + " / " + CameraHud.mmss(MAX_SECONDS);
+			CameraHud.top(g, w, left, t, CameraHud.REC);
+			int dot = CameraHud.FONT.getHeight() - 4;
+			CameraHud.recDot(g, w - 4 - CameraHud.FONT.stringWidth(t) - dot - 6, 5, dot);
+			CameraHud.bottom(g, w, h, ResourceBundle.getString("cam_hint_stop"), null);
+		}
+		else if (sending)
+			CameraHud.top(g, w, left, progress, CameraHud.WARN);
 		else
 		{
-			Font font = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
-			g.setFont(font);
-			g.setColor(0xC0C0C0);
-			g.drawString(ResourceBundle.getString("video_keys"), getWidth() / 2, 2, Graphics.HCENTER | Graphics.TOP);
+			CameraHud.top(g, w, left, ResourceBundle.getString("cam_upto") + " "
+					+ CameraHud.mmss(MAX_SECONDS), CameraHud.DIM);
+			if (video != null && status == null)
+				CameraHud.bottom(g, w, h, ResourceBundle.getString("cam_hint_rec"),
+						ResourceBundle.getString("cam_hint_back"));
 		}
+		if (status != null) CameraHud.box(g, w, h, status, details);
 	}
 
 	protected void keyPressed(int keyCode)

@@ -9,14 +9,16 @@
 #   telemotomax/sign.sh                  # подписать dist/TeleMotoMax-V8.jad
 #   telemotomax/sign.sh path/to/App.jad  # любой JAD рядом с его JAR
 #
-# Ключи — в ~/.tmm-sign/ (создаются при первом запуске, в репозиторий не
-# попадают): ca.key/ca.der — корневой (его на телефон), signer.key/signer.der
-# — подписывающий (им подписан JAR). В JAD добавляются MIDlet-Certificate-1-1
+# Ключи — в telemotomax/sign-keys/ (тестовые, лежат в репозитории; нет —
+# создаются при первом запуске): ca.key/ca.der — корневой (его на телефон),
+# signer.key/signer.der — подписывающий (им подписан JAR). В JAD добавляются MIDlet-Certificate-1-1
 # (подписывающий), MIDlet-Certificate-1-2 (корневой) и MIDlet-Jar-RSA-SHA1.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 JAD=${1:-$HERE/dist/TeleMotoMax-V8.jad}
-KEYS=${TMM_KEYS:-$HOME/.tmm-sign}
+# Ключи по умолчанию — из репозитория (telemotomax/sign-keys): они тестовые,
+# и телефон уже доверяет именно этому корню; TMM_KEYS=<каталог> — свои.
+KEYS=${TMM_KEYS:-$HERE/sign-keys}
 JAR=$(dirname "$JAD")/$(sed -n 's/^MIDlet-Jar-URL: *//p' "$JAD" | tr -d '\r')
 [ -f "$JAR" ] || { echo "нет JAR: $JAR" >&2; exit 1; }
 
