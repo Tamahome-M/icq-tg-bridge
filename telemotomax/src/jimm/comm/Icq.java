@@ -357,14 +357,59 @@ public class Icq implements Runnable
 		int w = 0, h = 0;
 		try { w = jimm.SplashCanvas.getAreaWidth(); h = jimm.SplashCanvas.getAreaHeight(); } catch (Exception ignore) {}
 		long mem = Runtime.getRuntime().totalMemory() / 1024;
-		byte[] buf = new byte[1 + raw.length + 2 + 2 + 4];
+		// Хвостом — настройки «Медиа»: пары u16 ключ / u16 значение, 0 —
+		// «как в профиле моста» (не шлём). Мост 0.47+ кладёт их поверх
+		// профиля; старый мост хвост не читает.
+		int[] media = mediaPairs();
+		byte[] buf = new byte[1 + raw.length + 2 + 2 + 4 + media.length * 2];
 		int m = 0;
 		Util.putByte(buf, m, raw.length); m += 1;
 		System.arraycopy(raw, 0, buf, m, raw.length); m += raw.length;
 		Util.putWord(buf, m, w); m += 2;
 		Util.putWord(buf, m, h); m += 2;
-		Util.putDWord(buf, m, mem);
+		Util.putDWord(buf, m, mem); m += 4;
+		for (int i = 0; i < media.length; i++) { Util.putWord(buf, m, media[i]); m += 2; }
 		conn.sendPacket(new SnacPacket(0x0001, 0x00F2, 0x00000000, new byte[0], buf));
+	}
+
+	// Ключи пар «Медиа» в 01/F2 — как у моста (server.MEDIA_KEYS).
+	private static final int MEDIA_PHOTO_W = 1, MEDIA_PHOTO_H = 2, MEDIA_PHOTO_Q = 3,
+			MEDIA_VIDEO_W = 4, MEDIA_VIDEO_H = 5, MEDIA_VIDEO_KBPS = 6, MEDIA_VIDEO_SEC = 7,
+			MEDIA_VIDEO_ROTATE = 8, MEDIA_VOICE_KBPS10 = 9, MEDIA_VOICE_SEC = 10, MEDIA_PHOTO_KB = 11;
+
+	private static int[] mediaPairs()
+	{
+		int[] out = new int[24];
+		int n = 0;
+		int[] size = jimm.Options.mediaSize(jimm.Options.OPTION_MEDIA_PHOTO_SIZE);
+		if (size != null) { out[n++] = MEDIA_PHOTO_W; out[n++] = size[0]; out[n++] = MEDIA_PHOTO_H; out[n++] = size[1]; }
+		n = pair(out, n, MEDIA_PHOTO_Q, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_PHOTO_QUALITY));
+		n = pair(out, n, MEDIA_PHOTO_KB, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_PHOTO_KB));
+		size = jimm.Options.mediaSize(jimm.Options.OPTION_MEDIA_VIDEO_SIZE);
+		if (size != null) { out[n++] = MEDIA_VIDEO_W; out[n++] = size[0]; out[n++] = MEDIA_VIDEO_H; out[n++] = size[1]; }
+		n = pair(out, n, MEDIA_VIDEO_KBPS, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VIDEO_KBPS));
+		n = pair(out, n, MEDIA_VIDEO_SEC, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VIDEO_SECONDS));
+		n = pair(out, n, MEDIA_VIDEO_ROTATE, jimm.Options.getInt(jimm.Options.OPTION_VIDEO_ROTATE));
+		n = pair(out, n, MEDIA_VOICE_KBPS10, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VOICE_KBPS10));
+		n = pair(out, n, MEDIA_VOICE_SEC, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VOICE_SECONDS));
+		int[] cut = new int[n];
+		System.arraycopy(out, 0, cut, 0, n);
+		return cut;
+	}
+
+	private static int pair(int[] out, int n, int key, int value)
+	{
+		if (value <= 0) return n;
+		out[n++] = key; out[n++] = value;
+		return n;
+	}
+
+	// Настройки «Медиа» поменяли — мост должен узнать сразу, не при
+	// следующем входе.
+	static public void resendClientInfo()
+	{
+		try { if (isConnected() && c != null) sendClientInfo(c); }
+		catch (Exception ignore) {}
 	}
 
 	// Кому сообщить, чем кончилось соединение со службой.

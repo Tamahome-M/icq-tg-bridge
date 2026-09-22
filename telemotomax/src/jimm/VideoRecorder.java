@@ -98,8 +98,15 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 					VideoControl vc = (VideoControl) p.getControl("VideoControl");
 					if (vc == null) throw new Exception("no VideoControl");
 					vc.initDisplayMode(VideoControl.USE_DIRECT_VIDEO, VideoRecorder.this);
-					vc.setDisplaySize(getWidth(), getHeight());
-					vc.setDisplayLocation(0, 0);
+					// Кадр записи у V8 — 4:3 (320×240, таблица videoSizeTable в
+					// ezx_camera.cfg), а экран портретный 240×320: видео на весь
+					// экран телефон растягивал в 3:4 — картинка «приближалась»
+					// при старте записи. Видоискатель — 4:3 по центру; полосы
+					// сверху и снизу свободны от видео, там подсказки HUD (поверх
+					// прямого видео канва не видна).
+					int vw = getWidth(), vh = vw * 3 / 4;
+					vc.setDisplaySize(vw, vh);
+					vc.setDisplayLocation(0, (getHeight() - vh) / 2);
 					vc.setVisible(true);
 					p.start();
 					if (current != VideoRecorder.this) { try { p.close(); } catch (Exception ig) {} return; }
@@ -365,11 +372,14 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 	protected void paint(Graphics g)
 	{
 		int w = getWidth(), h = getHeight();
-		// Видоискатель рисует телефон; без него — чёрный фон.
-		if (video == null)
+		// Видоискатель (4:3 по центру) рисует телефон; остальное — чёрное.
+		g.setColor(0x000000);
+		if (video == null) g.fillRect(0, 0, w, h);
+		else
 		{
-			g.setColor(0x000000);
-			g.fillRect(0, 0, w, h);
+			int vh = w * 3 / 4, top = (h - vh) / 2;
+			g.fillRect(0, 0, w, top);
+			g.fillRect(0, top + vh, w, h - top - vh);
 		}
 		String left = ResourceBundle.getString("cam_note");
 		if (recording)

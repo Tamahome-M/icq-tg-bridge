@@ -84,6 +84,8 @@ public class Options
 	public static final int OPTION_SRV_PORT           = 2;
 	public static final int OPTION_UI_LANGUAGE        = 3;
 	public static final int OPTION_CAMERA_SIZE        = 31;   // TeleMotoMax: размер снимка «WxH», пусто — как решит телефон
+	public static final int OPTION_MEDIA_PHOTO_SIZE   = 32;   // TeleMotoMax, «Медиа»: фото от моста «WxH», пусто — как в профиле
+	public static final int OPTION_MEDIA_VIDEO_SIZE   = 33;   // кадр ролика от моста «WxH»
 	public static final int OPTION_MESS_NOTIF_FILE    = 4;
 	public static final int OPTION_ONLINE_NOTIF_FILE  = 5;
 	public static final int OPTION_CURRENCY           = 6;
@@ -201,6 +203,24 @@ public class Options
 	public static final int OPTION_HISTORY_COUNT    = 113;   // 64..127 — числовые ключи
 	public static final int OPTION_CHAT_MESSAGES    = 114;   // сколько сообщений держит чат
 	public static final int OPTION_VIDEO_ROTATE     = 115;   // ролик боком: 0 авто, 1 всегда, 2 никогда
+	// «Медиа»: что мост отдаёт телефону; 0 — как в профиле моста.
+	public static final int OPTION_MEDIA_PHOTO_QUALITY  = 116;   // качество JPEG снимка
+	public static final int OPTION_MEDIA_PHOTO_KB       = 117;   // снимок не больше, КБ
+	public static final int OPTION_MEDIA_VIDEO_KBPS     = 118;   // битрейт ролика
+	public static final int OPTION_MEDIA_VIDEO_SECONDS  = 119;   // длина ролика
+	public static final int OPTION_MEDIA_VOICE_KBPS10   = 120;   // битрейт голосового ×10 (122 — 12.2)
+	public static final int OPTION_MEDIA_VOICE_SECONDS  = 121;   // длина голосового
+
+	/** «WxH» из настройки «Медиа» как {w, h}; пусто или негодно — null. */
+	public static int[] mediaSize(int key)
+	{
+		String s = Options.getString(key);
+		if (s == null) return null;
+		int x = s.indexOf('x');
+		if (x <= 0) return null;
+		try { return new int[] { Integer.parseInt(s.substring(0, x)), Integer.parseInt(s.substring(x + 1)) }; }
+		catch (Exception e) { return null; }
+	}
 	// TeleMotoMax: раз выключили цветной текст сообщений у тех, кто обновился
 	// со старой сборки (в новых установках он и так выключен).
 	public static final int OPTION_PLAIN_TEXT_DONE  = 170;   // 128..191 — флаги
@@ -366,6 +386,8 @@ public class Options
 		setString(Options.OPTION_PASSWORD1, emptyString);
 		setString (Options.OPTION_SRV_HOST, "login.icq.com,login.oscar.aol.com,ibucp-vip-d.blue.aol.com");
 		setString (Options.OPTION_CAMERA_SIZE, "");
+		setString (Options.OPTION_MEDIA_PHOTO_SIZE, "");
+		setString (Options.OPTION_MEDIA_VIDEO_SIZE, "");
 		
 		setString(Options.OPTION_SRV_PORT, "5190");
 		setBoolean(Options.OPTION_KEEP_CONN_ALIVE, true);
@@ -421,6 +443,12 @@ public class Options
 		setInt    (Options.OPTION_HISTORY_COUNT,     10);
 		setInt    (Options.OPTION_CHAT_MESSAGES,     15);
 		setInt    (Options.OPTION_VIDEO_ROTATE,      0);
+		setInt    (Options.OPTION_MEDIA_PHOTO_QUALITY, 0);
+		setInt    (Options.OPTION_MEDIA_PHOTO_KB,      0);
+		setInt    (Options.OPTION_MEDIA_VIDEO_KBPS,    0);
+		setInt    (Options.OPTION_MEDIA_VIDEO_SECONDS, 0);
+		setInt    (Options.OPTION_MEDIA_VOICE_KBPS10,  0);
+		setInt    (Options.OPTION_MEDIA_VOICE_SECONDS, 0);
 
 		setBoolean(Options.OPTION_CP1251_HACK, ResourceBundle.langAvailable[0]
 				.equals("RU") || ResourceBundle.langAvailable[0].equals("BE") );
@@ -1064,6 +1092,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private static final int OPTIONS_INTERFACE   = 3;
 	private static final int OPTIONS_BG_IMAGE    = 4;
 	private static final int OPTIONS_CAMERA      = 5;
+	private static final int OPTIONS_MEDIA       = 30;   // TeleMotoMax: что мост отдаёт телефону
 	private static final int OPTIONS_HOTKEYS     = 6;
 	private static final int OPTIONS_SIGNALING   = 7;
 	private static final int OPTIONS_TRAFFIC     = 8;
@@ -1104,7 +1133,19 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup autoConnectChoiceGroup;
 	private TextField reconnectNumberTextField;
 	private ChoiceGroup uiLanguageChoiceGroup;
-	private ChoiceGroup videoRotateChoice;     // TeleMotoMax
+	private ChoiceGroup videoRotateChoice;     // TeleMotoMax, раздел «Медиа»
+	private ChoiceGroup mediaPhotoSize, mediaPhotoQuality, mediaPhotoKb;
+	private ChoiceGroup mediaVideoSize, mediaVideoKbps, mediaVideoSeconds;
+	private ChoiceGroup mediaVoiceKbps, mediaVoiceSeconds;
+	// Значения списков «Медиа»; первый пункт каждого — «как в профиле моста».
+	private static final String[] MEDIA_PHOTO_SIZES = { "176x176", "176x220", "240x320", "320x240", "480x640", "640x480" };
+	private static final String[] MEDIA_VIDEO_SIZES = { "176x144", "144x176", "240x180", "320x240", "240x320", "480x640", "640x480" };
+	private static final int[] MEDIA_QUALITIES = { 40, 50, 60, 70, 80, 90, 95 };
+	private static final int[] MEDIA_PHOTO_KBS = { 20, 40, 60, 100, 150, 250 };
+	private static final int[] MEDIA_VIDEO_KBPS = { 32, 48, 64, 96, 128, 192, 256, 384 };
+	private static final int[] MEDIA_VIDEO_SECS = { 5, 10, 15, 20, 30, 60, 120 };
+	private static final int[] MEDIA_VOICE_KBPS10 = { 48, 52, 59, 67, 74, 80, 102, 122 };   // режимы AMR-NB ×10
+	private static final int[] MEDIA_VOICE_SECS = { 30, 60, 120, 300, 600 };
 	private ChoiceGroup choiceInterfaceMisc;
 	private ChoiceGroup clSortByChoiceGroup;
 	private ChoiceGroup chrgChat;
@@ -1268,6 +1309,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			if (System.getProperty("video.snapshot.encodings") != null)
 				JimmUI.addTextListItem(optionsMenu, "options_camera", MainMenu.menuIcons.elementAt(17), OPTIONS_CAMERA, true, -1, Font.STYLE_PLAIN);
 //#sijapp cond.end#
+			JimmUI.addTextListItem(optionsMenu, "options_media", MainMenu.menuIcons.elementAt(17), OPTIONS_MEDIA, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "options_hotkeys", MainMenu.menuIcons.elementAt(18), OPTIONS_HOTKEYS, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "options_signaling", MainMenu.menuIcons.elementAt(19), OPTIONS_SIGNALING, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "auto_away", MainMenu.menuIcons.elementAt(20), OPTIONS_AUTOAWAY, true, -1, Font.STYLE_PLAIN);
@@ -1880,6 +1922,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			showInterfaceOptions();
 			break;
 
+		case OPTIONS_MEDIA:
+			showMediaOptions();
+			break;
+
 //#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
 		case OPTIONS_CAMERA:
 			showCameraOptions();
@@ -2427,15 +2473,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		optionsForm.append(clSortByChoiceGroup);
 
 		if (chrgChat.size() != 0) optionsForm.append(chrgChat);
-		// TeleMotoMax: ролик боком. «Авто» — мост сам смотрит, широкий ли
-		// исходник; свой выбор уходит мосту в запросе ролика.
-		videoRotateChoice = new ChoiceGroup(ResourceBundle.getString("video_rotate"), Choice.EXCLUSIVE);
-		videoRotateChoice.append(ResourceBundle.getString("video_rotate_auto"), null);
-		videoRotateChoice.append(ResourceBundle.getString("video_rotate_always"), null);
-		videoRotateChoice.append(ResourceBundle.getString("video_rotate_never"), null);
-		try { videoRotateChoice.setSelectedIndex(Options.getInt(Options.OPTION_VIDEO_ROTATE), true); }
-		catch (Exception ignore) {}
-		optionsForm.append(videoRotateChoice);
 		historyCount = new TextField(ResourceBundle.getString("history_count"),
 				String.valueOf(Options.getInt(Options.OPTION_HISTORY_COUNT)), 3, TextField.NUMERIC);
 		optionsForm.append(historyCount);
@@ -2551,6 +2588,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			
 		case OPTIONS_INTERFACE:
 			readInterfaceOptions();
+			break;
+
+		case OPTIONS_MEDIA:
+			readMediaOptions();
 			break;
 
 //#sijapp cond.if target!="DEFAULT"#
@@ -2715,6 +2756,86 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	}
 
 //#sijapp cond.if modules_FILES="true"#	
+	// «Медиа»: что мост отдаёт телефону — размер и качество снимка, кадр,
+	// битрейт и длина ролика, «боком», битрейт и длина голосового. Всё
+	// выпадающими списками, первый пункт — «как в профиле моста» (0 /
+	// пусто — не шлётся). Значения уходят мосту в 01/F2 сразу при
+	// сохранении и при каждом входе.
+	private ChoiceGroup mediaChoice(String label, String[] values, String current)
+	{
+		ChoiceGroup g = new ChoiceGroup(ResourceBundle.getString(label), Choice.EXCLUSIVE);
+		g.append(ResourceBundle.getString("media_profile"), null);
+		int sel = 0;
+		for (int i = 0; i < values.length; i++)
+		{
+			g.append(values[i], null);
+			if (values[i].equals(current)) sel = i + 1;
+		}
+		try { g.setSelectedIndex(sel, true); } catch (Exception ignore) {}
+		return g;
+	}
+
+	private ChoiceGroup mediaChoice(String label, int[] values, int current, boolean tenths)
+	{
+		String[] names = new String[values.length];
+		for (int i = 0; i < values.length; i++)
+			names[i] = tenths ? (values[i] / 10) + "." + (values[i] % 10) : String.valueOf(values[i]);
+		return mediaChoice(label, names, tenths ? (current / 10) + "." + (current % 10) : String.valueOf(current));
+	}
+
+	private static int mediaValue(ChoiceGroup g, int[] values)
+	{
+		int sel = g.getSelectedIndex();
+		return (sel > 0 && sel - 1 < values.length) ? values[sel - 1] : 0;
+	}
+
+	private static String mediaValue(ChoiceGroup g, String[] values)
+	{
+		int sel = g.getSelectedIndex();
+		return (sel > 0 && sel - 1 < values.length) ? values[sel - 1] : "";
+	}
+
+	private void showMediaOptions()
+	{
+		mediaPhotoSize = mediaChoice("media_photo_size", MEDIA_PHOTO_SIZES, Options.getString(Options.OPTION_MEDIA_PHOTO_SIZE));
+		mediaPhotoQuality = mediaChoice("media_photo_quality", MEDIA_QUALITIES, Options.getInt(Options.OPTION_MEDIA_PHOTO_QUALITY), false);
+		mediaPhotoKb = mediaChoice("media_photo_kb", MEDIA_PHOTO_KBS, Options.getInt(Options.OPTION_MEDIA_PHOTO_KB), false);
+		mediaVideoSize = mediaChoice("media_video_size", MEDIA_VIDEO_SIZES, Options.getString(Options.OPTION_MEDIA_VIDEO_SIZE));
+		mediaVideoKbps = mediaChoice("media_video_kbps", MEDIA_VIDEO_KBPS, Options.getInt(Options.OPTION_MEDIA_VIDEO_KBPS), false);
+		mediaVideoSeconds = mediaChoice("media_video_seconds", MEDIA_VIDEO_SECS, Options.getInt(Options.OPTION_MEDIA_VIDEO_SECONDS), false);
+		videoRotateChoice = new ChoiceGroup(ResourceBundle.getString("video_rotate"), Choice.EXCLUSIVE);
+		videoRotateChoice.append(ResourceBundle.getString("video_rotate_auto"), null);
+		videoRotateChoice.append(ResourceBundle.getString("video_rotate_always"), null);
+		videoRotateChoice.append(ResourceBundle.getString("video_rotate_never"), null);
+		try { videoRotateChoice.setSelectedIndex(Options.getInt(Options.OPTION_VIDEO_ROTATE), true); }
+		catch (Exception ignore) {}
+		mediaVoiceKbps = mediaChoice("media_voice_kbps", MEDIA_VOICE_KBPS10, Options.getInt(Options.OPTION_MEDIA_VOICE_KBPS10), true);
+		mediaVoiceSeconds = mediaChoice("media_voice_seconds", MEDIA_VOICE_SECS, Options.getInt(Options.OPTION_MEDIA_VOICE_SECONDS), false);
+		optionsForm.append(mediaPhotoSize);
+		optionsForm.append(mediaPhotoQuality);
+		optionsForm.append(mediaPhotoKb);
+		optionsForm.append(mediaVideoSize);
+		optionsForm.append(mediaVideoKbps);
+		optionsForm.append(mediaVideoSeconds);
+		optionsForm.append(videoRotateChoice);
+		optionsForm.append(mediaVoiceKbps);
+		optionsForm.append(mediaVoiceSeconds);
+	}
+
+	private void readMediaOptions()
+	{
+		Options.setString(Options.OPTION_MEDIA_PHOTO_SIZE, mediaValue(mediaPhotoSize, MEDIA_PHOTO_SIZES));
+		Options.setInt(Options.OPTION_MEDIA_PHOTO_QUALITY, mediaValue(mediaPhotoQuality, MEDIA_QUALITIES));
+		Options.setInt(Options.OPTION_MEDIA_PHOTO_KB, mediaValue(mediaPhotoKb, MEDIA_PHOTO_KBS));
+		Options.setString(Options.OPTION_MEDIA_VIDEO_SIZE, mediaValue(mediaVideoSize, MEDIA_VIDEO_SIZES));
+		Options.setInt(Options.OPTION_MEDIA_VIDEO_KBPS, mediaValue(mediaVideoKbps, MEDIA_VIDEO_KBPS));
+		Options.setInt(Options.OPTION_MEDIA_VIDEO_SECONDS, mediaValue(mediaVideoSeconds, MEDIA_VIDEO_SECS));
+		Options.setInt(Options.OPTION_VIDEO_ROTATE, videoRotateChoice.getSelectedIndex());
+		Options.setInt(Options.OPTION_MEDIA_VOICE_KBPS10, mediaValue(mediaVoiceKbps, MEDIA_VOICE_KBPS10));
+		Options.setInt(Options.OPTION_MEDIA_VOICE_SECONDS, mediaValue(mediaVoiceSeconds, MEDIA_VOICE_SECS));
+		jimm.comm.Icq.resendClientInfo();
+	}
+
 	private void readCameraOptions()
 	{
 		//Options.setInt(Options.OPTION_CAMERA_LOCATOR, clCamDevGroup.getSelectedIndex());
@@ -2763,8 +2884,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		if (ResourceBundle.langAvailable.length > 1)
 			Options.setString(Options.OPTION_UI_LANGUAGE,
 					ResourceBundle.langAvailable[uiLanguageChoiceGroup.getSelectedIndex()]);
-		if (videoRotateChoice != null)
-			Options.setInt(Options.OPTION_VIDEO_ROTATE, videoRotateChoice.getSelectedIndex());
 
 		int idx = 0;
 		

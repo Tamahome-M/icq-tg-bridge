@@ -575,6 +575,31 @@ async def run_profiles() -> None:
         assert str(session.device).startswith("MotoV8, экран 240×320"), str(session.device)
         assert len(client.contacts) == 5, f"профиль v8 без ограничения, а чатов {len(client.contacts)}"
         await client.close()
+        await asyncio.sleep(0.2)
+
+        # «Медиа» из настроек телефона — поверх профиля: пары в 01/F2.
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 47)
+        client.device = ("MotoV8", 240, 320, 8192)
+        client.media = {"photo_width": 480, "photo_height": 640, "photo_quality": 70,
+                        "video_kbps": 128, "video_seconds": 15, "voice_kbps": 7.4,
+                        "video_rotate": False}
+        await client.connect()
+        await client.bos(await client.login_md5_jimm())
+        await client.drain_for(0.3)
+        session = server.session
+        assert session is not None and session.profile_name == "v8"
+        assert session.media == {"photo_width": 480, "photo_height": 640, "photo_quality": 70,
+                                 "video_kbps": 128, "video_seconds": 15, "voice_kbps": 7.4,
+                                 "video_rotate": False}, session.media
+        # То же через Bridge.tmm: медиа важнее профиля, профиль — общего.
+        from bridge.bridge import Bridge
+        stub = type("Stub", (), {})()
+        stub.cfg, stub.oscar = cfg, server
+        assert Bridge.tmm(stub, "photo_quality") == 70
+        assert Bridge.tmm(stub, "photo_max_kb") == 60, "не задано — из профиля v8"
+        assert Bridge.tmm(stub, "voice_kbps") == 7.4 and Bridge.tmm(stub, "video_rotate") is False
+        await client.close()
     finally:
         server._server.close()
     print("  профили телефонов: ок (v3/v8, по экрану, из конфига, roster_limit по профилю)")

@@ -144,6 +144,7 @@ class Session:
         # Что за телефон (TeleMotoMax присылает после входа) и его профиль.
         self.device: profiles.Device | None = None
         self.profile_name = ""
+        self.media: dict = {}           # «Медиа» из настроек телефона поверх профиля
         self.profile: dict = {}
         # Снимок или голосовое, которые телефон шлёт по частям.
         self.upload: bytearray | None = None
@@ -909,15 +910,38 @@ class Session:
         body = struct.pack("<H", len(inner)) + inner
         await self.send_snac(C.ICQ, C.ICQ_FROM_SERVER, tlv(0x0001, body))
 
+    # Настройки «Медиа» с телефона (TeleMotoMax 0.47+): после сведений о
+    # телефоне в 01/F2 идут пары u16 ключ / u16 значение — что владелец
+    # выбрал в настройках; 0 — «как в профиле». Переопределяют профиль на
+    # время сессии; телефон шлёт их и при входе, и при каждом сохранении.
+    MEDIA_KEYS = {1: "photo_width", 2: "photo_height", 3: "photo_quality", 4: "video_width",
+                  5: "video_height", 6: "video_kbps", 7: "video_seconds", 8: "video_rotate",
+                  9: "voice_kbps", 10: "voice_seconds", 11: "photo_max_kb"}
+
     async def on_client_info(self, s: Snac) -> None:
-        """01/F2 от TeleMotoMax: платформа, экран, куча. По ним — профиль."""
+        """01/F2 от TeleMotoMax: платформа, экран, куча — по ним профиль; дальше
+        пары «Медиа» из настроек телефона поверх профиля."""
         r = Reader(s.data)
         try:
             platform = r.pstr8().decode("utf-8", "replace")
             width, height = r.u16(), r.u16()
             memory = r.u32() if r.left >= 4 else 0
+            media: dict = {}
+            while r.left >= 4:
+                key, value = r.u16(), r.u16()
+                name = self.MEDIA_KEYS.get(key)
+                if name and value:
+                    media[name] = value
         except Exception:
             return
+        if "voice_kbps" in media:
+            media["voice_kbps"] = media["voice_kbps"] / 10       # 122 — это 12.2
+        if "video_rotate" in media:
+            media["video_rotate"] = media["video_rotate"] == 1   # 1 всегда, 2 никогда
+        self.media = media
+        if media:
+            log.info("настройки «Медиа» с телефона: %s",
+                     ", ".join(f"{k}={v}" for k, v in media.items()))
         self.device = profiles.Device(platform, width, height, memory)
         chosen = profiles.choose(self.device, self.server.cfg.tmm_profiles)
         if chosen:

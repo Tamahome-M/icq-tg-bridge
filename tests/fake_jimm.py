@@ -49,6 +49,7 @@ class FakeJimm:
         # Сведения о телефоне (платформа, ширина, высота, куча): если заданы,
         # уходят при входе сразу после списка семейств, как у TeleMotoMax.
         self.device: tuple[str, int, int, int] | None = None
+        self.media: dict | None = None            # «Медиа» из настроек, пары в 01/F2
         self.bart_flags = 0x01           # флаги запроса к службе (TeleMotoMax: поворот ролика)
 
     async def connect(self) -> None:
@@ -63,10 +64,23 @@ class FakeJimm:
     async def send_snac(self, family: int, subtype: int, data: bytes = b"", req: int = 0) -> None:
         await self.send_flap(2, snac(family, subtype, data, 0, req))
 
-    async def client_info(self, platform: str, width: int, height: int, memory_kb: int) -> None:
-        """Как TeleMotoMax после входа: платформа, экран, куча (01/F2)."""
+    MEDIA_KEYS = {"photo_width": 1, "photo_height": 2, "photo_quality": 3, "video_width": 4,
+                  "video_height": 5, "video_kbps": 6, "video_seconds": 7, "video_rotate": 8,
+                  "voice_kbps": 9, "voice_seconds": 10, "photo_max_kb": 11}
+
+    async def client_info(self, platform: str, width: int, height: int, memory_kb: int,
+                          media: dict | None = None) -> None:
+        """Как TeleMotoMax после входа: платформа, экран, куча (01/F2) и, с
+        0.47, пары «Медиа» из настроек: u16 ключ, u16 значение."""
+        tail = b""
+        for name, value in (media or {}).items():
+            if name == "voice_kbps":
+                value = int(round(value * 10))
+            elif name == "video_rotate":
+                value = 1 if value else 2
+            tail += struct.pack(">HH", self.MEDIA_KEYS[name], int(value))
         await self.send_snac(C.OSERVICE, C.CLIENT_INFO,
-                             pstr8(platform.encode("utf-8")) + struct.pack(">HHI", width, height, memory_kb))
+                             pstr8(platform.encode("utf-8")) + struct.pack(">HHI", width, height, memory_kb) + tail)
 
     async def recv_flap(self, timeout: float = 5.0) -> tuple[int, bytes]:
         header = await asyncio.wait_for(self.reader.readexactly(6), timeout)
@@ -271,7 +285,7 @@ class FakeJimm:
         await self.send_snac(C.OSERVICE, C.CLI_VERSIONS,
                              b"".join(struct.pack(">HH", f, v) for f, v in C.FAMILY_VERSIONS.items()))
         if self.device is not None:
-            await self.client_info(*self.device)
+            await self.client_info(*self.device, media=self.media)
         await self.expect(C.OSERVICE, C.SRV_VERSIONS)
 
         await self.send_snac(C.OSERVICE, C.RATE_REQ)
