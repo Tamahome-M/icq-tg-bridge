@@ -73,13 +73,15 @@ MINOR=${VERSION#*.}; MINOR=${MINOR%%.*}
 # клиентами ICQ) вырезан из исходников целиком: с мостом он не нужен, а на
 # KVM код лежит в той же куче, что и данные. Раньше без него пропадало
 # «печатает» — разбор способностей контакта сидел в том же блоке; теперь
-# он общий. У V3 нет и смайлов: ICQ-смайлы в переписке из Telegram/MAX —
-# редкость, а набор картинок держал ~32 КБ кучи. CAMERA — снимок, кружок и
-# файлы с карты (JSR-75): на V3 недоступно, сборка v8 включает.
+# он общий. V3 собирается в двух вариантах: v3 — со смайлами, v3light —
+# без (ICQ-смайлы в переписке из Telegram/MAX редкость, а набор картинок
+# держит ~32 КБ кучи). CAMERA — снимок, кружок и файлы с карты (JSR-75):
+# на V3 недоступно, сборка v8 включает.
 MODULES=${TMM_MODULES:-v3}
 case "$MODULES" in
-	v3)    MODULES="AVATARS" ;;
-	v8)    MODULES="SMILES_STD,AVATARS,CAMERA" ;;
+	v3)      MODULES="SMILES_STD,AVATARS" ;;
+	v3light) MODULES="AVATARS" ;;
+	v8)      MODULES="SMILES_STD,AVATARS,CAMERA" ;;
 esac
 sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION###|$STAMP|; \
      s|###TMM-VERSION-JAVA###|$VERSION|; s|###TMM-NAME###|$NAME|; \
@@ -162,10 +164,12 @@ say "Готово: $WORK/out/TeleMotoMax.jar ($(wc -c < "$WORK/out/TeleMotoMax.j
 # TMM_DIST=1 — положить сборку в telemotomax/dist (в репозиторий): оттуда её
 # раздаёт веб-сервер моста в разделе «Загрузки», и после обновления моста
 # на VPS свежий клиент ставится на телефон по ссылке http://…/d/. Сборка
-# v8 ложится как TeleMotoMax-V8.jar/.jad, v3 — как TeleMotoMax.jar/.jad.
+# v8 ложится как TeleMotoMax-V8.jar/.jad, v3 — как TeleMotoMax.jar/.jad,
+# v3light — как TeleMotoMax-Light.jar/.jad (то же имя мидлета: ставится
+# поверх обычной и наоборот, настройки остаются).
 if [ -n "${TMM_DIST:-}" ]; then
 	DIST="$HERE/dist"; mkdir -p "$DIST"
-	case "${TMM_MODULES:-v3}" in v8) BASE=TeleMotoMax-V8 ;; *) BASE=TeleMotoMax ;; esac
+	case "${TMM_MODULES:-v3}" in v8) BASE=TeleMotoMax-V8 ;; v3light) BASE=TeleMotoMax-Light ;; *) BASE=TeleMotoMax ;; esac
 	cp "$WORK/out/TeleMotoMax.jar" "$DIST/$BASE.jar"
 	sed "s|^MIDlet-Jar-URL: .*|MIDlet-Jar-URL: $BASE.jar|" "$WORK/out/TeleMotoMax.jad" > "$DIST/$BASE.jad"
 	# Сборка V8 в репозитории — подписанная: на V8 файлы (JSR-75) даёт
