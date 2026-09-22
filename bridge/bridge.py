@@ -685,7 +685,7 @@ class Bridge:
                      "широкий, кладу боком" if transcoder.video_rotate else "боком не кладу")
         data = await transcoder.convert(raw, "video")
         if data:
-            log.info("ролик для «%s»: первые %d с, %d КБ", contact.title,
+            log.info("ролик для «%s» готов: первые %d с, %d КБ", contact.title,
                      self.tmm("video_seconds"), len(data) // 1024)
         return data
 
