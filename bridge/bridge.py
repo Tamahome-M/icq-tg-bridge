@@ -435,8 +435,9 @@ class Bridge:
                 return session.profile[key]
         return getattr(self.cfg, profiles.KEYS.get(key, "tmm_" + key))
 
-    async def fetch_attachment(self, uin: int, attach: str) -> bytes | None:
-        """Снимок из сообщения для TeleMotoMax — ужатый под экран телефона.
+    async def fetch_attachment(self, uin: int, attach: str, rotate: str = "auto") -> bytes | None:
+        """Снимок из сообщения для TeleMotoMax — ужатый под экран телефона;
+        rotate — класть ли боком (флаги запроса, как у ролика).
 
         Достаётся только когда клиент за ним пришёл: пометка [фото] в тексте
         ничего не стоит, а сам снимок — трафик на GPRS."""
@@ -448,7 +449,7 @@ class Bridge:
         if not raw:
             return None
         got = photos.shrink(raw, self.tmm("photo_width"), self.tmm("photo_height"),
-                            self.tmm("photo_max_kb") * 1024, self.tmm("photo_quality"))
+                            self.tmm("photo_max_kb") * 1024, self.tmm("photo_quality"), rotate)
         if got is None:
             return None
         data, width, height = got
@@ -681,7 +682,7 @@ class Bridge:
             transcoder.video_rotate = bool(size and size[0] > size[1])
             log.info("ролик для «%s»: исходник %s — %s", contact.title,
                      f"{size[0]}×{size[1]}" if size else "размер неизвестен",
-                     "кладу боком" if transcoder.video_rotate else "оставляю как есть")
+                     "широкий, кладу боком" if transcoder.video_rotate else "боком не кладу")
         data = await transcoder.convert(raw, "video")
         if data:
             log.info("ролик для «%s»: первые %d с, %d КБ", contact.title,

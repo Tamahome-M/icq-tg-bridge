@@ -41,11 +41,17 @@ class Photo:
 
 
 def shrink(raw: bytes, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT,
-           max_bytes: int = DEFAULT_MAX_BYTES, quality: int = 0) -> tuple[bytes, int, int] | None:
+           max_bytes: int = DEFAULT_MAX_BYTES, quality: int = 0,
+           rotate: str = "never") -> tuple[bytes, int, int] | None:
     """Ужимает картинку под экран телефона: данные, ширина, высота.
 
     quality — с какого качества JPEG начинать (0 — с обычного, 75); дальше
-    качество снижается ступенями, пока снимок не уложится в max_bytes."""
+    качество снижается ступенями, пока снимок не уложится в max_bytes.
+    rotate — «never» (по умолчанию: страница, аватарки), «always»,
+    «auto» — класть ли снимок боком, как ролик: широкий кадр на портретном
+    экране — полоска посередине, повёрнутый на 90° занимает весь экран,
+    телефон при просмотре поворачивают. «auto» — только если исходник
+    шире, чем выше, а экран наоборот; просит его телефон флагами запроса."""
     if not raw:
         log.warning("картинка пустая, пропускаю")
         return None
@@ -61,6 +67,8 @@ def shrink(raw: bytes, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT,
         log.warning("не удалось прочитать картинку (%d байт)", len(raw))
         return None
 
+    if rotate == "always" or (rotate == "auto" and image.width > image.height and height > width):
+        image = image.transpose(Image.ROTATE_270)      # в ту же сторону, что ролик
     image.thumbnail((width, height), Image.LANCZOS)
     data = b""
     steps = QUALITY_STEPS

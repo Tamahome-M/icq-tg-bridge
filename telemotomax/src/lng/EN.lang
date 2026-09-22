@@ -361,6 +361,7 @@
 "record_voice"				"Record voice"
 "record_video"			"Record video note"
 "video_rotate"			"Rotate video"
+"photo_rotate"			"Photo sideways"
 "video_rotate_auto"			"auto (landscape only)"
 "video_rotate_always"			"always"
 "video_rotate_never"			"never"

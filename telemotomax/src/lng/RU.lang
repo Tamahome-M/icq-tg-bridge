@@ -509,6 +509,7 @@
 "record_voice"				"Записать голосовое"
 "record_video"			"Записать кружок"
 "video_rotate"			"Ролик боком"
+"photo_rotate"			"Фото боком"
 "video_rotate_auto"			"авто (широкий — боком)"
 "video_rotate_always"			"всегда"
 "video_rotate_never"			"никогда"
