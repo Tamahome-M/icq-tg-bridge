@@ -93,13 +93,20 @@ sed -i "s|TMM_VERSION_MAJOR = .*;|TMM_VERSION_MAJOR = $MAJOR;|; \
 # authorized, а обязательные он переводит в «спросить у владельца» — либо
 # честно отказывается ставить, если домен их не даёт вовсе. Снимок и
 # запись работали и так — их оставляем необязательными.
+# Сеть — не Restricted API (в отличие от файлов), но для ДОВЕРЕННОГО
+# (подписанного) приложения runtime разрешает только то, что явно
+# перечислено здесь: без объявления сокет отвечал «не разрешено» даже в
+# домене с полными правами — неподписанным сборкам это скрывал
+# интерактивный запрос доступа у пользователя.
+PERMS="javax.microedition.io.Connector.socket,javax.microedition.io.Connector.http,javax.microedition.io.Connector.https"
 case "$MODULES" in *CAMERA*)
-	# Все разрешения — необязательные (-Opt): обязательные для неподписанной
-	# сборки дают молчаливый отказ в установке на MOTOMAGX, а подписанной
-	# телефон выдаёт и необязательные по политике её домена. Строка одна и в
-	# манифесте, и в JAD: у подписанного приложения они обязаны совпадать.
-	printf 'MIDlet-Permissions-Opt: javax.microedition.io.Connector.file.read,javax.microedition.io.Connector.file.write,javax.microedition.media.control.VideoControl.getSnapshot,javax.microedition.media.control.RecordControl\n' >> src/res/MANIFEST.MF ;;
+	PERMS="$PERMS,javax.microedition.io.Connector.file.read,javax.microedition.io.Connector.file.write,javax.microedition.media.control.VideoControl.getSnapshot,javax.microedition.media.control.RecordControl" ;;
 esac
+# Разрешения — необязательные (-Opt): обязательные файлы для неподписанной
+# сборки дают молчаливый отказ в установке на MOTOMAGX, а подписанной
+# телефон выдаёт и необязательные по политике её домена. Строка одна и в
+# манифесте, и в JAD: у подписанного приложения они обязаны совпадать.
+printf 'MIDlet-Permissions-Opt: %s\n' "$PERMS" >> src/res/MANIFEST.MF
 say "Версия: $STAMP (способность TMM:$MAJOR.$MINOR, имя «$NAME», модули $MODULES)"
 cd src
 
