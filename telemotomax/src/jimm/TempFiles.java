@@ -37,6 +37,16 @@ final class TempFiles
 	/** Адрес созданного пустого файла с таким именем, или null. */
 	static String writableUrl(String name)
 	{
+		return writableUrl(name, false);
+	}
+
+	/**
+	 * rootFirst — сначала пробовать сам корень, потом tmm/: плееру проще
+	 * короткий путь (так он играл на V3), а загрузчику файлов приятнее
+	 * складывать скачанное в tmm/.
+	 */
+	static String writableUrl(String name, boolean rootFirst)
+	{
 		lastError = "";
 		try
 		{
@@ -46,15 +56,17 @@ final class TempFiles
 				String root = (String) roots.nextElement();
 				while (root.length() > 0 && root.charAt(0) == '/') root = root.substring(1);
 				if (root.length() > 0 && !root.endsWith("/")) root += "/";
-				String[] dirs = { "file:///" + root + "tmm/", "file:///" + root };
+				String[] dirs = rootFirst
+						? new String[] { "file:///" + root, "file:///" + root + "tmm/" }
+						: new String[] { "file:///" + root + "tmm/", "file:///" + root };
 				for (int i = 0; i < dirs.length; i++)
 				{
 					String url = dirs[i] + name;
 					try
 					{
-						if (i == 0)
+						if (dirs[i].endsWith("tmm/"))
 						{
-							FileConnection d = (FileConnection) Connector.open(dirs[0], Connector.READ_WRITE);
+							FileConnection d = (FileConnection) Connector.open(dirs[i], Connector.READ_WRITE);
 							try { if (!d.exists()) d.mkdir(); } finally { d.close(); }
 						}
 						FileConnection fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);

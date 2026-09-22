@@ -601,11 +601,28 @@ public class Jimm extends MIDlet
 	// или файла (минуты на GPRS), — приход или отправка каждой части будит
 	// её, как нажатие клавиши: Display.flashBacklight на Motorola зажигает
 	// подсветку на заданное время (так же делает заставка).
+	private static long lastFlash;
+
 	public static void wakeBacklight()
 	{
 //#sijapp cond.if target="MOTOROLA" | target="MIDP2"#
-		try { display.flashBacklight(1000 * Math.max(3, Options.getInt(Options.OPTION_LIGHT_TIMEOUT))); }
-		catch (Exception ignore) {}
+		// Зовут из потока связи, притом из synchronized-метода приёма частей:
+		// flashBacklight — вызов интерфейса, и если он ждёт поток отрисовки,
+		// под замком встаёт и писатель частей, и весь обмен. Поэтому — в
+		// своём потоке и не чаще раза в пять секунд.
+		long now = System.currentTimeMillis();
+		synchronized (Jimm.class)
+		{
+			if (now - lastFlash < 5000) return;
+			lastFlash = now;
+		}
+		new Thread() {
+			public void run()
+			{
+				try { display.flashBacklight(1000 * Math.max(3, Options.getInt(Options.OPTION_LIGHT_TIMEOUT))); }
+				catch (Throwable ignore) {}
+			}
+		}.start();
 //#sijapp cond.end#
 	}
 	

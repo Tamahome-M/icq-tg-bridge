@@ -121,9 +121,13 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 				}
 				partOut.write(chunk);
 			}
+			status = ResourceBundle.getString("media_saving");
+			repaint();
 			partOut.flush();
 			partOut.close(); partOut = null;
+			long written = partFc.fileSize();
 			partFc.close(); partFc = null;
+			if (written <= 0) throw new Exception("empty temp file");
 		}
 		catch (Exception e)
 		{
@@ -140,16 +144,58 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			if (err != null) fail(err, null); else { status = failedText(); repaint(); }
 			return;
 		}
-		status = null;
+		status = ResourceBundle.getString("media_opening");
 		repaint();
 		try
 		{
 			start(Manager.createPlayer(path));
+			status = null;
+			repaint();
 		}
 		catch (Exception e)
 		{
+			// Плеер не взял файл — пробуем из памяти, как при однопакетном
+			// ответе: на V8 из памяти играет не всё, но клип уже у нас.
+			Exception streamErr = null;
+			byte[] clip = readFile(path, 512 * 1024);
+			if (clip != null) streamErr = playFromStream(clip);
 			deleteTemp();
-			fail(e, null);
+			if (clip == null || streamErr != null)
+			{
+				fail(e, streamErr);
+				return;
+			}
+			status = null;
+			repaint();
+		}
+	}
+
+	/** Файл целиком, если он не больше предела; иначе null. */
+	private static byte[] readFile(String url, int limit)
+	{
+		FileConnection fc = null;
+		java.io.InputStream in = null;
+		try
+		{
+			fc = (FileConnection) Connector.open(url, Connector.READ);
+			long size = fc.fileSize();
+			if (size <= 0 || size > limit) return null;
+			byte[] buf = new byte[(int) size];
+			in = fc.openInputStream();
+			int got = 0;
+			while (got < buf.length)
+			{
+				int n = in.read(buf, got, buf.length - got);
+				if (n < 0) break;
+				got += n;
+			}
+			return got == buf.length ? buf : null;
+		}
+		catch (Exception e) { return null; }
+		finally
+		{
+			try { if (in != null) in.close(); } catch (Exception ignore) {}
+			try { if (fc != null) fc.close(); } catch (Exception ignore) {}
 		}
 	}
 
@@ -443,7 +489,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	// и плеер говорил «no writable root», а из памяти MP4 он не играет.
 	private static String tempFileUrl(String ext)
 	{
-		return TempFiles.writableUrl("tmm_media" + ext);
+		return TempFiles.writableUrl("tmm_media" + ext, true);
 	}
 
 	private void deleteTemp()

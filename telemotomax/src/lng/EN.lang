@@ -399,6 +399,8 @@
 "cam_wait_bridge"			"sent, waiting for the bridge..."
 "cam_upto"			"up to"
 "video_loading"				"Loading video..."
+"media_saving"			"Saving..."
+"media_opening"			"Starting player..."
 "video_failed"				"Video unavailable"
 "server_history"				"History from server"
 "history_loading"				"Loading history..."
