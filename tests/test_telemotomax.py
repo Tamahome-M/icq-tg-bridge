@@ -457,10 +457,10 @@ async def run_files() -> None:
         assert attach == "file:4242", attach
         return "отчёт.pdf", big
 
-    async def on_file(target: int, path: str, name: str) -> bool:
+    async def on_file(target: int, path: str, name: str, kind: int) -> bool:
         import os
         with open(path, "rb") as fh:
-            sent.append((target, name, len(fh.read())))
+            sent.append((target, name, len(fh.read()), kind))
         return True
 
     server = OscarServer(cfg, storage, on_outgoing, storage.contacts,
@@ -484,7 +484,12 @@ async def run_files() -> None:
 
         # Файл с телефона: части на диск, по последней — в чат.
         assert await client.send_file(uin, big, "фото.jpg") is True
-        assert sent == [(uin, "фото.jpg", len(big))], sent
+        assert sent == [(uin, "фото.jpg", len(big), 0)], sent
+        # Вид 1 — «как фото», 2 — «как видео»: байт хвостом первой части.
+        assert await client.send_file(uin, b"\xff\xd8\xff" + b"j" * 50, "снимок.jpg", kind=1) is True
+        assert sent[-1] == (uin, "снимок.jpg", 53, 1), sent[-1]
+        assert await client.send_file(uin, b"v" * 40, "ролик.3gp", kind=2) is True
+        assert sent[-1] == (uin, "ролик.3gp", 40, 2), sent[-1]
         import os
         assert not [n for n in os.listdir(cfg.render_dir) if n.startswith("up-")], "временный файл не убран"
         # Больше потолка — отказ на первой же части.

@@ -594,6 +594,15 @@ public class Icq implements Runnable
 	public static void sendFile(String uin, java.io.InputStream in, long size, String name,
 			UploadProgress progress) throws JimmException, java.io.IOException
 	{
+		sendFile(uin, in, size, name, progress, 0);
+	}
+
+	// kind — как отправить на той стороне: 0 документом, 1 фотографией,
+	// 2 видео. Байт хвостом первой части после имени; старый мост его не
+	// читает и шлёт документом, как раньше.
+	public static void sendFile(String uin, java.io.InputStream in, long size, String name,
+			UploadProgress progress, int kind) throws JimmException, java.io.IOException
+	{
 		byte[] uinRaw = Util.stringToByteArray(uin);
 		byte[] nameRaw = Util.stringToByteArray(name == null ? "" : name, true);
 		if (nameRaw.length > 200) { byte[] cut = new byte[200]; System.arraycopy(nameRaw, 0, cut, 0, 200); nameRaw = cut; }
@@ -610,7 +619,7 @@ public class Icq implements Runnable
 				if (n < 0) throw new java.io.IOException("file shorter than declared");
 				got += n;
 			}
-			int tail = (part == 1) ? 1 + nameRaw.length : 0;
+			int tail = (part == 1) ? 1 + nameRaw.length + 1 : 0;
 			byte[] buf = new byte[1 + uinRaw.length + 2 + 2 + 4 + 2 + got + tail];
 			int marker = 0;
 			Util.putByte(buf, marker, uinRaw.length); marker += 1;
@@ -623,7 +632,8 @@ public class Icq implements Runnable
 			if (tail > 0)
 			{
 				Util.putByte(buf, marker, nameRaw.length); marker += 1;
-				System.arraycopy(nameRaw, 0, buf, marker, nameRaw.length);
+				System.arraycopy(nameRaw, 0, buf, marker, nameRaw.length); marker += nameRaw.length;
+				Util.putByte(buf, marker, kind);
 			}
 			sendPacket(new SnacPacket(0x0010, 0x0008, 0x00000000, new byte[0], buf));
 			if (progress != null) progress.onPart(part, total);

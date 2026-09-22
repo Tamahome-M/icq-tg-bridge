@@ -355,6 +355,7 @@
 "video_rotate_always"			"always"
 "video_rotate_never"			"never"
 "send_file"			"Send file"
+"send_media"			"Send photo/video"
 "get_file"			"Download file"
 "file_sending"			"Sending file"
 "file_failed"			"File failed:"

@@ -538,14 +538,15 @@ class FakeJimm:
         return r.u8() == 0
 
     async def send_file(self, uin: int, data: bytes, name: str, part_size: int = 8000,
-                        timeout: float = 5.0) -> bool:
+                        timeout: float = 5.0, kind: int = 0) -> bool:
         """Файл с телефона — как TeleMotoMax: части 10/08 с общим размером,
-        имя хвостом первой части, ответ 10/03."""
+        имя и байт вида (0 документ, 1 фото, 2 видео) хвостом первой части,
+        ответ 10/03."""
         raw = str(uin).encode()
         total = max(1, (len(data) + part_size - 1) // part_size)
         for part in range(1, total + 1):
             chunk = data[(part - 1) * part_size:part * part_size]
-            tail = pstr8(name.encode("utf-8")) if part == 1 else b""
+            tail = pstr8(name.encode("utf-8")) + bytes([kind]) if part == 1 else b""
             await self.send_snac(C.SSBI, C.SSBI_UPLOAD_FILE,
                                  pstr8(raw) + struct.pack(">HHIH", part, total, len(data), len(chunk))
                                  + chunk + tail)

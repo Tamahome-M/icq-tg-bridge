@@ -552,22 +552,50 @@ class Bridge:
         log.info("файл «%s» из «%s»: %d КБ", name, contact.title, len(data) // 1024)
         return name, data
 
-    async def send_document(self, uin: int, path: str, name: str) -> bool:
-        """Файл с телефона (лежит на диске моста) — в чат документом."""
+    async def send_document(self, uin: int, path: str, name: str, kind: int = 0) -> bool:
+        """Файл с телефона (лежит на диске моста) — в чат: документом, а с
+        видом 1 — фотографией, 2 — видео. Так в чат попадают снимок
+        1200×1600 и ролик, снятые штатной камерой телефона: из Java на V8
+        больше 480×640 не снять, а файл с карты — любого размера."""
         contact = self.storage.contact_by_uin(uin)
         if contact is None or contact.peer_id == ASSISTANT_PEER:
             return False
+        what = "файл"
         try:
             size = os.path.getsize(path)
-            message_id = await self.side_for(contact.peer_id).send_document(
-                contact.peer_id, path, name, topic_id=contact.topic_id)
+            side = self.side_for(contact.peer_id)
+            if kind == 1:
+                with open(path, "rb") as fh:
+                    data = fh.read()
+                if data[:3] == b"\xff\xd8\xff" or data[:8] == b"\x89PNG\r\n\x1a\n":
+                    what = "фото"
+                    message_id = await side.send_photo(contact.peer_id, data, topic_id=contact.topic_id)
+                else:
+                    log.warning("«%s» просили отправить фотографией, но это не JPEG/PNG — документом", name)
+                    kind = 0
+            elif kind == 2:
+                with open(path, "rb") as fh:
+                    data = fh.read()
+                transcoder = self._transcoder(self.tmm("video_seconds"))
+                mp4 = await transcoder.to_mp4(data) if transcoder.available else None
+                if mp4 is None:
+                    log.warning("видео «%s» не перекодировалось в MP4/H.264 — отправляю как есть", name)
+                what = "видео"
+                message_id = await side.send_video(
+                    contact.peer_id, mp4 or data, 0, note=False, topic_id=contact.topic_id,
+                    name=(os.path.splitext(name)[0] + ".mp4") if mp4 else name)
+                size = len(mp4 or data)
+            if kind == 0:
+                message_id = await side.send_document(
+                    contact.peer_id, path, name, topic_id=contact.topic_id)
         except Exception as exc:
-            log.exception("файл «%s» в чат «%s» не ушёл", name, contact.title)
-            await self.reply(contact, f"Файл не отправлен: {type(exc).__name__}")
+            log.exception("%s «%s» в чат «%s» не ушёл", what, name, contact.title)
+            await self.reply(contact, f"{what.capitalize()} не отправлен{'о' if what != 'файл' else ''}: {type(exc).__name__}")
             return False
-        log.info("файл «%s» с телефона → «%s»: %d КБ, номер %s",
-                 name, contact.title, size // 1024, message_id)
-        await self.reply(contact, f"[файл {name}, {max(1, size // 1024)} КБ] отправлен")
+        log.info("%s «%s» с телефона → «%s»: %d КБ, номер %s",
+                 what, name, contact.title, size // 1024, message_id)
+        await self.reply(contact, f"[{what} {name}, {max(1, size // 1024)} КБ] отправлен"
+                                  + ("о" if what != "файл" else ""))
         return True
 
     @staticmethod
