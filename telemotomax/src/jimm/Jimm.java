@@ -596,5 +596,17 @@ public class Jimm extends MIDlet
 		device.setBackLightOff();
 //#sijapp cond.end#
 	}
+
+	// Подсветка гаснет, пока телефон лежит и ждёт части ролика, голосового
+	// или файла (минуты на GPRS), — приход или отправка каждой части будит
+	// её, как нажатие клавиши: Display.flashBacklight на Motorola зажигает
+	// подсветку на заданное время (так же делает заставка).
+	public static void wakeBacklight()
+	{
+//#sijapp cond.if target="MOTOROLA" | target="MIDP2"#
+		try { display.flashBacklight(1000 * Math.max(3, Options.getInt(Options.OPTION_LIGHT_TIMEOUT))); }
+		catch (Exception ignore) {}
+//#sijapp cond.end#
+	}
 	
 }

@@ -121,6 +121,7 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 	public synchronized boolean onBartPart(byte[] buf, int off, int len, int part, int total)
 	{
 		if (current != this || failed) return false;
+		Jimm.wakeBacklight();
 		if (partQueue == null)
 		{
 			// Первая часть: имя файла в голове.

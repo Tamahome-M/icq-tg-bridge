@@ -66,6 +66,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	public synchronized boolean onBartPart(byte[] buf, int off, int len, int part, int total)
 	{
 		if (current != this || partFailed) return false;
+		Jimm.wakeBacklight();
 		if (partQueue == null)
 		{
 			String url = tempFileUrl(bartType == RequestBartAction.BART_VOICE ? ".amr" : ".3gp");
