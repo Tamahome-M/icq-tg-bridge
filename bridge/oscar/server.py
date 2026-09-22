@@ -1187,9 +1187,10 @@ class Session:
 
     async def on_file_upload(self, s: Snac) -> None:
         """Файл с телефона: части 10/08 — UIN, номер части, всего частей,
-        общий размер (4 байта), кусок; хвостом первой части — имя файла.
+        общий размер (4 байта), кусок; хвостом первой части — имя файла и
+        (TeleMotoMax 0.45+) байт вида: 0 документом, 1 фото, 2 видео.
         Части пишутся во временный файл на диске, по последней мост
-        отправляет документ в чат и отвечает 10/03."""
+        отправляет его в чат и отвечает 10/03."""
         if not self.extended:
             return
         r = Reader(s.data)
@@ -1199,6 +1200,7 @@ class Session:
             size = r.u32()
             chunk = r.read(r.u16())
             name = r.pstr8().decode("utf-8", "replace") if r.left else ""
+            kind = r.u8() if r.left else 0
         except Exception:
             log.warning("негодная часть файла от телефона")
             return
@@ -1214,6 +1216,7 @@ class Session:
                                      pstr8(target.encode()) + b"\x01", request_id=s.request_id)
                 return
             self.file_name = os.path.basename(name.replace("\\", "/")) or "file.bin"
+            self.file_kind = kind if kind in (1, 2) else 0
             self.file_size = size
             self.file_got = 0
             self.file_started = time.time()
@@ -1244,13 +1247,15 @@ class Session:
         if part < total:
             return
         path, name = self.file_path, self.file_name
+        kind = getattr(self, "file_kind", 0)
         self.file_path = ""
-        log.info("файл «%s» с телефона для %s: %d КБ — отправляю",
-                 name, self.server.name_of(int(target)), self.file_got // 1024)
+        log.info("файл «%s» с телефона для %s: %d КБ — отправляю %s",
+                 name, self.server.name_of(int(target)), self.file_got // 1024,
+                 {1: "фотографией", 2: "видео"}.get(kind, "документом"))
         ok = False
         try:
             if self.server.on_file is not None:
-                ok = await self.server.on_file(int(target), path, name)
+                ok = await self.server.on_file(int(target), path, name, kind)
         finally:
             try:
                 os.unlink(path)
@@ -1600,7 +1605,7 @@ class OscarServer:
                  on_video: Callable[[int, bytes, int], Awaitable[bool]] | None = None,
                  on_profile: Callable[[], None] | None = None,
                  fetch_file: Callable[[int, str], Awaitable[tuple[str, bytes] | None]] | None = None,
-                 on_file: Callable[[int, str, str], Awaitable[bool]] | None = None,
+                 on_file: Callable[[int, str, str, int], Awaitable[bool]] | None = None,
                  chat_list: Callable[[], Awaitable[list]] | None = None,
                  open_chat: Callable[[int], Awaitable[bool]] | None = None):
         self.cfg = cfg

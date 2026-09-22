@@ -348,6 +348,28 @@ class Transcoder:
             return None
         return await self.convert(raw, "note", "libx264")
 
+    def mp4_args(self, src: str, dst: str, vcodec: str) -> list[str]:
+        """Ролик с телефона (3GP: H.263 + AMR) — обычным MP4 для Telegram и
+        MAX: H.264 и AAC, кадр как есть (V8 пишет до 640×480; чётные
+        стороны — требование yuv420p), без обрезки по времени: это не
+        кружок, а ролик целиком."""
+        video = ([vcodec, "-preset", "veryfast", "-profile:v", "baseline",
+                  "-pix_fmt", "yuv420p"] if vcodec == "libx264" else [vcodec])
+        return ([self.ffmpeg, "-y", "-loglevel", "error", "-i", src,
+                 "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-c:v"] + video
+                + ["-b:v", "600k", "-c:a", "aac", "-ar", "44100", "-ac", "1", "-b:a", "64k",
+                   "-movflags", "+faststart", "-f", "mp4", dst])
+
+    async def to_mp4(self, raw: bytes) -> bytes | None:
+        """Ролик с телефона — в MP4/H.264: H.263 из 3GP Telegram и MAX как
+        видео не играют."""
+        if not raw:
+            return None
+        if "libx264" not in await self.encoders():
+            log.warning("в ffmpeg нет libx264 — видео уйдёт как есть")
+            return None
+        return await self.convert(raw, "mp4", "libx264")
+
     async def to_ogg(self, raw: bytes) -> bytes | None:
         """Запись с телефона — в OGG для Telegram и MAX.
 
@@ -396,7 +418,7 @@ class Transcoder:
                 log.warning("ffmpeg %r не найден — %s не перекодирую", self.ffmpeg, kind)
             return None
 
-        ext = {"audio": "amr", "ogg": "ogg", "note": "mp4"}.get(kind, "3gp")
+        ext = {"audio": "amr", "ogg": "ogg", "note": "mp4", "mp4": "mp4"}.get(kind, "3gp")
         stamp = _token()
         src = os.path.join(self.workdir, f"in-{stamp}")
         dst = os.path.join(self.workdir, f"out-{stamp}.{ext}")
@@ -408,6 +430,8 @@ class Transcoder:
             args = self.ogg_args(src, dst, codec)
         elif kind == "note":
             args = self.note_args(src, dst, codec)
+        elif kind == "mp4":
+            args = self.mp4_args(src, dst, codec)
         else:
             args = self.audio_args(src, dst)
         try:

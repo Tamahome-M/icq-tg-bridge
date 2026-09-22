@@ -115,6 +115,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 //#sijapp cond.if modules_CAMERA="true"#
 	static final Command cmdRecordVideo = new Command(ResourceBundle.getString("record_video"), Command.ITEM, 4);
 	static final Command cmdSendFile = new Command(ResourceBundle.getString("send_file"), Command.ITEM, 4);
+	static final Command cmdSendMedia = new Command(ResourceBundle.getString("send_media"), Command.ITEM, 4);
 	static final Command cmdGetFile = new Command(ResourceBundle.getString("get_file"), Command.ITEM, 3);
 //#sijapp cond.end#
 	// TeleMotoMax: chat history from the bridge on its own screen
@@ -233,6 +234,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 //#sijapp cond.if modules_CAMERA="true"#
 		textList.addCommandEx(cmdRecordVideo, VirtualList.MENU_TYPE_RIGHT);
 		textList.addCommandEx(cmdSendFile, VirtualList.MENU_TYPE_RIGHT);
+		textList.addCommandEx(cmdSendMedia, VirtualList.MENU_TYPE_RIGHT);
 //#sijapp cond.end#
 		textList.addCommandEx(cmdServerHistory, VirtualList.MENU_TYPE_RIGHT);
 		textList.addCommandEx(cmdContactMenu, VirtualList.MENU_TYPE_RIGHT);
@@ -301,6 +303,10 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		else if (c == cmdSendFile)
 		{
 			FileSender.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), this);
+		}
+		else if (c == cmdSendMedia)
+		{
+			FileSender.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), this, true);
 		}
 		else if (c == cmdGetFile)
 		{

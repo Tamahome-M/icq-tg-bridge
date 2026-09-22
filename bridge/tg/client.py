@@ -517,11 +517,12 @@ class TelegramSide:
         return message_id
 
     async def send_video(self, peer_id: int, data: bytes, seconds: int = 0,
-                         note: bool = True, topic_id: int = 0) -> int | None:
-        """«Кружок» с камеры телефона — в чат Telegram; note=False — обычным видео."""
+                         note: bool = True, topic_id: int = 0, name: str = "") -> int | None:
+        """«Кружок» с камеры телефона — в чат Telegram; note=False — обычным
+        видео (name — имя файла: по нему Telegram судит о типе)."""
         from telethon.tl.types import DocumentAttributeVideo
         stream = io.BytesIO(data)
-        stream.name = "note.mp4" if note else "video.3gp"
+        stream.name = "note.mp4" if note else (name or "video.3gp")
         attrs = ([DocumentAttributeVideo(duration=max(1, seconds), w=384, h=384,
                                          round_message=True, supports_streaming=True)]
                  if note else None)

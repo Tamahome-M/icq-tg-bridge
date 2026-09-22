@@ -47,11 +47,13 @@ public class FileSender extends Canvas implements CommandListener, JimmScreen
 	private String status;
 	private String fileName;
 	private boolean sending;
+	private final boolean media;             // «как фото/видео»: вид по расширению
 
-	private FileSender(String uin, JimmScreen back)
+	private FileSender(String uin, JimmScreen back, boolean media)
 	{
 		this.uin = uin;
 		this.back = back;
+		this.media = media;
 		setFullScreenMode(true);
 		addCommand(JimmUI.cmdBack);
 		setCommandListener(this);
@@ -59,7 +61,14 @@ public class FileSender extends Canvas implements CommandListener, JimmScreen
 
 	static public void show(String uin, JimmScreen back)
 	{
-		FileSender sender = new FileSender(uin, back);
+		show(uin, back, false);
+	}
+
+	// media — отправить как фото или видео (по расширению файла): снимок
+	// 1200×1600 и ролик штатной камеры так и приходят в чат, а не файлом.
+	static public void show(String uin, JimmScreen back, boolean media)
+	{
+		FileSender sender = new FileSender(uin, back, media);
 		current = sender;
 		sender.browser = new FileSystem2();
 		sender.browser.browse(null, sender, false);
@@ -105,7 +114,7 @@ public class FileSender extends Canvas implements CommandListener, JimmScreen
 									+ " (" + (total / 1024) + " КБ)";
 							repaint();
 						}
-					});
+					}, media ? kindOf(fileName) : 0);
 					status = ResourceBundle.getString("video_waiting_bridge");
 					waitForBridge();
 				}
@@ -151,6 +160,16 @@ public class FileSender extends Canvas implements CommandListener, JimmScreen
 		}
 		sender.status = ResourceBundle.getString("file_not_sent");
 		sender.repaint();
+	}
+
+	// Вид по расширению: 1 фото, 2 видео, иначе 0 — обычным файлом.
+	static int kindOf(String name)
+	{
+		String n = name == null ? "" : name.toLowerCase();
+		if (n.endsWith(".jpg") || n.endsWith(".jpeg") || n.endsWith(".png")) return 1;
+		if (n.endsWith(".3gp") || n.endsWith(".mp4") || n.endsWith(".3g2") || n.endsWith(".avi")
+				|| n.endsWith(".mov")) return 2;
+		return 0;
 	}
 
 	private static String shortName(Exception e)
