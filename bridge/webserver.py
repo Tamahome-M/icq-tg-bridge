@@ -205,7 +205,7 @@ class PhotoServer:
 
         found = self._find(path)
         if found is None:
-            log.info("запрос мимо: %s", path[:64])
+            log.info("запрос мимо: %s от %s", path[:64], (writer.get_extra_info("peername") or ("?",))[0])
             await self._reply(writer, 404, "text/plain; charset=utf-8", _NOT_FOUND_BODY)
             return
         content, mime, what = found

@@ -36,9 +36,6 @@ import jimm.Options;
 import jimm.SplashCanvas;
 import jimm.StatusInfo;
 
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-import jimm.FileTransfer;
-//#sijapp cond.end#
 
 
 public class ActionListener
@@ -211,15 +208,6 @@ public class ActionListener
 				int xStatus = -1;
 				String xStatusMessage = null;
 
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-				// DC variables
-				byte[] internalIP = new byte[4];
-				byte[] externalIP = new byte[4];
-				int dcPort = 0;
-				int dcType = -1;
-				int icqProt = 0;
-				int authCookie = 0;
-//#sijapp cond.end#
 
 				boolean statusChange = true;
 				int dwFT1 = 0, dwFT2 = 0, dwFT3 = 0;
@@ -302,47 +290,6 @@ public class ActionListener
 						}
 					}
 					
-//#sijapp cond.if (target != "DEFAULT") & (modules_FILES = "true")#
-					else if (tlvType == 0x000A) // External IP
-					{
-						System.arraycopy(tlvData, 0, externalIP, 0, 4);
-					}
-					else if (tlvType == 0x000c) // DC Infos
-					{
-						// dcMarker
-						int dcMarker = 0;
-
-						// Get internal IP
-						System.arraycopy(tlvData, dcMarker, internalIP, 0, 4);
-						dcMarker += 4;
-
-						// Get tcp port
-						dcPort = (int) Util.getDWord(tlvData, dcMarker);
-						dcMarker += 4;
-
-						// Get DC type
-						dcType = Util.getByte(tlvData, dcMarker);
-						dcMarker++;
-
-						// Get protocol version
-						icqProt = Util.getWord(tlvData, dcMarker);
-						dcMarker += 2;
-
-						// Get auth cookie
-						authCookie = (int) Util.getDWord(tlvData, dcMarker);
-						dcMarker += 12;
-
-						// Get data for client detection
-						dwFT1 = (int) Util.getDWord(tlvData, dcMarker);
-						dcMarker += 4;
-						dwFT2 = (int) Util.getDWord(tlvData, dcMarker);
-						dcMarker += 4;
-						dwFT3 = (int) Util.getDWord(tlvData, dcMarker);
-
-						statusChange = false;
-
-					}
-//#sijapp cond.end#
 					
 					else if (tlvType == 0x0003) // Signon time
 					{
@@ -363,28 +310,22 @@ public class ActionListener
 
 				}
 
-//#sijapp cond.if (target!="DEFAULT") & (modules_FILES="true") #				
+				// Способности контакта (TLV 0x0D/0x19) разбираются всегда: раньше
+				// это сидело под FILES вместе с прямыми соединениями, и без модуля
+				// телефон не знал, что собеседник понимает «печатает», — и не слал.
 				ContactItem item = ContactList.getItembyUIN(uin);
-
 				if (item != null)
 				{
 					byte[] capsArray = Icq.mergeCapabilities(capabilities_old, capabilities_new);
-					Icq.detectUserClientAndParseCaps(item, dwFT1, dwFT2, dwFT3, capsArray, icqProt, statusChange);
+					Icq.detectUserClientAndParseCaps(item, dwFT1, dwFT2, dwFT3, capsArray, 0, statusChange);
 					if (xStatus == -1)
 						xStatus = Icq.detectXStatus(capsArray);
 				}
-				MainThread.updateContactList(uin, status, xStatus, xStatusMessage, internalIP, externalIP, dcPort, dcType, icqProt, authCookie, signon, online, idle, regdate
-					//#sijapp cond.if modules_AVATARS="true"#
+				MainThread.updateContactList(uin, status, xStatus, xStatusMessage, null, null, 0, 0, 0, 0, signon, online, idle, regdate
+					//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 					, biHash
 					//#sijapp cond.end#
 				);
-//#sijapp cond.else#
-				MainThread.updateContactList(uin, status, -1, null, null, null, 0, 0, 0, 0, signon, online, idle, regdate
-					//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-					, null
-					//#sijapp cond.end#
-				);
-//#sijapp cond.end#
 			}
 
 			/** ********************************************************************* */
@@ -668,12 +609,6 @@ public class ActionListener
 
 					// Get message data and initialize marker
 					byte[] msg2Buf;
-//#sijapp cond.if (target != "DEFAULT") & (modules_FILES = "true")#
-					int ackType = -1;
-					byte[] extIP = new byte[4];
-					byte[] ip = new byte[4];
-					String port = "0";
-//#sijapp cond.end#
 
 					do
 					{
@@ -683,23 +618,6 @@ public class ActionListener
 							throw (new JimmException(152, 2, false));
 						}
 						tlvType = Util.getWord(msgBuf, msgMarker);
-//#sijapp cond.if (target != "DEFAULT") & (modules_FILES = "true")#
-						switch (tlvType)
-						{
-						case 0x0003:
-							System.arraycopy(msg2Buf, 0, extIP, 0, 4);
-							break;
-						case 0x0004:
-							System.arraycopy(msg2Buf, 0, ip, 0, 4);
-							break;
-						case 0x0005:
-							port = Util.byteArrayToString(msg2Buf);
-							break;
-						case 0x000a:
-							ackType = Util.getWord(msg2Buf, 0);
-							break;
-						}
-//#sijapp cond.end#
 						msgMarker += 4 + msg2Buf.length;
 					} while (tlvType != 0x2711);
 
@@ -723,9 +641,6 @@ public class ActionListener
 							|| (msgType == Message.MESSAGE_TYPE_EXTENDED) || ((msgType >= Message.MESSAGE_TYPE_AWAY) && (msgType <= Message.MESSAGE_TYPE_FFC))))
 						return;
 
-//#sijapp cond.if (target != "DEFAULT") & (modules_FILES = "true")#
-					Util.getWord(msg2Buf, msg2Marker);
-//#sijapp cond.end#
 					msg2Marker += 2;
 
 					// Skip PRIORITY
@@ -912,101 +827,6 @@ public class ActionListener
 								msg2Buf, msg2Marker, textLen));
 						msg2Marker += textLen;
 
-//#sijapp cond.if (target != "DEFAULT") & (modules_FILES = "true")#
-						// File transfer message
-						if (plugin.equals("File")
-								&& Jimm.jimm.getSplashCanvasRef().isShown())
-						{
-							if (ackType == 2)
-							{
-
-								// Get the port we should connect to
-								port = Integer.toString(Util.getWord(msg2Buf,
-										msg2Marker));
-								msg2Marker += 2;
-
-								// Skip unknwon stuff
-								msg2Marker += 2;
-
-								// Get filename
-								textLen = Util.getWord(msg2Buf, msg2Marker,
-										false);
-								msg2Marker += 2;
-
-								// Check length
-								if (msg2Buf.length < msg2Marker + textLen)
-								{
-									throw (new JimmException(152, 8, false));
-								}
-
-								// Get text
-								/*String filename = */ Util.removeCr(Util
-										.byteArrayToString(msg2Buf, msg2Marker,
-												textLen));
-								msg2Marker += textLen;
-
-								// Get filesize
-								/*long filesize = */ Util.getDWord(msg2Buf,
-										msg2Marker, false);
-								msg2Marker += 4;
-
-								// Get IP if possible
-								// Check length
-								//System.out.println("msgBuf len: "+msgBuf.length+" msgMarker: "+msgMarker);
-								if (msgBuf.length < +8)
-								{
-									throw (new JimmException(152, 9, false));
-								}
-
-								msg2Buf = Util.getTlv(msgBuf, msgMarker);
-								if (msg2Buf == null)
-								{
-									throw (new JimmException(152, 2, false));
-								}
-								tlvType = Util.getWord(msgBuf, msgMarker);
-								if (tlvType == 0x0004)
-									System.arraycopy(msg2Buf, 0, ip, 0, 4);
-								msgMarker += 4 + msg2Buf.length;
-
-								ContactItem sender = ContactList
-										.getItembyUIN(uin);
-
-								sender
-										.setBytesArray(
-												ContactItem.CONTACTITEM_INTERNAL_IP,
-												ip);
-								sender
-										.setBytesArray(
-												ContactItem.CONTACTITEM_EXTERNAL_IP,
-												extIP);
-								sender
-										.setIntValue(
-												ContactItem.CONTACTITEM_DC_PORT,
-												Integer.parseInt(port));
-
-								//System.out.println("Filetransfer ack: "+text+" "+filename+" "+filesize+" "+Util.ipToString(ip)+" "+Util.ipToString(extIP)+" "+port);
-
-								DirectConnectionAction dcAct = new DirectConnectionAction(
-										FileTransfer.getFTM());
-								try
-								{
-									Icq.requestAction(dcAct);
-								} catch (JimmException e)
-								{
-									JimmException.handleException(e);
-									if (e.isCritical())
-										return;
-								}
-
-								// Start timer (timer will activate splash screen)
-								SplashCanvas.addTimerTask("filetransfer",
-										dcAct, true);
-							}
-						}
-						// URL message
-						else
-						
-//#sijapp cond.end#
 						if (plugin.equals("Send Web Page Address (URL)"))
 						{
 

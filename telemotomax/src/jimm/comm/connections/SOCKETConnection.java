@@ -42,6 +42,7 @@ import jimm.JimmException;
 import jimm.Options;
 import jimm.MainThread;
 import jimm.comm.Icq;
+import jimm.comm.SnacPacket;
 import jimm.comm.Packet;
 import jimm.comm.ToIcqSrvPacket;
 import jimm.comm.Util;
@@ -160,34 +161,19 @@ public class SOCKETConnection extends Connection implements Runnable
 
 	}
 
-	//  #sijapp cond.if target!="DEFAULT" & modules_FILES="true"#
 
-	// Return the port this connection is running on
-	public int getLocalPort()
+	// Дочитывает ровно len байт; false — поток кончился.
+	private boolean readFully(byte[] buf, int off, int len) throws IOException
 	{
-		try
+		int got = 0;
+		while (got < len)
 		{
-			return (this.sc.getLocalPort());
-		} catch (IOException e)
-		{
-			return (0);
+			int n = is.read(buf, off + got, len - got);
+			if (n == -1) return false;
+			got += n;
 		}
+		return true;
 	}
-
-	// Return the ip this connection is running on
-	public byte[] getLocalIP()
-	{
-		try
-		{
-			return (Util.ipToByteArray(this.sc.getLocalAddress()));
-		} catch (IOException e)
-		{
-			return (new byte[4]);
-		}
-	}
-
-	//#sijapp cond.end#
-
 	// Main loop
 	public void run()
 	{
@@ -234,25 +220,57 @@ public class SOCKETConnection extends Connection implements Runnable
 					throw (new JimmException(124, 0));
 				}
 
-				// TeleMotoMax: тело читается сразу в кадр, за заголовком —
-				// раньше сначала в отдельный массив, потом копия в кадр:
-				// для части ролика или голосового это лишние 60 КБ в куче.
+				// TeleMotoMax: тело SNAC читается сразу в свой массив, без кадра
+				// целиком: раньше кадр читался в один массив, а Packet.parse
+				// копировал тело во второй — на части списка чатов или истории
+				// это лишние 10–24 КБ в куче на каждый пакет.
 				int flapLen = Util.getWord(flapHeader, 4);
-				rcvdPacket = new byte[flapHeader.length + flapLen];
-				System.arraycopy(flapHeader, 0, rcvdPacket, 0, flapHeader.length);
-
-				// Read flap data
-				bReadSum = 0;
-				while (bReadSum < flapLen)
+				int channel = Util.getByte(flapHeader, 1);
+				Object ready;
+				if (channel == 2 && flapLen >= 10)
 				{
-					bRead = is.read(rcvdPacket, flapHeader.length + bReadSum, flapLen - bReadSum);
-					if (bRead == -1)
-						break;
-					bReadSum += bRead;
+					byte[] head = new byte[10];
+					if (!readFully(head, 0, 10)) break;
+					int family = Util.getWord(head, 0), command = Util.getWord(head, 2), flags = Util.getWord(head, 4);
+					long reference = Util.getDWord(head, 6);
+					if ((family == SnacPacket.CLI_TOICQSRV_FAMILY && command == SnacPacket.CLI_TOICQSRV_COMMAND)
+							|| (family == SnacPacket.SRV_FROMICQSRV_FAMILY && command == SnacPacket.SRV_FROMICQSRV_COMMAND))
+					{
+						// Семейство 0x15 разбирает свой класс, ему нужен весь кадр.
+						rcvdPacket = new byte[6 + flapLen];
+						System.arraycopy(flapHeader, 0, rcvdPacket, 0, 6);
+						System.arraycopy(head, 0, rcvdPacket, 6, 10);
+						if (!readFully(rcvdPacket, 16, flapLen - 10)) break;
+						ready = rcvdPacket;
+					}
+					else
+					{
+						byte[] extData = new byte[0];
+						int bodyLen = flapLen - 10;
+						if (flags == 0x8000)
+						{
+							byte[] lenBuf = new byte[2];
+							if (bodyLen < 2) throw new JimmException(133, 1);
+							if (!readFully(lenBuf, 0, 2)) break;
+							int extLen = Util.getWord(lenBuf, 0);
+							if (bodyLen < 2 + extLen) throw new JimmException(133, 2);
+							extData = new byte[extLen];
+							if (!readFully(extData, 0, extLen)) break;
+							bodyLen -= 2 + extLen;
+						}
+						byte[] data = new byte[bodyLen];
+						if (!readFully(data, 0, bodyLen)) break;
+						ready = new SnacPacket(Util.getWord(flapHeader, 2), family, command, flags, reference, extData, data);
+					}
 				}
-				if (bRead == -1)
-					break;
-
+				else
+				{
+					rcvdPacket = new byte[flapHeader.length + flapLen];
+					System.arraycopy(flapHeader, 0, rcvdPacket, 0, flapHeader.length);
+					if (!readFully(rcvdPacket, flapHeader.length, flapLen)) break;
+					ready = rcvdPacket;
+				}
+				bReadSum = flapLen;
 				// Count the data
 //#sijapp cond.if modules_TRAFFIC is "true" #
 				Traffic.addInTraffic(bReadSum + 57);
@@ -262,7 +280,7 @@ public class SOCKETConnection extends Connection implements Runnable
 				// Lock object and add rcvd packet to vector
 				synchronized (rcvdPackets)
 				{
-					rcvdPackets.addElement(rcvdPacket);
+					rcvdPackets.addElement(ready);
 				}
 
 				// Notify main loop

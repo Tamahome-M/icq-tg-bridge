@@ -108,21 +108,20 @@ public abstract class Connection implements Runnable
 	// Returns the next packet, or null if no packet is available
 	public Packet getPacket() throws JimmException
 	{
-
-		// Request lock on packet buffer and get next packet, if available
-		byte[] packet;
+		Object packet;
 		synchronized (this.rcvdPackets)
 		{
 			if (this.rcvdPackets.size() == 0)
 			{
 				return (null);
 			}
-			packet = (byte[]) this.rcvdPackets.elementAt(0);
+			packet = this.rcvdPackets.elementAt(0);
 			this.rcvdPackets.removeElementAt(0);
 		}
-
-		// Parse and return packet
-		return (Packet.parse(packet));
+		// Сокет кладёт SNAC уже разобранным (тело читалось сразу в свой
+		// массив); сырой кадр — от других соединений и для семейства 0x15.
+		if (packet instanceof Packet) return (Packet) packet;
+		return (Packet.parse((byte[]) packet));
 
 	}
 
@@ -131,21 +130,6 @@ public abstract class Connection implements Runnable
 	{
 	}
 
-	//  #sijapp cond.if target!="DEFAULT" & modules_FILES="true"#
-
-	// Return the port this connection is running on
-	public int getLocalPort()
-	{
-		return (0);
-	}
-
-	// Return the ip this connection is running on
-	public byte[] getLocalIP()
-	{
-		return (new byte[4]);
-	}
-
-	//  #sijapp cond.end#
 
 	// Main loop
 	public void run()

@@ -49,14 +49,10 @@ public class ContactItem implements ContactListItem, JimmScreen
 	public static final int CONTACTITEM_ID            = 64; 
 	public static final int CONTACTITEM_GROUP         = 65;
 	public static final int CONTACTITEM_IDLE          = 71;
-	public static final int CONTACTITEM_DC_TYPE       = 72;
-	public static final int CONTACTITEM_ICQ_PROT      = 73;
-	public static final int CONTACTITEM_DC_PORT       = 74;
 	public static final int CONTACTITEM_CAPABILITIES  = 75;
 	public static final int CONTACTITEM_CLIENT        = 76;
 	public static final int CONTACTITEM_XSTATUS       = 78;
 	public static final int CONTACTITEM_STATUS        = 79;
-	public static final int CONTACTITEM_AUTH_COOKIE   = 80;
 	public static final int CONTACTITEM_SIGNON        = 81;
 	public static final int CONTACTITEM_ONLINE        = 82;
 	public static final int CONTACTITEM_INV_ID        = 83;
@@ -77,8 +73,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 	public static final int CONTACTITEM_B_AUTREQUESTS = 1 << 9;
 	
 	/* bytes[] */
-	public static final int CONTACTITEM_INTERNAL_IP			 = 225;
-	public static final int CONTACTITEM_EXTERNAL_IP     	 = 226;
 	public static final int CONTACTITEM_SS_DATA         	 = 227;
 
 	//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
@@ -95,13 +89,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 	private int idle;
 	private int booleanValues;
 
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-	private int typeAndClientId;
-	private int portAndProt;
-	private int intIP;
-	private int extIP;
-	private int authCookie;
-//#sijapp cond.end #
 
 	private long privacyData;
 	private int uinLong;
@@ -245,23 +232,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 				//#sijapp cond.end#
 			}
 			return;
-//#sijapp cond.if (target != "DEFAULT") & (modules_FILES = "true")#
-		case CONTACTITEM_DC_TYPE:
-			typeAndClientId = (typeAndClientId & 0xff) | ((value & 0xff) << 8);
-			return;
-		case CONTACTITEM_ICQ_PROT:
-			portAndProt = (portAndProt & 0xffff0000) | (value & 0xffff);
-			return;
-		case CONTACTITEM_DC_PORT:
-			portAndProt = (portAndProt & 0x0000ffff) | ((value & 0xffff) << 16);
-			return;
-		case CONTACTITEM_CLIENT:
-			typeAndClientId = (typeAndClientId & 0xff00) | (value & 0xff);
-			return;
-		case CONTACTITEM_AUTH_COOKIE:
-			authCookie = value;
-			return;
-//#sijapp cond.end #
 
 		case CONTACTITEM_ONLINE:
 			online = value;
@@ -315,18 +285,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 			return caps;
 		case CONTACTITEM_STATUS:
 			return status;
-//#sijapp cond.if (target != "DEFAULT") & (modules_FILES = "true")#
-		case CONTACTITEM_DC_TYPE:
-			return ((typeAndClientId & 0xff00) >> 8) & 0xFF;
-		case CONTACTITEM_ICQ_PROT:
-			return portAndProt & 0xffff;
-		case CONTACTITEM_DC_PORT:
-			return ((portAndProt & 0xffff0000) >> 16) & 0xFFFF;
-		case CONTACTITEM_CLIENT:
-			return typeAndClientId & 0xff;
-		case CONTACTITEM_AUTH_COOKIE:
-			return authCookie;
-//#sijapp cond.end #
 		case CONTACTITEM_ONLINE:
 			return online;
 		case CONTACTITEM_SIGNON:
@@ -374,27 +332,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 
 	///////////////////////////////////////////////////////////////////////////
 
-//#sijapp cond.if (target != "DEFAULT") & (modules_FILES = "true")#
-	public static byte[] longIPToByteAray(int value)
-	{
-		if (value == 0)
-			return null;
-		return new byte[]
-		{ (byte) (value & 0x000000FF), (byte) ((value & 0x0000FF00) >> 8),
-				(byte) ((value & 0x00FF0000) >> 16),
-				(byte) ((value & 0xFF000000) >> 24) };
-	}
-
-	public static int arrayToLongIP(byte[] array)
-	{
-		if ((array == null) || (array.length < 4))
-			return 0;
-		return (int) array[0] & 0xFF | (((int) array[1] & 0xFF) << 8)
-				| (((int) array[2] & 0xFF) << 16)
-				| (((int) array[3] & 0xFF) << 24);
-	}
-
-//#sijapp cond.end #
 	
 	synchronized public void setImage(int key, Image value)
 	{
@@ -424,14 +361,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 	{
 		switch (key)
 		{
-//#sijapp cond.if (target != "DEFAULT") & (modules_FILES = "true")#
-		case CONTACTITEM_INTERNAL_IP:
-			intIP = arrayToLongIP(value);
-			break;
-		case CONTACTITEM_EXTERNAL_IP:
-			extIP = arrayToLongIP(value);
-			break;
-//#sijapp cond.end #
 			
 		case CONTACTITEM_SS_DATA:
 			ssData = value;
@@ -451,12 +380,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 	{
 		switch (key)
 		{
-//#sijapp cond.if (target != "DEFAULT") & (modules_FILES = "true")#
-		case CONTACTITEM_INTERNAL_IP:
-			return longIPToByteAray(intIP);
-		case CONTACTITEM_EXTERNAL_IP:
-			return longIPToByteAray(extIP);
-//#sijapp cond.end #
 			
 		case CONTACTITEM_SS_DATA:
 			return ssData;
@@ -541,14 +464,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 		setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH_READY, new byte[16]);
 		//#sijapp cond.end#
 
-//#sijapp cond.if (target != "DEFAULT") & (modules_FILES = "true")#
-		setBytesArray(ContactItem.CONTACTITEM_INTERNAL_IP, new byte[4]);
-		setBytesArray(ContactItem.CONTACTITEM_EXTERNAL_IP, new byte[4]);
-		setIntValue_(ContactItem.CONTACTITEM_DC_PORT, 0);
-		setIntValue_(ContactItem.CONTACTITEM_DC_TYPE, 0);
-		setIntValue_(ContactItem.CONTACTITEM_ICQ_PROT, 0);
-		setIntValue_(ContactItem.CONTACTITEM_AUTH_COOKIE, 0);
-//#sijapp cond.end#
 
 		setIntValue_(ContactItem.CONTACTITEM_SIGNON, -1);
 		setIntValue_(ContactItem.CONTACTITEM_REG, -1);

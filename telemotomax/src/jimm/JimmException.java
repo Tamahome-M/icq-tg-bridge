@@ -91,9 +91,6 @@ public class JimmException extends Exception
 		this._ExtErrCode = extErrCode;
 		this.critical = true;
 		this.displayMsg = true;
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-		this.peer = false;
-//#sijapp cond.end#
 	}
 
 	// Constructs a JimmException for network connections
@@ -109,24 +106,11 @@ public class JimmException extends Exception
 			case ICQ_MAIN:
 				this.critical = true;
 				this.displayMsg = true;
-				//  #sijapp cond.if target!="DEFAULT" & modules_FILES="true"#
-				this.peer = false;
-				//  #sijapp cond.end#
 				break;
 			//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 			case ICQ_BART:
 				this.critical = false;
 				this.displayMsg = false;
-				//  #sijapp cond.if modules_FILES="true"#
-				this.peer = false;
-				//  #sijapp cond.end#
-				break;
-			//  #sijapp cond.end#
-			//  #sijapp cond.if target!="DEFAULT" & modules_FILES="true"#
-			case ICQ_PEER:
-				this.critical = false;
-				this.displayMsg = true;
-				this.peer = true;
 				break;
 			//  #sijapp cond.end#
 		}
@@ -140,24 +124,8 @@ public class JimmException extends Exception
 		this._ExtErrCode = extErrCode;
 		this.critical = false;
 		this.displayMsg = displayMsg;
-		//  #sijapp cond.if target!="DEFAULT" & modules_FILES="true"#
-		this.peer = false;
-		//  #sijapp cond.end#
 	}
 
-	//  #sijapp cond.if target!="DEFAULT" & modules_FILES="true"#
-	// Constructs a non-critical JimmException with peer info
-	public JimmException(int errCode, int extErrCode, boolean displayMsg,
-			boolean _peer)
-	{
-		super(JimmException.getErrDesc(errCode, extErrCode));
-		this._ErrCode = errCode;
-		this._ExtErrCode = extErrCode;
-		this.critical = false;
-		this.displayMsg = displayMsg;
-		this.peer = _peer;
-	}
-	//  #sijapp cond.end#
 
 	// Returns true if an error message should be presented to the user
 	public boolean isDisplayMsg()
@@ -171,13 +139,6 @@ public class JimmException extends Exception
 		return (this.critical);
 	}
 
-	//  #sijapp cond.if target!="DEFAULT" & modules_FILES="true"#
-	// Returns true if this is a peer exception
-	public boolean isPeer()
-	{
-		return (this.peer);
-	}
-	//  #sijapp cond.end#
 
 	// Returns network type
 	public int getTypeNetwork()
@@ -193,9 +154,6 @@ public class JimmException extends Exception
 		if (e.isCritical())
 		{
 			// Reset comm. subsystem
-			//  #sijapp cond.if target!="DEFAULT" & modules_FILES="true"#
-			if (e.isPeer())	Icq.resetPeerCon();
-			//  #sijapp cond.end#
 
 			boolean diconnFlag = Icq.isDisconnected(); 
 			Icq.disconnect(true);

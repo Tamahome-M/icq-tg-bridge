@@ -48,7 +48,6 @@ import jimm.comm.SearchAction;
 import jimm.comm.UpdateContactListAction;
 import jimm.comm.Util;
 import jimm.comm.Icq;
-import jimm.comm.RegisterNewUinAction;
 import jimm.util.ResourceBundle;
 
 //#sijapp cond.if target="MIDP2"|target="MOTOROLA"|target="RIM"#
@@ -141,7 +140,6 @@ public class Options
 	public static final int OPTION_RECONNECT_NUMBER   = 91;
 	public static final int OPTION_XSTATUS            = 92; 
 	public static final int OPTION_DAYLIGHT_SAVING    = 93;
-	public static final int OPTION_FT_MODE            = 94;
 //	public static final int OPTION_CAMERA_LOCATOR     = 95;
 	public static final int OPTION_AUTOAWAY_TIME1     = 96;
 	public static final int OPTION_AUTOAWAY_TIME2     = 97;
@@ -231,8 +229,6 @@ public class Options
 	public static final int OPTION_ONLINE_STATUS = 192; 
 	
 	/* Filetransfer modes */
-	public static final int FS_MODE_WEB = 0;
-	public static final int FS_MODE_NET = 1;
 	
 	/* Hotkey Actions */
 	public static final int HOTKEY_NONE        = 0;
@@ -552,7 +548,7 @@ public class Options
 		setBoolean(OPTION_ASK_FOR_WEB_FT, true);
 		setInt(OPTION_XSTATUS, -1);
 
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
+//#sijapp cond.if modules_CAMERA="true"#
 //		setInt(OPTION_CAMERA_LOCATOR, 0);
 		setInt(OPTION_CAMERA_RES, 0);
 		setInt(OPTION_CAMERA_ENCODING, 0);
@@ -564,7 +560,6 @@ public class Options
 		selectSoundType("typing.", OPTION_TYPING_FILE);
 //#sijapp cond.end#		
 		
-		setInt(OPTION_FT_MODE, FS_MODE_WEB);
 		
 		setBoolean(OPTION_USE_AUTOAWAY, true);
 		setInt(OPTION_AUTOAWAY_TIME1, 5);
@@ -817,18 +812,7 @@ public class Options
 		optionsForm.activateContactList();
 	}
 
-	static public void setCaptchaImage(Image img)
-	{
-		int width = 9*SplashCanvas.getAreaWidth()/10-2;
-		img = Util.createThumbnail(img, width, 0);
-		optionsForm.addCaptchaToForm(img);
-		img = null;
-	}
 
-	static public void submitNewUinPassword(String uin, String password)
-	{
-		optionsForm.addAccount(uin, password);
-	}
 
 	//#sijapp cond.if target isnot "DEFAULT"#
 	private static void selectSoundType(String name, int option)
@@ -877,43 +861,6 @@ public class Options
 				catch (IOException e) {} // Do nothing
 				break;
 				
-//#sijapp cond.if modules_FILES="true"#
-			case Options.BG_IMAGE_EXT :
-				new Thread() 
-				{
-					public void run () 
-					{
-						FileConnection fileConnection = null;
-						InputStream result = null;
-
-						try
-						{
-							String filename = Options.getString (Options.OPTION_BG_IMAGE_URL);
-							fileConnection = (FileConnection) Connector.open("file://"+filename,Connector.READ);
-							result = fileConnection.openInputStream();
-							setBgImage(Image.createImage(result), placeMode);
-						}
-						catch (OutOfMemoryError me)
-						{
-							System.gc();
-							me.printStackTrace();
-							VirtualList.setBackImage(null, false);
-						}
-						catch (Exception e)
-						{
-							e.printStackTrace();
-							VirtualList.setBackImage(null, false);
-						}
-						finally
-						{
-							if (result != null) try { result.close(); } catch (Exception e) {}
-							if (fileConnection != null) try { fileConnection.close(); } catch (Exception e) {}
-						}
-					}
-				}.start();
-				break;
-				
-//#sijapp cond.end#
 			case Options.BG_IMAGE_NONE:
 				VirtualList.setBackImage(null, false);
 				break;
@@ -1046,29 +993,6 @@ public class Options
 class OptionsForm implements CommandListener, ItemStateListener, VirtualListCommands, JimmScreen
 {
 
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-	private class OptionsItems implements ItemCommandListener
-	{
-		public OptionsItems()
-		{
-		}
-
-		public void commandAction(Command command, Item item)
-		{
-			if(command == cmdSelectBackImg)
-			{
-				try
-				{
-					fileSystem = new FileSystem2();
-					fileSystem.browse(null, _this, false);
-				} catch (Exception e)
-				{
-					System.out.println (e.getMessage());
-				}
-			} 
-		}
-	}
-//#sijapp cond.end#
 
 
 	private boolean lastGroupsUsed, lastHideOffline, lastHideEmpty;
@@ -1168,7 +1092,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup chsTimeZone;
 	private ChoiceGroup chsCurrTime;
 	private ChoiceGroup chsDayLight;
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
+//#sijapp cond.if modules_CAMERA="true"#
 	//	private ChoiceGroup clCamDevGroup;
 	private ChoiceGroup camRes;
 	private ChoiceGroup camEnc;
@@ -1188,10 +1112,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private Gauge typingNotificationSoundVolume;
 	private ChoiceGroup backImgGroup;
 	private ChoiceGroup backImgModeGroup;
-	//#sijapp cond.if modules_FILES="true"#
-	private StringItem backImgFilename;
-	private int backImgFilenameIndex = 0;
-	//#sijapp cond.end#
 //#sijapp cond.end#
 	
 //#sijapp cond.if target="MIDP2" | target="SIEMENS2"#
@@ -1243,10 +1163,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private TextList statusStrings;
 	private TextBox  statusString;
 
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-	// For background selection
-	private FileSystem2 fileSystem;
-//#sijapp cond.end#
 
 	private static OptionsForm _this;
 
@@ -1316,7 +1232,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			if (Jimm.display.numAlphaLevels() > 2)
 				JimmUI.addTextListItem(optionsMenu, "transparency", MainMenu.menuIcons.elementAt(16), OPTIONS_TRANSP, true, -1, Font.STYLE_PLAIN);
 //#sijapp cond.end#			
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
+//#sijapp cond.if modules_CAMERA="true"#
 			if (System.getProperty("video.snapshot.encodings") != null)
 				JimmUI.addTextListItem(optionsMenu, "options_camera", MainMenu.menuIcons.elementAt(17), OPTIONS_CAMERA, true, -1, Font.STYLE_PLAIN);
 //#sijapp cond.end#
@@ -1616,19 +1532,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private Command cmdDeleteAccount = new Command(ResourceBundle.getString(
 			"delete", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 3);
 
-	private Command cmdRegisterAccount = new Command(ResourceBundle.getString(
-			"register_new", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 3);
 
-	private Command cmdRequestCaptchaImage = new Command(ResourceBundle.getString(
-			"register_request_image", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 3);
-
-	private Command cmdRequestRegistration = new Command(ResourceBundle.getString(
-			"register_request_send", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 3);
-
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-	private Command cmdSelectBackImg = new Command(ResourceBundle.getString(
-			"select_background", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 3);
-//#sijapp cond.end#
 
 	private int currAccount;
 
@@ -1638,11 +1542,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 	private int maxAccountsCount = Options.accountKeys.length / 2;
 
-	private TextField captchaCode;
 
-	private TextField newPassword;
 
-	private boolean registration_connected = false;
 
 	private void readAccontsData()
 	{
@@ -1668,29 +1569,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		if ((value == null) || (value.length() == 0))
 			return "---";
 		return value;
-	}
-
-	private void showRegisterControls()
-	{
-		newPassword = new TextField(ResourceBundle
-				.getString("password"), "", 8, TextField.PASSWORD);
-		captchaCode = new TextField(ResourceBundle
-				.getString("captcha"), "", 8, TextField.ANY);
-		optionsForm.removeCommand(JimmUI.cmdSave);
-		optionsForm.append(newPassword);
-		if (!Icq.isConnected()) {
-			registration_connected = false;
-			optionsForm.addCommand(cmdRequestCaptchaImage);
-		}
-	}
-
-	public void addCaptchaToForm (Image img)
-	{
-		clearForm();
-		optionsForm.append(img);
-		optionsForm.append(captchaCode);
-		optionsForm.append(ResourceBundle.getString("register_notice"));
-		optionsForm.addCommand(cmdRequestRegistration);
 	}
 
 	public void addAccount (String uin, String password)
@@ -1763,8 +1641,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 		if (size != maxAccountsCount) {
 			optionsForm.addCommand(cmdAddNewAccount);
-			if (!Icq.isConnected())
-				optionsForm.addCommand(cmdRegisterAccount);
 		}
 		if (size != 1)
 			optionsForm.addCommand(cmdDeleteAccount);
@@ -1809,21 +1685,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 	public void itemStateChanged(Item item)
 	{
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-		if ((backImgGroup != null) && (backImgGroup == item))
-		{
-			int selItem = backImgGroup.getSelectedIndex();
-			
-			if (selItem == Options.BG_IMAGE_EXT)
-			{
-				if (backImgFilenameIndex == 0)
-					backImgFilenameIndex = optionsForm.append(backImgFilename);
-			} else if (backImgFilenameIndex != 0) {
-				optionsForm.delete(backImgFilenameIndex);
-				backImgFilenameIndex = 0;
-			}
-		}
-//#sijapp cond.end#
 
 		if (uinTextField != null)
 		{
@@ -1937,7 +1798,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			showMediaOptions();
 			break;
 
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
+//#sijapp cond.if modules_CAMERA="true"#
 		case OPTIONS_CAMERA:
 			showCameraOptions();
 			break;
@@ -2144,10 +2005,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		optionsForm.append(httpWAPProfileTextField);
 		optionsForm.append(reconnectNumberTextField);
 		
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-		chsFSMode = createSelector("ft_type", "ft_type_web"+"|"+"ft_type_net", Options.OPTION_FT_MODE);
-		optionsForm.append(chsFSMode);
-//#sijapp cond.end#
 	}
 
 //#sijapp cond.if modules_PROXY is "true"#	
@@ -2187,7 +2044,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	}
 //#sijapp cond.end#	
 
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#	
+//#sijapp cond.if modules_CAMERA="true"#	
 	private void showCameraOptions()
 	{
 		//	clCamDevGroup = new ChoiceGroup(ResourceBundle.getString("opt_camerauri"), Choice.EXCLUSIVE);
@@ -2310,23 +2167,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	{
 		backImgGroup = createSelector("background_image", "none"
 				+ "|" + "background_int"
-//#sijapp cond.if modules_FILES="true"#
-				+ "|" + "background_ext"
-//#sijapp cond.end#
 				,Options.OPTION_BG_IMAGE);
 		backImgModeGroup = createSelector("bg_image_mode", 
 				"bg_center"+"|"+"bg_stretch"+"|"+"bg_pave", Options.OPTION_BG_IMAGE_MODE);
 		optionsForm.append(backImgGroup);
-		//#sijapp cond.if modules_FILES="true"#
-		String fname = Options.getString(Options.OPTION_BG_IMAGE_URL);
-		fname = (fname.length() == 0) ? ResourceBundle.getString("background_empty") : fname;
-		backImgFilename = new StringItem(null, fname, Item.HYPERLINK);
-		backImgFilename.setDefaultCommand(cmdSelectBackImg);
-		backImgFilename.setItemCommandListener(new OptionsItems());
-		if (Options.getInt (Options.OPTION_BG_IMAGE) == Options.BG_IMAGE_EXT)
-			backImgFilenameIndex = optionsForm.append (backImgFilename);
-		optionsForm.append(backImgModeGroup);
-		//#sijapp cond.end#
 	}
 //#sijapp cond.end#
 
@@ -2616,7 +2460,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 //#sijapp cond.end#			
 			
 
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
+//#sijapp cond.if modules_CAMERA="true"#
 		case OPTIONS_CAMERA:
 			readCameraOptions();
 			break;
@@ -2766,7 +2610,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		//#sijapp cond.end#
 	}
 
-//#sijapp cond.if modules_FILES="true"#	
 	// «Медиа»: что мост отдаёт телефону — размер и качество снимка, кадр,
 	// битрейт и длина ролика, «боком», битрейт и длина голосового. Всё
 	// выпадающими списками, первый пункт — «как в профиле моста» (0 /
@@ -2868,6 +2711,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		jimm.comm.Icq.resendClientInfo();
 	}
 
+//#sijapp cond.if modules_CAMERA="true"#
 	private void readCameraOptions()
 	{
 		//Options.setInt(Options.OPTION_CAMERA_LOCATOR, clCamDevGroup.getSelectedIndex());
@@ -2881,8 +2725,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		Options.setInt(Options.OPTION_CAMERA_RES, camRes.getSelectedIndex());
 //#sijapp cond.end#
 	}
-//#sijapp cond.end#	
-	
+//#sijapp cond.end#
+
 	private void readTransparencyOptions()
 	{
 		Options.setInt(Options.OPTION_CURSOR_ALPHA, cursorAlpha.getSelectedIndex()*64);
@@ -2898,16 +2742,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		Options.setInt(Options.OPTION_BG_IMAGE, newBgImage);
 		Options.setInt(Options.OPTION_BG_IMAGE_MODE, newBgImageMode);
 		boolean changed = (oldBgImage!=newBgImage) || (oldBgImageMode!=newBgImageMode);  
-		//#sijapp cond.if modules_FILES="true"#
-		String oldImgPath = Options.getString (Options.OPTION_BG_IMAGE_URL);
-		String newImgPath = backImgFilename.getText();
-		changed |= (!oldImgPath.equals(newImgPath));
-		Options.setString (Options.OPTION_BG_IMAGE_URL, newImgPath);
-		Options.setBackgroundImage (backImgGroup.getSelectedIndex(), newImgPath, newBgImageMode);
-		//#sijapp cond.else#
 		Options.setString (Options.OPTION_BG_IMAGE_URL, Options.emptyString);
 		if (changed) Options.setBackgroundImage(backImgGroup.getSelectedIndex(), null, newBgImageMode);
-		//#sijapp cond.end#
 	}
 //#sijapp cond.end#	
 
@@ -3074,9 +2910,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		Options.setInt(Options.OPTION_RECONNECT_NUMBER, Integer
 				.parseInt(reconnectNumberTextField.getString()));
 		
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-		Options.setInt(Options.OPTION_FT_MODE, chsFSMode.getSelectedIndex());
-//#sijapp cond.end#
 	}
 
 	
@@ -3265,42 +3098,11 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			}
 		}
 
-//#sijapp cond.if (target!="DEFAULT")&(modules_FILES="true")#
-		else if ((fileSystem != null) && fileSystem.isActive())
-		{
-			if (c == JimmUI.cmdOk)
-			{
-				String fileName = fileSystem.getValue();
-				backImgFilename.setText (fileName);
-			}
-			fileSystem = null;
-			Jimm.display.setCurrent(optionsForm);
-			Jimm.setBkltOn(true);
-		}
-		else if (c == cmdSelectBackImg)
-		{
-			try
-			{
-				fileSystem = new FileSystem2();
-				fileSystem.browse(null, this, false);
-			} catch (Exception e)
-			{
-				System.out.println (e.getMessage());
-			}
-			return;
-		} 
-
-//#sijapp cond.end#
 		/* Look for back command */
 		else if ((c == JimmUI.cmdBack) || (c == JimmUI.cmdCancel))
 		{
 			if (d == optionsForm || keysMenu.isActive())
 			{
-				if (registration_connected)
-				{
-					RegisterNewUinAction.stopTimerTask();
-					registration_connected = false;
-				}
 				initOptionsList(currOptType);
 			} 
 			else
@@ -3341,40 +3143,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			JimmUI.showSelector("delete", items, this, TAG_DELETE_ACCOUNT, false);
 			return;
 		} 
-		else if (c == cmdRegisterAccount)
-		{
-			clearForm();
-			showRegisterControls();
-			return;
-		} 
-		else if (c == cmdRequestCaptchaImage)
-		{
-			if (newPassword.getString().length() == 0) return;
-			optionsForm.removeCommand(cmdRequestCaptchaImage);
-			//#sijapp cond.if target!="DEFAULT"#
-			optionsForm.append(new Gauge(null, false, Gauge.INDEFINITE, Gauge.CONTINUOUS_RUNNING));
-			//#sijapp cond.else#
-			optionsForm.append(ResourceBundle.getString("wait"));
-			//#sijapp cond.end#
-			registration_connected = true;
-			Icq.connectForNewUIN(newPassword.getString());
-			return;
-		} 
-		else if (c == cmdRequestRegistration)
-		{
-			try {
-				//#sijapp cond.if target!="DEFAULT"#
-				optionsForm.append(new Gauge(null, false, Gauge.INDEFINITE, Gauge.CONTINUOUS_RUNNING));
-				//#sijapp cond.else#
-				optionsForm.append(ResourceBundle.getString("wait"));
-				//#sijapp cond.end#
-
-				RegisterNewUinAction.requestRegistration (newPassword.getString(), captchaCode.getString());
-			} catch (Exception e) {
-				System.out.println (e.getMessage());
-			}
-			return;
-		} 
 		else if (JimmUI.getCurScreenTag() == TAG_DELETE_ACCOUNT)
 		{
 			if (c == JimmUI.cmdOk)
@@ -3394,9 +3162,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private void clearForm()
 	{
 		optionsForm.removeCommand(cmdAddNewAccount);
-		optionsForm.removeCommand(cmdRegisterAccount);
-		optionsForm.removeCommand(cmdRequestCaptchaImage);
-		optionsForm.removeCommand(cmdRequestRegistration);
 		optionsForm.removeCommand(cmdDeleteAccount);
 		//#sijapp cond.if target!="DEFAULT"#
 		optionsForm.deleteAll();
