@@ -84,7 +84,8 @@ public class Options
 	public static final int OPTION_UI_LANGUAGE        = 3;
 	public static final int OPTION_CAMERA_SIZE        = 31;   // TeleMotoMax: размер снимка «WxH», пусто — как решит телефон
 	public static final int OPTION_MEDIA_PHOTO_SIZE   = 32;   // TeleMotoMax, «Медиа»: фото от моста «WxH», пусто — как в профиле
-	public static final int OPTION_MEDIA_VIDEO_SIZE   = 33;   // кадр ролика от моста «WxH»
+	public static final int OPTION_MEDIA_VIDEO_SIZE   = 33;
+	public static final int OPTION_LAST_ERROR         = 34;   // TeleMotoMax: последняя пойманная ошибка — переживает перезапуск, видна в «О программе»   // кадр ролика от моста «WxH»
 	public static final int OPTION_MESS_NOTIF_FILE    = 4;
 	public static final int OPTION_ONLINE_NOTIF_FILE  = 5;
 	public static final int OPTION_CURRENCY           = 6;
@@ -390,6 +391,7 @@ public class Options
 		setString (Options.OPTION_CAMERA_SIZE, "");
 //#sijapp cond.end#
 		setString (Options.OPTION_MEDIA_PHOTO_SIZE, "");
+		setString (Options.OPTION_LAST_ERROR, "");
 		setString (Options.OPTION_MEDIA_VIDEO_SIZE, "");
 		
 		setString(Options.OPTION_SRV_PORT, "5190");
