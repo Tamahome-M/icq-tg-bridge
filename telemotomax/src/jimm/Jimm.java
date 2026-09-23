@@ -359,7 +359,10 @@ public class Jimm extends MIDlet
 		try
 		{
 			Options.setString(Options.OPTION_LAST_ERROR, text);
-			Options.safeSave();
+			// Именно save(), а не safeSave(): тот на неудаче показывает
+			// «ошибка сохранения настроек», и поверх пойманной ошибки
+			// пользователь получал ещё и диалог ни о чём.
+			Options.save();
 		}
 		catch (Throwable ignore) {}
 	}
