@@ -253,9 +253,7 @@ public class MainThread implements Runnable
 	static public void addMessageSerially(Object message)
 	{
 		addMainThreadTask(TYPE_ADD_MSG, message);
-// Поднять окно при входящем: было только для MIDP2, хотя Motorola это
-// тоже по силам — а в свёрнутом виде на паузе телефон не даёт даже звука.
-//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA"#
+//#sijapp cond.if target is "MIDP2"#
 		if (Options.getBoolean(Options.OPTION_BRING_UP)) Jimm.setMinimized(false);
 //#sijapp cond.end #
 	}

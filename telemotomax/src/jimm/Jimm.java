@@ -166,7 +166,7 @@ public class Jimm extends MIDlet
 			// после «Возобновить», а что именно упало — не видно. Теперь
 			// ошибка запоминается в настройках (переживёт перезапуск, видна в
 			// «О программе»), а вместо вылета — главное меню.
-			try { resumeScreen(); }
+			try { showWorkScreen(); }
 			catch (Throwable t)
 			{
 				rememberError("возврат из фона", t);
@@ -353,8 +353,7 @@ public class Jimm extends MIDlet
 	// настройки (RMS). «О программе» покажет её при следующем запуске.
 	static public void rememberError(String where, Throwable t)
 	{
-		String text = where + (workStep.length() > 0 ? " (" + workStep + ")" : "")
-				+ ": " + t.getClass().getName()
+		String text = where + ": " + t.getClass().getName()
 				+ (t.getMessage() != null ? ": " + t.getMessage() : "");
 		ConnLog.note(text);
 		try
@@ -471,40 +470,14 @@ public class Jimm extends MIDlet
 		return ui;
 	}
 
-	// Какой шаг показа экрана идёт сейчас — попадёт в запомненную ошибку,
-	// иначе по одному NullPointerException не понять, где именно упало.
-	static private String workStep = "";
-
 	static public void showWorkScreen()
 	{
-		workStep = "заставка";
 		if (SplashCanvas.locked())
 			SplashCanvas.show();
 		else if (Icq.isConnected())
-		{
-			workStep = "список контактов";
 			ContactList.activateList();
-		}
 		else
-		{
-			workStep = "главное меню";
 			MainMenu.activateMenu();
-		}
-		workStep = "";
-	}
-
-	/**
-	 * Вернуться из фона. Экран, который был на виду, никуда не делся —
-	 * его и показываем: перестроение списка контактов на возврате роняло
-	 * V3 (NullPointerException), а нужды в нём нет — список обновляет
-	 * главный поток по мере прихода сообщений.
-	 */
-	static public void resumeScreen()
-	{
-		Displayable shown = null;
-		try { shown = display.getCurrent(); } catch (Throwable ignore) {}
-		if (shown != null) { display.setCurrent(shown); return; }
-		showWorkScreen();
 	}
 
 	//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA" #
@@ -518,23 +491,22 @@ public class Jimm extends MIDlet
 			// notifyPaused() — «мидлет приостановлен» для системы, при
 			// котором потоки и соединение живут (Motorola, Nokia S40).
 			// Возврат — через список приложений: startApp() покажет экран.
-			// notifyPaused() говорит телефону «мидлет на паузе» — и телефон
-			// забирает звук: в свёрнутом виде уведомления молчат. Кому нужны
-			// звуки в фоне, включает «Свернуть без паузы»: тогда просто
-			// убираем экран, а мидлет для телефона остаётся работающим.
-			boolean pause = !Options.getBoolean(Options.OPTION_MINI_NO_PAUSE);
-			ConnLog.note(pause ? "свёрнуто (пауза)" : "свёрнуто (экран убран)");
+			ConnLog.note("свёрнуто");
+//#sijapp cond.if modules_CAMERA="true"#
+			// V8 (MOTOMAGX): оба способа, какой поймёт — тот и сработает.
 			try { Jimm.display.setCurrent(null); } catch (Exception ignore) {}
-			try { if (pause && jimm != null) jimm.notifyPaused(); } catch (Exception ignore) {}
+//#sijapp cond.else#
+//#			// V3 (P2K): только notifyPaused(). В исходном Jimm «Свернуть» для
+//#			// Motorola не было; setCurrent(null) оставлял Display без экрана, и
+//#			// после «Возобновить» приложение вылетало — есть подозрение, что
+//#			// на этом. Штатный путь P2K — клавиша «Отбой» → «Фон».
+//#sijapp cond.end#
+			try { if (jimm != null) jimm.notifyPaused(); } catch (Exception ignore) {}
 		} else
 		{
 			Displayable disp = Jimm.display.getCurrent();
 			// После setCurrent(null) экрана нет вовсе — disp == null.
-			if (disp == null || !disp.isShown())
-			{
-				try { resumeScreen(); }
-				catch (Throwable t) { rememberError("подъём из фона", t); }
-			}
+			if (disp == null || !disp.isShown()) showWorkScreen();
 
 		}
 	}
