@@ -20,8 +20,6 @@ import java.util.Enumeration;
 import java.util.Vector;
 
 import javax.microedition.io.Connector;
-import javax.microedition.io.file.FileConnection;
-import javax.microedition.io.file.FileSystemRegistry;
 import javax.microedition.lcdui.Canvas;
 import javax.microedition.lcdui.Command;
 import javax.microedition.lcdui.CommandListener;
@@ -58,7 +56,6 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	private Vector partQueue;
 	private Thread writer;
 	private OutputStream partOut;
-	private FileConnection partFc;
 	private boolean partFailed;
 	private boolean partsDone;
 	private boolean partsOk;
@@ -104,10 +101,8 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		final String path = filePath;
 		try
 		{
-			partFc = (FileConnection) Connector.open(path, Connector.READ_WRITE);
-			if (partFc.exists()) partFc.delete();
-			partFc.create();
-			partOut = partFc.openOutputStream();
+			TempFiles.api().recreate(path);
+			partOut = TempFiles.out(path);
 			for (;;)
 			{
 				byte[] chunk;
@@ -132,9 +127,8 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			repaint();
 			partOut.flush();
 			partOut.close(); partOut = null;
-			long written = partFc.fileSize();
-			partFc.close(); partFc = null;
-			if (written <= 0) throw new Exception("empty temp file");
+			long written = TempFiles.size(path);
+			if (written == 0) throw new Exception("empty temp file");
 		}
 		catch (Exception e)
 		{
@@ -142,8 +136,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			partFailed = true;
 		}
 		try { if (partOut != null) partOut.close(); } catch (Exception ignore) {}
-		try { if (partFc != null) partFc.close(); } catch (Exception ignore) {}
-		partOut = null; partFc = null;
+		partOut = null;
 		if (current != this) { deleteFile(path); return; }
 		if (err != null || !partsOk)
 		{
@@ -197,15 +190,13 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	/** Файл целиком, если он не больше предела; иначе null. */
 	private static byte[] readFile(String url, int limit)
 	{
-		FileConnection fc = null;
 		java.io.InputStream in = null;
 		try
 		{
-			fc = (FileConnection) Connector.open(url, Connector.READ);
-			long size = fc.fileSize();
+			long size = TempFiles.size(url);
 			if (size <= 0 || size > limit) return null;      // в кучу не ляжет
 			byte[] buf = new byte[(int) size];
-			in = fc.openInputStream();
+			in = TempFiles.in(url);
 			int got = 0;
 			while (got < buf.length)
 			{
@@ -219,20 +210,12 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		finally
 		{
 			try { if (in != null) in.close(); } catch (Exception ignore) {}
-			try { if (fc != null) fc.close(); } catch (Exception ignore) {}
 		}
 	}
 
 	private static void deleteFile(String url)
 	{
-		if (url == null) return;
-		try
-		{
-			FileConnection fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
-			if (fc.exists()) fc.delete();
-			fc.close();
-		}
-		catch (Exception ignore) {}
+		TempFiles.remove(url);
 	}
 
 	private static MediaPlayer current;
@@ -402,19 +385,14 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	private Exception playFromFile(byte[] data)
 	{
 		String url = tempFileUrl(bartType == RequestBartAction.BART_VOICE ? ".amr" : ".3gp");
-		if (url == null) return new Exception("no writable root: " + TempFiles.lastError);
-		FileConnection fc = null;
+		if (url == null) return new Exception(TempFiles.lastError);
 		OutputStream os = null;
 		try
 		{
-			fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
-			if (fc.exists()) fc.delete();
-			fc.create();
-			os = fc.openOutputStream();
+			os = TempFiles.out(url);
 			os.write(data);
 			os.flush();
 			os.close(); os = null;
-			fc.close(); fc = null;
 			filePath = url;
 			// Данные уже во временном файле — держать их ещё и в куче незачем:
 			// плеер читает с «диска», а памяти на V3 немного.
@@ -425,24 +403,36 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		catch (Exception e)
 		{
 			try { if (os != null) os.close(); } catch (Exception ignore) {}
-			try { if (fc != null) fc.close(); } catch (Exception ignore) {}
 			deleteTemp();
 			return e;
 		}
 	}
 
+	// Из памяти телефон открывает поток по названному типу — и разборчив:
+	// один и тот же 3GP он может взять как «video/3gpp», но отвергнуть как
+	// «video/mp4», и наоборот. Перебираем несколько названий, прежде чем
+	// сказать, что не вышло.
 	private Exception playFromStream(byte[] data)
 	{
-		try
+		String[] types = (bartType == RequestBartAction.BART_VOICE)
+				? new String[] { mime, "audio/amr", "audio/3gpp" }
+				: new String[] { mime, "video/mp4", "video/3gpp2", "video/mpeg4" };
+		Exception last = null;
+		for (int i = 0; i < types.length; i++)
 		{
-			start(Manager.createPlayer(new ByteArrayInputStream(data), mime));
-			return null;
+			if (types[i] == null || (i > 0 && types[i].equals(types[0]))) continue;
+			try
+			{
+				start(Manager.createPlayer(new ByteArrayInputStream(data), types[i]));
+				playedAs = types[i];
+				return null;
+			}
+			catch (Exception e) { last = e; }
 		}
-		catch (Exception e)
-		{
-			return e;
-		}
+		return last;
 	}
+
+	private String playedAs;
 
 	// The player tells us when the voice message has played to the end, so the
 	// screen can offer to play it again instead of just going quiet.
@@ -661,7 +651,8 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		}
 		catch (Exception e) { types = shortName(e); }
 		details = new String[] {
-			(clipSize / 1024) + " КБ",
+			(clipSize / 1024) + " КБ, файлы: " + TempFiles.apiName(),
+			"тип: " + mime,
 			"файл: " + shortName(fileErr),
 			"память: " + shortName(streamErr),
 			"плеер: " + types,
