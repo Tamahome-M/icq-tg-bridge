@@ -2,10 +2,10 @@ Manifest-Version: 1.0
 Ant-Version: Apache Ant 1.10.15
 Created-By: TeleMotoMax (Jimm fork)
 MIDlet-Name: TeleMotoMax
-MIDlet-Version: 0.60
+MIDlet-Version: 0.61
 MIDlet-Vendor: icq-tg-bridge
 MIDlet-Jar-URL: TeleMotoMax.jar
-MIDlet-Jar-Size: 213803
+MIDlet-Jar-Size: 213825
 MIDlet-Icon: icon.png
 MicroEdition-Profile: MIDP-2.0
 MicroEdition-Configuration: CLDC-1.0
@@ -13,9 +13,9 @@ MIDlet-Description: Jimm fork for icq-tg-bridge
 MIDlet-Info-URL: https://github.com/Tamahome-M/icq-tg-bridge
 MIDlet-1: TeleMotoMax,icon.png,jimm.Jimm
 Jimm-Version: 0.6.091219
-TeleMotoMax-Version: 0.60.260923
+TeleMotoMax-Version: 0.61.260923
 Background: True
 FlipInsensitive: True
 Nokia-MIDlet-No-Exit: true
-MIDlet-Permissions-Opt: javax.microedition.io.Connector.socket,javax.microedition.io.Connector.http,javax.microedition.io.Connector.https
+MIDlet-Permissions-Opt: javax.microedition.io.Connector.socket,javax.microedition.io.Connector.http,javax.microedition.io.Connector.https,javax.microedition.io.Connector.file.read,javax.microedition.io.Connector.file.write
 

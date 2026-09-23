@@ -99,9 +99,12 @@ sed -i "s|TMM_VERSION_MAJOR = .*;|TMM_VERSION_MAJOR = $MAJOR;|; \
 # перечислено здесь: без объявления сокет отвечал «не разрешено» даже в
 # домене с полными правами — неподписанным сборкам это скрывал
 # интерактивный запрос доступа у пользователя.
-PERMS="javax.microedition.io.Connector.socket,javax.microedition.io.Connector.http,javax.microedition.io.Connector.https"
+# Файлы (JSR-75) нужны всем сборкам, не только с камерой: плеер пишет ролик
+# во временный файл (из памяти V3 видео не играет). Незаявленное разрешение
+# телефон вправе отказать молча — так и выглядело «no writable root» на V3.
+PERMS="javax.microedition.io.Connector.socket,javax.microedition.io.Connector.http,javax.microedition.io.Connector.https,javax.microedition.io.Connector.file.read,javax.microedition.io.Connector.file.write"
 case "$MODULES" in *CAMERA*)
-	PERMS="$PERMS,javax.microedition.io.Connector.file.read,javax.microedition.io.Connector.file.write,javax.microedition.media.control.VideoControl.getSnapshot,javax.microedition.media.control.RecordControl" ;;
+	PERMS="$PERMS,javax.microedition.media.control.VideoControl.getSnapshot,javax.microedition.media.control.RecordControl" ;;
 esac
 # Разрешения — необязательные (-Opt): обязательные файлы для неподписанной
 # сборки дают молчаливый отказ в установке на MOTOMAGX, а подписанной
