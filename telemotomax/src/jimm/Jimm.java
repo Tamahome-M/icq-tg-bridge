@@ -518,17 +518,14 @@ public class Jimm extends MIDlet
 			// notifyPaused() — «мидлет приостановлен» для системы, при
 			// котором потоки и соединение живут (Motorola, Nokia S40).
 			// Возврат — через список приложений: startApp() покажет экран.
-			ConnLog.note("свёрнуто");
-//#sijapp cond.if modules_CAMERA="true"#
-			// V8 (MOTOMAGX): оба способа, какой поймёт — тот и сработает.
+			// notifyPaused() говорит телефону «мидлет на паузе» — и телефон
+			// забирает звук: в свёрнутом виде уведомления молчат. Кому нужны
+			// звуки в фоне, включает «Свернуть без паузы»: тогда просто
+			// убираем экран, а мидлет для телефона остаётся работающим.
+			boolean pause = !Options.getBoolean(Options.OPTION_MINI_NO_PAUSE);
+			ConnLog.note(pause ? "свёрнуто (пауза)" : "свёрнуто (экран убран)");
 			try { Jimm.display.setCurrent(null); } catch (Exception ignore) {}
-//#sijapp cond.else#
-//#			// V3 (P2K): только notifyPaused(). В исходном Jimm «Свернуть» для
-//#			// Motorola не было; setCurrent(null) оставлял Display без экрана, и
-//#			// после «Возобновить» приложение вылетало — есть подозрение, что
-//#			// на этом. Штатный путь P2K — клавиша «Отбой» → «Фон».
-//#sijapp cond.end#
-			try { if (jimm != null) jimm.notifyPaused(); } catch (Exception ignore) {}
+			try { if (pause && jimm != null) jimm.notifyPaused(); } catch (Exception ignore) {}
 		} else
 		{
 			Displayable disp = Jimm.display.getCurrent();
