@@ -183,6 +183,15 @@ if [ -n "${TMM_DIST:-}" ]; then
 	if [ "$BASE" = TeleMotoMax-V8 ] && [ -f "$HERE/sign-keys/ca.key" ]; then
 		sh "$HERE/sign.sh" "$DIST/$BASE.jad" | sed 's/^/   /'
 	fi
+	# TMM_SIGN_V3=1 — рядом с обычным V3-JAD положить подписанный
+	# (TeleMotoMax-Signed.jad, тот же JAR). Он ставится, только если наш
+	# корень лежит в /a/mobile/certs/root/x509/kjava/ телефона; иначе
+	# телефон скажет «отсутствует корневой сертификат», а обычный JAD
+	# останется как был. См. README, «V3: попытка подписи».
+	if [ "$BASE" = TeleMotoMax ] && [ -n "${TMM_SIGN_V3:-}" ] && [ -f "$HERE/sign-keys/ca.key" ]; then
+		sed "s|^MIDlet-Jar-URL: .*|MIDlet-Jar-URL: $BASE.jar|" "$DIST/$BASE.jad" > "$DIST/$BASE-Signed.jad"
+		sh "$HERE/sign.sh" "$DIST/$BASE-Signed.jad" | sed 's/^/   /'
+	fi
 	say "В репозиторий: telemotomax/dist/$BASE.jar"
 fi
 
