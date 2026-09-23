@@ -40,6 +40,7 @@
 "birth_day"					"Birthday"
 "black_on_white"			"Black on white"
 "bring_up"					"Bring up on incoming message"
+"mini_no_pause"			"Minimize without pause (sound in background)"
 "caption_offset"			"Caption offset (%)"
 "cancel"					"Cancel"  
 "change"					"Change"

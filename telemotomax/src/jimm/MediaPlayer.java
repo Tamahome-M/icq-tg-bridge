@@ -81,7 +81,8 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		// Части идут прямо в файл, минуя onBartProgress, — счётчик на
 		// экране обновляем сами, иначе за всю загрузку не меняется ничего.
 		waited = 0;
-		if (part == 1) firstPart = len;
+		receiving = true;
+		if (part == 1) { firstPart = len; keepHead(buf, off, len); }
 		status = waitingText() + " " + part + "/" + total + ", "
 				+ loaded(clipSize, firstPart, part, total);
 		repaint();
@@ -230,6 +231,8 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	private int clipSize;
 	private int waited;              // секунд ждём первую часть (мост качает)
 	private boolean settled;         // ответ пришёл (или всё сломалось): отсчёт стоп
+	private boolean receiving;       // части пошли: отсчёт ожидания больше не нужен
+	private byte[] head;             // начало клипа: по нему виден кодек
 	private int firstPart;           // размер первой части: по нему виден весь объём
 	private byte[] token;            // примета вложения: нужна, чтобы просить следующий кусок
 	private String uin;
@@ -306,6 +309,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	public void onBartProgress(int part, int total)
 	{
 		if (current != this) return;
+		receiving = true;
 		waited = 0;
 		status = waitingText() + " " + part + "/" + total;
 		repaint();
@@ -338,10 +342,12 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			public void run()
 			{
 				String waiting = status;
-				while (current == MediaPlayer.this && partQueue == null && player == null && !settled)
+				while (current == MediaPlayer.this && partQueue == null && player == null
+						&& !settled && !receiving)
 				{
 					try { Thread.sleep(1000); } catch (Exception ignore) {}
-					if (current != MediaPlayer.this || partQueue != null || player != null || settled) return;
+					if (current != MediaPlayer.this || partQueue != null || player != null
+							|| settled || receiving) return;
 					waited++;
 					status = waiting + " " + waited + " с";
 					repaint();
@@ -368,6 +374,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		// blocks; it must not run on the comm thread that called us, or the
 		// whole connection freezes. Do it on a thread of its own.
 		final byte[] clip = data;
+		keepHead(clip, 0, clip.length);
 		new Thread() {
 			public void run()
 			{
@@ -615,6 +622,32 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	 * присылает, но все части, кроме последней, одного размера, значит по
 	 * первой он известен; на последней части объём уже точный.
 	 */
+	/** Первые байты клипа — по ним на экране ошибки виден кодек. */
+	private void keepHead(byte[] buf, int off, int len)
+	{
+		if (head != null || len <= 0) return;
+		int n = len < 256 ? len : 256;
+		head = new byte[n];
+		System.arraycopy(buf, off, head, 0, n);
+	}
+
+	/** «3gp/s263» — марка файла и кодек кадра, как их назвал сам файл. */
+	private String headInfo()
+	{
+		if (head == null) return "";
+		String s = new String(head, 0, head.length);
+		String brand = "";
+		int f = s.indexOf("ftyp");
+		if (f >= 0 && f + 8 <= s.length()) brand = s.substring(f + 4, f + 8).trim();
+		String codec = "";
+		String[] known = { "s263", "mp4v", "avc1", "h263", "samr", "mp4a" };
+		for (int i = 0; i < known.length; i++)
+			if (s.indexOf(known[i]) >= 0)
+				codec += (codec.length() > 0 ? "+" : "") + known[i];
+		if (brand.length() == 0 && codec.length() == 0) return "";
+		return brand + (codec.length() > 0 ? "/" + codec : "");
+	}
+
 	static String loaded(long got, int firstPart, int part, int total)
 	{
 		long whole = (part >= total || firstPart <= 0) ? got : (long) firstPart * total;
@@ -638,21 +671,21 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	{
 		settled = true;                // отсчёт ожидания больше не затирает экран
 		status = failedText();
+		// Весь список, как его отдаёт телефон: раньше он был отфильтрован по
+		// «video» и «3gp», и на V3 оставалась одна строка «audio/3gpp» —
+		// выглядело так, будто телефон не умеет ничего другого.
 		String types = "";
 		try
 		{
 			String[] list = Manager.getSupportedContentTypes(null);
-			for (int i = 0; i < list.length; i++)
-			{
-				if (list[i].indexOf("video") < 0 && list[i].indexOf("3gp") < 0) continue;
+			for (int i = 0; i < list.length && types.length() < 120; i++)
 				types += (types.length() > 0 ? ", " : "") + list[i];
-			}
-			if (types.length() == 0) types = "нет видео";
+			if (types.length() == 0) types = "пусто";
 		}
 		catch (Exception e) { types = shortName(e); }
 		details = new String[] {
 			(clipSize / 1024) + " КБ, файлы: " + TempFiles.apiName(),
-			"тип: " + mime,
+			"тип: " + mime + (headInfo().length() > 0 ? ", в файле: " + headInfo() : ""),
 			"файл: " + shortName(fileErr),
 			"память: " + shortName(streamErr),
 			"плеер: " + types,
