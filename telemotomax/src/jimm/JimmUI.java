@@ -355,19 +355,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 				MainMenu.activateMenu();
 				aboutTextList = null;
 			}
-//#sijapp cond.if target isnot "DEFAULT"#			
-			else if (c == cmdSelect)
-			{
-				if (aboutTextList.getCurrTextIndex() == ABOUT_JIMM_WAP)
-				{
-					try
-					{					
-						Jimm.jimm.platformRequest("http://jimm.org/wap/");
-					}
-					catch (Exception e) {}
-				}
-			}
-//#sijapp cond.end#		
 		}
 
 		// "User info"
@@ -565,10 +552,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	//////////////////////////////////////////////////////////////////////////////
 	private static TextList aboutTextList;
 
-	// String for recent version
-	static private String version;
-	static private String betaVersion;
-	static private final int ABOUT_JIMM_WAP = 1000;
 
 	static public void about()
 	{
@@ -601,11 +584,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		aboutTextList.addBigText(str.toString(), -1, Font.STYLE_PLAIN, -1);
 		aboutTextList.doCRLF(-1);
 		
-//#sijapp cond.if target isnot "DEFAULT"#
-		JimmUI.addTextListItem(aboutTextList, "about_visit_wap", JimmUI.eventUrlMessageImg, ABOUT_JIMM_WAP, true, -1, Font.STYLE_BOLD);
-		aboutTextList.doCRLF(-1);
-		aboutTextList.addCommandEx(cmdSelect, VirtualList.MENU_TYPE_RIGHT_BAR);
-//#sijapp cond.end#
 		
 		str.setLength(0);
 		str	.append(ResourceBundle.getString("midp_info"))
@@ -641,11 +619,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		// разбирался по фактам.
 		String connLog = ConnLog.text();
 		if (connLog.length() > 0) str.append("Связь:\n").append(connLog).append("\n\n");
-		str.append(ResourceBundle.getString("latest_ver")).append(":\n");
-		
 		aboutTextList.addBigText(str.toString(), -1, Font.STYLE_PLAIN, -1);
-		
-		internalShowLastVers();
 
 		aboutTextList.addCommandEx(cmdBack, VirtualList.MENU_TYPE_LEFT_BAR);
 		aboutTextList.setCommandListener(_this);
@@ -653,76 +627,8 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		
 		aboutTextList.activate(Jimm.display);
 		
-		// request last jimm version
-		if (version == null && betaVersion == null) Threads.requestLastJimmVers();
 	}
 	
-	static private String readHttpContentFirstString(String url)
-	{
-		HttpConnection httemp = null;
-		InputStream istemp = null;
-		String result = null;
-		
-		try
-		{
-			httemp = (HttpConnection) Connector.open(url);
-			if (httemp.getResponseCode() != HttpConnection.HTTP_OK) throw new IOException();
-			istemp = httemp.openInputStream();
-			byte[] versRaw_ = new byte[(int) httemp.getLength()];
-			istemp.read(versRaw_, 0, versRaw_.length);
-			result = new String(versRaw_);
-		} catch (SecurityException e)
-		{
-			JimmException f = new JimmException(119, 1, true);
-			JimmException.handleException(f);
-		}
-		catch (Exception e) {}
-		finally
-		{
-			if (istemp != null) try {istemp.close();} catch (Exception e) {}
-			if (httemp != null) try {httemp.close();} catch (Exception e) {}
-		}
-		
-		if (result != null)
-		{
-			int pos = result.indexOf("\r");
-			if (pos != -1) pos = result.indexOf("\n");
-			if (pos != -1) result = result.substring(0, pos); 
-		}
-		return result;
-	}
-	
-	static public void internalReqLastVersThread()
-	{
-		Thread.yield();
-		Thread.currentThread().setPriority(Thread.MIN_PRIORITY);
-		
-		if (version == null)
-			version = readHttpContentFirstString("http://www.jimm.org/current_ver");
-		
-		if (betaVersion == null)
-			betaVersion = readHttpContentFirstString("http://www.jimm.org/nightly/current-nightly");
-		
-		MainThread.showLastJimmVers();
-	}
-	
-	static private void addVersString(String result, String name)
-	{
-		if (result == null) return;
-		aboutTextList.addBigText(ResourceBundle.getString(name), aboutTextList.getTextColor(), Font.STYLE_PLAIN, -1);
-		aboutTextList.addBigText(": ", aboutTextList.getTextColor(), Font.STYLE_PLAIN, -1);
-		aboutTextList.addBigText(result, aboutTextList.getTextColor(), Font.STYLE_BOLD, -1);
-		aboutTextList.doCRLF(-1);
-	}
-	
-	static public void internalShowLastVers()
-	{
-		if (aboutTextList != null)
-		{
-			addVersString(version,     "version_stable");
-			addVersString(betaVersion, "version_beta");
-		}
-	}
 
 	//////////////////////
 	//                  //

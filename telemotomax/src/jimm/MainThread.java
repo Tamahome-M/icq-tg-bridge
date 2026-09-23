@@ -49,7 +49,6 @@ public class MainThread implements Runnable
 	final static private int TYPE_ADD_CONTACT         = 12;
 	final static private int TYPE_MINUTE_TASK         = 14;
 	final static private int TYPE_MESS_DELIVERED      = 15;
-	final static private int TYPE_SHOW_LAST_VESR      = 17;
 	final static private int TYPE_SHOW_STATUS_STR     = 18;
 	final static private int TYPE_BACK_TO_LAST_SCR    = 19;
 	final static private int TYPE_ACTIVATE_CL         = 20;
@@ -204,10 +203,6 @@ public class MainThread implements Runnable
 			ChatHistory.messageIsDelivered((String)data[0], getInt(data, 1));
 			break;
 			
-		case TYPE_SHOW_LAST_VESR:
-			JimmUI.internalShowLastVers();
-			break;
-			
 		case TYPE_SHOW_STATUS_STR:
 			JimmUI.showStatusMessage((String)data[0], (String)data[1]);
 			break;
@@ -348,10 +343,6 @@ public class MainThread implements Runnable
 		addMainThreadTask(TYPE_MESS_DELIVERED, uin, new Integer(messId));
 	}
 	
-	static public void showLastJimmVers()
-	{
-		addMainThreadTask(TYPE_SHOW_LAST_VESR);
-	}
 	
 	static public void showStatusString(String text, String uin)
 	{

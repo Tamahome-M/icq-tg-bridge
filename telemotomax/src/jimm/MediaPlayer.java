@@ -246,6 +246,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	private String filePath;           // temp file URL, or null if played from memory
 	private int clipSize;
 	private int waited;              // секунд ждём первую часть (мост качает)
+	private boolean settled;         // ответ пришёл (или всё сломалось): отсчёт стоп
 	private int firstPart;           // размер первой части: по нему виден весь объём
 	private byte[] token;            // примета вложения: нужна, чтобы просить следующий кусок
 	private String uin;
@@ -354,10 +355,10 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			public void run()
 			{
 				String waiting = status;
-				while (current == MediaPlayer.this && partQueue == null && player == null)
+				while (current == MediaPlayer.this && partQueue == null && player == null && !settled)
 				{
 					try { Thread.sleep(1000); } catch (Exception ignore) {}
-					if (current != MediaPlayer.this || partQueue != null || player != null) return;
+					if (current != MediaPlayer.this || partQueue != null || player != null || settled) return;
 					waited++;
 					status = waiting + " " + waited + " с";
 					repaint();
@@ -370,6 +371,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	public void onBart(byte[] data)
 	{
 		if (current != this) return;
+		settled = true;
 		if (data == null)
 		{
 			// На последнем куске мост отвечает ошибкой: ролик кончился.
@@ -400,7 +402,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	private Exception playFromFile(byte[] data)
 	{
 		String url = tempFileUrl(bartType == RequestBartAction.BART_VOICE ? ".amr" : ".3gp");
-		if (url == null) return new Exception("no writable root");
+		if (url == null) return new Exception("no writable root: " + TempFiles.lastError);
 		FileConnection fc = null;
 		OutputStream os = null;
 		try
@@ -644,6 +646,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	private void fail(Exception fileErr, Exception streamErr)
 	{
+		settled = true;                // отсчёт ожидания больше не затирает экран
 		status = failedText();
 		String types = "";
 		try
@@ -681,18 +684,36 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			g.setColor(0xFFFFFF);
 			g.setFont(font);
 			int step = font.getHeight();
-			int lines = 1 + (details == null ? 0 : details.length);
-			int y = (getHeight() - lines * step) / 2 + step;
-			g.drawString(status, getWidth() / 2, y, Graphics.HCENTER | Graphics.BASELINE);
+			// Подробности ошибки переносятся по ширине: «no writable root:
+			// …» на V3 обрезалось краем экрана, и причина оставалась за кадром.
+			java.util.Vector rows = new java.util.Vector();
 			if (details != null)
+				for (int i = 0; i < details.length; i++) wrap(details[i], font, getWidth() - 4, rows);
+			int lines = 1 + rows.size();
+			int y = (getHeight() - lines * step) / 2 + step;
+			if (y < step) y = step;
+			g.drawString(status, getWidth() / 2, y, Graphics.HCENTER | Graphics.BASELINE);
+			g.setColor(0xC0C0C0);
+			for (int i = 0; i < rows.size(); i++)
 			{
-				g.setColor(0xC0C0C0);
-				for (int i = 0; i < details.length; i++)
-				{
-					y += step;
-					g.drawString(details[i], 2, y, Graphics.LEFT | Graphics.BASELINE);
-				}
+				y += step;
+				g.drawString((String) rows.elementAt(i), 2, y, Graphics.LEFT | Graphics.BASELINE);
 			}
+		}
+	}
+
+	/** Режет строку на куски не шире width — по пробелам, а длинное слово по буквам. */
+	private static void wrap(String text, Font font, int width, java.util.Vector out)
+	{
+		while (text.length() > 0)
+		{
+			if (font.stringWidth(text) <= width) { out.addElement(text); return; }
+			int n = text.length();
+			while (n > 1 && font.stringWidth(text.substring(0, n)) > width) n--;
+			int sp = text.lastIndexOf(' ', n);
+			if (sp > 0) n = sp;
+			out.addElement(text.substring(0, n).trim());
+			text = text.substring(n).trim();
 		}
 	}
 
