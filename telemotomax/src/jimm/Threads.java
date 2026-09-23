@@ -27,7 +27,6 @@ import jimm.comm.Icq;
 
 public class Threads implements Runnable
 {
-	final static public int TYPE_REQ_LAST_VESR = 1;
 	final static public int TYPE_RECONNECT     = 2;
 	
 	private int type; 
@@ -51,10 +50,6 @@ public class Threads implements Runnable
 	{
 		switch (type)
 		{
-		case TYPE_REQ_LAST_VESR:
-			JimmUI.internalReqLastVersThread();
-			break;
-			
 		case TYPE_RECONNECT:
 			boolean again = false;
 			try
@@ -89,11 +84,6 @@ public class Threads implements Runnable
 		}
 	}
 	
-	static public void requestLastJimmVers()
-	{
-		Threads ri = new Threads(TYPE_REQ_LAST_VESR);
-		new Thread(ri).start();
-	}
 	
 	static public void reconnect()
 	{
