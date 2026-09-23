@@ -210,7 +210,8 @@ public class Options
 	public static final int OPTION_MEDIA_VOICE_KBPS10   = 120;   // битрейт голосового ×10 (122 — 12.2)
 	public static final int OPTION_MEDIA_VOICE_SECONDS  = 121;   // длина голосового
 	public static final int OPTION_PHOTO_ROTATE         = 122;   // фото боком: 0 авто, 1 всегда, 2 никогда
-	public static final int OPTION_MEDIA_MEM_KB         = 123;   // сколько КБ ролика читать в память, 0 — по куче
+	public static final int OPTION_MEDIA_MEM_KB         = 123;
+	public static final int OPTION_MEDIA_VIDEO_KB       = 125;   // «Медиа»: предел размера ролика, КБ   // сколько КБ ролика читать в память, 0 — по куче
 
 	/** «WxH» из настройки «Медиа» как {w, h}; пусто или негодно — null. */
 	public static int[] mediaSize(int key)
@@ -456,6 +457,7 @@ public class Options
 		setInt    (Options.OPTION_MEDIA_VOICE_SECONDS, 0);
 		setInt    (Options.OPTION_PHOTO_ROTATE,        0);
 		setInt    (Options.OPTION_MEDIA_MEM_KB,        0);
+		setInt    (Options.OPTION_MEDIA_VIDEO_KB,      0);
 
 		setBoolean(Options.OPTION_CP1251_HACK, ResourceBundle.langAvailable[0]
 				.equals("RU") || ResourceBundle.langAvailable[0].equals("BE") );
@@ -1070,7 +1072,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup uiLanguageChoiceGroup;
 	private ChoiceGroup videoRotateChoice;     // TeleMotoMax, раздел «Медиа»
 	private ChoiceGroup photoRotateChoice;
-	private ChoiceGroup mediaPhotoSize, mediaPhotoQuality, mediaPhotoKb;
+	private ChoiceGroup mediaPhotoSize, mediaPhotoQuality, mediaPhotoKb, mediaVideoKb;
 	private ChoiceGroup mediaVideoSize, mediaVideoKbps, mediaVideoSeconds;
 	private ChoiceGroup mediaVoiceKbps, mediaVoiceSeconds;
 	private TextField mediaMemKb;
@@ -1081,6 +1083,9 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private static final int[] MEDIA_PHOTO_KBS = { 20, 40, 60, 100, 150, 250 };
 	private static final int[] MEDIA_VIDEO_KBPS = { 32, 48, 64, 96, 128, 192, 256, 384 };
 	private static final int[] MEDIA_VIDEO_SECS = { 5, 10, 15, 20, 30, 60, 120, 180, 300 };
+	// Предел размера ролика: клип целиком лежит в куче телефона, и не одной
+	// копией — на V3 32 КБ кончались OutOfMemoryError.
+	private static final int[] MEDIA_VIDEO_KBS = { 16, 24, 32, 48, 64, 128, 256, 512 };
 	private static final int[] MEDIA_VOICE_KBPS10 = { 48, 52, 59, 67, 74, 80, 102, 122 };   // режимы AMR-NB ×10
 	private static final int[] MEDIA_VOICE_SECS = { 30, 60, 120, 300, 600 };
 	private ChoiceGroup choiceInterfaceMisc;
@@ -2671,6 +2676,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		photoRotateChoice.append(ResourceBundle.getString("video_rotate_never"), null);
 		try { photoRotateChoice.setSelectedIndex(Options.getInt(Options.OPTION_PHOTO_ROTATE), true); }
 		catch (Exception ignore) {}
+		mediaVideoKb = mediaChoice("media_video_kb", MEDIA_VIDEO_KBS, Options.getInt(Options.OPTION_MEDIA_VIDEO_KB), false);
 		mediaVoiceKbps = mediaChoice("media_voice_kbps", MEDIA_VOICE_KBPS10, Options.getInt(Options.OPTION_MEDIA_VOICE_KBPS10), true);
 		mediaVoiceSeconds = mediaChoice("media_voice_seconds", MEDIA_VOICE_SECS, Options.getInt(Options.OPTION_MEDIA_VOICE_SECONDS), false);
 		optionsForm.append(mediaPhotoSize);
@@ -2680,6 +2686,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		optionsForm.append(mediaVideoSize);
 		optionsForm.append(mediaVideoKbps);
 		optionsForm.append(mediaVideoSeconds);
+		optionsForm.append(mediaVideoKb);
 		optionsForm.append(videoRotateChoice);
 		optionsForm.append(mediaVoiceKbps);
 		optionsForm.append(mediaVoiceSeconds);
@@ -2700,6 +2707,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		Options.setString(Options.OPTION_MEDIA_VIDEO_SIZE, mediaValue(mediaVideoSize, MEDIA_VIDEO_SIZES));
 		Options.setInt(Options.OPTION_MEDIA_VIDEO_KBPS, mediaValue(mediaVideoKbps, MEDIA_VIDEO_KBPS));
 		Options.setInt(Options.OPTION_MEDIA_VIDEO_SECONDS, mediaValue(mediaVideoSeconds, MEDIA_VIDEO_SECS));
+		Options.setInt(Options.OPTION_MEDIA_VIDEO_KB, mediaValue(mediaVideoKb, MEDIA_VIDEO_KBS));
 		Options.setInt(Options.OPTION_VIDEO_ROTATE, videoRotateChoice.getSelectedIndex());
 		Options.setInt(Options.OPTION_PHOTO_ROTATE, photoRotateChoice.getSelectedIndex());
 		Options.setInt(Options.OPTION_MEDIA_VOICE_KBPS10, mediaValue(mediaVoiceKbps, MEDIA_VOICE_KBPS10));

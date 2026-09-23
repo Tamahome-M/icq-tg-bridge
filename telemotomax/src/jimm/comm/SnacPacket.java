@@ -380,6 +380,16 @@ public class SnacPacket extends Packet
 	}
 
 
+	/**
+	 * Сами данные, без копии. Тем, кто только читает: копия ответа с
+	 * роликом — это ещё 32 КБ одним куском, а на V3 куча мала и рвана,
+	 * и лишний такой кусок кончался OutOfMemoryError.
+	 */
+	public byte[] getDataRef()
+	{
+		return this.data;
+	}
+
 	// Returns a copy of the data
 	public byte[] getData()
 	{

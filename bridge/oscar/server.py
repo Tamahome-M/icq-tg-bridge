@@ -916,7 +916,8 @@ class Session:
     # время сессии; телефон шлёт их и при входе, и при каждом сохранении.
     MEDIA_KEYS = {1: "photo_width", 2: "photo_height", 3: "photo_quality", 4: "video_width",
                   5: "video_height", 6: "video_kbps", 7: "video_seconds", 8: "video_rotate",
-                  9: "voice_kbps", 10: "voice_seconds", 11: "photo_max_kb"}
+                  9: "voice_kbps", 10: "voice_seconds", 11: "photo_max_kb",
+                  12: "video_max_kb"}
 
     async def on_client_info(self, s: Snac) -> None:
         """01/F2 от TeleMotoMax: платформа, экран, куча — по ним профиль; дальше
