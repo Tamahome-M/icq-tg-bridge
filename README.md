@@ -731,7 +731,8 @@ Level 10 и MPEG-4 Simple Profile Level 0, а это 176×144, не больше
 
 Сборки TeleMotoMax лежат в репозитории (`telemotomax/dist/`) и показываются в
 `/d/` всегда, отдельным разделом «Клиент TeleMotoMax», даже если `dir` пуст:
-`TeleMotoMax.jad` — для V3, `TeleMotoMax-V8.jad` — для V8 с камерой. После
+`TeleMotoMax.jad` — для V3, `TeleMotoMax-Light.jad` — V3 без смайлов (легче
+на ~32 КБ кучи), `TeleMotoMax-V8.jad` — для V8 с камерой. После
 обновления моста на VPS там сразу свежая версия — открыть ссылку на JAD в
 браузере телефона, дальше установщик сам. Кладёт их туда
 `TMM_DIST=1 telemotomax/build.sh` (и `TMM_MODULES=v8`).
