@@ -619,6 +619,10 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		// разбирался по фактам.
 		String connLog = ConnLog.text();
 		if (connLog.length() > 0) str.append("Связь:\n").append(connLog).append("\n\n");
+		// Последняя пойманная ошибка — из настроек, то есть и после вылета.
+		String lastError = Options.getString(Options.OPTION_LAST_ERROR);
+		if (lastError != null && lastError.length() > 0)
+			str.append("Последняя ошибка:\n").append(lastError).append("\n\n");
 		aboutTextList.addBigText(str.toString(), -1, Font.STYLE_PLAIN, -1);
 
 		aboutTextList.addCommandEx(cmdBack, VirtualList.MENU_TYPE_LEFT_BAR);

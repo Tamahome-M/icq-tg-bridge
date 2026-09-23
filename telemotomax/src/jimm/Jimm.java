@@ -162,7 +162,16 @@ public class Jimm extends MIDlet
 		if (Jimm.jimm != null)
 		{
 			ConnLog.note("развёрнуто");
-			showWorkScreen();
+			// Возврат из фона под защитой: на V3 приложение вылетало сразу
+			// после «Возобновить», а что именно упало — не видно. Теперь
+			// ошибка запоминается в настройках (переживёт перезапуск, видна в
+			// «О программе»), а вместо вылета — главное меню.
+			try { showWorkScreen(); }
+			catch (Throwable t)
+			{
+				rememberError("возврат из фона", t);
+				try { MainMenu.activateMenu(); } catch (Throwable ignore) {}
+			}
 			return;
 		}
 		
@@ -340,6 +349,21 @@ public class Jimm extends MIDlet
 		new Timer().schedule(new TimerTasks(TimerTasks.TYPE_MINUTE), 60*1000, 60*1000);
 	}
 
+	// Запомнить ошибку так, чтобы она пережила вылет: в журнал «Связь» и в
+	// настройки (RMS). «О программе» покажет её при следующем запуске.
+	static public void rememberError(String where, Throwable t)
+	{
+		String text = where + ": " + t.getClass().getName()
+				+ (t.getMessage() != null ? ": " + t.getMessage() : "");
+		ConnLog.note(text);
+		try
+		{
+			Options.setString(Options.OPTION_LAST_ERROR, text);
+			Options.safeSave();
+		}
+		catch (Throwable ignore) {}
+	}
+
 	// Pause: система увела мидлет в фон (звонок, «Домой», свёртывание).
 	// Ничего не рвём — соединение и потоки продолжают жить; отметка в
 	// журнале «Связь», чтобы было видно, зовёт ли телефон pauseApp вообще.
@@ -468,16 +492,21 @@ public class Jimm extends MIDlet
 			// котором потоки и соединение живут (Motorola, Nokia S40).
 			// Возврат — через список приложений: startApp() покажет экран.
 			ConnLog.note("свёрнуто");
+//#sijapp cond.if modules_CAMERA="true"#
+			// V8 (MOTOMAGX): оба способа, какой поймёт — тот и сработает.
 			try { Jimm.display.setCurrent(null); } catch (Exception ignore) {}
+//#sijapp cond.else#
+//#			// V3 (P2K): только notifyPaused(). В исходном Jimm «Свернуть» для
+//#			// Motorola не было; setCurrent(null) оставлял Display без экрана, и
+//#			// после «Возобновить» приложение вылетало — есть подозрение, что
+//#			// на этом. Штатный путь P2K — клавиша «Отбой» → «Фон».
+//#sijapp cond.end#
 			try { if (jimm != null) jimm.notifyPaused(); } catch (Exception ignore) {}
 		} else
 		{
 			Displayable disp = Jimm.display.getCurrent();
-			if (!disp.isShown()) {
-				if (disp != null)
-					Jimm.display.setCurrent(null);
-				showWorkScreen();
-			}
+			// После setCurrent(null) экрана нет вовсе — disp == null.
+			if (disp == null || !disp.isShown()) showWorkScreen();
 
 		}
 	}
