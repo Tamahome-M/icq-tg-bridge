@@ -691,9 +691,9 @@ class Bridge:
         start = max(0, int(segment)) * seconds
         data = await transcoder.convert(raw, "video", start=start)
         if data:
-            log.info("ролик для «%s» готов: %s, %s, %d КБ", contact.title,
+            log.info("ролик для «%s» готов: %s, %d КБ", contact.title,
                      f"секунды {start}–{start + seconds}" if start else f"первые {seconds} с",
-                     transcoder.describe_video(), len(data) // 1024)
+                     len(data) // 1024)
         elif start:
             log.info("ролик для «%s»: с секунды %d ничего не вышло — видимо, конец",
                      contact.title, start)

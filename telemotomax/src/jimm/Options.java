@@ -210,8 +210,7 @@ public class Options
 	public static final int OPTION_MEDIA_VOICE_KBPS10   = 120;   // битрейт голосового ×10 (122 — 12.2)
 	public static final int OPTION_MEDIA_VOICE_SECONDS  = 121;   // длина голосового
 	public static final int OPTION_PHOTO_ROTATE         = 122;   // фото боком: 0 авто, 1 всегда, 2 никогда
-	public static final int OPTION_MEDIA_MEM_KB         = 123;
-	public static final int OPTION_MINI_NO_PAUSE        = 124;   // TeleMotoMax: «Свернуть» прячет экран, не ставя мидлет на паузу   // сколько КБ ролика читать в память, 0 — по куче
+	public static final int OPTION_MEDIA_MEM_KB         = 123;   // сколько КБ ролика читать в память, 0 — по куче
 
 	/** «WxH» из настройки «Медиа» как {w, h}; пусто или негодно — null. */
 	public static int[] mediaSize(int key)
@@ -457,7 +456,6 @@ public class Options
 		setInt    (Options.OPTION_MEDIA_VOICE_SECONDS, 0);
 		setInt    (Options.OPTION_PHOTO_ROTATE,        0);
 		setInt    (Options.OPTION_MEDIA_MEM_KB,        0);
-		setBoolean(Options.OPTION_MINI_NO_PAUSE,   false);
 
 		setBoolean(Options.OPTION_CP1251_HACK, ResourceBundle.langAvailable[0]
 				.equals("RU") || ResourceBundle.langAvailable[0].equals("BE") );
@@ -2415,16 +2413,9 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA" | target is "SIEMENS2"#
 		chsBringUp = new ChoiceGroup(ResourceBundle.getString("misc"),
 				Choice.MULTIPLE);
-		// «Активировать при входящем» было только у Sony Ericsson, хотя
-		// поднимает окно та же setMinimized(false) — Motorola она тоже по
-		// силам; а «Свернуть без паузы» решает, отдавать ли телефону мидлет
-		// на паузу (тогда он забирает звук) или просто убрать экран.
 		//#sijapp cond.if target is "MIDP2"#
 		if (Jimm.getPhoneVendor() == Device.PHONE_SONYERICSSON)
 			setChecked(chsBringUp, "bring_up", Options.OPTION_BRING_UP);
-		//#sijapp cond.else#
-		setChecked(chsBringUp, "bring_up", Options.OPTION_BRING_UP);
-		setChecked(chsBringUp, "mini_no_pause", Options.OPTION_MINI_NO_PAUSE);
 		//#sijapp cond.end#
 		
 		setChecked(chsBringUp, "creeping_line",
@@ -2616,9 +2607,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		//#sijapp cond.if target is "MIDP2"#
 		if (Jimm.getPhoneVendor() == Device.PHONE_SONYERICSSON) 
 			Options.setBoolean(Options.OPTION_BRING_UP, chsBringUp.isSelected(idx++));
-		//#sijapp cond.else#
-		Options.setBoolean(Options.OPTION_BRING_UP, chsBringUp.isSelected(idx++));
-		Options.setBoolean(Options.OPTION_MINI_NO_PAUSE, chsBringUp.isSelected(idx++));
 		//#sijapp cond.end#
 		Options.setBoolean(Options.OPTION_CREEPING_LINE, chsBringUp.isSelected(idx++));
 		//#sijapp cond.end#
