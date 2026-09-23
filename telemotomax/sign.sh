@@ -114,6 +114,11 @@ fi
 # Подпись JAR: RSA-SHA1 (PKCS#1 v1.5) по байтам JAR, base64 одной строкой.
 SIG=$(openssl dgst -sha1 -sign "$KEYS/signer.key" "$JAR" | openssl base64 -A)
 CERT1=$(openssl base64 -A < "$KEYS/signer.der")
+# Руководство V3x: «the certificate path includes the signer certificate
+# and any necessary certificates while omitting the root certificate —
+# root certificates will be found on the device only». MOTOMAGX (V8)
+# принимает и с корнем, поэтому по умолчанию он в цепочке; TMM_NO_ROOT=1
+# собирает цепочку без него — для P2K (V3).
 CERT2=$(openssl base64 -A < "$KEYS/ca.der")
 
 # Старые строки подписи убираем, новые дописываем. Разрешения в JAD не
@@ -123,7 +128,7 @@ grep -v '^MIDlet-Certificate-\|^MIDlet-Jar-RSA-SHA1' "$JAD" > "$JAD.tmp"
 {
 	cat "$JAD.tmp"
 	echo "MIDlet-Certificate-1-1: $CERT1"
-	echo "MIDlet-Certificate-1-2: $CERT2"
+	[ -z "${TMM_NO_ROOT:-}" ] && echo "MIDlet-Certificate-1-2: $CERT2"
 	echo "MIDlet-Jar-RSA-SHA1: $SIG"
 } > "$JAD" && rm -f "$JAD.tmp"
 echo "== Подписано: $JAD"

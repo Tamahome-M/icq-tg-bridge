@@ -191,6 +191,11 @@ if [ -n "${TMM_DIST:-}" ]; then
 	if [ "$BASE" = TeleMotoMax ] && [ -n "${TMM_SIGN_V3:-}" ] && [ -f "$HERE/sign-keys/ca.key" ]; then
 		sed "s|^MIDlet-Jar-URL: .*|MIDlet-Jar-URL: $BASE.jar|" "$DIST/$BASE.jad" > "$DIST/$BASE-Signed.jad"
 		sh "$HERE/sign.sh" "$DIST/$BASE-Signed.jad" | sed 's/^/   /'
+		# Второй вариант — цепочка без корня, как требует руководство V3x
+		# («root certificates will be found on the device only»). Какой из
+		# двух телефон примет, тем и ставить.
+		sed "s|^MIDlet-Jar-URL: .*|MIDlet-Jar-URL: $BASE.jar|" "$DIST/$BASE.jad" > "$DIST/$BASE-Signed-NoRoot.jad"
+		TMM_NO_ROOT=1 sh "$HERE/sign.sh" "$DIST/$BASE-Signed-NoRoot.jad" | sed 's/^/   /'
 	fi
 	say "В репозиторий: telemotomax/dist/$BASE.jar"
 fi
