@@ -183,6 +183,15 @@ if [ -n "${TMM_DIST:-}" ]; then
 	if [ "$BASE" = TeleMotoMax-V8 ] && [ -f "$HERE/sign-keys/ca.key" ]; then
 		sh "$HERE/sign.sh" "$DIST/$BASE.jad" | sed 's/^/   /'
 	fi
+	# V3: рядом с обычным JAD — подписанный тем же ключом, TeleMotoMax-Signed.jad
+	# (тот же JAR). Ставится он, только если корень v3/telemotomax_root.crt
+	# положен в /a/mobile/certs/root/x509/kjava/ телефона (см. README);
+	# без корня телефон скажет «Root certificate missing», и обычный JAD
+	# остаётся как был.
+	if [ "$BASE" = TeleMotoMax ] && [ -f "$HERE/sign-keys/ca.key" ]; then
+		cp "$DIST/$BASE.jad" "$DIST/$BASE-Signed.jad"
+		sh "$HERE/sign.sh" "$DIST/$BASE-Signed.jad" | sed 's/^/   /'
+	fi
 	say "В репозиторий: telemotomax/dist/$BASE.jar"
 fi
 
