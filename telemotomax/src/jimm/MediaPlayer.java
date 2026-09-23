@@ -373,10 +373,28 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			{
 				if (current != MediaPlayer.this) return;
 				clipSize = clip.length;
-				Exception fileErr = playFromFile(clip);
-				if (fileErr == null) return;
-				Exception streamErr = playFromStream(clip);
-				if (streamErr == null) return;
+				// Перед плеером — прибраться: ему нужен свой буфер такого же
+				// размера, а куча на V3 мала и рвана. Лишние копии клипа к
+				// этому моменту уже не нужны.
+				try { System.gc(); } catch (Throwable ignore) {}
+				Exception fileErr, streamErr;
+				try
+				{
+					fileErr = playFromFile(clip);
+					if (fileErr == null) return;
+					streamErr = playFromStream(clip);
+					if (streamErr == null) return;
+				}
+				catch (OutOfMemoryError e)
+				{
+					// Не хватило куска кучи под буфер плеера: скажем прямо,
+					// вместо того чтобы падать посреди показа.
+					status = ResourceBundle.getString("video_no_memory");
+					details = new String[] { (clip.length / 1024) + " КБ клип, свободно "
+							+ (Runtime.getRuntime().freeMemory() / 1024) + " КБ" };
+					repaint();
+					return;
+				}
 				fail(fileErr, streamErr);
 			}
 		}.start();

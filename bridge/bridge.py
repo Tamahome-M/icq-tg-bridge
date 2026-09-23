@@ -458,12 +458,25 @@ class Bridge:
                  contact.title, width, height, len(data))
         return data
 
+    def _video_kbps(self, seconds: int) -> int:
+        """Битрейт ролика с оглядкой на предел размера: клип целиком лежит
+        в куче телефона, и на V3 32 КБ уже кончались OutOfMemoryError."""
+        kbps = self.tmm("video_kbps")
+        limit_kb = self.tmm("video_max_kb")
+        if limit_kb and seconds > 0:
+            # 8 кбит на килобайт; часть места съест звук и заголовки — берём
+            # с запасом в четверть.
+            fit = int(limit_kb * 8 / seconds * 0.75)
+            if fit < kbps:
+                kbps = max(8, fit)
+        return kbps
+
     def _transcoder(self, seconds: int) -> "Transcoder":
         """Перекодировщик с теми же кодеками, что у страницы !render."""
         return Transcoder(self.cfg.render_ffmpeg, seconds,
                           self.cfg.render_audio_seconds, self.cfg.render_timeout,
                           self.cfg.render_dir, self.cfg.render_video_codec,
-                          self.tmm("video_kbps"), self.cfg.render_video_fps,
+                          self._video_kbps(seconds), self.cfg.render_video_fps,
                           self.tmm("voice_kbps"),
                           (self.tmm("video_width"), self.tmm("video_height")),
                           self.tmm("video_rotate"))

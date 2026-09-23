@@ -402,6 +402,7 @@
 "media_saving"			"Saving..."
 "media_opening"			"Starting player..."
 "video_failed"				"Video unavailable"
+"video_no_memory"			"Out of memory"
 "server_history"				"History from server"
 "history_loading"				"Loading history..."
 "history_failed"				"History unavailable"

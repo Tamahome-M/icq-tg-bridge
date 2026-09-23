@@ -24,6 +24,9 @@ KEYS = {
     "photo_width": "tmm_photo_width",
     "photo_height": "tmm_photo_height",
     "photo_max_kb": "tmm_photo_max_kb",
+    # Ролик целиком лежит в куче телефона — и не одной копией: на V3 клип
+    # в 32 КБ кончился OutOfMemoryError. Предел держим низким.
+    "video_max_kb": "tmm_video_max_kb",
     "photo_quality": "tmm_photo_quality",
     "video_seconds": "tmm_video_seconds",
     # Кадр ролика для телефона и поворот «боком»; битрейт — общий из [render].
@@ -47,12 +50,13 @@ BUILTIN: dict[str, dict] = {
     # Платформу оба телефона называют просто «j2me», поэтому решает экран:
     # до 200 точек в ширину — v3, от 240 — v8.
     "v3": {"match": "V3", "max_width": 200, "photo_width": 176, "photo_height": 176, "photo_max_kb": 20,
-           "photo_quality": 60, "video_seconds": 10, "voice_kbps": 12.2, "history_max": 200,
-           "file_max_mb": 1},
+           "photo_quality": 60, "video_seconds": 10, "video_max_kb": 16, "voice_kbps": 12.2,
+           "history_max": 200, "file_max_mb": 1},
     # Motorola V8: 240×320, кучи хватает на снимок побольше и получше, ролик
     # подлиннее и список без ограничения (0 — все чаты).
     "v8": {"match": "V8", "min_width": 240, "photo_width": 240, "photo_height": 320,
-           "photo_max_kb": 60, "photo_quality": 85, "video_seconds": 30, "voice_kbps": 12.2,
+           "photo_max_kb": 60, "photo_quality": 85, "video_seconds": 30, "video_max_kb": 400,
+           "voice_kbps": 12.2,
            "history_max": 400, "roster_limit": 0, "file_max_mb": 5,
            # Кадр остаётся QCIF — на GPRS ролик 320×240 весил в четыре
            # раза больше и плеер его не взял; повёрнутый QCIF (144×176) —

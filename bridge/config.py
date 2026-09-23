@@ -123,6 +123,7 @@ class Config:
     tmm_photo_width: int = 176
     tmm_photo_height: int = 176
     tmm_photo_max_kb: int = 20
+    tmm_video_max_kb: int = 64        # ролик целиком лежит в куче телефона
     tmm_photo_quality: int = 0         # 0 — обычное (75), выше — качественнее и тяжелее
     tmm_file_max_mb: int = 2           # потолок файла в обе стороны (профиль может поменять)
     tmm_video_width: int = 176         # кадр ролика для телефона (QCIF по умолчанию)
@@ -261,6 +262,7 @@ class Config:
             tmm_photo_width=int(tm.get("photo_width", cls.tmm_photo_width)),
             tmm_photo_height=int(tm.get("photo_height", cls.tmm_photo_height)),
             tmm_photo_max_kb=int(tm.get("photo_max_kb", cls.tmm_photo_max_kb)),
+            tmm_video_max_kb=int(tm.get("video_max_kb", cls.tmm_video_max_kb)),
             tmm_photo_quality=int(tm.get("photo_quality", cls.tmm_photo_quality)),
             tmm_file_max_mb=int(tm.get("file_max_mb", cls.tmm_file_max_mb)),
             tmm_video_width=int(tm.get("video_width", cls.tmm_video_width)),

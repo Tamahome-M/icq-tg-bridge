@@ -189,7 +189,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 					if ((snacPacket.getFamily() == SnacPacket.SRV_REDIRECT_FAMILY)
 							&& (snacPacket.getCommand() == SnacPacket.SRV_REDIRECT_COMMAND))
 					{
-						byte[] buf = snacPacket.getData();
+						byte[] buf = snacPacket.getDataRef();   // только читаем
 						int marker = 0;
 						for (int i = 0; i < 3; i++)
 						{
@@ -253,7 +253,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 					if ((snacPacket.getFamily() == SnacPacket.SRV_REPLYAVATAR_FAMILY)
 							&& (snacPacket.getCommand() == SnacPacket.SRV_REPLYAVATAR_COMMAND))
 					{
-						byte[] buf = snacPacket.getData();
+						byte[] buf = snacPacket.getDataRef();   // только читаем
 						int marker = 0;
 						int uinLength = Util.getByte(buf, marker);
 						marker += 1 + uinLength;

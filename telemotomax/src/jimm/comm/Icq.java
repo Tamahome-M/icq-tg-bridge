@@ -346,7 +346,8 @@ public class Icq implements Runnable
 	// Ключи пар «Медиа» в 01/F2 — как у моста (server.MEDIA_KEYS).
 	private static final int MEDIA_PHOTO_W = 1, MEDIA_PHOTO_H = 2, MEDIA_PHOTO_Q = 3,
 			MEDIA_VIDEO_W = 4, MEDIA_VIDEO_H = 5, MEDIA_VIDEO_KBPS = 6, MEDIA_VIDEO_SEC = 7,
-			MEDIA_VIDEO_ROTATE = 8, MEDIA_VOICE_KBPS10 = 9, MEDIA_VOICE_SEC = 10, MEDIA_PHOTO_KB = 11;
+			MEDIA_VIDEO_ROTATE = 8, MEDIA_VOICE_KBPS10 = 9, MEDIA_VOICE_SEC = 10, MEDIA_PHOTO_KB = 11,
+			MEDIA_VIDEO_KB = 12;
 
 	private static int[] mediaPairs()
 	{
@@ -360,6 +361,7 @@ public class Icq implements Runnable
 		if (size != null) { out[n++] = MEDIA_VIDEO_W; out[n++] = size[0]; out[n++] = MEDIA_VIDEO_H; out[n++] = size[1]; }
 		n = pair(out, n, MEDIA_VIDEO_KBPS, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VIDEO_KBPS));
 		n = pair(out, n, MEDIA_VIDEO_SEC, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VIDEO_SECONDS));
+		n = pair(out, n, MEDIA_VIDEO_KB, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VIDEO_KB));
 		n = pair(out, n, MEDIA_VIDEO_ROTATE, jimm.Options.getInt(jimm.Options.OPTION_VIDEO_ROTATE));
 		n = pair(out, n, MEDIA_VOICE_KBPS10, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VOICE_KBPS10));
 		n = pair(out, n, MEDIA_VOICE_SEC, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VOICE_SECONDS));

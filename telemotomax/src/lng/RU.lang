@@ -520,6 +520,7 @@
 "media_saving"			"Сохраняю..."
 "media_opening"			"Открываю плеер..."
 "video_failed"				"Видео недоступно"
+"video_no_memory"			"Не хватило памяти"
 "server_history"				"История с сервера"
 "history_loading"				"Загрузка истории..."
 "history_failed"				"История недоступна"
