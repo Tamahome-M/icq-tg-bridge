@@ -272,6 +272,17 @@ class Transcoder:
             except OSError:
                 pass
 
+    def describe_video(self) -> str:
+        """«h263 176×144» — что именно уедет на телефон: по журналу видно,
+        не переключился ли кодек на MPEG-4 из-за нестандартного кадра."""
+        width, height = self.video_size
+        codec = self.video_codec
+        if self.video_rotate:
+            width, height = height, width
+        if codec == "h263" and (width, height) not in ((176, 144), (352, 288), (128, 96)):
+            codec = "mpeg4"
+        return f"{codec} {width}×{height}"
+
     def video_args(self, src: str, dst: str, start: int = 0) -> list[str]:
         """start — с какой секунды резать: телефон смотрит ролик кусками
         по video_seconds и просит следующий кнопкой «Дальше»."""

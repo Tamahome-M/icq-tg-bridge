@@ -166,7 +166,7 @@ public class Jimm extends MIDlet
 			// после «Возобновить», а что именно упало — не видно. Теперь
 			// ошибка запоминается в настройках (переживёт перезапуск, видна в
 			// «О программе»), а вместо вылета — главное меню.
-			try { showWorkScreen(); }
+			try { resumeScreen(); }
 			catch (Throwable t)
 			{
 				rememberError("возврат из фона", t);
@@ -353,7 +353,8 @@ public class Jimm extends MIDlet
 	// настройки (RMS). «О программе» покажет её при следующем запуске.
 	static public void rememberError(String where, Throwable t)
 	{
-		String text = where + ": " + t.getClass().getName()
+		String text = where + (workStep.length() > 0 ? " (" + workStep + ")" : "")
+				+ ": " + t.getClass().getName()
 				+ (t.getMessage() != null ? ": " + t.getMessage() : "");
 		ConnLog.note(text);
 		try
@@ -470,14 +471,40 @@ public class Jimm extends MIDlet
 		return ui;
 	}
 
+	// Какой шаг показа экрана идёт сейчас — попадёт в запомненную ошибку,
+	// иначе по одному NullPointerException не понять, где именно упало.
+	static private String workStep = "";
+
 	static public void showWorkScreen()
 	{
+		workStep = "заставка";
 		if (SplashCanvas.locked())
 			SplashCanvas.show();
 		else if (Icq.isConnected())
+		{
+			workStep = "список контактов";
 			ContactList.activateList();
+		}
 		else
+		{
+			workStep = "главное меню";
 			MainMenu.activateMenu();
+		}
+		workStep = "";
+	}
+
+	/**
+	 * Вернуться из фона. Экран, который был на виду, никуда не делся —
+	 * его и показываем: перестроение списка контактов на возврате роняло
+	 * V3 (NullPointerException), а нужды в нём нет — список обновляет
+	 * главный поток по мере прихода сообщений.
+	 */
+	static public void resumeScreen()
+	{
+		Displayable shown = null;
+		try { shown = display.getCurrent(); } catch (Throwable ignore) {}
+		if (shown != null) { display.setCurrent(shown); return; }
+		showWorkScreen();
 	}
 
 	//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA" #
@@ -506,7 +533,11 @@ public class Jimm extends MIDlet
 		{
 			Displayable disp = Jimm.display.getCurrent();
 			// После setCurrent(null) экрана нет вовсе — disp == null.
-			if (disp == null || !disp.isShown()) showWorkScreen();
+			if (disp == null || !disp.isShown())
+			{
+				try { resumeScreen(); }
+				catch (Throwable t) { rememberError("подъём из фона", t); }
+			}
 
 		}
 	}
