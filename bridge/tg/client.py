@@ -28,6 +28,10 @@ KIND_TITLES = {
 RECENTLY_SECONDS = 15 * 60
 # «Заглушить навсегда» в Telegram — это отключение до очень далёкой даты
 MUTE_FOREVER = 2 ** 31 - 1
+# Тема «General» есть в каждом форуме и всегда под номером 1. Её сообщения
+# приходят без заголовка темы — как в обычной супергруппе, — и отправляются
+# так же: без ответа на корень темы.
+GENERAL_TOPIC = 1
 
 
 @dataclass
@@ -103,9 +107,14 @@ class TelegramSide:
                      ", ".join(title for title, _ in folders))
         out: list[Dialog] = []
         position = 0
-        async for dialog in self.client.iter_dialogs():
+        # Группа, ставшая супергруппой, остаётся в диалогах пустой оболочкой
+        # с migrated_to — тот же чат живёт дальше под новым peer_id, и без
+        # ignore_migrated он был бы в списке дважды.
+        async for dialog in self.client.iter_dialogs(ignore_migrated=True):
             entity = dialog.entity
             if isinstance(entity, types.UserFull):
+                continue
+            if getattr(entity, "migrated_to", None) is not None:
                 continue
             kind = self._kind(entity)
             peer_id = utils.get_peer_id(entity)
@@ -280,7 +289,7 @@ class TelegramSide:
             # другого устройства на телефоне нельзя было открыть.
             await self.on_message(peer_id, "Я", text,
                                   int(event.message.date.timestamp()),
-                                  topic_of(event.message),
+                                  await self._topic_in(event),
                                   attach=attachment_of(event.message))
         except Exception:
             log.exception("ошибка обработки своего сообщения")
@@ -293,10 +302,42 @@ class TelegramSide:
                 del self._own_ids[key]
         return self._own_ids.pop((peer_id, message_id), None) is not None
 
+    async def _topic_in(self, event) -> int:
+        """Тема, в которую пришло сообщение события.
+
+        Сообщения темы «General» заголовка темы не несут, и по одному
+        сообщению их не отличить от обычной супергруппы — поэтому в форуме
+        такое сообщение относим к теме 1, а не заводим форуму второй контакт.
+        """
+        topic_id = topic_of(event.message)
+        if topic_id:
+            return topic_id
+        chat = getattr(event, "chat", None)
+        if chat is None and callable(getattr(event, "get_chat", None)):
+            try:
+                chat = await event.get_chat()
+            except Exception:
+                chat = None
+        return GENERAL_TOPIC if getattr(chat, "forum", False) else 0
+
+    async def topic_title(self, peer_id: int, topic_id: int) -> str:
+        """Название темы форума по её номеру; пустая строка, если не узнать."""
+        try:
+            result = await self.client(functions.messages.GetForumTopicsByIDRequest(
+                peer=peer_id, topics=[topic_id]))
+        except Exception as exc:
+            log.debug("название темы %s в чате %s не получено: %s",
+                      topic_id, peer_id, type(exc).__name__)
+            return ""
+        for topic in getattr(result, "topics", ()):
+            if isinstance(topic, types.ForumTopic) and topic.id == topic_id:
+                return topic.title or ""
+        return ""
+
     async def _on_new_message(self, event) -> None:
         try:
             peer_id = utils.get_peer_id(event.message.peer_id)
-            topic_id = topic_of(event.message)
+            topic_id = await self._topic_in(event)
             text = describe_message(event.message)
             log.debug("событие Telegram: сообщение %s в чате %s%s, %s",
                       getattr(event.message, "id", "?"),
@@ -508,7 +549,7 @@ class TelegramSide:
         self._sending[peer_id] = self._sending.get(peer_id, 0) + 1
         try:
             message = await self.client.send_file(
-                peer_id, file=stream, voice_note=voice, reply_to=topic_id or None)
+                peer_id, file=stream, voice_note=voice, reply_to=reply_target(topic_id))
         finally:
             self._sending[peer_id] -= 1
         message_id = getattr(message, "id", None)
@@ -530,7 +571,7 @@ class TelegramSide:
         try:
             message = await self.client.send_file(
                 peer_id, file=stream, video_note=note, attributes=attrs,
-                reply_to=topic_id or None)
+                reply_to=reply_target(topic_id))
         finally:
             self._sending[peer_id] -= 1
         message_id = getattr(message, "id", None)
@@ -547,7 +588,7 @@ class TelegramSide:
         try:
             message = await self.client.send_file(
                 peer_id, file=stream, caption=caption or None,
-                reply_to=topic_id or None)
+                reply_to=reply_target(topic_id))
         finally:
             self._sending[peer_id] -= 1
         message_id = getattr(message, "id", None)
@@ -588,7 +629,7 @@ class TelegramSide:
             message = await self.client.send_file(
                 peer_id, file=path, force_document=True,
                 attributes=[DocumentAttributeFilename(file_name=name)],
-                reply_to=topic_id or None)
+                reply_to=reply_target(topic_id))
         finally:
             self._sending[peer_id] -= 1
         message_id = getattr(message, "id", None)
@@ -769,14 +810,12 @@ class TelegramSide:
         """Отправляет сообщение и возвращает его номер в Telegram.
 
         Для форума ответ уходит в нужную тему: у Telegram тема — это ответ
-        на её корневое сообщение.
+        на её корневое сообщение. В «General» пишут как в обычную группу.
         """
         self._sending[peer_id] = self._sending.get(peer_id, 0) + 1
         try:
-            if topic_id:
-                message = await self.client.send_message(peer_id, text, reply_to=topic_id)
-            else:
-                message = await self.client.send_message(peer_id, text)
+            message = await self.client.send_message(peer_id, text,
+                                                     reply_to=reply_target(topic_id))
         finally:
             self._sending[peer_id] -= 1
         message_id = getattr(message, "id", None)
@@ -821,6 +860,15 @@ def topic_of(message) -> int:
     # Ответ внутри темы указывает на неё в reply_to_top_id, а первое
     # сообщение темы — прямо в reply_to_msg_id.
     return getattr(reply, "reply_to_top_id", None) or getattr(reply, "reply_to_msg_id", 0) or 0
+
+
+def reply_target(topic_id: int) -> int | None:
+    """Куда отвечать при отправке в тему: корень темы, а для «General»
+    и обычного чата — никуда (в General Telegram велит писать как в обычную
+    супергруппу; ответ на «сообщение 1» вышел бы цитатой)."""
+    if not topic_id or topic_id == GENERAL_TOPIC:
+        return None
+    return topic_id
 
 
 def status_of(entity, kind: str) -> str:

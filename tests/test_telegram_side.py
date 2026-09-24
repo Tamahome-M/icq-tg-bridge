@@ -54,6 +54,8 @@ def check_media():
         (msg("", types.MessageMediaContact(phone_number="+79990000000", first_name="Вася",
                                            last_name="", vcard="", user_id=0)),
          "[контакт Вася +79990000000]"),
+        # Служебные — пометкой с именем действия.
+        (msg("", action=types.MessageActionChatMigrateTo(channel_id=1)), "[ChatMigrateTo]"),
     ]
     for message, expected in cases:
         got = describe_message(message)
@@ -178,6 +180,30 @@ def check_events() -> None:
         asyncio.run(side._on_new_message(event))
     assert reads == ["это покажем"], f"прочитанным помечено лишнее: {reads}"
 
+    # Сообщение без заголовка темы: в форуме это тема «General» (1),
+    # в обычной супергруппе — просто чат (0).
+    topics: list[int] = []
+
+    async def on_message_topic(peer_id, sender, text, ts, topic_id=0, attach=""):
+        topics.append(topic_id)
+        return False
+
+    side.on_message = on_message_topic
+    forum = -1001234
+    forum_msg = Msg("покажем в общем")
+    forum_msg.peer_id = types.PeerChannel(1234)
+    forum_chat = FakeEvent(forum=True)
+
+    async def fetch_forum():
+        return forum_chat
+
+    asyncio.run(side._on_new_message(FakeEvent(message=forum_msg, is_private=False,
+                                               chat=None, get_chat=fetch_forum)))
+    asyncio.run(side._on_new_message(FakeEvent(message=forum_msg, is_private=False,
+                                               chat=FakeEvent(forum=False))))
+    assert topics == [1, 0], topics
+    side.on_message = on_message
+
     # Свои сообщения с других устройств приходят как «Я», а отправленное
     # самим мостом обратно не возвращается.
     seen.clear()
@@ -194,7 +220,8 @@ def check_events() -> None:
     side._sending[555] = 1                    # отправка в этот чат прямо сейчас идёт
     asyncio.run(side._on_own_message(FakeEvent(message=own)))
     assert seen == [], "во время отправки мостом исходящее в тот же чат не зеркалим"
-    print("  события: ок (набор в группе, прочтение только показанного, зеркало своих)")
+    print("  события: ок (набор в группе, прочтение только показанного, "
+          "General форума, зеркало своих)")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bridge.bridge import Bridge
 from bridge.config import Config
-from bridge.tg.client import topic_of
+from bridge.tg.client import GENERAL_TOPIC, reply_target, topic_of
 
 FORUM = -1001234567890
 
@@ -73,6 +73,10 @@ def test_topic_detection() -> None:
     assert topic_of(Message(Reply(True, top=42, msg=100))) == 42        # ответ в теме
     assert topic_of(Message(Reply(True, msg=7))) == 7                   # первое в теме
     assert topic_of(Message(Reply(False, msg=5))) == 0                  # ответ вне форума
+    # В General пишут как в обычную группу; в остальные темы — ответом на корень.
+    assert reply_target(0) is None
+    assert reply_target(GENERAL_TOPIC) is None
+    assert reply_target(42) == 42
     print("  определение темы: ок")
 
 
@@ -109,17 +113,39 @@ async def main() -> None:
     await bridge.on_phone_message(plain, "привет")
     assert bridge.sent[-1] == (555, "привет", 0), bridge.sent[-1]
 
-    # Незнакомая тема заводится на лету, форум становится группой.
+    # Незнакомая тема заводится на лету, форум становится группой,
+    # название темы берётся из Telegram.
+    async def topic_title(peer_id, topic_id):
+        return "Дежурство" if topic_id == 77 else ""
+
+    bridge.telegram.topic_title = topic_title
     await bridge.on_telegram_message(FORUM, "Петя", "в новой теме", now, 77)
     fresh = bridge.storage.contact_by_peer(FORUM, 77)
     assert fresh is not None, "новая тема не завелась"
     assert fresh.group_name == "Рабочий форум", fresh.group_name
+    assert fresh.title == "Дежурство", fresh.title
     assert fresh.uin not in (general, dev)
+    await bridge.on_telegram_message(FORUM, "Петя", "ещё тема", now, 78)
+    assert bridge.storage.contact_by_peer(FORUM, 78).title == "Тема 78"
+
+    # Сообщение из General приходит без темы — оно должно попасть в тему 1,
+    # а не завести форуму второй контакт.
+    before = {c.uin for c in bridge.storage.contacts()}
+    await bridge.on_telegram_message(FORUM, "Вася", "в общем", now, 0)
+    rows = bridge.storage.peek_pending()
+    assert rows[-1][1] == general, f"сообщение General ушло не туда: {rows[-1]}"
+    assert bridge.storage.contact_by_peer(FORUM, 0) is None, "лишний контакт форума"
+    assert {c.uin for c in bridge.storage.contacts()} == before
+    assert bridge.storage.contact_by_uin(general).last_ts == now
+    # Ответ из General уходит без темы — как в обычную группу.
+    await bridge.on_phone_message(general, "ответ в общее")
+    assert bridge.sent[-1] == (FORUM, "ответ в общее", GENERAL_TOPIC), bridge.sent[-1]
 
     # Отметка о доставке ведётся по теме, а не по чату целиком.
-    bridge.storage.note_delivered(FORUM, now, 42)
-    assert bridge.storage.contact_by_peer(FORUM, 42).last_ts == now
-    assert bridge.storage.contact_by_peer(FORUM, 1).last_ts == 0
+    bridge.storage.note_delivered(FORUM, now + 10, 42)
+    assert bridge.storage.contact_by_peer(FORUM, 42).last_ts == now + 10
+    assert bridge.storage.contact_by_peer(FORUM, 1).last_ts == now
+    assert bridge.storage.contact_by_peer(FORUM, 78).last_ts == now
 
     # Команды в теме спрашивают только эту тему, а не весь форум.
     from bridge import history as history_mod
@@ -169,6 +195,26 @@ async def main() -> None:
     assert bridge.storage.pending_count() == 1, "повторной догрузки быть не должно"
     bridge.storage.close()
     print("  догрузка тем: ок (отметка у темы, без повторов)")
+
+    # --- лишний контакт «всего форума» уходит при обновлении списка --------
+    bridge = make_bridge()
+    shell = bridge.storage.uin_for_peer(FORUM, kind="chat", title="Рабочий форум",
+                                        group_name="Группы", position=9999)
+    general = bridge.storage.uin_for_peer(FORUM, kind="chat", title="Общее",
+                                          group_name="Рабочий форум", topic_id=1)
+    plain = bridge.storage.uin_for_peer(555, kind="user", title="Мама", group_name="Личные")
+    marked = bridge.storage.mark_forum_shells({FORUM})
+    assert [c.uin for c in marked] == [shell], marked
+    alive = {c.uin for c in bridge.storage.contacts()}
+    assert alive == {general, plain}, alive
+    assert bridge.storage.mark_forum_shells({FORUM}) == [], "повторно помечать нечего"
+    # Сообщение без темы после этого идёт в General, а не воскрешает оболочку.
+    bridge.mode = policy.ALL
+    await bridge.on_telegram_message(FORUM, "Вася", "снова в общем", now, 0)
+    assert bridge.storage.peek_pending()[-1][1] == general
+    assert bridge.storage.contact_by_uin(shell).gone == 1
+    bridge.storage.close()
+    print("  оболочка форума: ок (убрана, General идёт в тему 1)")
     print("ФОРУМЫ ПРОВЕРЕНЫ")
 
 
