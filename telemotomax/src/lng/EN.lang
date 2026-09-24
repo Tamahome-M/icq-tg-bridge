@@ -216,6 +216,7 @@
 "options_camera"			"Camera"
 "options_media"			"Media"
 "media_profile"			"bridge profile"
+"media_roster_limit"			"Chats in list (0 — all, empty — profile)"
 "media_photo_size"			"Photo: size"
 "media_photo_quality"			"Photo: JPEG quality"
 "media_photo_kb"			"Photo: max KB"

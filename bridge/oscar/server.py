@@ -917,7 +917,10 @@ class Session:
     MEDIA_KEYS = {1: "photo_width", 2: "photo_height", 3: "photo_quality", 4: "video_width",
                   5: "video_height", 6: "video_kbps", 7: "video_seconds", 8: "video_rotate",
                   9: "voice_kbps", 10: "voice_seconds", 11: "photo_max_kb",
-                  12: "video_max_kb"}
+                  12: "video_max_kb", 13: "roster_limit"}
+    # Ограничение контакт-листа: 0 в паре значит «как в профиле», поэтому
+    # «все чаты» телефон шлёт этим числом (TeleMotoMax 0.70+).
+    ROSTER_ALL = 0xFFFF
 
     async def on_client_info(self, s: Snac) -> None:
         """01/F2 от TeleMotoMax: платформа, экран, куча — по ним профиль; дальше
@@ -939,6 +942,8 @@ class Session:
             media["voice_kbps"] = media["voice_kbps"] / 10       # 122 — это 12.2
         if "video_rotate" in media:
             media["video_rotate"] = media["video_rotate"] == 1   # 1 всегда, 2 никогда
+        if media.get("roster_limit") == self.ROSTER_ALL:
+            media["roster_limit"] = 0                            # без ограничения
         self.media = media
         if media:
             log.info("настройки «Медиа» с телефона: %s",

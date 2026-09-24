@@ -347,11 +347,11 @@ public class Icq implements Runnable
 	private static final int MEDIA_PHOTO_W = 1, MEDIA_PHOTO_H = 2, MEDIA_PHOTO_Q = 3,
 			MEDIA_VIDEO_W = 4, MEDIA_VIDEO_H = 5, MEDIA_VIDEO_KBPS = 6, MEDIA_VIDEO_SEC = 7,
 			MEDIA_VIDEO_ROTATE = 8, MEDIA_VOICE_KBPS10 = 9, MEDIA_VOICE_SEC = 10, MEDIA_PHOTO_KB = 11,
-			MEDIA_VIDEO_KB = 12;
+			MEDIA_VIDEO_KB = 12, MEDIA_ROSTER_LIMIT = 13;
 
 	private static int[] mediaPairs()
 	{
-		int[] out = new int[24];
+		int[] out = new int[26];
 		int n = 0;
 		int[] size = jimm.Options.mediaSize(jimm.Options.OPTION_MEDIA_PHOTO_SIZE);
 		if (size != null) { out[n++] = MEDIA_PHOTO_W; out[n++] = size[0]; out[n++] = MEDIA_PHOTO_H; out[n++] = size[1]; }
@@ -365,6 +365,9 @@ public class Icq implements Runnable
 		n = pair(out, n, MEDIA_VIDEO_ROTATE, jimm.Options.getInt(jimm.Options.OPTION_VIDEO_ROTATE));
 		n = pair(out, n, MEDIA_VOICE_KBPS10, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VOICE_KBPS10));
 		n = pair(out, n, MEDIA_VOICE_SEC, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VOICE_SECONDS));
+		// Сколько чатов класть в контакт-лист; 65535 — все (0 значило бы
+		// «как в профиле»). Мост читает пару до того, как отдаст список.
+		n = pair(out, n, MEDIA_ROSTER_LIMIT, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_ROSTER_LIMIT));
 		int[] cut = new int[n];
 		System.arraycopy(out, 0, cut, 0, n);
 		return cut;

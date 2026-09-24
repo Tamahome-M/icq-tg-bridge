@@ -211,6 +211,7 @@ public class Options
 	public static final int OPTION_MEDIA_VOICE_SECONDS  = 121;   // длина голосового
 	public static final int OPTION_PHOTO_ROTATE         = 122;   // фото боком: 0 авто, 1 всегда, 2 никогда
 	public static final int OPTION_MEDIA_MEM_KB         = 123;
+	public static final int OPTION_MEDIA_ROSTER_LIMIT   = 124;   // «Медиа»: чатов в контакт-листе, 65535 — все, 0 — как в профиле
 	public static final int OPTION_MEDIA_VIDEO_KB       = 125;   // «Медиа»: предел размера ролика, КБ   // сколько КБ ролика читать в память, 0 — по куче
 
 	/** «WxH» из настройки «Медиа» как {w, h}; пусто или негодно — null. */
@@ -458,6 +459,7 @@ public class Options
 		setInt    (Options.OPTION_PHOTO_ROTATE,        0);
 		setInt    (Options.OPTION_MEDIA_MEM_KB,        0);
 		setInt    (Options.OPTION_MEDIA_VIDEO_KB,      0);
+		setInt    (Options.OPTION_MEDIA_ROSTER_LIMIT,  0);
 
 		setBoolean(Options.OPTION_CP1251_HACK, ResourceBundle.langAvailable[0]
 				.equals("RU") || ResourceBundle.langAvailable[0].equals("BE") );
@@ -1075,6 +1077,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup mediaPhotoSize, mediaPhotoQuality, mediaPhotoKb, mediaVideoKb;
 	private ChoiceGroup mediaVideoSize, mediaVideoKbps, mediaVideoSeconds;
 	private ChoiceGroup mediaVoiceKbps, mediaVoiceSeconds;
+	private TextField mediaRosterLimit;
 	private TextField mediaMemKb;
 	// Значения списков «Медиа»; первый пункт каждого — «как в профиле моста».
 	private static final String[] MEDIA_PHOTO_SIZES = { "176x176", "176x220", "240x320", "320x240", "480x640", "640x480" };
@@ -1088,6 +1091,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private static final int[] MEDIA_VIDEO_KBS = { 16, 24, 32, 48, 64, 128, 256, 512 };
 	private static final int[] MEDIA_VOICE_KBPS10 = { 48, 52, 59, 67, 74, 80, 102, 122 };   // режимы AMR-NB ×10
 	private static final int[] MEDIA_VOICE_SECS = { 30, 60, 120, 300, 600 };
+	// Чатов в контакт-листе — числовое поле: пусто — как в профиле моста
+	// (0, не шлётся), 0 — все чаты (мосту уходит 65535: ноль в паре занят
+	// под «как в профиле»), иначе само число.
+	private static final int MEDIA_ROSTER_ALL = 65535;
 	private ChoiceGroup choiceInterfaceMisc;
 	private ChoiceGroup clSortByChoiceGroup;
 	private ChoiceGroup chrgChat;
@@ -2658,6 +2665,9 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 	private void showMediaOptions()
 	{
+		int roster = Options.getInt(Options.OPTION_MEDIA_ROSTER_LIMIT);
+		mediaRosterLimit = new TextField(ResourceBundle.getString("media_roster_limit"),
+				roster <= 0 ? "" : (roster == MEDIA_ROSTER_ALL ? "0" : String.valueOf(roster)), 4, TextField.NUMERIC);
 		mediaPhotoSize = mediaChoice("media_photo_size", MEDIA_PHOTO_SIZES, Options.getString(Options.OPTION_MEDIA_PHOTO_SIZE));
 		mediaPhotoQuality = mediaChoice("media_photo_quality", MEDIA_QUALITIES, Options.getInt(Options.OPTION_MEDIA_PHOTO_QUALITY), false);
 		mediaPhotoKb = mediaChoice("media_photo_kb", MEDIA_PHOTO_KBS, Options.getInt(Options.OPTION_MEDIA_PHOTO_KB), false);
@@ -2679,6 +2689,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		mediaVideoKb = mediaChoice("media_video_kb", MEDIA_VIDEO_KBS, Options.getInt(Options.OPTION_MEDIA_VIDEO_KB), false);
 		mediaVoiceKbps = mediaChoice("media_voice_kbps", MEDIA_VOICE_KBPS10, Options.getInt(Options.OPTION_MEDIA_VOICE_KBPS10), true);
 		mediaVoiceSeconds = mediaChoice("media_voice_seconds", MEDIA_VOICE_SECS, Options.getInt(Options.OPTION_MEDIA_VOICE_SECONDS), false);
+		optionsForm.append(mediaRosterLimit);
 		optionsForm.append(mediaPhotoSize);
 		optionsForm.append(mediaPhotoQuality);
 		optionsForm.append(mediaPhotoKb);
@@ -2701,6 +2712,17 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 	private void readMediaOptions()
 	{
+		String roster = mediaRosterLimit.getString().trim();
+		if (roster.length() == 0) Options.setInt(Options.OPTION_MEDIA_ROSTER_LIMIT, 0);
+		else
+		{
+			try
+			{
+				int n = Integer.parseInt(roster);
+				Options.setInt(Options.OPTION_MEDIA_ROSTER_LIMIT, n <= 0 ? MEDIA_ROSTER_ALL : Math.min(9999, n));
+			}
+			catch (Exception ignore) {}
+		}
 		Options.setString(Options.OPTION_MEDIA_PHOTO_SIZE, mediaValue(mediaPhotoSize, MEDIA_PHOTO_SIZES));
 		Options.setInt(Options.OPTION_MEDIA_PHOTO_QUALITY, mediaValue(mediaPhotoQuality, MEDIA_QUALITIES));
 		Options.setInt(Options.OPTION_MEDIA_PHOTO_KB, mediaValue(mediaPhotoKb, MEDIA_PHOTO_KBS));

@@ -299,6 +299,7 @@
 "options_camera"			"Камера"
 "options_media"			"Медиа"
 "media_profile"			"как в профиле моста"
+"media_roster_limit"			"Чатов в списке (0 — все, пусто — по профилю)"
 "media_photo_size"			"Фото: размер"
 "media_photo_quality"			"Фото: качество JPEG"
 "media_photo_kb"			"Фото: не больше, КБ"

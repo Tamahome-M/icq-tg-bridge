@@ -66,7 +66,8 @@ class FakeJimm:
 
     MEDIA_KEYS = {"photo_width": 1, "photo_height": 2, "photo_quality": 3, "video_width": 4,
                   "video_height": 5, "video_kbps": 6, "video_seconds": 7, "video_rotate": 8,
-                  "voice_kbps": 9, "voice_seconds": 10, "photo_max_kb": 11}
+                  "voice_kbps": 9, "voice_seconds": 10, "photo_max_kb": 11,
+                  "roster_limit": 13}
 
     async def client_info(self, platform: str, width: int, height: int, memory_kb: int,
                           media: dict | None = None) -> None:
