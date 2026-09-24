@@ -22,7 +22,7 @@ from .config import Config
 from .db import Contact, Storage, limit_contacts
 from .oscar import const as C
 from .oscar.server import OscarServer
-from .tg.client import KIND_TITLES, TelegramSide
+from .tg.client import GENERAL_TOPIC, KIND_TITLES, TelegramSide
 from .max.client import MaxSide, is_max_peer
 
 log = logging.getLogger("bridge")
@@ -155,6 +155,17 @@ class Bridge:
 
     def network_of(self, peer_id: int) -> str:
         return "MAX" if self.max is not None and is_max_peer(peer_id) else "Telegram"
+
+    async def topic_title(self, peer_id: int, topic_id: int) -> str:
+        """Название темы форума — если сторона сети умеет его узнать."""
+        ask = getattr(self.side_for(peer_id), "topic_title", None)
+        if ask is None:
+            return ""
+        try:
+            return (await ask(peer_id, topic_id)) or ""
+        except Exception:
+            log.debug("название темы %s не получено", topic_id, exc_info=True)
+            return ""
 
     def group_for(self, peer_id: int, kind: str) -> str:
         """Группа для чата, впервые пришедшего сообщением или найденного поиском."""
@@ -812,7 +823,12 @@ class Bridge:
             self._statuses[uin] = C.STATUS_ONLINE
             present.append(ASSISTANT_PEER)
         # Чаты, которых больше нет в Telegram, убираем из контакт-листа.
-        for contact in self.storage.mark_missing(present):
+        gone = self.storage.mark_missing(present)
+        # Форум разложен на темы — отдельный контакт «всего форума» лишний.
+        # Такой заводился, пока сообщения из «General» считались обычными.
+        forums = {d.peer_id for d in dialogs if d.topic_id}
+        gone += self.storage.mark_forum_shells(forums)
+        for contact in gone:
             log.info("чат %r исчез из Telegram — убираю из списка", contact.title)
             self._statuses[contact.uin] = C.STATUS_OFFLINE
             self._shown[contact.uin] = C.STATUS_OFFLINE
@@ -867,6 +883,12 @@ class Bridge:
         if not text:
             return False
         contact = self.storage.contact_by_peer(peer_id, topic_id)
+        if not topic_id and (contact is None or contact.gone):
+            # Сообщение без темы из чата, который у нас разложен на темы, —
+            # это тема «General»: её сообщения приходят без заголовка темы.
+            general = self.storage.contact_by_peer(peer_id, GENERAL_TOPIC)
+            if general is not None:
+                contact, topic_id = general, GENERAL_TOPIC
         if contact is not None and contact.hidden:
             log.debug("чат %r убран с телефона — сообщение не доставляю", contact.title)
             if ts:
@@ -875,9 +897,10 @@ class Bridge:
         if contact is None:
             title, kind = await self.side_for(peer_id).title_for(peer_id)
             if topic_id:
-                # Новая тема форума: сам форум становится группой контактов.
+                # Новая тема форума: сам форум становится группой контактов,
+                # название темы спрашиваем у Telegram (MAX тем не знает).
                 group = title[:self.cfg.alias_max_chars]
-                title = f"Тема {topic_id}"
+                title = await self.topic_title(peer_id, topic_id) or f"Тема {topic_id}"
                 kind = "chat"
             else:
                 group = self.group_for(peer_id, kind)

@@ -288,6 +288,22 @@ class Storage:
             )
         return [Contact(**dict(r)) for r in rows]
 
+    def mark_forum_shells(self, forums: "set[int] | list[int]") -> list[Contact]:
+        """Убирает у форумов контакт «без темы»: форум показан темами, и его
+        сообщения теперь расходятся по ним. UIN и здесь остаётся за записью."""
+        rows = []
+        for peer_id in forums:
+            rows += self.conn.execute(
+                "SELECT uin, peer_id, topic_id, kind, title, group_name, position, last_ts,"
+                " gone, hidden, muted, COALESCE(fav_manual, favourite) AS favourite"
+                " FROM contacts WHERE gone = 0 AND peer_id = ? AND topic_id = 0",
+                (peer_id,),
+            ).fetchall()
+        if rows:
+            self.conn.executemany("UPDATE contacts SET gone = 1 WHERE uin = ?",
+                                  [(r["uin"],) for r in rows])
+        return [Contact(**dict(r)) for r in rows]
+
     def contact_by_uin(self, uin: int) -> Contact | None:
         row = self.conn.execute(
             "SELECT uin, peer_id, topic_id, kind, title, group_name, position, last_ts, gone, hidden, muted, COALESCE(fav_manual, favourite) AS favourite FROM contacts WHERE uin = ?", (uin,)).fetchone()
