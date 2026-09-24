@@ -565,6 +565,8 @@ async def run_profiles() -> None:
         s = server.session
         state["limit"] = (s.profile.get("roster_limit", cfg.roster_limit)
                           if s is not None and s.profile else cfg.roster_limit)
+        if s is not None and "roster_limit" in s.media:
+            state["limit"] = s.media["roster_limit"]     # телефон важнее профиля
     server.on_profile = on_profile
     await server.start()
     try:
@@ -615,9 +617,37 @@ async def run_profiles() -> None:
         assert Bridge.tmm(stub, "photo_max_kb") == 60, "не задано — из профиля v8"
         assert Bridge.tmm(stub, "voice_kbps") == 7.4 and Bridge.tmm(stub, "video_rotate") is False
         await client.close()
+        await asyncio.sleep(0.2)
+
+        # Ограничение контакт-листа из настроек телефона: профиль v8 даёт
+        # все чаты, телефон просит два — в списке два. 0xFFFF — «все».
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 70)
+        client.device = ("MotoV8", 240, 320, 8192)
+        client.media = {"roster_limit": 2}
+        await client.connect()
+        await client.bos(await client.login_md5_jimm())
+        await client.drain_for(0.3)
+        assert server.session.media == {"roster_limit": 2}, server.session.media
+        assert Bridge.tmm(stub, "roster_limit") == 2
+        assert len(client.contacts) == 2, f"телефон просил 2 чата, а получил {len(client.contacts)}"
+        await client.close()
+        await asyncio.sleep(0.2)
+        client = FakeJimm("127.0.0.1", cfg.oscar_port, "100500", "s3cret")
+        client.tmm_version = (0, 70)
+        client.device = ("MotoV3", 176, 220, 1024)      # общее ограничение — 2
+        client.media = {"roster_limit": 0xFFFF}
+        await client.connect()
+        await client.bos(await client.login_md5_jimm())
+        await client.drain_for(0.3)
+        assert server.session.media == {"roster_limit": 0}, server.session.media
+        assert Bridge.tmm(stub, "roster_limit") == 0
+        assert len(client.contacts) == 5, f"«все» с телефона, а чатов {len(client.contacts)}"
+        await client.close()
     finally:
         server._server.close()
-    print("  профили телефонов: ок (v3/v8, по экрану, из конфига, roster_limit по профилю)")
+    print("  профили телефонов: ок (v3/v8, по экрану, из конфига, roster_limit по профилю "
+          "и с телефона)")
 
 
 async def run_video_note() -> None:
