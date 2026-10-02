@@ -291,6 +291,20 @@ async def run_bridge() -> None:
                                                  **mention("user", ME, "Вася"))))
     assert len(queued) == 2, queued
 
+    # Мост был выключен: при старте догружается всё непрочитанное, в том
+    # числе из заглушённой группы — и упоминание вместе с остальным.
+    cfg.mentions_through = True
+    before = bridge.storage.pending_count()
+    later = NOW_MS + 60_000
+    fake.rows[GROUP] += [
+        raw_event(40, GROUP, BOSS, "пока тебя не было", later),
+        raw_event(41, GROUP, BOSS, "и тебя звали @{mention:%s}" % MENTION, later + 1000,
+                  **mention("user", ME, "Вася"))]
+    bridge._unread[(chat_peer(GROUP), 0)] = 2
+    await bridge.catch_up()
+    texts = [row[2] for row in bridge.storage.peek_pending()][before:]
+    assert texts == ["Шеф: пока тебя не было", "Шеф: и тебя звали @Вася"], texts
+
     # eXpress не ответил на обновление списка — его чаты не считаются пропавшими.
     async def broken():
         raise RuntimeError("сеть")
