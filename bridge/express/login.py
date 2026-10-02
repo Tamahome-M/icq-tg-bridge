@@ -13,7 +13,7 @@ import sys
 
 from playwright.async_api import async_playwright
 
-from .browser import is_logged_in, open_app, open_context
+from .browser import is_logged_in, open_app, open_context, prepare
 
 DEFAULT_PROFILE = "express.session"
 
@@ -40,11 +40,12 @@ async def _show(page, shot: str) -> None:
     print(f"--- снимок: {shot} ---")
 
 
-async def main(profile: str) -> int:
+async def main(profile: str, executable: str = "") -> int:
     global FIFO
     shot = f"{profile}/login.png"
+    prepare()
     async with async_playwright() as pw:
-        ctx = await open_context(pw, profile)
+        ctx = await open_context(pw, profile, executable=executable)
         if not sys.stdin.isatty():
             FIFO = f"{profile}/login.in"
             if not os.path.exists(FIFO):

@@ -13,28 +13,46 @@ from pathlib import Path
 from playwright.async_api import BrowserContext, Page, Playwright
 
 WEB_URL = "https://corp.express/"
+ROOT = Path(__file__).resolve().parents[2]
 # Системные библиотеки Chromium, распакованные рядом без root (см. README).
-LOCAL_LIBS = Path(__file__).resolve().parents[2] / ".syslibs/usr/lib/x86_64-linux-gnu"
+LOCAL_LIBS = ROOT / ".syslibs/usr/lib/x86_64-linux-gnu"
+# Chromium, скачанный рядом с проектом (PLAYWRIGHT_BROWSERS_PATH при установке):
+# служба работает без домашнего каталога, и в ~/.cache ей искать нечего.
+LOCAL_BROWSERS = ROOT / ".browsers"
 
 # Все экраны до входа (выбор способа, капча, код из СМС) свёрстаны
 # классами login*; в самом приложении их нет.
 LOGIN_SCREEN = '[class*="login"]'
 
 
-def _env() -> dict[str, str]:
+def prepare() -> None:
+    """Вызвать до запуска Playwright: показывает ему Chromium, лежащий рядом."""
+    if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ and LOCAL_BROWSERS.is_dir():
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(LOCAL_BROWSERS)
+
+
+def _env(profile_dir: str) -> dict[str, str]:
     env = dict(os.environ)
     if LOCAL_LIBS.is_dir():
         env["LD_LIBRARY_PATH"] = f"{LOCAL_LIBS}:{env.get('LD_LIBRARY_PATH', '')}".rstrip(":")
+    # Под службой HOME бывает чужим (root): Chromium пишет туда мелочи и
+    # ругается, если нельзя, — отдаём ему каталог рядом с профилем.
+    if not os.access(env.get("HOME") or "/", os.W_OK):
+        env["HOME"] = str(Path(profile_dir).resolve().parent)
     return env
 
 
-async def open_context(pw: Playwright, profile_dir: str, headless: bool = True) -> BrowserContext:
+async def open_context(pw: Playwright, profile_dir: str, headless: bool = True,
+                       executable: str = "") -> BrowserContext:
+    """executable — путь к системному Chromium или Chrome; пусто — тот, что
+    скачан командой playwright install chromium."""
     Path(profile_dir).mkdir(parents=True, exist_ok=True)
     os.chmod(profile_dir, 0o700)
     return await pw.chromium.launch_persistent_context(
         profile_dir,
         headless=headless,
-        env=_env(),
+        executable_path=executable or None,
+        env=_env(profile_dir),
         locale="ru-RU",
         viewport={"width": 1280, "height": 800},
     )

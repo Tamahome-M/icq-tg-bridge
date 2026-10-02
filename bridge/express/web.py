@@ -27,7 +27,7 @@ from typing import Awaitable, Callable
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
-from .browser import is_logged_in, open_app, open_context
+from .browser import is_logged_in, open_app, open_context, prepare
 
 log = logging.getLogger("express")
 
@@ -152,7 +152,13 @@ JS_WATCH = """() => {
   const key = (e) => e ? [e.syncId, e.editedAt || '', e.deletedAt || ''].join('|') : '';
   const last = new Map(), read = new Map();
   let prev = store.getState().chats;
-  for (const c of prev) { last.set(c.groupChatId, key(c.lastEvent)); read.set(c.groupChatId, c.readPositionAt || 0); }
+  // Список чатов может досинхронизироваться уже после нас: событие старее
+  // самого свежего из известных на старте — это история, а не новость.
+  let floor = 0;
+  for (const c of prev) {
+    last.set(c.groupChatId, key(c.lastEvent)); read.set(c.groupChatId, c.readPositionAt || 0);
+    floor = Math.max(floor, (c.lastEvent && c.lastEvent.insertedAt) || 0);
+  }
   store.subscribe(() => {
     const chats = store.getState().chats;
     if (chats === prev) return;
@@ -167,7 +173,7 @@ JS_WATCH = """() => {
       const k = key(c.lastEvent);
       if (last.get(c.groupChatId) === k) continue;
       last.set(c.groupChatId, k);
-      if (c.lastEvent) window.__expressEmit(JSON.stringify(window.__exSlim(c.lastEvent)));
+      if (c.lastEvent && (c.lastEvent.insertedAt || 0) > floor) window.__expressEmit(JSON.stringify(window.__exSlim(c.lastEvent)));
     }
   });
   // «Печатает»: Map чат -> Map человек -> чем занят. Себя не считаем.
@@ -315,8 +321,10 @@ class ExpressClient:
                  headless: bool = True,
                  on_typing: Callable[[str, bool], Awaitable[None]] | None = None,
                  on_presence: Callable[[str, str, float], Awaitable[None]] | None = None,
-                 on_read: Callable[[str, int], Awaitable[None]] | None = None):
+                 on_read: Callable[[str, int], Awaitable[None]] | None = None,
+                 executable: str = ""):
         self.profile_dir = profile_dir
+        self.executable = executable        # системный Chromium; пусто — скачанный Playwright
         self.on_message = on_message
         self.on_typing = on_typing          # (чат, печатают ли)
         self.on_presence = on_presence      # (huid, online/offline, когда сменился)
@@ -337,8 +345,13 @@ class ExpressClient:
     # --- запуск и остановка ---
 
     async def start(self) -> None:
+        await self._launch()
+        self._watchdog = asyncio.create_task(self._watch())
+
+    async def _launch(self) -> None:
+        prepare()
         self._pw = await async_playwright().start()
-        self._ctx = await open_context(self._pw, self.profile_dir, self.headless)
+        self._ctx = await open_context(self._pw, self.profile_dir, self.headless, self.executable)
         await self._ctx.expose_binding("__expressEmit", self._on_emit)
         await self._ctx.add_init_script(JS_BLOBS)
         # Содержимое забираем из памяти страницы, сохранение на диск не нужно.
@@ -346,17 +359,21 @@ class ExpressClient:
         for page in self._ctx.pages:
             page.on("download", self._drop_download)
         await self._load()
-        self._watchdog = asyncio.create_task(self._watch())
+
+    async def _shutdown(self) -> None:
+        for closing in (self._ctx and self._ctx.close, self._pw and self._pw.stop):
+            if closing:
+                try:
+                    await asyncio.wait_for(closing(), 15)
+                except Exception:
+                    log.debug("eXpress: браузер закрылся с ошибкой", exc_info=True)
+        self._ctx = self._pw = self._page = None
 
     async def stop(self) -> None:
         self._stop_typing()
         if self._watchdog:
             self._watchdog.cancel()
-        if self._ctx:
-            await self._ctx.close()
-        if self._pw:
-            await self._pw.stop()
-        self._ctx = self._pw = self._page = None
+        await self._shutdown()
 
     def _drop_download(self, download) -> None:
         task = asyncio.create_task(download.cancel())
@@ -397,13 +414,25 @@ class ExpressClient:
             except NotLoggedIn:
                 log.error("сессия eXpress разлогинена")
                 return
-            except PlaywrightError as exc:
-                log.warning("страница eXpress не отвечает (%s), открываю заново", exc)
+            except Exception as exc:
+                log.warning("страница eXpress не отвечает (%s), открываю заново",
+                            str(exc).splitlines()[0] if str(exc) else type(exc).__name__)
                 try:
                     async with self._lock:
-                        await self._load()
+                        try:
+                            await self._load()
+                        except NotLoggedIn:
+                            raise
+                        except Exception:
+                            # Упала не страница, а сам браузер — поднимаем его целиком.
+                            log.warning("браузер eXpress не отвечает, запускаю заново")
+                            await self._shutdown()
+                            await self._launch()
+                except NotLoggedIn:
+                    log.error("сессия eXpress разлогинена")
+                    return
                 except Exception:
-                    log.exception("не удалось переоткрыть eXpress")
+                    log.exception("не удалось переоткрыть eXpress, попробую ещё раз")
 
     # --- события ---
 

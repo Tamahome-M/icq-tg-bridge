@@ -380,7 +380,8 @@ corp.express в Chromium без окна ([Playwright](https://playwright.dev/py
 
 Включается в секции `[express]`: `enabled = true`, затем
 `.venv/bin/playwright install chromium` (системные библиотеки Chromium —
-`sudo .venv/bin/playwright install-deps chromium`) и вход один раз командой
+`sudo .venv/bin/playwright install-deps chromium`; для Gentoo и запуска
+службой — по шагам в [DEPLOY.md](DEPLOY.md)) и вход один раз командой
 `python3 run.py login express`: она спросит номер телефона, текст с капчи
 (картинка сохраняется в `express.session/login.png`) и код из SMS. Сессия —
 каталог профиля браузера `session` (по умолчанию `express.session`); как и
@@ -965,6 +966,7 @@ for t in tests/test_*.py; do .venv/bin/python "$t" || echo "СБОЙ: $t"; done
 |---|---|---|
 | `enabled` | `false` | подключать ли аккаунт eXpress |
 | `session` | `express.session` | каталог профиля браузера; равносилен доступу к аккаунту |
+| `browser` | — | путь к системному Chromium или Chrome; пусто — тот, что скачал `playwright install chromium` |
 | `group` | `eXpress` | группа контакт-листа для чатов eXpress |
 | `roster_limit` | `0` (все) | сколько чатов eXpress класть в контакт-лист — отдельно от `roster_limit` в `[bridge]` |
 

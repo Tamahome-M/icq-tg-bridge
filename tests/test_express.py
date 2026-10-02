@@ -230,6 +230,10 @@ async def run_side() -> None:
         ("Я", "123", ""), ("Шеф", "[фото] Фото сервера", "photo"), ("Шеф", "[голосовое]", "voice")]
     missed = await side.missed(personal, (NOW_MS - 2500) // 1000, 30)
     assert [text for _, _, text in missed] == ["[фото] Фото сервера", "[голосовое]"], missed
+    # То же сообщение следом событием (старт: догрузка и события идут разом)
+    # второй раз мосту не отдаётся.
+    await side._on_new_message(fake.message(fake.rows[PERSONAL][2]))
+    assert got == [], got
     assert [m[1] for m in await side.missed(group, 0, 30)] == ["Шеф"]
 
     # Вложение достаётся по номеру сообщения — и после перезапуска, когда

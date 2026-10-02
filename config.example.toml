@@ -99,6 +99,11 @@ enabled = false
 # Каталог профиля браузера: в нём сессия и ключи шифрования.
 session = "express.session"
 
+# Какой браузер запускать. Пусто — Chromium, скачанный командой
+# playwright install chromium. Можно указать системный:
+# "/usr/bin/chromium" или "/usr/bin/google-chrome-stable".
+browser = ""
+
 # Группа контакт-листа для чатов eXpress.
 group = "eXpress"
 

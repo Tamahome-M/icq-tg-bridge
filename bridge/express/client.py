@@ -111,6 +111,7 @@ class ExpressSide:
         self._chats: dict[int, object] = {}        # peer_id -> Chat
         self._messages: dict[int, object] = {}     # номер сообщения -> Message
         self._own_ids: set[str] = set()
+        self._passed: dict[str, None] = {}         # что уже отдано мосту — чтобы не дважды
         self._sending: dict[str, int] = {}         # чат -> сколько отправок идёт
 
     # --- запуск ---------------------------------------------------------
@@ -119,7 +120,7 @@ class ExpressSide:
         from .web import ExpressClient
         return ExpressClient(self.cfg.express_session, self._on_new_message,
                              on_typing=self._on_typing, on_presence=self._on_presence,
-                             on_read=self._on_read)
+                             on_read=self._on_read, executable=self.cfg.express_browser)
 
     async def start(self) -> None:
         if self.client is None:
@@ -135,7 +136,7 @@ class ExpressSide:
     async def login(self) -> None:
         """Интерактивный вход: телефон, текст с капчи, код из SMS."""
         from .login import main
-        if await main(self.cfg.express_session):
+        if await main(self.cfg.express_session, self.cfg.express_browser):
             raise RuntimeError("вход прерван")
 
     async def stop(self) -> None:
@@ -220,6 +221,16 @@ class ExpressSide:
 
     # --- события --------------------------------------------------------
 
+    def _pass(self, message) -> bool:
+        """Одно сообщение может прийти и событием, и догрузкой пропущенного
+        (при старте они идут одновременно). False — уже отдавали."""
+        if message.id in self._passed:
+            return False
+        self._passed[message.id] = None
+        if len(self._passed) > KNOWN_MESSAGES:
+            self._passed.pop(next(iter(self._passed)))
+        return True
+
     def _remember(self, message) -> int:
         number = message_number(message.id)
         self._messages[number] = message
@@ -241,7 +252,7 @@ class ExpressSide:
                 if not self.cfg.mirror_outgoing:
                     return
             text = describe_message(message)
-            if not text:
+            if not text or not self._pass(message):
                 return
             peer = chat_peer(message.chat_id)
             chat = await self._chat(peer)
@@ -427,7 +438,7 @@ class ExpressSide:
             if message.outgoing:
                 continue
             text = describe_message(message)
-            if not text:
+            if not text or not self._pass(message):
                 continue
             out.append((int(message.ts), "" if private else (message.sender_name or "?"), text))
         out.reverse()
