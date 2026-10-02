@@ -24,6 +24,7 @@ import os
 import tempfile
 import time
 import uuid
+import zlib
 from typing import Awaitable, Callable
 
 from ..history import HistoryItem
@@ -105,6 +106,7 @@ class ExpressSide:
         self.on_message = on_message
         self.on_status = on_status
         self.on_typing = on_typing
+        self.on_read = on_read
         self.client = client              # подмена для проверок
         self._chats: dict[int, object] = {}        # peer_id -> Chat
         self._messages: dict[int, object] = {}     # номер сообщения -> Message
@@ -116,7 +118,8 @@ class ExpressSide:
     def _make_client(self):
         from .web import ExpressClient
         return ExpressClient(self.cfg.express_session, self._on_new_message,
-                             on_typing=self._on_typing, on_presence=self._on_presence)
+                             on_typing=self._on_typing, on_presence=self._on_presence,
+                             on_read=self._on_read)
 
     async def start(self) -> None:
         if self.client is None:
@@ -178,7 +181,7 @@ class ExpressSide:
                 status=(presence_name(chat.status, chat.status_changed)
                         if self._kind(chat) == "user" else "online"),
                 unread=chat.unread, pinned=chat.pinned, muted=chat.muted,
-                photo_id=0))
+                photo_id=zlib.crc32(chat.avatar.encode()) if chat.avatar else 0))
         log.debug("eXpress: получено %d чатов", len(out))
         return out
 
@@ -226,7 +229,8 @@ class ExpressSide:
 
     async def _on_new_message(self, message) -> None:
         try:
-            if message.event != "message_new" or message.edited or message.deleted:
+            if not (message.event == "message_new" or message.call) or message.edited \
+                    or message.deleted:
                 return
             if message.outgoing:
                 # Своё сообщение страница показывает раньше, чем отправка
@@ -254,7 +258,7 @@ class ExpressSide:
                       ", меня упомянули" if message.mentions_me else "")
             shown = await self.on_message(peer, sender, text, int(message.ts), 0,
                                           attach=f"{kind}:{number}" if kind else "",
-                                          mention=message.mentions_me)
+                                          mention=message.mentions_me, always=bool(message.call))
             if self.cfg.mark_read and shown and not message.outgoing:
                 await self.client.mark_read(message.chat_id)
         except Exception:
@@ -263,6 +267,12 @@ class ExpressSide:
     async def _on_typing(self, chat_id: str, active: bool) -> None:
         if self.on_typing is not None:
             await self.on_typing(chat_peer(chat_id), active)
+
+    async def _on_read(self, chat_id: str, at: int) -> None:
+        """Отметка прочтения в eXpress — время, а не номер сообщения; отправка
+        возвращает время сообщения тем же счётом, так что сравнение сходится."""
+        if self.on_read is not None:
+            await self.on_read(chat_peer(chat_id), at)
 
     async def _on_presence(self, huid: str, status: str, changed: float) -> None:
         """Присутствие приходит по человеку, а контакт у нас — личный чат с ним."""
@@ -281,7 +291,7 @@ class ExpressSide:
         if len(self._own_ids) > 500:
             self._own_ids.pop()
         self._remember(message)
-        return int(time.time() * 1000)
+        return message.sent_mark or int(time.time() * 1000)
 
     async def _sent(self, chat_id: str, sending) -> int | None:
         self._sending[chat_id] = self._sending.get(chat_id, 0) + 1
@@ -340,7 +350,12 @@ class ExpressSide:
         return await self._send_bytes(peer_id, data, name or ("note.mp4" if note else "video.3gp"))
 
     async def set_typing(self, peer_id: int, active: bool) -> None:
-        return None
+        """«Печатает» с телефона. Веб-клиент сообщает о наборе только из
+        открытого чата, так что чат при этом считается прочитанным."""
+        try:
+            await self.client.set_typing(await self._chat_id(peer_id), active)
+        except Exception:
+            log.debug("eXpress: «печатает» не передано", exc_info=True)
 
     async def set_muted(self, peer_id: int, muted: bool) -> bool:
         """Заглушает чат в eXpress или возвращает ему голос — тем же пунктом
@@ -367,7 +382,8 @@ class ExpressSide:
         except Exception as exc:
             log.warning("eXpress: история чата %s не получена: %s", peer_id, exc)
             return []
-        messages = [m for m in messages if m.event == "message_new" and not m.deleted]
+        messages = [m for m in messages
+                    if (m.event == "message_new" or m.call == "missed") and not m.deleted]
         for message in messages:
             self._remember(message)
         messages.reverse()
@@ -503,4 +519,8 @@ class ExpressSide:
         return out
 
     async def avatar(self, peer_id: int) -> bytes | None:
-        return None
+        try:
+            return await self.client.avatar(await self._chat_id(peer_id))
+        except Exception as exc:
+            log.debug("eXpress: аватарка чата %s не получена: %s", peer_id, exc)
+            return None

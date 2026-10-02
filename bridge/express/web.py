@@ -20,6 +20,7 @@ import json
 import logging
 import mimetypes
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
@@ -34,6 +35,8 @@ READY_TIMEOUT = 60          # сколько ждать связи с серве
 CHAT_TIMEOUT = 20           # сколько ждать, пока откроется чат
 DOWNLOAD_TIMEOUT = 60       # сколько ждать, пока страница скачает и расшифрует файл
 UPLOAD_TIMEOUT = 180        # сколько ждать загрузки файла на сервер
+TYPING_PULSE = 3            # как часто «нажимать клавишу», чтобы «печатает» не гасло
+TYPING_MAX = 40             # дольше не держим: телефон мог не сообщить, что перестал
 SEND_TIMEOUT = 20           # сколько ждать появления отправленного сообщения
 WATCHDOG_SECONDS = 30
 MESSAGE_INPUT = ".slate-message-input"
@@ -43,6 +46,7 @@ PENDING_ATTACHMENT = ".attachment-dialog, .input-attachment__file"
 # Упоминание в тексте — заглушка с номером, а кто упомянут, лежит рядом в
 # payload.mentions: @ — человек или «все», @@ — контакт, ## — чат, канал, тема.
 MENTION = re.compile(r"(##|@{1,2})\{mention:([0-9a-fA-F-]{36})\}")
+QUOTE_CHARS = 60            # сколько символов цитаты показывать в ответе
 MENU_READ = "Отметить как прочитанное"
 MENU_MUTE = "Выключить уведомления"
 MENU_UNMUTE = "Включить уведомления"
@@ -101,6 +105,13 @@ JS_HELPERS = """() => {
     if (!e) return null;
     const p = Object.assign({}, e.payload || {});
     delete p.bodyAstTree;
+    if (p.forward && p.forward.senderHuid) p.forward = Object.assign({senderName: window.__exName(p.forward.senderHuid)}, p.forward);
+    if (p.reply) {
+      // Цитата несёт копию исходного сообщения; автора подписываем именем.
+      const src = Object.assign({}, p.reply.payload || {});
+      delete src.bodyAstTree;
+      p.reply = Object.assign({}, p.reply, {payload: src, senderHuid: src.from || '', senderName: src.from ? window.__exName(src.from) : ''});
+    }
     return {syncId: e.syncId, groupChatId: e.groupChatId, eventType: e.eventType, sender: e.sender,
             insertedAt: e.insertedAt, editedAt: e.editedAt, deletedAt: e.deletedAt, payload: p,
             decryptionStatus: e.decryptionStatus};
@@ -111,6 +122,12 @@ JS_HELPERS = """() => {
     const pick = (x) => (x && x.name) || '';
     return pick(p.phonebookProfile) || pick(p.ctsProfile) || pick(p.rtsProfile);
   };
+  window.__exAvatar = (huid) => {
+    const p = window.__store.getState().profiles[huid];
+    if (!p) return '';
+    const pick = (x) => (x && (x.avatar || x.avatarPreview)) || '';
+    return pick(p.ctsProfile) || pick(p.rtsProfile);
+  };
   window.__exPresence = (huid) => {
     const p = window.__store.getState().presences.userPresences.get(huid);
     return p ? {status: p.status, changed: p.statusChanged || 0} : null;
@@ -120,6 +137,8 @@ JS_HELPERS = """() => {
     opponent: c.opponent ? c.opponent.userHuid : null, unread: c.unreadCounter || 0,
     muted: !!(c.chatSettings && c.chatSettings.dnd), pinned: !!(c.chatSettings && c.chatSettings.pinned), members: (c.members || []).map(m => m.userHuid),
     presence: c.opponent ? window.__exPresence(c.opponent.userHuid) : null,
+    avatar: c.avatar || c.avatarPreview || (c.opponent ? window.__exAvatar(c.opponent.userHuid) : '') || '',
+    readAt: c.readPositionAt || 0,
     left: !!c.left, membersCount: c.membersCount || (c.members || []).length, updatedAt: c.lastEventInsertedAt || c.updatedAt, last: window.__exSlim(c.lastEvent),
   });
 }"""
@@ -131,14 +150,20 @@ JS_WATCH = """() => {
   window.__exWatching = true;
   const store = window.__store;
   const key = (e) => e ? [e.syncId, e.editedAt || '', e.deletedAt || ''].join('|') : '';
-  const last = new Map();
+  const last = new Map(), read = new Map();
   let prev = store.getState().chats;
-  for (const c of prev) last.set(c.groupChatId, key(c.lastEvent));
+  for (const c of prev) { last.set(c.groupChatId, key(c.lastEvent)); read.set(c.groupChatId, c.readPositionAt || 0); }
   store.subscribe(() => {
     const chats = store.getState().chats;
     if (chats === prev) return;
     prev = chats;
     for (const c of chats) {
+      // До какого времени чат прочитан собеседниками.
+      const at = c.readPositionAt || 0;
+      if (at > (read.get(c.groupChatId) || 0)) {
+        if (read.has(c.groupChatId)) window.__expressEmit(JSON.stringify({watch: 'read', chat: c.groupChatId, at}));
+        read.set(c.groupChatId, at);
+      }
       const k = key(c.lastEvent);
       if (last.get(c.groupChatId) === k) continue;
       last.set(c.groupChatId, k);
@@ -160,6 +185,18 @@ JS_WATCH = """() => {
     for (const chat of now) if (!typing.has(chat)) window.__expressEmit(JSON.stringify({watch: 'typing', chat, active: true}));
     for (const chat of typing) if (!now.has(chat)) window.__expressEmit(JSON.stringify({watch: 'typing', chat, active: false}));
     typing = now;
+  });
+  // Входящий вызов: страница переходит в состояние «offer», а в каком он
+  // чате, знает запись о звонке с тем же номером.
+  let ringing = null;
+  store.subscribe(() => {
+    const st = store.getState(), g = st.groupCall;
+    if (!(g.isIncomingCall && g.status === 'offer' && g.callId)) { if (g.status === 'idle') ringing = null; return; }
+    if (ringing === g.callId) return;
+    ringing = g.callId;
+    const call = st.voexCalls.find(v => (v.callId || v.id) === g.callId) || {};
+    const chat = call.groupChatId || call.chatId || g.parentGroupChatId;
+    if (chat) window.__expressEmit(JSON.stringify({watch: 'call', chat, sender: g.callOfferSender || '', callId: g.callId}));
   });
   // Присутствие: Map человек -> {status, statusChanged}.
   const seen = new Map();
@@ -196,6 +233,19 @@ JS_TAG_ENTRY = """(id) => {
   return false;
 }"""
 
+# Картинка аватарки из строки чата: страница уже загрузила её со своими
+# правами, забираем те же байты.
+JS_AVATAR = """async (id) => {
+  const img = document.querySelector('[data-ex-chat="' + id + '"] .chat-avatar img');
+  if (!img || !img.src) return null;
+  const response = await fetch(img.src, {credentials: 'include'});
+  if (!response.ok) return null;
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  let text = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(text);
+}"""
+
 JS_STATUS = """() => {
   const s = window.__store.getState();
   return {alive: !!s.ui.isConnectionAlive, huid: s.user.huid, name: s.user.name, path: s.router.location.pathname};
@@ -230,6 +280,8 @@ class Message:
     mentions_me: bool = False   # упомянули меня лично или всех участников
     mentions: list[str] = field(default_factory=list)   # huid упомянутых людей
     attachment: Attachment | None = None
+    call: str = ""              # incoming — мне звонят, missed — пропущенный; иначе пусто
+    sent_mark: int = 0          # время сообщения в мс, как его держит страница (для on_read)
     raw: dict = field(default_factory=dict, repr=False)
 
 
@@ -244,6 +296,8 @@ class Chat:
     pinned: bool
     members: list[str]
     left: bool
+    avatar: str = ""            # ссылка на аватарку как её знает страница; пусто — нет
+    read_at: int = 0            # до какого времени (мс) чат прочитан собеседниками
     status: str = ""            # online / offline собеседника личного чата; пусто — неизвестно
     status_changed: float = 0   # когда статус сменился, секунды Unix
     members_count: int = 0
@@ -260,11 +314,15 @@ class ExpressClient:
                  on_message: Callable[[Message], Awaitable[None]] | None = None,
                  headless: bool = True,
                  on_typing: Callable[[str, bool], Awaitable[None]] | None = None,
-                 on_presence: Callable[[str, str, float], Awaitable[None]] | None = None):
+                 on_presence: Callable[[str, str, float], Awaitable[None]] | None = None,
+                 on_read: Callable[[str, int], Awaitable[None]] | None = None):
         self.profile_dir = profile_dir
         self.on_message = on_message
         self.on_typing = on_typing          # (чат, печатают ли)
         self.on_presence = on_presence      # (huid, online/offline, когда сменился)
+        # (чат, время в мс): собеседники прочитали всё до этого времени. Счёт
+        # тот же, что у Message.sent_mark отправленного сообщения.
+        self.on_read = on_read
         self.headless = headless
         self.huid = ""
         self.name = ""
@@ -273,6 +331,7 @@ class ExpressClient:
         self._page = None
         self._lock = asyncio.Lock()
         self._watchdog: asyncio.Task | None = None
+        self._typing: asyncio.Task | None = None
         self._tasks: set[asyncio.Task] = set()
 
     # --- запуск и остановка ---
@@ -290,6 +349,7 @@ class ExpressClient:
         self._watchdog = asyncio.create_task(self._watch())
 
     async def stop(self) -> None:
+        self._stop_typing()
         if self._watchdog:
             self._watchdog.cancel()
         if self._ctx:
@@ -369,6 +429,21 @@ class ExpressClient:
             return ("#" if match.group(1) == "##" else "@") + name
 
         text = MENTION.sub(named, text)
+        forward = payload.get("forward") or {}
+        if forward:
+            origin = forward.get("senderName") or ""
+            source = forward.get("sourceName") or ""
+            if source and source != origin:
+                origin = f"{origin} из «{source}»" if origin else f"«{source}»"
+            text = f"[переслано от {origin}] {text}" if origin else f"[переслано] {text}"
+        reply = payload.get("reply") or {}
+        quoted = " ".join((reply.get("quote") or (reply.get("payload") or {}).get("body")
+                           or "").split())
+        if quoted:
+            if len(quoted) > QUOTE_CHARS:
+                quoted = quoted[:QUOTE_CHARS].rstrip() + "…"
+            who = "мне" if reply.get("senderHuid") == self.huid else reply.get("senderName") or ""
+            text = f"[в ответ {who}: {quoted}] {text}" if who else f"[в ответ на: {quoted}] {text}"
         attachment = None
         file = payload.get("payload") or {}
         sticker = payload.get("sticker") or {}
@@ -381,6 +456,14 @@ class ExpressClient:
         elif sticker.get("link"):
             attachment = Attachment(kind="sticker", name="sticker.png", size=0, mime="image/png",
                                     url=sticker["link"])
+        # Звонок — не сообщение, а событие чата: начало (мне звонят) и конец
+        # (со списком тех, кто не ответил).
+        call = ""
+        event = raw.get("eventType") or ""
+        if event == "call_start" and sender != self.huid:
+            call, text = "incoming", "[входящий звонок]"
+        elif event == "call_end" and self.huid in (payload.get("missedHuids") or []):
+            call, text = "missed", "[пропущенный звонок]"
         return Message(
             chat_id=raw.get("groupChatId") or payload.get("groupChatId") or "",
             id=raw.get("syncId") or "",
@@ -396,6 +479,8 @@ class ExpressClient:
             mentions_me=mentions_me,
             mentions=mentions,
             attachment=attachment,
+            call=call,
+            sent_mark=int(raw.get("insertedAt") or 0),
             raw=raw,
         )
 
@@ -404,6 +489,13 @@ class ExpressClient:
         watch = raw.get("watch")
         if watch == "typing":
             job = self.on_typing and self.on_typing(raw["chat"], bool(raw["active"]))
+        elif watch == "call":
+            # Вызов оформляем как событие чата — тем же видом, что остальные.
+            job = self.on_message and self._deliver({
+                "syncId": raw["callId"], "groupChatId": raw["chat"], "eventType": "call_start",
+                "sender": raw.get("sender") or "", "insertedAt": int(time.time() * 1000), "payload": {}})
+        elif watch == "read":
+            job = self.on_read and self.on_read(raw["chat"], int(raw["at"]))
         elif watch == "presence":
             job = self.on_presence and self.on_presence(raw["huid"], raw.get("status") or "",
                                                         (raw.get("changed") or 0) / 1000)
@@ -432,14 +524,19 @@ class ExpressClient:
 
     async def chats(self) -> list[Chat]:
         rows = await self._page.evaluate(
-            "() => window.__store.getState().chats.map(window.__exChat)")
+            """() => { const s = window.__store.getState(), shown = new Set(s.indexes.visibleChats);
+                 // Только то, что стоит в списке чатов: под каждый звонок eXpress
+                 // заводит служебный чат (voex_call), в список он не попадает.
+                 return s.chats.filter(c => shown.has(c.groupChatId) && c.chatType !== 'voex_call')
+                               .map(window.__exChat); }""")
         result = []
         for row in rows:
             last = self._message(row["last"]) if row["last"] else None
             result.append(Chat(id=row["id"], type=row["type"], title=row["name"], opponent=row["opponent"],
                                unread=row["unread"], muted=row["muted"], pinned=row["pinned"],
                                members=row["members"],
-                               left=row["left"], status=(row["presence"] or {}).get("status") or "",
+                               left=row["left"], avatar=row["avatar"], read_at=int(row["readAt"]),
+                               status=(row["presence"] or {}).get("status") or "",
                                status_changed=((row["presence"] or {}).get("changed") or 0) / 1000,
                                members_count=row["membersCount"], updated=(row["updatedAt"] or 0) / 1000, last=last))
         result.sort(key=lambda c: c.updated, reverse=True)
@@ -535,6 +632,15 @@ class ExpressClient:
                     return True
             return False
 
+    async def avatar(self, chat_id: str) -> bytes | None:
+        """Аватарка чата (у личного — собеседника): та картинка, что стоит
+        в строке чата в списке; None — аватарки нет или строки нет на экране."""
+        async with self._lock:
+            if not await self._page.evaluate(JS_TAG_ENTRY, chat_id):
+                return None
+            data = await self._page.evaluate(JS_AVATAR, chat_id)
+        return base64.b64decode(data) if data else None
+
     # --- вложения ---
 
     async def _blob(self, size: int, after: int, timeout: float) -> bytes | None:
@@ -590,6 +696,58 @@ class ExpressClient:
             finally:
                 await self._close()
 
+    # --- «печатает» -----------------------------------------------------
+
+    async def _is_open(self, chat_id: str) -> bool:
+        return await self._page.evaluate(
+            "(id) => window.__store.getState().router.location.pathname.endsWith(id)", chat_id)
+
+    async def _clear_input(self) -> None:
+        page = self._page
+        await page.locator(MESSAGE_INPUT).click()
+        await page.keyboard.press("Control+A")
+        await page.keyboard.press("Backspace")
+
+    def _stop_typing(self) -> None:
+        if self._typing is not None:
+            self._typing.cancel()
+            self._typing = None
+
+    async def set_typing(self, chat_id: str, active: bool) -> None:
+        """Показать собеседникам «печатает». Веб-клиент сообщает о наборе,
+        только когда в поле ввода открытого чата появляется текст, поэтому
+        чат открывается (и считается прочитанным), а в поле раз в несколько
+        секунд добавляется точка; перед отправкой и по окончании поле
+        очищается."""
+        self._stop_typing()
+        if active:
+            self._typing = asyncio.create_task(self._pulse_typing(chat_id))
+            return
+        async with self._lock:
+            try:
+                if await self._is_open(chat_id):
+                    await self._clear_input()
+            finally:
+                await self._close()
+
+    async def _pulse_typing(self, chat_id: str) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + TYPING_MAX
+        try:
+            while loop.time() < deadline:
+                async with self._lock:
+                    if not await self._is_open(chat_id):
+                        await self._open(chat_id)
+                    await self._page.locator(MESSAGE_INPUT).click()
+                    await self._page.keyboard.type(".")
+                await asyncio.sleep(TYPING_PULSE)
+            async with self._lock:
+                if await self._is_open(chat_id):
+                    await self._clear_input()
+                await self._close()
+        except PlaywrightError as exc:
+            log.debug("«печатает» в eXpress не передано: %s", exc)
+
     # --- отправка ---
 
     async def _type(self, text: str) -> None:
@@ -617,10 +775,12 @@ class ExpressClient:
         text = text.strip("\n")
         if not text:
             return None
+        self._stop_typing()
         async with self._lock:
             try:
                 await self._open(chat_id)
                 before = {m.id for m in await self._loaded(chat_id)}
+                await self._clear_input()       # остатки «печатает» и черновик
                 await self._type(text)
                 await self._page.keyboard.press("Enter")
                 return await self._sent(chat_id, before, SEND_TIMEOUT)
@@ -638,11 +798,13 @@ class ExpressClient:
             field = "video-input"
         else:
             field = "document-input"
+        self._stop_typing()
         async with self._lock:
             try:
                 await self._open(chat_id)
                 page = self._page
                 before = {m.id for m in await self._loaded(chat_id)}
+                await self._clear_input()
                 await page.locator(f'input[id^="{field}"]').set_input_files(path)
                 # Картинка открывает экран предпросмотра, документ встаёт в поле ввода.
                 await page.wait_for_selector(PENDING_ATTACHMENT, timeout=CHAT_TIMEOUT * 1000)

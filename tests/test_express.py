@@ -53,6 +53,7 @@ class FakeExpress:
         self.on_message = None
         self.sent: list = []
         self.read: list = []
+        self.typed: list = []
         self.muted: dict[str, bool] = {GROUP: True}
         self.rows: dict[str, list[dict]] = {
             PERSONAL: [
@@ -78,6 +79,7 @@ class FakeExpress:
             rows = self.rows[chat_id]
             return Chat(id=chat_id, type=kind, title=title, opponent=opponent, unread=unread,
                         status="offline" if opponent else "",
+                        avatar="https://x/a.png" if chat_id == GROUP else "",
                         muted=self.muted.get(chat_id, False), pinned=False, members=[ME, BOSS],
                         left=False, members_count=2, updated=rows[-1]["insertedAt"] / 1000,
                         last=self.message(rows[-1]))
@@ -108,6 +110,12 @@ class FakeExpress:
     async def set_muted(self, chat_id, muted):
         self.muted[chat_id] = muted
         return True
+
+    async def set_typing(self, chat_id, active):
+        self.typed.append((chat_id, active))
+
+    async def avatar(self, chat_id):
+        return b"png" if chat_id == GROUP else None
 
 
 def make_cfg(work: str) -> Config:
@@ -153,6 +161,28 @@ def run_pure() -> None:
                                   **mention("chat", "", "Работа")))
     assert chat.text == "см. #Работа" and not chat.mentions_me
 
+    # Пересылка и ответ с цитатой — пометкой перед текстом.
+    forwarded = fake.message(raw_event(11, GROUP, BOSS, "смотри", forward={
+        "senderHuid": BOSS, "senderName": "Шеф", "sourceName": "Дежурные"}))
+    assert forwarded.text == "[переслано от Шеф из «Дежурные»] смотри", forwarded.text
+    answer = fake.message(raw_event(12, GROUP, BOSS, "да", reply={
+        "senderHuid": ME, "senderName": "Вася", "quote": None, "payload": {"body": "идём  обедать?"}}))
+    assert answer.text == "[в ответ мне: идём обедать?] да", answer.text
+    long_quote = fake.message(raw_event(13, GROUP, ME, "ок", reply={
+        "senderHuid": BOSS, "senderName": "Шеф", "payload": {"body": "я" * 100}}))
+    assert long_quote.text == "[в ответ Шеф: " + "я" * 60 + "…] ок"
+
+    # Звонки: вызов и пропущенный — текстом; чужой или отвеченный — нет.
+    ring = raw_event(14, PERSONAL, BOSS)
+    ring["eventType"] = "call_start"
+    assert fake.message(ring).call == "incoming" and fake.message(ring).text == "[входящий звонок]"
+    ended = raw_event(15, PERSONAL, BOSS, missedHuids=[ME])
+    ended["eventType"] = "call_end"
+    assert fake.message(ended).call == "missed" and fake.message(ended).text == "[пропущенный звонок]"
+    answered = raw_event(16, PERSONAL, BOSS, missedHuids=[])
+    answered["eventType"] = "call_end"
+    assert fake.message(answered).call == "" and fake.message(answered).text == ""
+
     # Упоминание идёт как личное: мьют ему не мешает, тихие статусы — мешают.
     assert not policy.allows(policy.UNMUTED, "chat", False, True)
     assert policy.allows(policy.UNMUTED, "chat", False, True, mention=True)
@@ -173,10 +203,14 @@ async def run_side() -> None:
     cfg = make_cfg(work)
     got: list = []
 
-    async def on_message(peer, sender, text, ts=0, topic=0, attach="", mention=False):
+    async def on_message(peer, sender, text, ts=0, topic=0, attach="", mention=False,
+                         always=False):
         got.append((peer, sender, text, attach, mention))
+        if always:
+            urgent.append(text)
         return True
 
+    urgent: list = []
     fake = FakeExpress()
     side = ExpressSide(cfg, on_message, client=fake)
     fake.on_message = side._on_new_message
@@ -210,8 +244,9 @@ async def run_side() -> None:
         ("", "123", True), ("photo", "Фото сервера", False), ("voice", "", False)]
     assert await rows[1]["fetch"]() == b"xxxxx" and rows[2]["seconds"] == 11
 
-    # Отправка: своё сообщение эхом не возвращается.
-    assert await side.send(personal, "привет")
+    # Отправка: своё сообщение эхом не возвращается; возвращается время
+    # сообщения — тем же счётом потом приходит отметка прочтения.
+    assert await side.send(personal, "привет") == NOW_MS
     assert fake.sent == [(PERSONAL, "привет")] and got == [], got
     await side.send_photo(group, b"\xff\xd8\xff", "подпись")
     assert fake.sent[-1] == (GROUP, "camera.jpg", b"\xff\xd8\xff", "подпись", False)
@@ -248,6 +283,30 @@ async def run_side() -> None:
     assert seen == [("typing", group, True), ("typing", group, False), ("status", personal, "online"),
                     ("status", personal, "away"), ("status", personal, "offline")], seen
     assert [d.status for d in await side.dialogs()] == ["online", "offline"], "у группы статуса нет"
+
+    # Прочтение собеседником, «печатает» с телефона, аватарка.
+    side.on_read = lambda peer, mark: seen.append(("read", peer, mark)) or asyncio.sleep(0)
+    await side._on_read(PERSONAL, NOW_MS + 5)
+    assert seen[-1] == ("read", personal, NOW_MS + 5)
+    await side.set_typing(group, True)
+    await side.set_typing(group, False)
+    assert fake.typed == [(GROUP, True), (GROUP, False)]
+    photo_ids = {d.title: d.photo_id for d in await side.dialogs()}
+    assert photo_ids["Работа"] and not photo_ids["Шеф"], photo_ids
+    assert await side.avatar(group) == b"png" and await side.avatar(personal) is None
+
+    # Звонок доходит с признаком «всегда»; отвеченный — не событие.
+    ring = raw_event(50, PERSONAL, BOSS)
+    ring["eventType"] = "call_start"
+    await side._on_new_message(fake.message(ring))
+    ended = raw_event(51, PERSONAL, BOSS, missedHuids=[ME])
+    ended["eventType"] = "call_end"
+    await side._on_new_message(fake.message(ended))
+    done = raw_event(52, PERSONAL, BOSS, missedHuids=[])
+    done["eventType"] = "call_end"
+    await side._on_new_message(fake.message(done))
+    assert urgent == ["[входящий звонок]", "[пропущенный звонок]"], urgent
+    assert [i.text for i in await side.history(personal, None, None, 50)][-1] == "[голосовое]"
 
     # Мьют с телефона.
     assert await side.set_muted(personal, True) and fake.muted[PERSONAL]
@@ -301,6 +360,14 @@ async def run_bridge() -> None:
                                                  **mention("all", "", "all"))))
     uin = titles["Работа"].uin
     assert queued == [(uin, "Шеф: ответь @Вася"), (uin, "Шеф: все сюда @all")], queued
+    # Звонок в заглушённую группу доходит при любом статусе телефона.
+    bridge.mode = policy.INVISIBLE
+    ring = raw_event(35, GROUP, BOSS)
+    ring["eventType"] = "call_start"
+    await fake.on_message(fake.message(ring))
+    assert queued[-1] == (uin, "Шеф: [входящий звонок]"), queued
+    queued.pop()
+    bridge.mode = policy.UNMUTED
     # Чужое упоминание мьют не пробивает; выключенная настройка — тоже.
     await fake.on_message(fake.message(raw_event(33, GROUP, BOSS, body, **mention("user", BOSS, "Шеф"))))
     cfg.mentions_through = False

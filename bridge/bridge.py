@@ -89,7 +89,7 @@ class Bridge:
                     ".venv/bin/python -m pip install playwright && "
                     ".venv/bin/playwright install chromium") from exc
             self.express = ExpressSide(cfg, self.on_telegram_message, self.on_telegram_status,
-                                       self.on_telegram_typing)
+                                       self.on_telegram_typing, self.on_telegram_read)
         self.oscar = OscarServer(cfg, self.storage, self.on_phone_message,
                                  self.roster, self.status_of, self.chat_info,
                                  self.search_chats, self.verdict_for,
@@ -922,7 +922,7 @@ class Bridge:
 
     async def on_telegram_message(self, peer_id: int, sender: str, text: str,
                                   ts: int = 0, topic_id: int = 0, attach: str = "",
-                                  mention: bool = False) -> bool:
+                                  mention: bool = False, always: bool = False) -> bool:
         """Возвращает True, если сообщение ушло телефону (или встало в очередь).
 
         По этому Telegram-сторона решает, помечать ли его прочитанным:
@@ -973,9 +973,10 @@ class Bridge:
         # Статус в Jimm решает, что доставлять, а что придержать или пропустить.
         net = self.network_of(peer_id)
         mention = mention and self.cfg.mentions_through
-        if contact is not None and not policy.allows(self.mode, contact.kind,
-                                                     bool(contact.favourite),
-                                                     bool(contact.muted), mention):
+        # Звонок приходит всегда: ни мьют, ни статус его не останавливают.
+        if contact is not None and not always and not policy.allows(
+                self.mode, contact.kind, bool(contact.favourite),
+                bool(contact.muted), mention):
             why = (f"заглушён в {net}" if contact.muted
                    else f"режим «{policy.MODE_NAMES[self.mode]}»")
             # Отсеянных бывает много (заглушённые каналы шумят), поэтому
@@ -992,7 +993,7 @@ class Bridge:
                 self.storage.note_delivered(peer_id, ts, topic_id)
             return False
         log.info("из %s: %s → в очередь телефону, %d симв.%s%s", net, name, len(text),
-                 ", упоминание" if mention else "",
+                 ", звонок" if always else ", упоминание" if mention else "",
                  "" if self.oscar.online else " (телефон не в сети)")
         log.debug("из %s: %s: %s", net, name, text[:300])
         await self.oscar.deliver(uin, text, ts=ts, attach=attach)
