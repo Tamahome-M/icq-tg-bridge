@@ -63,7 +63,8 @@ def status_name(status: int) -> str:
     return STATUS_NAMES.get(status, f"0x{status:04x}")
 
 
-def allows(mode: str, kind: str, favourite: bool, muted: bool = False) -> bool:
+def allows(mode: str, kind: str, favourite: bool, muted: bool = False,
+           mention: bool = False) -> bool:
     """Пропускать ли сообщение из чата такого рода при таком режиме.
 
     Про то, что важно, а что нет, мост не гадает: он смотрит на настройки
@@ -72,8 +73,15 @@ def allows(mode: str, kind: str, favourite: bool, muted: bool = False) -> bool:
     Два самых тихих статуса — обратный случай: в «недоступен» и «невидимый»
     решает пометка «избранное», её ставят руками и ради таких случаев, поэтому
     мьют её не отменяет. «Невидимый» вдобавок отсекает всё, кроме людей.
+
+    Упоминание (меня лично или всех участников) — это обращение ко мне:
+    фильтр пропускает его наравне с сообщением из личного чата, так что
+    мьют его не останавливает, а два самых тихих статуса по-прежнему
+    требуют «избранного». Приходит оно в свой же чат.
     """
     personal = kind in ("user", "bot")
+    if mention:
+        personal, muted = True, False
     if mode == ALL:
         return True
     if mode == INVISIBLE:
