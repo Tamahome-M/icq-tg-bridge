@@ -88,7 +88,8 @@ class Bridge:
                     "Для eXpress нужны playwright и Chromium: "
                     ".venv/bin/python -m pip install playwright && "
                     ".venv/bin/playwright install chromium") from exc
-            self.express = ExpressSide(cfg, self.on_telegram_message)
+            self.express = ExpressSide(cfg, self.on_telegram_message, self.on_telegram_status,
+                                       self.on_telegram_typing)
         self.oscar = OscarServer(cfg, self.storage, self.on_phone_message,
                                  self.roster, self.status_of, self.chat_info,
                                  self.search_chats, self.verdict_for,

@@ -27,7 +27,7 @@ import uuid
 from typing import Awaitable, Callable
 
 from ..history import HistoryItem
-from ..tg.client import Dialog
+from ..tg.client import Dialog, RECENTLY_SECONDS
 
 log = logging.getLogger("express")
 
@@ -56,6 +56,16 @@ def message_number(sync_id: str) -> int:
 
 def is_express_peer(peer_id: int) -> bool:
     return 0 <= int(peer_id) - EXPRESS_BASE < EXPRESS_SPAN
+
+
+def presence_name(status: str, changed: float) -> str:
+    """«online» / «away» / «offline»: недавно ушедший — «отошёл», как у
+    остальных сетей; без данных — «не в сети»."""
+    if status == "online":
+        return "online"
+    if changed and time.time() - changed < RECENTLY_SECONDS:
+        return "away"
+    return "offline"
 
 
 def media_kind(message) -> str:
@@ -93,6 +103,8 @@ class ExpressSide:
                  client=None):
         self.cfg = cfg
         self.on_message = on_message
+        self.on_status = on_status
+        self.on_typing = on_typing
         self.client = client              # подмена для проверок
         self._chats: dict[int, object] = {}        # peer_id -> Chat
         self._messages: dict[int, object] = {}     # номер сообщения -> Message
@@ -103,7 +115,8 @@ class ExpressSide:
 
     def _make_client(self):
         from .web import ExpressClient
-        return ExpressClient(self.cfg.express_session, self._on_new_message)
+        return ExpressClient(self.cfg.express_session, self._on_new_message,
+                             on_typing=self._on_typing, on_presence=self._on_presence)
 
     async def start(self) -> None:
         if self.client is None:
@@ -161,7 +174,10 @@ class ExpressSide:
             out.append(Dialog(
                 chat_peer(chat.id), self._kind(chat), self._title(chat)[:self.cfg.alias_max_chars],
                 self.cfg.express_group, position,
-                status="online", unread=chat.unread, pinned=chat.pinned, muted=chat.muted,
+                # У групп и каналов статуса нет; у человека — по присутствию.
+                status=(presence_name(chat.status, chat.status_changed)
+                        if self._kind(chat) == "user" else "online"),
+                unread=chat.unread, pinned=chat.pinned, muted=chat.muted,
                 photo_id=0))
         log.debug("eXpress: получено %d чатов", len(out))
         return out
@@ -243,6 +259,19 @@ class ExpressSide:
                 await self.client.mark_read(message.chat_id)
         except Exception:
             log.exception("ошибка обработки входящего сообщения eXpress")
+
+    async def _on_typing(self, chat_id: str, active: bool) -> None:
+        if self.on_typing is not None:
+            await self.on_typing(chat_peer(chat_id), active)
+
+    async def _on_presence(self, huid: str, status: str, changed: float) -> None:
+        """Присутствие приходит по человеку, а контакт у нас — личный чат с ним."""
+        if self.on_status is None:
+            return
+        for peer, chat in self._chats.items():
+            if chat.opponent == huid and self._kind(chat) == "user":
+                chat.status, chat.status_changed = status, changed
+                await self.on_status(peer, presence_name(status, changed))
 
     # --- сообщения ------------------------------------------------------
 

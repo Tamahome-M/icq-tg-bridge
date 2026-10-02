@@ -6,6 +6,7 @@ import asyncio
 import os
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -76,6 +77,7 @@ class FakeExpress:
         def chat(chat_id, kind, title, opponent, unread):
             rows = self.rows[chat_id]
             return Chat(id=chat_id, type=kind, title=title, opponent=opponent, unread=unread,
+                        status="offline" if opponent else "",
                         muted=self.muted.get(chat_id, False), pinned=False, members=[ME, BOSS],
                         left=False, members_count=2, updated=rows[-1]["insertedAt"] / 1000,
                         last=self.message(rows[-1]))
@@ -231,6 +233,21 @@ async def run_side() -> None:
     cfg.mirror_outgoing = True
     await side._on_new_message(fake.message(raw_event(24, PERSONAL, ME, "с ноутбука")))
     assert got[-1] == (personal, "Я", "с ноутбука", "", False)
+
+    # «Печатает» и присутствие собеседника доходят до моста по номеру чата.
+    seen: list = []
+
+    async def on_status(peer, status): seen.append(("status", peer, status))
+    async def on_typing(peer, active): seen.append(("typing", peer, active))
+    side.on_status, side.on_typing = on_status, on_typing
+    await side._on_typing(GROUP, True)
+    await side._on_typing(GROUP, False)
+    await side._on_presence(BOSS, "online", NOW_MS / 1000)
+    await side._on_presence(BOSS, "offline", time.time() - 30)
+    await side._on_presence(BOSS, "offline", time.time() - 86400)
+    assert seen == [("typing", group, True), ("typing", group, False), ("status", personal, "online"),
+                    ("status", personal, "away"), ("status", personal, "offline")], seen
+    assert [d.status for d in await side.dialogs()] == ["online", "offline"], "у группы статуса нет"
 
     # Мьют с телефона.
     assert await side.set_muted(personal, True) and fake.muted[PERSONAL]

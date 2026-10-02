@@ -111,10 +111,15 @@ JS_HELPERS = """() => {
     const pick = (x) => (x && x.name) || '';
     return pick(p.phonebookProfile) || pick(p.ctsProfile) || pick(p.rtsProfile);
   };
+  window.__exPresence = (huid) => {
+    const p = window.__store.getState().presences.userPresences.get(huid);
+    return p ? {status: p.status, changed: p.statusChanged || 0} : null;
+  };
   window.__exChat = (c) => ({
     id: c.groupChatId, type: c.chatType, name: c.name || (c.opponent ? window.__exName(c.opponent.userHuid) : ''),
     opponent: c.opponent ? c.opponent.userHuid : null, unread: c.unreadCounter || 0,
     muted: !!(c.chatSettings && c.chatSettings.dnd), pinned: !!(c.chatSettings && c.chatSettings.pinned), members: (c.members || []).map(m => m.userHuid),
+    presence: c.opponent ? window.__exPresence(c.opponent.userHuid) : null,
     left: !!c.left, membersCount: c.membersCount || (c.members || []).length, updatedAt: c.lastEventInsertedAt || c.updatedAt, last: window.__exSlim(c.lastEvent),
   });
 }"""
@@ -140,6 +145,38 @@ JS_WATCH = """() => {
       if (c.lastEvent) window.__expressEmit(JSON.stringify(window.__exSlim(c.lastEvent)));
     }
   });
+  // «Печатает»: Map чат -> Map человек -> чем занят. Себя не считаем.
+  const typingNow = () => {
+    const me = store.getState().user.huid, out = new Set();
+    for (const [chat, who] of store.getState().typing)
+      for (const huid of who.keys()) if (huid !== me) out.add(chat);
+    return out;
+  };
+  let typingMap = store.getState().typing, typing = typingNow();
+  store.subscribe(() => {
+    if (store.getState().typing === typingMap) return;
+    typingMap = store.getState().typing;
+    const now = typingNow();
+    for (const chat of now) if (!typing.has(chat)) window.__expressEmit(JSON.stringify({watch: 'typing', chat, active: true}));
+    for (const chat of typing) if (!now.has(chat)) window.__expressEmit(JSON.stringify({watch: 'typing', chat, active: false}));
+    typing = now;
+  });
+  // Присутствие: Map человек -> {status, statusChanged}.
+  const seen = new Map();
+  let presences = null;
+  const presence = () => {
+    const map = store.getState().presences.userPresences;
+    if (map === presences) return;
+    presences = map;
+    for (const [huid, p] of map) {
+      const k = p.status + '|' + p.statusChanged;
+      if (seen.get(huid) === k) continue;
+      seen.set(huid, k);
+      window.__expressEmit(JSON.stringify({watch: 'presence', huid, status: p.status, changed: p.statusChanged || 0}));
+    }
+  };
+  presence();
+  store.subscribe(presence);
 }"""
 
 # Помечает строку чата в списке слева, чтобы по ней можно было щёлкнуть:
@@ -207,9 +244,11 @@ class Chat:
     pinned: bool
     members: list[str]
     left: bool
-    members_count: int
-    updated: float
-    last: Message | None
+    status: str = ""            # online / offline собеседника личного чата; пусто — неизвестно
+    status_changed: float = 0   # когда статус сменился, секунды Unix
+    members_count: int = 0
+    updated: float = 0
+    last: Message | None = None
 
 
 class NotLoggedIn(RuntimeError):
@@ -219,9 +258,13 @@ class NotLoggedIn(RuntimeError):
 class ExpressClient:
     def __init__(self, profile_dir: str = "session",
                  on_message: Callable[[Message], Awaitable[None]] | None = None,
-                 headless: bool = True):
+                 headless: bool = True,
+                 on_typing: Callable[[str, bool], Awaitable[None]] | None = None,
+                 on_presence: Callable[[str, str, float], Awaitable[None]] | None = None):
         self.profile_dir = profile_dir
         self.on_message = on_message
+        self.on_typing = on_typing          # (чат, печатают ли)
+        self.on_presence = on_presence      # (huid, online/offline, когда сменился)
         self.headless = headless
         self.huid = ""
         self.name = ""
@@ -357,18 +400,30 @@ class ExpressClient:
         )
 
     def _on_emit(self, _source, data: str) -> None:
-        if not self.on_message:
+        raw = json.loads(data)
+        watch = raw.get("watch")
+        if watch == "typing":
+            job = self.on_typing and self.on_typing(raw["chat"], bool(raw["active"]))
+        elif watch == "presence":
+            job = self.on_presence and self.on_presence(raw["huid"], raw.get("status") or "",
+                                                        (raw.get("changed") or 0) / 1000)
+        else:
+            job = self.on_message and self._deliver(raw)
+        if not job:
             return
-        task = asyncio.create_task(self._deliver(json.loads(data)))
+        task = asyncio.create_task(self._guard(job))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _deliver(self, raw: dict) -> None:
+    async def _guard(self, job) -> None:
         try:
-            name = await self._page.evaluate("(h) => window.__exName(h)", raw.get("sender") or "")
-            await self.on_message(self._message(raw, {raw.get("sender") or "": name}))
+            await job
         except Exception:
-            log.exception("обработчик сообщения eXpress упал")
+            log.exception("обработчик события eXpress упал")
+
+    async def _deliver(self, raw: dict) -> None:
+        name = await self._page.evaluate("(h) => window.__exName(h)", raw.get("sender") or "")
+        await self.on_message(self._message(raw, {raw.get("sender") or "": name}))
 
     # --- чтение ---
 
@@ -384,7 +439,9 @@ class ExpressClient:
             result.append(Chat(id=row["id"], type=row["type"], title=row["name"], opponent=row["opponent"],
                                unread=row["unread"], muted=row["muted"], pinned=row["pinned"],
                                members=row["members"],
-                               left=row["left"], members_count=row["membersCount"], updated=(row["updatedAt"] or 0) / 1000, last=last))
+                               left=row["left"], status=(row["presence"] or {}).get("status") or "",
+                               status_changed=((row["presence"] or {}).get("changed") or 0) / 1000,
+                               members_count=row["membersCount"], updated=(row["updatedAt"] or 0) / 1000, last=last))
         result.sort(key=lambda c: c.updated, reverse=True)
         return result
 
