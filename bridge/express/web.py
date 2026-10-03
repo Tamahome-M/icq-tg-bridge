@@ -139,6 +139,10 @@ JS_HELPERS = """() => {
     presence: c.opponent ? window.__exPresence(c.opponent.userHuid) : null,
     avatar: c.avatar || c.avatarPreview || (c.opponent ? window.__exAvatar(c.opponent.userHuid) : '') || '',
     readAt: c.readPositionAt || 0,
+    // Обсуждение (тред) — чат с родителем; его номер равен номеру сообщения,
+    // под которым оно начато, а само сообщение лежит в starterMessage.
+    parent: c.parentChatId || null,
+    starter: (c.starterMessage && c.starterMessage.payload && c.starterMessage.payload.body) || '',
     left: !!c.left, membersCount: c.membersCount || (c.members || []).length, updatedAt: c.lastEventInsertedAt || c.updatedAt, last: window.__exSlim(c.lastEvent),
   });
 }"""
@@ -302,6 +306,8 @@ class Chat:
     pinned: bool
     members: list[str]
     left: bool
+    parent: str | None = None   # у обсуждения (type == "thread") — чат, в котором оно начато
+    starter: str = ""           # текст сообщения, под которым начато обсуждение
     avatar: str = ""            # ссылка на аватарку как её знает страница; пусто — нет
     read_at: int = 0            # до какого времени (мс) чат прочитан собеседниками
     status: str = ""            # online / offline собеседника личного чата; пусто — неизвестно
@@ -568,7 +574,8 @@ class ExpressClient:
             result.append(Chat(id=row["id"], type=row["type"], title=row["name"], opponent=row["opponent"],
                                unread=row["unread"], muted=row["muted"], pinned=row["pinned"],
                                members=row["members"],
-                               left=row["left"], avatar=row["avatar"], read_at=int(row["readAt"]),
+                               left=row["left"], parent=row["parent"], starter=row["starter"],
+                               avatar=row["avatar"], read_at=int(row["readAt"]),
                                status=(row["presence"] or {}).get("status") or "",
                                status_changed=((row["presence"] or {}).get("changed") or 0) / 1000,
                                members_count=row["membersCount"], updated=(row["updatedAt"] or 0) / 1000, last=last))
