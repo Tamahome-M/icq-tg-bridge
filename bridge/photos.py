@@ -62,7 +62,13 @@ def shrink(raw: bytes, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT,
         Image.MAX_IMAGE_PIXELS = MAX_SOURCE_PIXELS
         image = Image.open(io.BytesIO(raw))
         image = ImageOps.exif_transpose(image)
-        image = image.convert("RGB")
+        if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
+            # Прозрачное (стикеры) — на белом, а не на чёрном, как даёт convert.
+            rgba = image.convert("RGBA")
+            image = Image.new("RGB", rgba.size, (255, 255, 255))
+            image.paste(rgba, mask=rgba.getchannel("A"))
+        else:
+            image = image.convert("RGB")
     except Exception:
         log.warning("не удалось прочитать картинку (%d байт)", len(raw))
         return None
