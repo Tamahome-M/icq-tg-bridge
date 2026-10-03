@@ -394,6 +394,14 @@ async def run_bridge() -> None:
     await bridge.on_phone_message(titles["Шеф"].uin, "буду в десять")
     assert fake.sent == [(PERSONAL, "буду в десять")]
 
+    # Пути групп для дерева на телефоне (TeleMotoMax 0.73+): сеть, группа,
+    # а чат с обсуждениями — своя группа вместе с ними.
+    paths = bridge.group_paths(bridge.roster())
+    by_title = {c.title: paths[c.uin] for c in bridge.roster()}
+    assert by_title == {"Папа": "Telegram/Личные", "Шеф": "eXpress",
+                        "Работа": "eXpress/Работа",
+                        "Общий сбор в пятницу, приходите все": "eXpress/Работа"}, by_title
+
     # История группы для телефона: у сообщения с обсуждением — UIN обсуждения,
     # а обсуждению, которого на телефоне ещё нет, заводится контакт.
     # У eXpress номер обсуждения равен номеру сообщения, под которым оно начато.

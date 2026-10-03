@@ -347,12 +347,17 @@ public class Icq implements Runnable
 	private static final int MEDIA_PHOTO_W = 1, MEDIA_PHOTO_H = 2, MEDIA_PHOTO_Q = 3,
 			MEDIA_VIDEO_W = 4, MEDIA_VIDEO_H = 5, MEDIA_VIDEO_KBPS = 6, MEDIA_VIDEO_SEC = 7,
 			MEDIA_VIDEO_ROTATE = 8, MEDIA_VOICE_KBPS10 = 9, MEDIA_VOICE_SEC = 10, MEDIA_PHOTO_KB = 11,
-			MEDIA_VIDEO_KB = 12, MEDIA_ROSTER_LIMIT = 13, MEDIA_EXPRESS = 14;
+			MEDIA_VIDEO_KB = 12, MEDIA_ROSTER_LIMIT = 13, MEDIA_EXPRESS = 14,
+			MEDIA_CLIENT_VERSION = 19;
 
 	private static int[] mediaPairs()
 	{
-		int[] out = new int[28];
+		int[] out = new int[30];
 		int n = 0;
+		// Версия клиента — первой парой: сведения о телефоне уходят раньше
+		// способностей, а мосту версия нужна уже при сборке контакт-листа
+		// (вложенные группы шлются только клиенту, который их понимает).
+		n = pair(out, n, MEDIA_CLIENT_VERSION, TMM_VERSION_MAJOR * 100 + TMM_VERSION_MINOR);
 		int[] size = jimm.Options.mediaSize(jimm.Options.OPTION_MEDIA_PHOTO_SIZE);
 		if (size != null) { out[n++] = MEDIA_PHOTO_W; out[n++] = size[0]; out[n++] = MEDIA_PHOTO_H; out[n++] = size[1]; }
 		n = pair(out, n, MEDIA_PHOTO_Q, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_PHOTO_QUALITY));

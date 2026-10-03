@@ -643,13 +643,18 @@ class Session:
         self.ssi_key = sorted((c.uin, c.group_name, c.title[:self.server.alias_max_chars],
                                bool(c.muted)) for c in contacts)
 
+        # Клиент 0.73+ строит из имени группы дерево: мост отдаёт путь
+        # «Сеть/группа/чат». Старому клиенту — плоские имена, как раньше.
+        paths: dict[int, str] = {}
+        if (self.tmm_version or (0, 0)) >= (0, 73) and self.server.group_paths is not None:
+            paths = self.server.group_paths(contacts)
         groups: dict[str, list[tuple[int, Contact]]] = {}
         next_item_id = 1
         for contact in contacts:
             item_id = next_item_id
             next_item_id += 1
             self.item_to_uin[item_id] = contact.uin
-            groups.setdefault(contact.group_name, []).append((item_id, contact))
+            groups.setdefault(paths.get(contact.uin, contact.group_name), []).append((item_id, contact))
 
         enc = self.server.ssi_encoding
         items: list[bytes] = []
@@ -922,6 +927,10 @@ class Session:
     # Не «Медиа», а выключатель сети с телефона («Учётная запись» в
     # TeleMotoMax 0.71+): 1 — eXpress включён, 2 — выключен; нет пары — как в мосту.
     EXPRESS_KEY = 14
+    # Версия клиента (major*100+minor) — TeleMotoMax 0.73+ шлёт её первой
+    # парой: сведения о телефоне приходят раньше способностей, а версия
+    # нужна уже при сборке контакт-листа.
+    VERSION_KEY = 19
     # Ограничение контакт-листа: 0 в паре значит «как в профиле», поэтому
     # «все чаты» телефон шлёт этим числом (TeleMotoMax 0.70+).
     ROSTER_ALL = 0xFFFF
@@ -940,6 +949,10 @@ class Session:
                 key, value = r.u16(), r.u16()
                 if key == self.EXPRESS_KEY and value in (1, 2):
                     express_on = value == 1
+                    continue
+                if key == self.VERSION_KEY and value:
+                    if self.tmm_version is None:
+                        self.tmm_version = (value // 100, value % 100)
                     continue
                 name = self.MEDIA_KEYS.get(key)
                 if name and value:
@@ -1664,7 +1677,8 @@ class OscarServer:
                  fetch_file: Callable[[int, str], Awaitable[tuple[str, bytes] | None]] | None = None,
                  on_file: Callable[[int, str, str, int], Awaitable[bool]] | None = None,
                  chat_list: Callable[[], Awaitable[list]] | None = None,
-                 open_chat: Callable[[int], Awaitable[bool]] | None = None):
+                 open_chat: Callable[[int], Awaitable[bool]] | None = None,
+                 group_paths: Callable[[list], dict[int, str]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -1707,6 +1721,7 @@ class OscarServer:
         self.on_file = on_file
         self.chat_list = chat_list or self._no_chats
         self.open_chat = open_chat or self._no_open
+        self.group_paths = group_paths       # пути групп для дерева контактов (TeleMotoMax 0.73+)
         self.uin = str(cfg.oscar_uin)
         self.password = cfg.oscar_password
         self.ssi_encoding = cfg.ssi_encoding

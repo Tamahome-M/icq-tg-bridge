@@ -99,7 +99,7 @@ class Bridge:
                                  self.fetch_voice, self.send_voice_message,
                                  self.send_video_note, self.on_phone_profile,
                                  self.fetch_file, self.send_document,
-                                 self.chat_list, self.open_chat)
+                                 self.chat_list, self.open_chat, self.group_paths)
         # Сторону eXpress можно выключить с телефона («Учётная запись» в
         # TeleMotoMax): выбор запоминается в базе и действует и после
         # перезапуска, пока телефон не пришлёт другой.
@@ -167,6 +167,38 @@ class Bridge:
 
     def roster(self) -> list[Contact]:
         return self._roster
+
+    def group_paths(self, contacts: list[Contact]) -> dict[int, str]:
+        """Группа каждого контакта как путь для дерева на телефоне:
+        «Сеть/группа», а чат с обсуждениями (темами) становится группой сам —
+        «Сеть/группа/чат» — и лежит в ней вместе с ними. Одинаковые соседние
+        звенья схлопываются: у MAX и eXpress группа и так названа сетью."""
+        parents = {c.peer_id: c for c in contacts if not c.topic_id}
+        with_topics = {c.peer_id for c in contacts if c.topic_id}
+        cut = self.cfg.alias_max_chars
+
+        def path(*parts: str) -> str:
+            out: list[str] = []
+            for part in parts:
+                part = part.strip()[:cut].replace("/", "∕")
+                if part and (not out or out[-1].lower() != part.lower()):
+                    out.append(part)
+            return "/".join(out)
+
+        result: dict[int, str] = {}
+        for c in contacts:
+            net = self.network_of(c.peer_id)
+            if c.peer_id == ASSISTANT_PEER:
+                result[c.uin] = path(c.group_name)
+            elif c.topic_id:
+                parent = parents.get(c.peer_id)
+                result[c.uin] = (path(net, parent.group_name, parent.title) if parent
+                                 else path(net, c.group_name))
+            elif c.peer_id in with_topics:
+                result[c.uin] = path(net, c.group_name, c.title)
+            else:
+                result[c.uin] = path(net, c.group_name)
+        return result
 
     def on_phone_profile(self) -> None:
         """Телефон прислал сведения о себе и настройки: контакт-лист под его

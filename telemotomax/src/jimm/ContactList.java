@@ -125,6 +125,12 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	/* Contains tree nodes by groip ids */
 	private static Hashtable gNodes = new Hashtable();
 
+	// Промежуточные группы дерева, которых нет в списке с сервера: мост
+	// называет группу путём через «/», и каждое звено, кроме последнего,
+	// становится своим узлом. Номера у них отрицательные, чтобы не спутать
+	// с группами сервера.
+	private static Vector synItems = new Vector();
+
 	/* Tree object */
 	private static VirtualTree tree;
 
@@ -701,6 +707,16 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 				tree.sortNode(groupNode);
 				calcGroupData(groupNode, gItem);
 			}
+			// Промежуточные группы — тоже: их содержимое это вложенные группы,
+			// а счётчики складываются из всего, что внутри.
+			for (int i = 0; i < synItems.size(); i++)
+			{
+				gItem = (ContactListGroupItem) synItems.elementAt(i);
+				groupNode = (TreeNode) gNodes.get(new Integer(gItem.getId()));
+				if (groupNode == null) continue;
+				tree.sortNode(groupNode);
+				calcGroupData(groupNode, gItem);
+			}
 			gItem = null;
 			groupNode = null;
 		} else
@@ -713,6 +729,34 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		TreeNode groupNode = tree.addNode(null, item);
 		gNodes.put(new Integer(item.getId()), groupNode);
 		return groupNode;
+	}
+
+	// Глубже этого вложенность не разбираем: остаток пути остаётся в имени.
+	private static final int MAX_GROUP_DEPTH = 4;
+
+	static private int countSlashes(String path)
+	{
+		int n = 0;
+		for (int i = 0; i < path.length(); i++) if (path.charAt(i) == '/') n++;
+		return n > MAX_GROUP_DEPTH ? MAX_GROUP_DEPTH : n;
+	}
+
+	// Узел для пути родителя: существующая группа с таким полным именем или
+	// промежуточный узел, который заводится по дороге вместе со всеми
+	// недостающими предками.
+	static private TreeNode parentNodeFor(String path, Hashtable byPath)
+	{
+		TreeNode node = (TreeNode) byPath.get(path);
+		if (node != null) return node;
+		int cut = path.lastIndexOf('/');
+		TreeNode parent = (cut < 0) ? null : parentNodeFor(path.substring(0, cut), byPath);
+		ContactListGroupItem syn = new ContactListGroupItem(-(synItems.size() + 1), path);
+		syn.setLabel(cut < 0 ? path : path.substring(cut + 1));
+		synItems.addElement(syn);
+		node = tree.addNode(parent, syn);
+		gNodes.put(new Integer(syn.getId()), node);
+		byPath.put(path, node);
+		return node;
 	}
 
 	// Builds contacts tree (without sorting) 
@@ -734,13 +778,26 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 
 		if (use_groups)
 		{
-			ContactListGroupItem item;
-			for (i = 0; i < gCount; i++)
+			synItems.removeAllElements();
+			Hashtable byPath = new Hashtable();      // полный путь -> TreeNode
+			// Сначала короткие пути: родительская группа должна быть в дереве
+			// раньше дочерней, иначе под неё заведётся лишний узел.
+			for (int depth = 0; depth <= MAX_GROUP_DEPTH; depth++)
 			{
-				item = (ContactListGroupItem) gItems.elementAt(i);
-				addGroupNodeInternal(item);
+				for (i = 0; i < gCount; i++)
+				{
+					ContactListGroupItem item = (ContactListGroupItem) gItems.elementAt(i);
+					String path = item.getName();
+					if (countSlashes(path) != depth) continue;
+					int cut = path.lastIndexOf('/');
+					TreeNode parent = (cut < 0) ? null : parentNodeFor(path.substring(0, cut), byPath);
+					item.setLabel(cut < 0 ? path : path.substring(cut + 1));
+					TreeNode node = tree.addNode(parent, item);
+					gNodes.put(new Integer(item.getId()), node);
+					byPath.put(path, node);
+				}
 			}
-			item = null;
+			byPath = null;
 		}
 
 		// add contacts
@@ -777,6 +834,19 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 				{
 					tree.removeNode(groupNode);
 					gNodes.remove(intGroup);
+				}
+			}
+		// Промежуточные узлы, оставшиеся без содержимого, — тоже лишние.
+		if (Options.getBoolean(Options.OPTION_CL_HIDE_EMPTY) && use_groups)
+			for (i = synItems.size() - 1; i >= 0; i--)
+			{
+				ContactListGroupItem syn = (ContactListGroupItem) synItems.elementAt(i);
+				Integer key = new Integer(syn.getId());
+				TreeNode node = (TreeNode) gNodes.get(key);
+				if (node != null && node.size() == 0)
+				{
+					tree.removeNode(node);
+					gNodes.remove(key);
 				}
 			}
 
@@ -842,20 +912,28 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		if ((group == null) || (groupNode == null))
 			return;
 
-		ContactItem cItem;
-		int onlineCount = 0;
+		int[] counts = new int[2];          // в сети, всего — по всему поддереву
+		countNode(groupNode, counts);
+		group.setCounters(counts[0], counts[1]);
+	}
 
-		int count = groupNode.size();
-		for (int i = 0; i < count; i++)
+	// Контакты узла вместе с вложенными группами: у группы-пути счётчик
+	// складывается из всего, что под ней.
+	static private void countNode(TreeNode node, int[] counts)
+	{
+		int size = node.size();
+		for (int i = 0; i < size; i++)
 		{
-			if (!(groupNode.elementAt(i).getData() instanceof ContactItem))
-				continue; // TODO: must be removed
-			cItem = (ContactItem) groupNode.elementAt(i).getData();
-			if (cItem.getIntValue(ContactItem.CONTACTITEM_STATUS) != STATUS_OFFLINE)
-				onlineCount++;
+			TreeNode child = node.elementAt(i);
+			Object data = child.getData();
+			if (data instanceof ContactItem)
+			{
+				counts[1]++;
+				if (((ContactItem) data).getIntValue(ContactItem.CONTACTITEM_STATUS) != STATUS_OFFLINE)
+					counts[0]++;
+			}
+			else countNode(child, counts);
 		}
-		cItem = null;
-		group.setCounters(onlineCount, count);
 	}
 
 	// Must be called after any changes in contacts

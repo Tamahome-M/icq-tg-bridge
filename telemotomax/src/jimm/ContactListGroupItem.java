@@ -44,6 +44,11 @@ public class ContactListGroupItem implements ContactListItem
 
 	private String name;
 
+	// Как группа подписана в списке. Мост присылает имя группы путём
+	// («eXpress/Групповой тест»), и на экране показывается последнее звено;
+	// name остаётся полным — по нему группа узнаётся.
+	private String label;
+
 	// Constructor for an existing group item
 	public ContactListGroupItem(int id, String name)
 	{
@@ -111,8 +116,8 @@ public class ContactListGroupItem implements ContactListItem
 		{
 			textOnline = onlineCount; textTotal = totalCount; textHide = hide;
 			textCache = (onlineCount != 0 && !hide)
-					? name + " (" + Integer.toString(onlineCount) + "/" + Integer.toString(totalCount) + ")"
-					: name;
+					? getLabel() + " (" + Integer.toString(onlineCount) + "/" + Integer.toString(totalCount) + ")"
+					: getLabel();
 		}
 		return textCache;
 	}
@@ -144,6 +149,16 @@ public class ContactListGroupItem implements ContactListItem
 	public String getName()
 	{
 		return (new String(this.name));
+	}
+
+	public String getLabel()
+	{
+		return (label != null) ? label : name;
+	}
+
+	public void setLabel(String label)
+	{
+		this.label = label;
 	}
 
 	// Sets the group item name
@@ -192,7 +207,7 @@ public class ContactListGroupItem implements ContactListItem
 	
 	public String getSortText()
 	{
-		return name;
+		return getLabel();
 	}
 	
 	public int getSortWeight()
