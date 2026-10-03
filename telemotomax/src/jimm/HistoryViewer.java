@@ -124,16 +124,22 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 				String text = Util.byteArrayToString(data, 2, len, true);
 				int flag = Util.getByte(data, 2 + len);
 				byte[] photo = null;
-				if ((flag & 1) != 0 && 2 + len + 1 + 16 <= data.length)
+				int marker = 2 + len + 1;
+				if ((flag & 1) != 0 && marker + 16 <= data.length)
 				{
 					photo = new byte[16];
-					System.arraycopy(data, 2 + len + 1, photo, 0, 16);
+					System.arraycopy(data, marker, photo, 0, 16);
+					marker += 16;
 				}
+				// Обсуждение под сообщением — его UIN за токеном (мост 0.74+).
+				String thread = null;
+				if ((flag & 0x10) != 0 && marker + 4 <= data.length)
+					thread = String.valueOf(Util.getDWord(data, marker));
 				// Вид вложения — как в полной истории: бит 2 — видео,
 				// бит 4 — голосовое, иначе фото. Раньше голосовое здесь
 				// считалось фото, и в чате была кнопка «Показать фото».
 				int kind = ((flag & 6) == 6) ? 4 : ((flag & 4) != 0 ? 3 : ((flag & 2) != 0 ? 2 : 1));
-				ChatHistory.addHistoryLine(uin, text, photo, kind);
+				ChatHistory.addHistoryLine(uin, text, photo, kind, thread);
 			}
 		};
 		try

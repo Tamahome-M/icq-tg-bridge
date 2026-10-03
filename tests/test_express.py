@@ -94,10 +94,12 @@ class FakeExpress:
                         muted=self.muted.get(chat_id, False), pinned=False, members=[ME, BOSS],
                         left=False, members_count=2, updated=rows[-1]["insertedAt"] / 1000,
                         last=self.message(rows[-1]))
-        return [chat(GROUP, "group_chat", "Работа", None, 0),
-                chat(PERSONAL, "chat", "Шеф", BOSS, 2),
-                chat(THREAD, "thread", "Работа", None, 1, parent=GROUP,
-                     starter="Общий  сбор в пятницу, приходите все", starter_sender="Шеф")] + extra_chats
+        listed = [chat(GROUP, "group_chat", "Работа", None, 0),
+                  chat(PERSONAL, "chat", "Шеф", BOSS, 2)]
+        if not getattr(self, "hide_threads", False):
+            listed.append(chat(THREAD, "thread", "Работа", None, 1, parent=GROUP,
+                               starter="Общий  сбор в пятницу, приходите все", starter_sender="Шеф"))
+        return listed + extra_chats
 
     async def history(self, chat_id, count=50):
         return [self.message(r) for r in self.rows[chat_id]][-count:]
@@ -357,6 +359,23 @@ async def run_side() -> None:
     await side._on_new_message(fake.message(done))
     assert urgent == ["[входящий звонок]", "[пропущенный звонок]"], urgent
     assert [i.text for i in await side.history(personal, None, None, 50)][-1] == "[голосовое]"
+
+    # Обсуждение, на которое не подписаны, в списке чатов страницы не
+    # значится — но сообщение-корень из истории чата его выдаёт: номер
+    # обсуждения равен номеру этого сообщения.
+    fake.hide_threads = True
+    fake.rows[GROUP][0]["syncId"], fake.rows[GROUP][0]["threadStarted"] = THREAD, True
+    side._messages.clear()
+    await side._all_chats()
+    assert (group, topic) not in side._threads
+    assert [i.text for i in await side.history(group, None, None, 50)][0] == "общий сбор [есть обсуждение]"
+    assert await side.topic_title(group, topic) == "общий сбор"
+    assert [i.text for i in await side.history(group, None, None, 50, topic)] == ["а когда?"]
+    assert side._locate(THREAD) == (group, topic)
+    await side._on_new_message(fake.message(raw_event(62, THREAD, BOSS, "в пять")))
+    assert got[-1] == (group, "Шеф", "в пять", "", False) and got_topics[-1] == topic
+    fake.hide_threads = False
+    await side._all_chats()
 
     # Мьют с телефона.
     assert await side.set_muted(personal, True) and fake.muted[PERSONAL]

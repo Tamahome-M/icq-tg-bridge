@@ -197,10 +197,28 @@ class ExpressSide:
         return self._threads.get((peer_id, topic_id))
 
     async def _chat_id(self, peer_id: int, topic_id: int = 0) -> str:
-        chat = await self._thread(peer_id, topic_id) if topic_id else await self._chat(peer_id)
+        if topic_id:
+            thread = await self._thread(peer_id, topic_id)
+            if thread is not None:
+                return thread.id
+            # Обсуждение, на которое не подписаны, в списке чатов страницы не
+            # значится, но у него тот же номер, что у сообщения, под которым
+            # оно начато, — а сообщение мы видели в истории чата.
+            root = self._root_message(peer_id, topic_id)
+            if root is not None:
+                return root.id
+            raise LookupError(f"обсуждение eXpress {peer_id}/{topic_id} не найдено")
+        chat = await self._chat(peer_id)
         if chat is None:
-            raise LookupError(f"чат eXpress {peer_id}/{topic_id} не найден")
+            raise LookupError(f"чат eXpress {peer_id} не найден")
         return chat.id
+
+    def _root_message(self, peer_id: int, topic_id: int):
+        """Сообщение чата, под которым начато обсуждение с таким topic_id."""
+        message = self._messages.get(topic_id)
+        if message is not None and chat_peer(message.chat_id) == peer_id and message.thread_started:
+            return message
+        return None
 
     def _locate(self, chat_id: str) -> tuple[int, int] | None:
         """(peer_id, topic_id) по номеру чата страницы — обычного или обсуждения."""
@@ -210,6 +228,10 @@ class ExpressSide:
         for key, thread in self._threads.items():
             if thread.id == chat_id:
                 return key
+        # Обсуждение не из списка: его номер — номер сообщения-корня.
+        root = self._messages.get(message_number(chat_id))
+        if root is not None and root.id == chat_id and chat_peer(root.chat_id) in self._chats:
+            return chat_peer(root.chat_id), message_number(chat_id)
         return None
 
     @staticmethod
@@ -256,7 +278,10 @@ class ExpressSide:
     async def topic_title(self, peer_id: int, topic_id: int) -> str:
         """Название обсуждения — сообщение, под которым оно начато."""
         thread = await self._thread(peer_id, topic_id)
-        return self._thread_title(thread) if thread is not None else ""
+        if thread is not None:
+            return self._thread_title(thread)
+        root = self._root_message(peer_id, topic_id)
+        return " ".join((root.text or "").split()) or "Обсуждение" if root is not None else ""
 
     async def title_for(self, peer_id: int) -> tuple[str, str]:
         chat = await self._chat(peer_id)

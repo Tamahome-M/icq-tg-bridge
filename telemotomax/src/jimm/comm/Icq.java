@@ -376,8 +376,8 @@ public class Icq implements Runnable
 		n = pair(out, n, MEDIA_ROSTER_LIMIT, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_ROSTER_LIMIT));
 		// Сети моста: 1 — включена, 2 — выключена; и сколько чатов каждой в списке.
 		n = pair(out, n, MEDIA_EXPRESS, jimm.Options.getInt(jimm.Options.OPTION_EXPRESS));
-		n = pair(out, n, MEDIA_MAX, jimm.Options.getInt(jimm.Options.OPTION_MAX));
-		n = pair(out, n, MEDIA_TELEGRAM, jimm.Options.getInt(jimm.Options.OPTION_TELEGRAM));
+		n = pair(out, n, MEDIA_MAX, jimm.Options.getBoolean(jimm.Options.OPTION_MAX_ON) ? 1 : 2);
+		n = pair(out, n, MEDIA_TELEGRAM, jimm.Options.getBoolean(jimm.Options.OPTION_TELEGRAM_ON) ? 1 : 2);
 		n = pair(out, n, MEDIA_MAX_ROSTER_LIMIT, jimm.Options.getInt(jimm.Options.OPTION_MAX_ROSTER_LIMIT));
 		n = pair(out, n, MEDIA_EXPRESS_ROSTER_LIMIT, jimm.Options.getInt(jimm.Options.OPTION_EXPRESS_ROSTER_LIMIT));
 		int[] cut = new int[n];
