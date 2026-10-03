@@ -139,6 +139,10 @@ JS_HELPERS = """() => {
     presence: c.opponent ? window.__exPresence(c.opponent.userHuid) : null,
     avatar: c.avatar || c.avatarPreview || (c.opponent ? window.__exAvatar(c.opponent.userHuid) : '') || '',
     readAt: c.readPositionAt || 0,
+    // Обсуждение (тред) — чат с родителем; его номер равен номеру сообщения,
+    // под которым оно начато, а само сообщение лежит в starterMessage.
+    parent: c.parentChatId || null,
+    starter: (c.starterMessage && c.starterMessage.payload && c.starterMessage.payload.body) || '',
     left: !!c.left, membersCount: c.membersCount || (c.members || []).length, updatedAt: c.lastEventInsertedAt || c.updatedAt, last: window.__exSlim(c.lastEvent),
   });
 }"""
@@ -302,6 +306,8 @@ class Chat:
     pinned: bool
     members: list[str]
     left: bool
+    parent: str | None = None   # у обсуждения (type == "thread") — чат, в котором оно начато
+    starter: str = ""           # текст сообщения, под которым начато обсуждение
     avatar: str = ""            # ссылка на аватарку как её знает страница; пусто — нет
     read_at: int = 0            # до какого времени (мс) чат прочитан собеседниками
     status: str = ""            # online / offline собеседника личного чата; пусто — неизвестно
@@ -387,7 +393,7 @@ class ExpressClient:
     async def _load(self) -> None:
         page = self._page = await open_app(self._ctx)
         if not await is_logged_in(page):
-            raise NotLoggedIn(f"в профиле {self.profile_dir} нет входа: python3 run.py login express")
+            raise NotLoggedIn(f"в профиле {self.profile_dir} python3 run.py login express")
         await page.wait_for_function(JS_STORE, timeout=READY_TIMEOUT * 1000)
         await page.evaluate(JS_HELPERS)
         try:
@@ -568,7 +574,8 @@ class ExpressClient:
             result.append(Chat(id=row["id"], type=row["type"], title=row["name"], opponent=row["opponent"],
                                unread=row["unread"], muted=row["muted"], pinned=row["pinned"],
                                members=row["members"],
-                               left=row["left"], avatar=row["avatar"], read_at=int(row["readAt"]),
+                               left=row["left"], parent=row["parent"], starter=row["starter"],
+                               avatar=row["avatar"], read_at=int(row["readAt"]),
                                status=(row["presence"] or {}).get("status") or "",
                                status_changed=((row["presence"] or {}).get("changed") or 0) / 1000,
                                members_count=row["membersCount"], updated=(row["updatedAt"] or 0) / 1000, last=last))
@@ -586,7 +593,13 @@ class ExpressClient:
                  return s.router.location.pathname.endsWith(id) && ui && ui.state === 'idle'
                         && !ui.loaderTop && !ui.loaderMiddle && !ui.loaderBottom; }""",
             arg=chat_id, timeout=CHAT_TIMEOUT * 1000)
-        await page.wait_for_selector(MESSAGE_INPUT, timeout=CHAT_TIMEOUT * 1000)
+        # Поля ввода у канала (и чата, из которого вышли) нет — это не ошибка,
+        # читать историю можно и так; писать проверяет _writable.
+        await page.wait_for_timeout(300)
+
+    async def _writable(self) -> None:
+        if not await self._page.locator(MESSAGE_INPUT).count():
+            raise RuntimeError("в этот чат писать нельзя: нет поля ввода (канал?)")
 
     async def _close(self) -> None:
         try:
@@ -611,19 +624,33 @@ class ExpressClient:
             try:
                 await self._open(chat_id)
                 items = await self._loaded(chat_id)
-                # Старое подгружается прокруткой вверх, пока список растёт.
-                while len(items) < count:
-                    await self._page.locator(MESSAGE_INPUT).hover()
-                    await self._page.mouse.move(640, 300)
-                    await self._page.mouse.wheel(0, -20000)
-                    await self._page.wait_for_timeout(1500)
+                # Старое подгружается прокруткой ленты к началу, пока список
+                # растёт; две пустые попытки подряд — значит, это всё.
+                idle = 0
+                while len(items) < count and idle < 2:
+                    await self._scroll_to_top()
                     more = await self._loaded(chat_id)
-                    if len(more) <= len(items):
-                        break
+                    idle = idle + 1 if len(more) <= len(items) else 0
                     items = more
                 return items[-count:]
             finally:
                 await self._close()
+
+    async def _scroll_to_top(self) -> None:
+        """Прокрутить ленту сообщений к началу и дождаться подгрузки."""
+        page = self._page
+        await page.evaluate("""() => { const list = document.querySelector('.infinite-scroll--chat');
+            if (list) { list.scrollTop = 0; list.dispatchEvent(new Event('scroll', {bubbles: true})); } }""")
+        await page.mouse.move(640, 300)
+        await page.mouse.wheel(0, -20000)
+        try:
+            await page.wait_for_function(
+                """() => { const s = window.__store.getState(); const id = s.router.location.pathname.split('/').pop();
+                     const ui = s.ui.chats[id]; return !ui || (!ui.loaderTop && ui.state === 'idle'); }""",
+                timeout=10000)
+        except PlaywrightError:
+            pass
+        await page.wait_for_timeout(500)
 
     async def _menu(self, chat_id: str, label: str) -> bool:
         """Выбрать пункт в меню чата (правая кнопка по строке списка).
@@ -737,6 +764,8 @@ class ExpressClient:
 
     async def _clear_input(self) -> None:
         page = self._page
+        if not await page.locator(MESSAGE_INPUT).count():
+            return                              # канал: писать некуда, чистить нечего
         await page.locator(MESSAGE_INPUT).click()
         await page.keyboard.press("Control+A")
         await page.keyboard.press("Backspace")
@@ -771,6 +800,7 @@ class ExpressClient:
                 async with self._lock:
                     if not await self._is_open(chat_id):
                         await self._open(chat_id)
+                        await self._writable()
                     await self._page.locator(MESSAGE_INPUT).click()
                     await self._page.keyboard.type(".")
                 await asyncio.sleep(TYPING_PULSE)
@@ -778,7 +808,7 @@ class ExpressClient:
                 if await self._is_open(chat_id):
                     await self._clear_input()
                 await self._close()
-        except PlaywrightError as exc:
+        except (PlaywrightError, RuntimeError) as exc:
             log.debug("«печатает» в eXpress не передано: %s", exc)
 
     # --- отправка ---
@@ -812,6 +842,7 @@ class ExpressClient:
         async with self._lock:
             try:
                 await self._open(chat_id)
+                await self._writable()
                 before = {m.id for m in await self._loaded(chat_id)}
                 await self._clear_input()       # остатки «печатает» и черновик
                 await self._type(text)
@@ -835,6 +866,7 @@ class ExpressClient:
         async with self._lock:
             try:
                 await self._open(chat_id)
+                await self._writable()
                 page = self._page
                 before = {m.id for m in await self._loaded(chat_id)}
                 await self._clear_input()
