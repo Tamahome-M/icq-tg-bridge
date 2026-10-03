@@ -295,6 +295,7 @@
 "only_online"				"Показывать только онлайн контакты"
 "options_lng"				"Настройки"
 "options_account"			"Учетная запись"
+"bridge_networks"			"Сети моста"
 "options_interface"			"Интерфейс"
 "options_camera"			"Камера"
 "options_media"			"Медиа"

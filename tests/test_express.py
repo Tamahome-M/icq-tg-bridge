@@ -46,7 +46,7 @@ def mention(kind: str, huid: str = "", name: str = "") -> dict:
 class FakeExpress:
     """Подделка веб-клиента: ровно те методы, которыми пользуется сторона."""
 
-    def __init__(self):
+    def _setup(self):
         self.name = "Вася"
         self.parser = ExpressClient("нет-такого-профиля")
         self.parser.huid = ME
@@ -71,8 +71,12 @@ class FakeExpress:
     def message(self, raw: dict):
         return self.parser._message(raw, NAMES)
 
-    async def start(self): pass
-    async def stop(self): pass
+    def __init__(self):
+        self.stopped = False
+        self._setup()
+
+    async def start(self): self.stopped = False
+    async def stop(self): self.stopped = True
 
     async def chats(self):
         def chat(chat_id, kind, title, opponent, unread):
@@ -392,6 +396,25 @@ async def run_bridge() -> None:
     await bridge.catch_up()
     texts = [row[2] for row in bridge.storage.peek_pending()][before:]
     assert texts == ["Шеф: пока тебя не было", "Шеф: и тебя звали @Вася"], texts
+
+    # Выключатель с телефона: сторона останавливается, её чаты уходят из
+    # списка, выбор переживает перезапуск; включение возвращает всё назад.
+    from types import SimpleNamespace
+    bridge.express._make_client = lambda: fake
+    bridge.oscar.session = SimpleNamespace(express_on=False, profile={}, media={}, ready=False, closed=True)
+    bridge.on_phone_profile()
+    await asyncio.sleep(0.05)
+    assert not bridge.express_active and fake.stopped and bridge.express.client is None
+    assert bridge.storage.get_meta("express_on") == "0"
+    assert {c.title for c in bridge.roster()} == {"Папа"}, [c.title for c in bridge.roster()]
+    assert Bridge(cfg).express_active is False, "выбор телефона помнится в базе"
+    bridge.oscar.session = SimpleNamespace(express_on=True, profile={}, media={}, ready=False, closed=True)
+    bridge.on_phone_profile()
+    await asyncio.sleep(0.05)
+    assert bridge.express_active and bridge.express.client is fake
+    assert {c.title for c in bridge.roster()} == {"Папа", "Работа", "Шеф"}
+    fake.on_message = bridge.express._on_new_message
+    bridge.oscar.session = None
 
     # eXpress не ответил на обновление списка — его чаты не считаются пропавшими.
     async def broken():

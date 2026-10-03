@@ -212,7 +212,8 @@ public class Options
 	public static final int OPTION_PHOTO_ROTATE         = 122;   // фото боком: 0 авто, 1 всегда, 2 никогда
 	public static final int OPTION_MEDIA_MEM_KB         = 123;
 	public static final int OPTION_MEDIA_ROSTER_LIMIT   = 124;   // «Медиа»: чатов в контакт-листе, 65535 — все, 0 — как в профиле
-	public static final int OPTION_MEDIA_VIDEO_KB       = 125;   // «Медиа»: предел размера ролика, КБ   // сколько КБ ролика читать в память, 0 — по куче
+	public static final int OPTION_MEDIA_VIDEO_KB       = 125;
+	public static final int OPTION_EXPRESS              = 126;   // «Учётная запись»: сеть eXpress на мосту — 1 включена, 2 выключена   // «Медиа»: предел размера ролика, КБ   // сколько КБ ролика читать в память, 0 — по куче
 
 	/** «WxH» из настройки «Медиа» как {w, h}; пусто или негодно — null. */
 	public static int[] mediaSize(int key)
@@ -460,6 +461,7 @@ public class Options
 		setInt    (Options.OPTION_MEDIA_MEM_KB,        0);
 		setInt    (Options.OPTION_MEDIA_VIDEO_KB,      0);
 		setInt    (Options.OPTION_MEDIA_ROSTER_LIMIT,  0);
+		setInt    (Options.OPTION_EXPRESS,             1);
 
 		setBoolean(Options.OPTION_CP1251_HACK, ResourceBundle.langAvailable[0]
 				.equals("RU") || ResourceBundle.langAvailable[0].equals("BE") );
@@ -1103,6 +1105,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup chsBringUp;
 	private ChoiceGroup chsFSMode;
 	private ChoiceGroup choiceCurAccount;
+
+	// Сети моста, которые можно выключить с телефона: пока одна — eXpress.
+	// Мост получает выбор парой в 01/F2 при входе и при каждом сохранении.
+	private ChoiceGroup networksChoice;
 	private ChoiceGroup chsTimeZone;
 	private ChoiceGroup chsCurrTime;
 	private ChoiceGroup chsDayLight;
@@ -1658,6 +1664,11 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		}
 		if (size != 1)
 			optionsForm.addCommand(cmdDeleteAccount);
+
+		networksChoice = new ChoiceGroup(ResourceBundle.getString("bridge_networks"), Choice.MULTIPLE);
+		networksChoice.append("eXpress", null);
+		networksChoice.setSelectedIndex(0, Options.getInt(Options.OPTION_EXPRESS) != 2);
+		optionsForm.append(networksChoice);
 	}
 
 	private void setAccountOptions()
@@ -1681,6 +1692,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		if (currAccount >= size)
 			currAccount = size - 1;
 		Options.setInt(Options.OPTION_CURR_ACCOUNT, currAccount);
+		if (networksChoice != null)
+			Options.setInt(Options.OPTION_EXPRESS, networksChoice.isSelected(0) ? 1 : 2);
 	}
 
 	private void readAccontsControls()
@@ -2444,6 +2457,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		case OPTIONS_ACCOUNT:
 			readAccontsControls();
 			setAccountOptions();
+			// Выбор сетей мост должен узнать сразу, не дожидаясь перевхода.
+			jimm.comm.Icq.resendClientInfo();
 			break;
 		case OPTIONS_NETWORK:
 			readNetworkOptions();

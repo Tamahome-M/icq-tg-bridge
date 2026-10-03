@@ -97,9 +97,15 @@ class Bridge:
                                  self.avatar, self.icon_hash, self.fetch_attachment,
                                  self.fetch_history, self.fetch_video, self.send_camera_photo,
                                  self.fetch_voice, self.send_voice_message,
-                                 self.send_video_note, self._reload_roster,
+                                 self.send_video_note, self.on_phone_profile,
                                  self.fetch_file, self.send_document,
                                  self.chat_list, self.open_chat)
+        # Сторону eXpress можно выключить с телефона («Учётная запись» в
+        # TeleMotoMax): выбор запоминается в базе и действует и после
+        # перезапуска, пока телефон не пришлёт другой.
+        self.express_active = (self.express is not None
+                               and self.storage.get_meta("express_on", "1") == "1")
+        self._express_switch = asyncio.Lock()
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
@@ -161,6 +167,39 @@ class Bridge:
 
     def roster(self) -> list[Contact]:
         return self._roster
+
+    def on_phone_profile(self) -> None:
+        """Телефон прислал сведения о себе и настройки: контакт-лист под его
+        профиль, а выключатель eXpress — в работу."""
+        self._reload_roster()
+        session = self.oscar.session
+        wanted = getattr(session, "express_on", None) if session is not None else None
+        if wanted is not None and self.express is not None and wanted != self.express_active:
+            asyncio.create_task(self.set_express_active(wanted))
+
+    async def set_express_active(self, on: bool) -> None:
+        """Включить или выключить сторону eXpress на ходу: выключенная
+        закрывает браузер, её чаты уходят из контакт-листа до включения."""
+        if self.express is None:
+            return
+        async with self._express_switch:
+            if on == self.express_active:
+                return
+            if on:
+                try:
+                    await self.express.start()
+                except Exception as exc:
+                    log.error("eXpress не включился: %s", exc)
+                    return
+            else:
+                await self.express.stop()
+            self.express_active = on
+            self.storage.set_meta("express_on", "1" if on else "0")
+            log.info("eXpress %s с телефона", "включён" if on else "выключен")
+            try:
+                await self.refresh_roster()
+            except Exception:
+                log.exception("контакт-лист после переключения eXpress не обновился")
 
     def side_for(self, peer_id: int):
         """Сеть, которой принадлежит чат: по номеру видно, чей он."""
@@ -834,7 +873,7 @@ class Bridge:
                 d.position -= MAX_ROSTER_SLOTS
             dialogs += extra
         keep_express = False
-        if self.express is not None:
+        if self.express is not None and self.express_active:
             try:
                 extra = await self.express.dialogs()
             except Exception:
@@ -1493,8 +1532,10 @@ class Bridge:
         await self.telegram.start()
         if self.max is not None:
             await self.max.start()
-        if self.express is not None:
+        if self.express is not None and self.express_active:
             await self.express.start()
+        elif self.express is not None:
+            log.info("eXpress выключен с телефона — не запускаю, пока телефон не включит")
         await self.refresh_roster()
         # Догрузка пропущенного идёт в своём потоке: она ходит в Telegram и
         # MAX за каждым непрочитанным чатом, и телефону незачем ждать её,
@@ -1575,7 +1616,7 @@ class Bridge:
         await self.oscar.stop()
         if self.max is not None:
             await self.max.stop()
-        if self.express is not None:
+        if self.express is not None and self.express_active:
             await self.express.stop()
         await self.telegram.stop()
         self.storage.close()
