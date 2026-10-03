@@ -60,12 +60,14 @@ async def by_qr(page, shot: str, profile: str) -> int:
     return 1
 
 
-async def main(profile: str, executable: str = "", devtools_port: int = 0) -> int:
+async def main(profile: str, executable: str = "", devtools_port: int = 0,
+               trust_ca: list[str] | None = None) -> int:
     global FIFO
     shot = f"{profile}/login.png"
     prepare()
     async with async_playwright() as pw:
-        ctx = await open_context(pw, profile, executable=executable, devtools_port=devtools_port)
+        ctx = await open_context(pw, profile, executable=executable, devtools_port=devtools_port,
+                                 trust_ca=trust_ca)
         if devtools_port:
             print(f"Браузер виден через chrome://inspect на localhost:{devtools_port}")
         if not sys.stdin.isatty():
