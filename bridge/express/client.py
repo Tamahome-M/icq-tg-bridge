@@ -515,7 +515,8 @@ class ExpressSide:
                 continue
             who, _ = self._who(message, private, chat_name)
             items.append(HistoryItem(when, who, text, message_number(message.id),
-                                     media_kind(message)))
+                                     media_kind(message),
+                                     thread_topic(message.id) if message.thread_started else 0))
         items.reverse()
         return items
 

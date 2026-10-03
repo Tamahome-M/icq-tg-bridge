@@ -36,6 +36,7 @@ class HistoryItem:
     text: str
     msg_id: int = 0        # номер сообщения в сети — по нему достаётся вложение
     kind: str = ""         # photo, video, voice, audio — или пусто
+    thread: int = 0        # topic_id обсуждения, начатого под этим сообщением; 0 — нет
 
 
 def parse(text: str) -> Command | None:

@@ -334,6 +334,7 @@
 "wait"						"Please wait ..."
 "when_locked"				"When locked"
 "show_photo"				"Show photo"
+"history_thread"			"Discussion"
 "play_video"				"Play video"
 "play_voice"				"Play voice"
 "voice_start"				"Press fire to record"

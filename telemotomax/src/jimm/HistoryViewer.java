@@ -37,6 +37,8 @@ import jimm.util.ResourceBundle;
  * The bridge sends one record per message: text length (2 bytes), UTF-8
  * text, a flag byte and, if the flag is set, a 16-byte photo token — so a
  * message with a picture can be opened with "Show photo" right here.
+ * Bit 0x10 of the flag (bridge 0.72+) adds a 4-byte UIN of the discussion
+ * started under the message: "Discussion" opens its history on top.
  */
 public class HistoryViewer implements CommandListener, VirtualListCommands, JimmScreen,
 		RequestBartAction.Listener
@@ -51,11 +53,14 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 
 	static final Command cmdMore = new Command(ResourceBundle.getString("history_more"),
 			Command.ITEM, 3);
+	static final Command cmdThread = new Command(ResourceBundle.getString("history_thread"),
+			Command.ITEM, 4);
 
 	private TextList list;
 	private Vector texts = new Vector();     // per message: String
 	private Vector tokens = new Vector();    // per message: byte[16] or null
 	private Vector kinds = new Vector();     // per message: Integer kind (1 photo, 2 video)
+	private Vector threads = new Vector();   // per message: String UIN обсуждения или null
 	private int shown;                       // сколько сообщений уже загружено
 	private boolean more;                    // осталось ли что подгружать
 	private boolean paged;                   // мост ответил с пометкой «есть ещё»
@@ -162,6 +167,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		texts.addElement(text);
 		tokens.addElement(token);
 		kinds.addElement(new Integer(kind));
+		threads.addElement(null);
 	}
 
 	// Список перерисовывается целиком: подгруженная пачка встаёт перед уже
@@ -237,14 +243,17 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		texts.removeAllElements();
 		tokens.removeAllElements();
 		kinds.removeAllElements();
+		threads.removeAllElements();
 		texts.addElement(ResourceBundle.getString("history_failed") + " " + name);
 		tokens.addElement(null);
 		kinds.addElement(new Integer(1));
+		threads.addElement(null);
 		if (size > 0)
 		{
 			texts.addElement(size + " " + ResourceBundle.getString("bytes"));
 			tokens.addElement(null);
 			kinds.addElement(new Integer(1));
+			threads.addElement(null);
 		}
 		fill();
 		list.unlock();
@@ -261,6 +270,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		Vector newTexts = new Vector();
 		Vector newTokens = new Vector();
 		Vector newKinds = new Vector();
+		Vector newThreads = new Vector();
 		if (data != null)
 		{
 			// Мосты разных возрастов отвечают по-разному: со страницами
@@ -304,8 +314,15 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 					System.arraycopy(data, marker, token, 0, 16);
 					marker += 16;
 				}
+				String thread = null;
+				if ((flag & 0x10) != 0 && marker + 4 <= data.length)
+				{
+					thread = String.valueOf(Util.getDWord(data, marker));
+					marker += 4;
+				}
 				newTexts.addElement(text);
 				newTokens.addElement(token);
+				newThreads.addElement(thread);
 				int kind = ((flag & 6) == 6) ? 4 : ((flag & 4) != 0 ? 3 : ((flag & 2) != 0 ? 2 : 1));
 				if ((flag & 8) != 0) kind += 8;
 				newKinds.addElement(new Integer(kind));
@@ -319,6 +336,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			texts.removeAllElements();
 			tokens.removeAllElements();
 			kinds.removeAllElements();
+			threads.removeAllElements();
 		}
 		// Подгруженное старее уже показанного, поэтому встаёт перед ним.
 		for (int i = newTexts.size() - 1; i >= 0; i--)
@@ -326,6 +344,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			texts.insertElementAt(newTexts.elementAt(i), 0);
 			tokens.insertElementAt(newTokens.elementAt(i), 0);
 			kinds.insertElementAt(newKinds.elementAt(i), 0);
+			threads.insertElementAt(newThreads.elementAt(i), 0);
 		}
 		shown += newTexts.size();
 		if (newTexts.size() == 0) exhausted = true;
@@ -337,6 +356,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 							: ""));
 			tokens.addElement(null);
 			kinds.addElement(new Integer(1));
+			threads.addElement(null);
 		}
 		else if (failed)
 		{
@@ -399,6 +419,13 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		return (byte[]) tokens.elementAt(index);
 	}
 
+	private String currentThread()
+	{
+		int index = list.getCurrTextIndex();
+		if (index < 0 || index >= threads.size()) return null;
+		return (String) threads.elementAt(index);
+	}
+
 	private int currentKind()
 	{
 		int index = list.getCurrTextIndex();
@@ -411,6 +438,8 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		list.removeCommandEx(ChatTextList.cmdShowPhoto);
 		list.removeCommandEx(ChatTextList.cmdPlayVideo);
 		list.removeCommandEx(ChatTextList.cmdPlayVoice);
+		list.removeCommandEx(cmdThread);
+		if (currentThread() != null) list.addCommandEx(cmdThread, VirtualList.MENU_TYPE_RIGHT);
 		if (currentToken() != null)
 		{
 			int kind = currentKind();
@@ -434,7 +463,13 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	public void vlItemClicked(VirtualList sender)
 	{
 		byte[] token = currentToken();
-		if (token == null) return;
+		if (token == null)
+		{
+			// Без вложения выбор записи открывает обсуждение под ней, если есть.
+			String thread = currentThread();
+			if (thread != null) HistoryViewer.show(thread, name, this);
+			return;
+		}
 		int kind = currentKind();
 //#sijapp cond.if modules_CAMERA="true"#
 		if (kind == 4) { FileDownloader.show(uin, token, this); return; }
@@ -478,17 +513,25 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			request();
 			return;
 		}
+		if (c == cmdThread)
+		{
+			String thread = currentThread();
+			if (thread != null) HistoryViewer.show(thread, name, this);
+			return;
+		}
 		if (current == this) current = null;
 		list = null;                       // the text goes with the screen
 		texts = null;
 		tokens = null;
 		kinds = null;
+		threads = null;
 		if (back != null) back.activate();
 		else JimmUI.backToLastScreen();
 	}
 
 	public void activate()
 	{
+		current = this;                    // вернулись из вложенной истории
 		if (list != null) list.activate(Jimm.display);
 	}
 
