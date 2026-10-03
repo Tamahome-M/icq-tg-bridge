@@ -212,8 +212,12 @@ public class Options
 	public static final int OPTION_PHOTO_ROTATE         = 122;   // фото боком: 0 авто, 1 всегда, 2 никогда
 	public static final int OPTION_MEDIA_MEM_KB         = 123;
 	public static final int OPTION_MEDIA_ROSTER_LIMIT   = 124;   // «Медиа»: чатов в контакт-листе, 65535 — все, 0 — как в профиле
-	public static final int OPTION_MEDIA_VIDEO_KB       = 125;
-	public static final int OPTION_EXPRESS              = 126;   // «Учётная запись»: сеть eXpress на мосту — 1 включена, 2 выключена   // «Медиа»: предел размера ролика, КБ   // сколько КБ ролика читать в память, 0 — по куче
+	public static final int OPTION_MEDIA_VIDEO_KB       = 125;   // «Медиа»: предел размера ролика, КБ
+	public static final int OPTION_EXPRESS              = 126;   // сеть eXpress на мосту — 1 включена, 2 выключена
+	public static final int OPTION_TELEGRAM             = 171;   // сеть Telegram на мосту — 1 включена, 2 выключена
+	public static final int OPTION_MAX                  = 172;   // сеть MAX на мосту — 1 включена, 2 выключена
+	public static final int OPTION_MAX_ROSTER_LIMIT     = 173;   // чатов MAX в списке: 65535 — все, 0 — как в мосте
+	public static final int OPTION_EXPRESS_ROSTER_LIMIT = 174;   // чатов eXpress в списке: 65535 — все, 0 — как в мосте
 
 	/** «WxH» из настройки «Медиа» как {w, h}; пусто или негодно — null. */
 	public static int[] mediaSize(int key)
@@ -462,6 +466,10 @@ public class Options
 		setInt    (Options.OPTION_MEDIA_VIDEO_KB,      0);
 		setInt    (Options.OPTION_MEDIA_ROSTER_LIMIT,  0);
 		setInt    (Options.OPTION_EXPRESS,             1);
+		setInt    (Options.OPTION_TELEGRAM,            1);
+		setInt    (Options.OPTION_MAX,                 1);
+		setInt    (Options.OPTION_MAX_ROSTER_LIMIT,    0);
+		setInt    (Options.OPTION_EXPRESS_ROSTER_LIMIT, 0);
 
 		setBoolean(Options.OPTION_CP1251_HACK, ResourceBundle.langAvailable[0]
 				.equals("RU") || ResourceBundle.langAvailable[0].equals("BE") );
@@ -1034,6 +1042,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private static final int OPTIONS_BG_IMAGE    = 4;
 	private static final int OPTIONS_CAMERA      = 5;
 	private static final int OPTIONS_MEDIA       = 30;   // TeleMotoMax: что мост отдаёт телефону
+	// Сети моста — каждая своим пунктом: включена ли и сколько её чатов в списке.
+	private static final int OPTIONS_NET_TELEGRAM = 31;
+	private static final int OPTIONS_NET_MAX      = 32;
+	private static final int OPTIONS_NET_EXPRESS  = 33;
 	private static final int OPTIONS_HOTKEYS     = 6;
 	private static final int OPTIONS_SIGNALING   = 7;
 	private static final int OPTIONS_TRAFFIC     = 8;
@@ -1079,7 +1091,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup mediaPhotoSize, mediaPhotoQuality, mediaPhotoKb, mediaVideoKb;
 	private ChoiceGroup mediaVideoSize, mediaVideoKbps, mediaVideoSeconds;
 	private ChoiceGroup mediaVoiceKbps, mediaVoiceSeconds;
-	private TextField mediaRosterLimit;
 	private TextField mediaMemKb;
 	// Значения списков «Медиа»; первый пункт каждого — «как в профиле моста».
 	private static final String[] MEDIA_PHOTO_SIZES = { "176x176", "176x220", "240x320", "320x240", "480x640", "640x480" };
@@ -1106,9 +1117,9 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup chsFSMode;
 	private ChoiceGroup choiceCurAccount;
 
-	// Сети моста, которые можно выключить с телефона: пока одна — eXpress.
-	// Мост получает выбор парой в 01/F2 при входе и при каждом сохранении.
-	private ChoiceGroup networksChoice;
+	// Форма сети моста: включена ли и сколько её чатов класть в список.
+	private ChoiceGroup netEnabled;
+	private TextField netRosterLimit;
 	private ChoiceGroup chsTimeZone;
 	private ChoiceGroup chsCurrTime;
 	private ChoiceGroup chsDayLight;
@@ -1257,6 +1268,9 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				JimmUI.addTextListItem(optionsMenu, "options_camera", MainMenu.menuIcons.elementAt(17), OPTIONS_CAMERA, true, -1, Font.STYLE_PLAIN);
 //#sijapp cond.end#
 			JimmUI.addTextListItem(optionsMenu, "options_media", MainMenu.menuIcons.elementAt(17), OPTIONS_MEDIA, true, -1, Font.STYLE_PLAIN);
+			JimmUI.addTextListItem(optionsMenu, "options_net_telegram", MainMenu.menuIcons.elementAt(11), OPTIONS_NET_TELEGRAM, true, -1, Font.STYLE_PLAIN);
+			JimmUI.addTextListItem(optionsMenu, "options_net_max", MainMenu.menuIcons.elementAt(11), OPTIONS_NET_MAX, true, -1, Font.STYLE_PLAIN);
+			JimmUI.addTextListItem(optionsMenu, "options_net_express", MainMenu.menuIcons.elementAt(11), OPTIONS_NET_EXPRESS, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "options_hotkeys", MainMenu.menuIcons.elementAt(18), OPTIONS_HOTKEYS, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "options_signaling", MainMenu.menuIcons.elementAt(19), OPTIONS_SIGNALING, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "auto_away", MainMenu.menuIcons.elementAt(20), OPTIONS_AUTOAWAY, true, -1, Font.STYLE_PLAIN);
@@ -1664,11 +1678,50 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		}
 		if (size != 1)
 			optionsForm.addCommand(cmdDeleteAccount);
+	}
 
-		networksChoice = new ChoiceGroup(ResourceBundle.getString("bridge_networks"), Choice.MULTIPLE);
-		networksChoice.append("eXpress", null);
-		networksChoice.setSelectedIndex(0, Options.getInt(Options.OPTION_EXPRESS) != 2);
-		optionsForm.append(networksChoice);
+	// Какая настройка держит выключатель и ограничение списка для пункта меню.
+	private static int netEnabledOption(int mode)
+	{
+		return mode == OPTIONS_NET_TELEGRAM ? Options.OPTION_TELEGRAM
+				: (mode == OPTIONS_NET_MAX ? Options.OPTION_MAX : Options.OPTION_EXPRESS);
+	}
+
+	private static int netLimitOption(int mode)
+	{
+		return mode == OPTIONS_NET_TELEGRAM ? Options.OPTION_MEDIA_ROSTER_LIMIT
+				: (mode == OPTIONS_NET_MAX ? Options.OPTION_MAX_ROSTER_LIMIT : Options.OPTION_EXPRESS_ROSTER_LIMIT);
+	}
+
+	private void showNetworkForm(int mode)
+	{
+		netEnabled = new ChoiceGroup(ResourceBundle.getString("net_bridge"), Choice.MULTIPLE);
+		netEnabled.append(ResourceBundle.getString("net_enabled"), null);
+		netEnabled.setSelectedIndex(0, Options.getInt(netEnabledOption(mode)) != 2);
+		optionsForm.append(netEnabled);
+		int roster = Options.getInt(netLimitOption(mode));
+		netRosterLimit = new TextField(ResourceBundle.getString("media_roster_limit"),
+				roster <= 0 ? "" : (roster == MEDIA_ROSTER_ALL ? "0" : String.valueOf(roster)), 4, TextField.NUMERIC);
+		optionsForm.append(netRosterLimit);
+	}
+
+	private void readNetworkForm(int mode)
+	{
+		Options.setInt(netEnabledOption(mode), netEnabled.isSelected(0) ? 1 : 2);
+		Options.setInt(netLimitOption(mode), parseRosterLimit(netRosterLimit.getString()));
+	}
+
+	// Поле «чатов в списке»: пусто — как в мосте (0), 0 — все (65535).
+	private static int parseRosterLimit(String raw)
+	{
+		String text = raw.trim();
+		if (text.length() == 0) return 0;
+		try
+		{
+			int n = Integer.parseInt(text);
+			return n <= 0 ? MEDIA_ROSTER_ALL : Math.min(9999, n);
+		}
+		catch (Exception ignore) { return 0; }
 	}
 
 	private void setAccountOptions()
@@ -1692,8 +1745,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		if (currAccount >= size)
 			currAccount = size - 1;
 		Options.setInt(Options.OPTION_CURR_ACCOUNT, currAccount);
-		if (networksChoice != null)
-			Options.setInt(Options.OPTION_EXPRESS, networksChoice.isSelected(0) ? 1 : 2);
 	}
 
 	private void readAccontsControls()
@@ -1823,6 +1874,12 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 		case OPTIONS_MEDIA:
 			showMediaOptions();
+			break;
+
+		case OPTIONS_NET_TELEGRAM:
+		case OPTIONS_NET_MAX:
+		case OPTIONS_NET_EXPRESS:
+			showNetworkForm(mode);
 			break;
 
 //#sijapp cond.if modules_CAMERA="true"#
@@ -2457,8 +2514,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		case OPTIONS_ACCOUNT:
 			readAccontsControls();
 			setAccountOptions();
-			// Выбор сетей мост должен узнать сразу, не дожидаясь перевхода.
-			jimm.comm.Icq.resendClientInfo();
 			break;
 		case OPTIONS_NETWORK:
 			readNetworkOptions();
@@ -2476,6 +2531,14 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 		case OPTIONS_MEDIA:
 			readMediaOptions();
+			break;
+
+		case OPTIONS_NET_TELEGRAM:
+		case OPTIONS_NET_MAX:
+		case OPTIONS_NET_EXPRESS:
+			readNetworkForm(currOptMode);
+			// Мост должен узнать сразу, не дожидаясь перевхода.
+			jimm.comm.Icq.resendClientInfo();
 			break;
 
 //#sijapp cond.if target!="DEFAULT"#
@@ -2680,9 +2743,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 	private void showMediaOptions()
 	{
-		int roster = Options.getInt(Options.OPTION_MEDIA_ROSTER_LIMIT);
-		mediaRosterLimit = new TextField(ResourceBundle.getString("media_roster_limit"),
-				roster <= 0 ? "" : (roster == MEDIA_ROSTER_ALL ? "0" : String.valueOf(roster)), 4, TextField.NUMERIC);
 		mediaPhotoSize = mediaChoice("media_photo_size", MEDIA_PHOTO_SIZES, Options.getString(Options.OPTION_MEDIA_PHOTO_SIZE));
 		mediaPhotoQuality = mediaChoice("media_photo_quality", MEDIA_QUALITIES, Options.getInt(Options.OPTION_MEDIA_PHOTO_QUALITY), false);
 		mediaPhotoKb = mediaChoice("media_photo_kb", MEDIA_PHOTO_KBS, Options.getInt(Options.OPTION_MEDIA_PHOTO_KB), false);
@@ -2704,7 +2764,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		mediaVideoKb = mediaChoice("media_video_kb", MEDIA_VIDEO_KBS, Options.getInt(Options.OPTION_MEDIA_VIDEO_KB), false);
 		mediaVoiceKbps = mediaChoice("media_voice_kbps", MEDIA_VOICE_KBPS10, Options.getInt(Options.OPTION_MEDIA_VOICE_KBPS10), true);
 		mediaVoiceSeconds = mediaChoice("media_voice_seconds", MEDIA_VOICE_SECS, Options.getInt(Options.OPTION_MEDIA_VOICE_SECONDS), false);
-		optionsForm.append(mediaRosterLimit);
 		optionsForm.append(mediaPhotoSize);
 		optionsForm.append(mediaPhotoQuality);
 		optionsForm.append(mediaPhotoKb);
@@ -2727,17 +2786,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 	private void readMediaOptions()
 	{
-		String roster = mediaRosterLimit.getString().trim();
-		if (roster.length() == 0) Options.setInt(Options.OPTION_MEDIA_ROSTER_LIMIT, 0);
-		else
-		{
-			try
-			{
-				int n = Integer.parseInt(roster);
-				Options.setInt(Options.OPTION_MEDIA_ROSTER_LIMIT, n <= 0 ? MEDIA_ROSTER_ALL : Math.min(9999, n));
-			}
-			catch (Exception ignore) {}
-		}
 		Options.setString(Options.OPTION_MEDIA_PHOTO_SIZE, mediaValue(mediaPhotoSize, MEDIA_PHOTO_SIZES));
 		Options.setInt(Options.OPTION_MEDIA_PHOTO_QUALITY, mediaValue(mediaPhotoQuality, MEDIA_QUALITIES));
 		Options.setInt(Options.OPTION_MEDIA_PHOTO_KB, mediaValue(mediaPhotoKb, MEDIA_PHOTO_KBS));

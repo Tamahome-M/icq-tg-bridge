@@ -348,11 +348,12 @@ public class Icq implements Runnable
 			MEDIA_VIDEO_W = 4, MEDIA_VIDEO_H = 5, MEDIA_VIDEO_KBPS = 6, MEDIA_VIDEO_SEC = 7,
 			MEDIA_VIDEO_ROTATE = 8, MEDIA_VOICE_KBPS10 = 9, MEDIA_VOICE_SEC = 10, MEDIA_PHOTO_KB = 11,
 			MEDIA_VIDEO_KB = 12, MEDIA_ROSTER_LIMIT = 13, MEDIA_EXPRESS = 14,
-			MEDIA_CLIENT_VERSION = 19;
+			MEDIA_MAX = 15, MEDIA_TELEGRAM = 16, MEDIA_MAX_ROSTER_LIMIT = 17,
+			MEDIA_EXPRESS_ROSTER_LIMIT = 18, MEDIA_CLIENT_VERSION = 19;
 
 	private static int[] mediaPairs()
 	{
-		int[] out = new int[30];
+		int[] out = new int[38];
 		int n = 0;
 		// Версия клиента — первой парой: сведения о телефоне уходят раньше
 		// способностей, а мосту версия нужна уже при сборке контакт-листа
@@ -373,8 +374,12 @@ public class Icq implements Runnable
 		// Сколько чатов класть в контакт-лист; 65535 — все (0 значило бы
 		// «как в профиле»). Мост читает пару до того, как отдаст список.
 		n = pair(out, n, MEDIA_ROSTER_LIMIT, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_ROSTER_LIMIT));
-		// Сеть eXpress на мосту: 1 — включена, 2 — выключена («Учётная запись»).
+		// Сети моста: 1 — включена, 2 — выключена; и сколько чатов каждой в списке.
 		n = pair(out, n, MEDIA_EXPRESS, jimm.Options.getInt(jimm.Options.OPTION_EXPRESS));
+		n = pair(out, n, MEDIA_MAX, jimm.Options.getInt(jimm.Options.OPTION_MAX));
+		n = pair(out, n, MEDIA_TELEGRAM, jimm.Options.getInt(jimm.Options.OPTION_TELEGRAM));
+		n = pair(out, n, MEDIA_MAX_ROSTER_LIMIT, jimm.Options.getInt(jimm.Options.OPTION_MAX_ROSTER_LIMIT));
+		n = pair(out, n, MEDIA_EXPRESS_ROSTER_LIMIT, jimm.Options.getInt(jimm.Options.OPTION_EXPRESS_ROSTER_LIMIT));
 		int[] cut = new int[n];
 		System.arraycopy(out, 0, cut, 0, n);
 		return cut;
