@@ -29,10 +29,16 @@ import urllib.request
 
 UA = "icq-tg-bridge route helper (https://github.com/Tamahome-M/icq-tg-bridge)"
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
-OVERPASS = "https://overpass-api.de/api/interpreter"
+# Overpass бывает занят (504): пробуем зеркала по очереди.
+OVERPASS_MIRRORS = ("https://overpass-api.de/api/interpreter",
+                    "https://overpass.kumi.systems/api/interpreter",
+                    "https://lz4.overpass-api.de/api/interpreter")
 OSRM = "https://routing.openstreetmap.de/routed-{profile}/route/v1/{profile}/"
 STATIC_MAP = "https://static-maps.yandex.ru/1.x/"
 METRO = re.compile(r"^(ближайш\w*\s+)?(метро|станци\w*(\s+метро)?)$", re.I)
+NAMED_METRO = re.compile(r"^(?:станция\s+метро|станция|метро|ст\.?\s*м\.?|м\.)\s+(.+)$", re.I)
+HOUSE = re.compile(r"^(.*\D)\s+(\d+\w*(?:[/\-]\d+\w*)?)$")
+PHOTON = "https://photon.komoot.io/api/"
 
 TURNS = {
     "left": "налево", "right": "направо", "sharp left": "резко налево",
@@ -47,17 +53,99 @@ def fetch(url: str, data: bytes | None = None) -> dict | list:
         return json.load(response)
 
 
-def geocode(place: str, near: str) -> tuple[float, float, str]:
-    query = place if not near or near.lower() in place.lower() else f"{place}, {near}"
+LAST_CITY = ""     # город последнего найденного места — им уточняется следующее
+
+
+def _nominatim(query: str) -> tuple[float, float, str] | None:
+    global LAST_CITY
     found = fetch(NOMINATIM + "?" + urllib.parse.urlencode(
-        {"q": query, "format": "json", "limit": 1, "accept-language": "ru"}))
+        {"q": query, "format": "json", "limit": 1, "accept-language": "ru", "addressdetails": 1}))
     if not found:
-        raise SystemExit(f"не нашёл место: {place}")
+        return None
     hit = found[0]
+    address = hit.get("address") or {}
+    LAST_CITY = address.get("city") or address.get("town") or address.get("village") or LAST_CITY
     parts = [p.strip() for p in hit["display_name"].split(",")]
     # У адреса первым идёт номер дома — тогда берём и улицу.
     name = ", ".join(parts[:2]) if parts and parts[0].replace("/", "").isdigit() else parts[0]
     return float(hit["lat"]), float(hit["lon"]), name
+
+
+def _photon(query: str) -> tuple[float, float, str] | None:
+    try:
+        found = fetch(PHOTON + "?" + urllib.parse.urlencode({"q": query, "lang": "ru", "limit": 1}))
+    except Exception:
+        return None
+    for feature in found.get("features", []):
+        lon, lat = feature["geometry"]["coordinates"]
+        props = feature.get("properties", {})
+        name = props.get("name") or ", ".join(filter(None, [props.get("street"), props.get("housenumber")]))
+        return lat, lon, name or query
+    return None
+
+
+def metro_by_name(name: str, near: str) -> tuple[float, float, str] | None:
+    """Станция метро по названию — через Overpass, в полусотне километров
+    от центра города: геокодер «метро Арбатская» не понимает."""
+    try:
+        c_lat, c_lon, _ = _nominatim(near) or (None, None, None)
+    except Exception:
+        c_lat = None
+    if c_lat is None:
+        return None
+    safe = re.sub(r'["\\]', "", name)
+    query = (f'[out:json][timeout:25];node(around:50000,{c_lat},{c_lon})[station=subway]'
+             f'[name~"^{safe}",i];out body;')
+    try:
+        stations = [e for e in overpass(query) if e.get("tags", {}).get("name")]
+    except SystemExit:
+        stations = []
+    if not stations:
+        # Overpass не помог — пусть геокодер попробует «станция метро …».
+        return _nominatim(f"станция метро {name}, {near}")
+    best = min(stations, key=lambda e: distance((c_lat, c_lon), (e["lat"], e["lon"])))
+    return best["lat"], best["lon"], "метро " + best["tags"]["name"]
+
+
+def overpass(query: str) -> list[dict]:
+    last: Exception | None = None
+    for mirror in OVERPASS_MIRRORS:
+        try:
+            return fetch(mirror, data=urllib.parse.urlencode({"data": query}).encode()).get("elements", [])
+        except Exception as exc:         # занят или лежит — следующее зеркало
+            last = exc
+    raise SystemExit(f"справочник OpenStreetMap не ответил: {last}")
+
+
+def geocode(place: str, near: str) -> tuple[float, float, str]:
+    """Координаты места: станция метро по названию, адрес (улица и дом —
+    через запятую, как любит геокодер), иначе как написано; сначала рядом с
+    городом, потом где угодно, потом второй геокодер. Город — тот, что
+    передали, иначе город предыдущего найденного места (откуда — туда)."""
+    place = place.strip()
+    near = near or LAST_CITY
+    named = NAMED_METRO.match(place)
+    if named:
+        hit = metro_by_name(named.group(1).strip(), near)
+        if hit:
+            return hit
+    variants = [place]
+    house = HOUSE.match(place)
+    if house and "," not in place:
+        variants.insert(0, f"{house.group(1).strip()}, {house.group(2)}")
+    queries = []
+    for variant in variants:
+        if near and near.lower() not in variant.lower():
+            queries.append(f"{variant}, {near}")
+        queries.append(variant)
+    for query in queries:
+        hit = _nominatim(query)
+        if hit:
+            return hit
+    hit = _photon(queries[0])
+    if hit:
+        return hit
+    raise SystemExit(f"не нашёл место: {place}")
 
 
 def distance(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -69,8 +157,7 @@ def distance(a: tuple[float, float], b: tuple[float, float]) -> float:
 
 def nearest_metro(lat: float, lon: float) -> tuple[float, float, str]:
     query = f"[out:json][timeout:25];node(around:3000,{lat},{lon})[station=subway];out body;"
-    answer = fetch(OVERPASS, data=urllib.parse.urlencode({"data": query}).encode())
-    stations = [(distance((lat, lon), (e["lat"], e["lon"])), e) for e in answer.get("elements", [])
+    stations = [(distance((lat, lon), (e["lat"], e["lon"])), e) for e in overpass(query)
                 if e.get("tags", {}).get("name")]
     if not stations:
         raise SystemExit("метро в трёх километрах не нашлось")
@@ -194,16 +281,21 @@ def main() -> int:
     parser.add_argument("destination")
     parser.add_argument("--mode", choices=("foot", "bike", "car"), default="foot")
     parser.add_argument("--out", default="", help="куда положить карту (PNG)")
-    parser.add_argument("--near", default="Москва", help="город, если в адресе его нет")
+    parser.add_argument("--near", default="", help="город, если в адресе его нет; "
+                        "по умолчанию — город точки отправления, а для неё — Москва")
     parser.add_argument("--parts", type=int, default=0, help="порезать маршрут на столько частей")
     parser.add_argument("--parts-dir", default="", help="куда класть карты частей (part-N.png)")
     args = parser.parse_args()
 
-    a_lat, a_lon, a_name = geocode(args.origin, args.near)
+    a_lat, a_lon, a_name = geocode(args.origin, args.near or "Москва")
     if METRO.match(args.destination.strip()):
         b_lat, b_lon, b_name = nearest_metro(a_lat, a_lon)
     else:
+        # Куда — в том же городе, что и откуда, если город не назван.
         b_lat, b_lon, b_name = geocode(args.destination, args.near)
+        if distance((a_lat, a_lon), (b_lat, b_lon)) > 100_000 and not args.near:
+            raise SystemExit(f"«{args.destination}» нашлось слишком далеко ({b_name}) — "
+                             "уточните город")
 
     url = (OSRM.format(profile=args.mode) + f"{a_lon},{a_lat};{b_lon},{b_lat}"
            + "?steps=true&overview=full&geometries=polyline")
