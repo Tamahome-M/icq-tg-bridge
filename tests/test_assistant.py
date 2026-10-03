@@ -34,6 +34,35 @@ def result(text: str, session: str = "s-1", **extra) -> dict:
             "stop_reason": "end_turn", **extra}
 
 
+async def run_images() -> None:
+    """Картинка, сохранённая Claude в out/, уходит телефону фотографией."""
+    import tempfile
+    work = tempfile.mkdtemp()
+    calls: list = []
+
+    async def run(argv, text):
+        calls.append(text)
+        os.makedirs(os.path.join(work, "out"), exist_ok=True)
+        if text == "карту":
+            with open(os.path.join(work, "out", "map.png"), "wb") as f:
+                f.write(b"\x89PNG fake")
+        return result("Вот маршрут")
+
+    bot = Assistant("claude", work, run=run)
+    assert bot.take_images() == []
+    await bot.ask("привет")
+    assert bot.take_images() == [], "без новых файлов картинок нет"
+    assert await bot.ask("карту") == "Вот маршрут"
+    images = bot.take_images()
+    assert images == [(1, "map.png")], images
+    assert bot.photo_bytes(1) == b"\x89PNG fake" and bot.photo_bytes(2) is None
+    assert bot.take_images() == [], "второй раз та же картинка не уходит"
+    # Тот же файл перезаписан — это новая картинка.
+    await bot.ask("карту")
+    assert bot.take_images() == [(2, "map.png")]
+    print("  картинки от Claude: ок")
+
+
 async def run_assistant() -> None:
     calls: list = []
     bot = Assistant("claude", "/tmp/w", model="opus", effort="low", tools="WebSearch",
@@ -45,7 +74,9 @@ async def run_assistant() -> None:
     argv, text = calls[0]
     assert text == "привет", "вопрос уходит через stdin, а не в аргументах"
     assert argv[:4] == ["claude", "-p", "--output-format", "json"], argv
-    assert argv[argv.index("--append-system-prompt") + 1] == DEFAULT_SYSTEM
+    system = argv[argv.index("--append-system-prompt") + 1]
+    assert system.startswith(DEFAULT_SYSTEM) and "/tmp/w/out" in system, \
+        "подсказка дополнена каталогом для картинок"
     assert argv[argv.index("--model") + 1] == "opus"
     assert argv[argv.index("--effort") + 1] == "low"
     assert argv[argv.index("--tools") + 1] == "WebSearch"
@@ -258,6 +289,7 @@ async def run_bridge() -> None:
 
 async def main() -> None:
     await run_assistant()
+    await run_images()
     await run_process()
     await run_bridge()
     print("КОНТАКТ CLAUDE ПРОВЕРЕН")

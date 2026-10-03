@@ -594,7 +594,10 @@ class Bridge:
         kind, _, ident = attach.partition(":")
         if contact is None or kind not in ("photo", "video") or not ident.isdigit():
             return None
-        raw = await self.side_for(contact.peer_id).photo_bytes(contact.peer_id, int(ident))
+        if contact.peer_id == ASSISTANT_PEER:
+            raw = self.assistant.photo_bytes(int(ident)) if self.assistant else None
+        else:
+            raw = await self.side_for(contact.peer_id).photo_bytes(contact.peer_id, int(ident))
         if not raw:
             return None
         got = photos.shrink(raw, self.tmm("photo_width"), self.tmm("photo_height"),
@@ -1371,6 +1374,12 @@ class Bridge:
         log.info("ответ Claude: %d симв.", len(answer))
         log.debug("ответ Claude: %s", answer[:300])
         await self.reply(contact, answer)
+        # Картинки, которые Claude сохранил, — следом, фотографиями: телефон
+        # попросит каждую по токену, и мост ужмёт её под экран.
+        for number, name in self.assistant.take_images():
+            log.info("Claude прислал картинку %s (№%d)", name, number)
+            await self.oscar.deliver(contact.uin, f"[фото] {os.path.splitext(name)[0]}",
+                                     forced=True, attach=f"photo:{number}")
 
     async def catch_up(self) -> None:
         """Догружает в очередь то, что пришло, пока мост не работал.

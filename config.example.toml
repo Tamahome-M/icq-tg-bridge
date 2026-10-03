@@ -394,7 +394,9 @@ system = ""
 # Инструменты, которые контакту разрешены без вопросов (в режиме печати
 # спросить некого — что не разрешено, то отклоняется). По умолчанию только
 # сеть; "" — совсем без инструментов; "default" — все, но тогда разрешения
-# берутся из настроек Claude Code (~/.claude/settings.json).
+# берутся из настроек Claude Code (~/.claude/settings.json). Чтобы Claude
+# мог присылать картинки (файлы в workdir/out) и снимки веб-страниц
+# (tools/snapshot.py), добавьте Bash и Write: "WebSearch,WebFetch,Bash,Write".
 tools = "WebSearch,WebFetch"
 
 # Любые другие аргументы `claude`, одной строкой — например

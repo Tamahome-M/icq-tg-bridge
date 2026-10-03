@@ -21,6 +21,7 @@ import os
 import pwd
 import shlex
 import shutil
+import sys
 import time
 
 log = logging.getLogger("assistant")
@@ -36,6 +37,19 @@ DEFAULT_SYSTEM = (
     "таблиц, без заголовков и эмодзи — только простой текст. Если вопрос "
     "требует длинного ответа, дай самое важное и предложи уточнить. Если "
     "нужного инструмента нет или он не разрешён, так и скажи одной фразой."
+)
+# Картинки от Claude: всё, что он сохранит в этот каталог внутри workdir,
+# после ответа уходит на телефон фотографиями (ужатыми под его экран).
+OUT_DIR = "out"
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
+IMAGES_PROMPT = (
+    " Чтобы прислать картинку (карту, график, снимок страницы), сохрани её файлом PNG "
+    "или JPEG в каталог {outdir} — мост сам отправит её на телефон, ужав под экран; "
+    "в тексте ответа имя файла не упоминай, просто скажи, что на картинке."
+)
+SNAPSHOT_PROMPT = (
+    " Снимок веб-страницы (например, маршрут на картах) делает команда: "
+    "{python} {snapshot} URL файл.png — и файл тоже клади в {outdir}."
 )
 # Инструменты по умолчанию: только сеть. Команды и правка файлов от имени
 # пользователя моста с телефона не нужны — а если нужны, это включается в
@@ -58,7 +72,11 @@ class Assistant:
         self.workdir = workdir
         self.model = model
         self.effort = effort
-        self.system = system or DEFAULT_SYSTEM
+        self.outdir = os.path.join(workdir, OUT_DIR) if workdir else ""
+        self.system = (system or DEFAULT_SYSTEM) + self._images_prompt()
+        self._images: dict[int, str] = {}      # номер картинки -> путь к файлу
+        self._fresh: list[tuple[int, str]] = []  # что сохранил последний ответ
+        self._next_image = 1
         self.tools = tools
         self.args = shlex.split(args) if args else []
         self.timeout = timeout
@@ -71,6 +89,60 @@ class Assistant:
     @property
     def available(self) -> bool:
         return shutil.which(self.command) is not None
+
+    def _images_prompt(self) -> str:
+        if not self.outdir:
+            return ""
+        prompt = IMAGES_PROMPT.format(outdir=self.outdir)
+        snapshot = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "tools", "snapshot.py")
+        try:
+            import playwright  # noqa: F401
+        except ImportError:
+            return prompt
+        return prompt + SNAPSHOT_PROMPT.format(python=sys.executable, snapshot=snapshot,
+                                               outdir=self.outdir)
+
+    def _image_files(self) -> dict[str, float]:
+        """Картинки в каталоге ответов: имя -> время изменения."""
+        if not self.outdir:
+            return {}
+        try:
+            os.makedirs(self.outdir, exist_ok=True)
+            return {name: os.path.getmtime(os.path.join(self.outdir, name))
+                    for name in os.listdir(self.outdir)
+                    if name.lower().endswith(IMAGE_SUFFIXES)}
+        except OSError:
+            return {}
+
+    def _collect_images(self, before: dict[str, float]) -> None:
+        """Новые или обновлённые картинки после ответа — под номерами, по
+        которым телефон их потом попросит."""
+        self._fresh = []
+        for name, stamp in sorted(self._image_files().items(), key=lambda kv: kv[1]):
+            if before.get(name) == stamp:
+                continue
+            number = self._next_image
+            self._next_image += 1
+            self._images[number] = os.path.join(self.outdir, name)
+            self._fresh.append((number, name))
+            if len(self._images) > 100:
+                self._images.pop(next(iter(self._images)))
+
+    def take_images(self) -> list[tuple[int, str]]:
+        """Картинки последнего ответа: (номер, имя файла)."""
+        fresh, self._fresh = self._fresh, []
+        return fresh
+
+    def photo_bytes(self, number: int) -> bytes | None:
+        path = self._images.get(number)
+        if not path:
+            return None
+        try:
+            with open(path, "rb") as source:
+                return source.read()
+        except OSError:
+            return None
 
     def reset(self) -> None:
         self.session_id = None
@@ -101,6 +173,7 @@ class Assistant:
                 log.info("сеанс %s залежался — начинаю новый", self.session_id[:8])
                 self.session_id = None
             resume = self.session_id
+            before = self._image_files()
             reply = await self._run(self.argv(resume), text)
             if reply is None and resume:
                 # Сеанс на диске не нашёлся (почистили ~/.claude, сменили
@@ -111,6 +184,7 @@ class Assistant:
             if reply is None:
                 raise AssistantError("claude вернул не то, что ждали")
             self.last_asked = time.time()
+            self._collect_images(before)
             return self._answer(reply)
 
     def _answer(self, reply: dict) -> str:
