@@ -390,11 +390,16 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			marker += len;
 			int flag = Util.getByte(data, marker);
 			marker += 1;
-			if ((flag & 0xF0) != 0) return false;        // старшие биты не наши
+			if ((flag & 0xE0) != 0) return false;        // старшие биты не наши
 			if ((flag & 1) != 0)
 			{
 				if (marker + 16 > data.length) return false;
 				marker += 16;
+			}
+			if ((flag & 0x10) != 0)                      // UIN обсуждения
+			{
+				if (marker + 4 > data.length) return false;
+				marker += 4;
 			}
 			records++;
 		}
