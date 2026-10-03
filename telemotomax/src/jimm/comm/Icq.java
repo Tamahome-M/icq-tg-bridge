@@ -347,11 +347,11 @@ public class Icq implements Runnable
 	private static final int MEDIA_PHOTO_W = 1, MEDIA_PHOTO_H = 2, MEDIA_PHOTO_Q = 3,
 			MEDIA_VIDEO_W = 4, MEDIA_VIDEO_H = 5, MEDIA_VIDEO_KBPS = 6, MEDIA_VIDEO_SEC = 7,
 			MEDIA_VIDEO_ROTATE = 8, MEDIA_VOICE_KBPS10 = 9, MEDIA_VOICE_SEC = 10, MEDIA_PHOTO_KB = 11,
-			MEDIA_VIDEO_KB = 12, MEDIA_ROSTER_LIMIT = 13;
+			MEDIA_VIDEO_KB = 12, MEDIA_ROSTER_LIMIT = 13, MEDIA_EXPRESS = 14;
 
 	private static int[] mediaPairs()
 	{
-		int[] out = new int[26];
+		int[] out = new int[28];
 		int n = 0;
 		int[] size = jimm.Options.mediaSize(jimm.Options.OPTION_MEDIA_PHOTO_SIZE);
 		if (size != null) { out[n++] = MEDIA_PHOTO_W; out[n++] = size[0]; out[n++] = MEDIA_PHOTO_H; out[n++] = size[1]; }
@@ -368,6 +368,8 @@ public class Icq implements Runnable
 		// Сколько чатов класть в контакт-лист; 65535 — все (0 значило бы
 		// «как в профиле»). Мост читает пару до того, как отдаст список.
 		n = pair(out, n, MEDIA_ROSTER_LIMIT, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_ROSTER_LIMIT));
+		// Сеть eXpress на мосту: 1 — включена, 2 — выключена («Учётная запись»).
+		n = pair(out, n, MEDIA_EXPRESS, jimm.Options.getInt(jimm.Options.OPTION_EXPRESS));
 		int[] cut = new int[n];
 		System.arraycopy(out, 0, cut, 0, n);
 		return cut;

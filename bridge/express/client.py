@@ -145,10 +145,14 @@ class ExpressSide:
                 await self.client.stop()
             except Exception:
                 log.debug("eXpress: браузер закрылся с ошибкой", exc_info=True)
+        self.client = None
+        self._chats.clear()
 
     # --- контакт-лист ---------------------------------------------------
 
     async def _all_chats(self) -> list:
+        if self.client is None:
+            raise RuntimeError("сторона eXpress выключена")
         chats = [c for c in await self.client.chats() if not c.left]
         self._chats = {chat_peer(c.id): c for c in chats}
         return chats

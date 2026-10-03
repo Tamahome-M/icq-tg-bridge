@@ -212,6 +212,7 @@
 "only_online"				"Show only online contacts"
 "options_lng"				"Options"
 "options_account"			"Account"
+"bridge_networks"			"Bridge networks"
 "options_interface"			"Interface"
 "options_camera"			"Camera"
 "options_media"			"Media"

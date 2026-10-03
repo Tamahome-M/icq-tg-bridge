@@ -145,6 +145,7 @@ class Session:
         self.device: profiles.Device | None = None
         self.profile_name = ""
         self.media: dict = {}           # «Медиа» из настроек телефона поверх профиля
+        self.express_on: bool | None = None   # выключатель eXpress с телефона; None — не присылал
         self.profile: dict = {}
         # Снимок или голосовое, которые телефон шлёт по частям.
         self.upload: bytearray | None = None
@@ -918,6 +919,9 @@ class Session:
                   5: "video_height", 6: "video_kbps", 7: "video_seconds", 8: "video_rotate",
                   9: "voice_kbps", 10: "voice_seconds", 11: "photo_max_kb",
                   12: "video_max_kb", 13: "roster_limit"}
+    # Не «Медиа», а выключатель сети с телефона («Учётная запись» в
+    # TeleMotoMax 0.71+): 1 — eXpress включён, 2 — выключен; нет пары — как в мосту.
+    EXPRESS_KEY = 14
     # Ограничение контакт-листа: 0 в паре значит «как в профиле», поэтому
     # «все чаты» телефон шлёт этим числом (TeleMotoMax 0.70+).
     ROSTER_ALL = 0xFFFF
@@ -931,8 +935,12 @@ class Session:
             width, height = r.u16(), r.u16()
             memory = r.u32() if r.left >= 4 else 0
             media: dict = {}
+            express_on = None
             while r.left >= 4:
                 key, value = r.u16(), r.u16()
+                if key == self.EXPRESS_KEY and value in (1, 2):
+                    express_on = value == 1
+                    continue
                 name = self.MEDIA_KEYS.get(key)
                 if name and value:
                     media[name] = value
@@ -945,6 +953,9 @@ class Session:
         if media.get("roster_limit") == self.ROSTER_ALL:
             media["roster_limit"] = 0                            # без ограничения
         self.media = media
+        self.express_on = express_on
+        if express_on is not None:
+            log.info("eXpress с телефона: %s", "включён" if express_on else "выключен")
         if media:
             log.info("настройки «Медиа» с телефона: %s",
                      ", ".join(f"{k}={v}" for k, v in media.items()))
