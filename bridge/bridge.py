@@ -476,7 +476,8 @@ class Bridge:
                     "about": ("Claude Code с этой машины. Пишите как обычно; "
                               "!reset — начать разговор заново.")}
         try:
-            info = await self.side_for(contact.peer_id).chat_info(contact.peer_id)
+            info = await self.side_for(contact.peer_id).chat_info(contact.peer_id,
+                                                                  contact.topic_id)
         except Exception:
             log.exception("карточка «%s»: сторона %s не ответила", contact.title,
                           self.network_of(contact.peer_id))
@@ -492,6 +493,11 @@ class Bridge:
             info = {k: emoji.to_text(v) if isinstance(v, str) else v
                     for k, v in info.items()}
         if info is not None:
+            if contact.topic_id and info.get("title") != contact.title:
+                # Сторона рассказала про весь чат — а карточка про тему в нём.
+                info["about"] = "\n".join(filter(None, [f"Чат: {info.get('title', '')}",
+                                                        info.get("about", "")]))
+                info["title"], info["kind"] = contact.title, "Тема"
             # Пометки чата — то, чего в Telegram-профиле нет, но что решает
             # судьбу его сообщений: избранное и выключенные уведомления.
             marks = []

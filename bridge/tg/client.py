@@ -767,7 +767,7 @@ class TelegramSide:
                 break
         return found
 
-    async def chat_info(self, peer_id: int) -> dict | None:
+    async def chat_info(self, peer_id: int, topic_id: int = 0) -> dict | None:
         """Сведения о чате для карточки контакта в Jimm."""
         try:
             entity = await self.client.get_entity(peer_id)

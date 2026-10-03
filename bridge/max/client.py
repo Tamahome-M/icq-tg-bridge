@@ -743,7 +743,7 @@ class MaxSide:
                     break
         return found
 
-    async def chat_info(self, peer_id: int) -> dict | None:
+    async def chat_info(self, peer_id: int, topic_id: int = 0) -> dict | None:
         chat = await self._chat(from_peer(peer_id))
         if chat is None:
             log.info("MAX: чат %s не нашёлся ни в кэше, ни на сервере", from_peer(peer_id))
