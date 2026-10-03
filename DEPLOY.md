@@ -206,12 +206,42 @@ sudo -u icqbridge .venv/bin/python run.py login express
 **5. Запуск.** `rc-service icq-tg-bridge restart`; в журнале должна появиться
 строка «вошли в eXpress как …». Старт стороны занимает 10–15 секунд.
 
-**Вместо шагов 1–3** можно взять системный браузер: поставьте
-`www-client/chromium` (долгая сборка) или `www-client/google-chrome` и
-укажите путь в `browser` секции `[express]` — например
-`browser = "/usr/bin/chromium"`. `pip install -r requirements.txt` нужен в
-любом случае, `playwright install chromium` — нет. На профиле с musl
-скачанный Chromium не запустится, там только системный.
+#### Вариант: системный Google Chrome вместо шагов 1–3
+
+Проще взять готовый браузер из portage: `www-client/google-chrome` — бинарный
+пакет, собирать ничего не надо, а все его библиотеки portage поставит сам
+(гораздо больше, чем в шаге 1, — Chrome тянет и GTK). Лицензия у него своя:
+
+```bash
+echo "www-client/google-chrome google-chrome" >> /etc/portage/package.license
+emerge --ask www-client/google-chrome
+```
+
+Пакет кладёт браузер в `/usr/bin/google-chrome-stable`. Укажите этот путь в
+`config.toml`:
+
+```toml
+[express]
+enabled = true
+browser = "/usr/bin/google-chrome-stable"
+```
+
+Python-пакет Playwright нужен и в этом случае — через него мост управляет
+браузером, — а вот `playwright install chromium` не нужен:
+
+```bash
+cd /opt/icq-tg-bridge
+sudo -u icqbridge .venv/bin/python -m pip install -r requirements.txt
+sudo -u icqbridge .venv/bin/python run.py login express
+```
+
+Дальше — вход и запуск, как в шагах 4–5. Браузер запускается без окна и без
+своей песочницы (это штатный режим Playwright), так что ни X-сервер, ни
+пользовательские пространства имён в ядре не нужны.
+
+То же самое с `www-client/chromium` (`browser = "/usr/bin/chromium"`), но
+это сборка из исходников на несколько часов. На профиле с musl скачанный
+Chromium не запустится — там только системный браузер.
 
 **Обновление.** `tools/update-from-github.sh` доставляет Python-пакеты сам, а
 `express.session` и `.browsers` не трогает. После обновления самого Playwright
