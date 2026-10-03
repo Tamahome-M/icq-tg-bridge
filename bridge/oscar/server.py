@@ -1481,7 +1481,9 @@ class Session:
             data = blocks.history_records(rows, C.HISTORY_MAX_BYTES,
                                           lambda attach: self.server.register_attachment(
                                               int(target), attach),
-                                          threads=(self.tmm_version or (0, 0)) >= (0, 72))
+                                          # 0.72 и 0.73 бит объявили, но проверку
+                                          # записи под него не поправили — им нельзя.
+                                          threads=(self.tmm_version or (0, 0)) >= (0, 74))
             if paged:
                 # Клиенту нужно знать, стоит ли предлагать «Ещё». Заголовок
                 # начинается с 0xFF: длина текста первой записи с такого

@@ -635,9 +635,11 @@ class ExpressClient:
                 await self._open(chat_id)
                 items = await self._loaded(chat_id)
                 # Старое подгружается прокруткой ленты к началу, пока список
-                # растёт; две пустые попытки подряд — значит, это всё.
+                # растёт; три пустые попытки подряд — значит, это всё. Чат с
+                # непрочитанным страница открывает с нескольких сообщений и
+                # дотягивает остальное не сразу — потому и не одна попытка.
                 idle = 0
-                while len(items) < count and idle < 2:
+                while len(items) < count and idle < 3:
                     await self._scroll_to_top()
                     more = await self._loaded(chat_id)
                     idle = idle + 1 if len(more) <= len(items) else 0
@@ -647,12 +649,21 @@ class ExpressClient:
                 await self._close()
 
     async def _scroll_to_top(self) -> None:
-        """Прокрутить ленту сообщений к началу и дождаться подгрузки."""
+        """Прокрутить ленту сообщений к началу и дождаться подгрузки. Лента
+        может быть короче экрана (чат открыт с одного непрочитанного) — тогда
+        прокручивать нечего, и страницу подталкивают колесо и клавиши."""
         page = self._page
-        await page.evaluate("""() => { const list = document.querySelector('.infinite-scroll--chat');
-            if (list) { list.scrollTop = 0; list.dispatchEvent(new Event('scroll', {bubbles: true})); } }""")
-        await page.mouse.move(640, 300)
-        await page.mouse.wheel(0, -20000)
+        box = await page.evaluate("""() => { const list = document.querySelector('.infinite-scroll--chat');
+            if (!list) return null;
+            list.scrollTop = 0;
+            list.dispatchEvent(new Event('scroll', {bubbles: true}));
+            list.dispatchEvent(new WheelEvent('wheel', {deltaY: -600, bubbles: true, cancelable: true}));
+            const r = list.getBoundingClientRect();
+            return [r.x + r.width / 2, r.y + r.height / 2]; }""")
+        if box:
+            await page.mouse.move(box[0], box[1])
+            await page.mouse.wheel(0, -20000)
+            await page.keyboard.press("PageUp")
         try:
             await page.wait_for_function(
                 """() => { const s = window.__store.getState(); const id = s.router.location.pathname.split('/').pop();
