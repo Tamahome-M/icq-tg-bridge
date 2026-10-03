@@ -43,15 +43,19 @@ def _env(profile_dir: str) -> dict[str, str]:
 
 
 async def open_context(pw: Playwright, profile_dir: str, headless: bool = True,
-                       executable: str = "") -> BrowserContext:
+                       executable: str = "", devtools_port: int = 0) -> BrowserContext:
     """executable — путь к системному Chromium или Chrome; пусто — тот, что
-    скачан командой playwright install chromium."""
+    скачан командой playwright install chromium. devtools_port — открыть
+    отладочный порт Chrome на localhost: через него браузер видно и им можно
+    управлять из обычного Chrome (chrome://inspect) по туннелю ssh."""
     Path(profile_dir).mkdir(parents=True, exist_ok=True)
     os.chmod(profile_dir, 0o700)
+    args = [f"--remote-debugging-port={devtools_port}"] if devtools_port else []
     return await pw.chromium.launch_persistent_context(
         profile_dir,
         headless=headless,
         executable_path=executable or None,
+        args=args,
         env=_env(profile_dir),
         locale="ru-RU",
         viewport={"width": 1280, "height": 800},
