@@ -2,9 +2,13 @@
 """Маршрут словами и картинкой — для контакта «Claude» на мосту.
 
     tools/route.py "откуда" "куда" [--mode foot|bike|car] [--out файл.png] [--near Москва]
+                   [--parts N --parts-dir каталог]
 
 Печатает пошаговое описание по-русски («Поверните направо на Кремлёвский
-проезд, 180 м»), а в файл кладёт карту с линией маршрута. «Куда» может
+проезд, 180 м»), а в файл кладёт карту с линией маршрута. С --parts маршрут
+режется на N кусков по длине: для каждого — своя карта крупнее
+(part-1.png, part-2.png, … в --parts-dir) и свои шаги, чтобы отдавать их
+на телефон по одному. «Куда» может
 быть «метро» (или «ближайшее метро», «станция») — тогда ищется ближайшая
 станция метро. Всё на открытых сервисах без ключей: геокодер и Overpass
 OpenStreetMap, маршрут — OSRM (routing.openstreetmap.de), картинка —
@@ -17,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import sys
 import urllib.parse
@@ -123,17 +128,64 @@ def meters(value: float) -> str:
     return f"{round(value / 100) / 10:g} км" if value >= 1000 else f"{int(round(value / 10) * 10)} м"
 
 
-def static_map(points: list[tuple[float, float]], out: str) -> None:
+def thin_line(points: list[tuple[float, float]], limit: int = 80) -> str:
     # Линию прореживаем: адрес картинки не должен расти без меры.
-    step = max(1, len(points) // 80)
+    step = max(1, len(points) // limit)
     thin = points[::step] + ([points[-1]] if (len(points) - 1) % step else [])
-    line = ",".join(f"{lon:.5f},{lat:.5f}" for lat, lon in thin)
-    marks = f"{points[0][1]:.5f},{points[0][0]:.5f},pm2am~{points[-1][1]:.5f},{points[-1][0]:.5f},pm2bm"
-    url = STATIC_MAP + "?" + urllib.parse.urlencode(
-        {"l": "map", "size": "450,450", "pl": f"c:1e64ffff,w:5,{line}", "pt": marks})
+    return ",".join(f"{lon:.5f},{lat:.5f}" for lat, lon in thin)
+
+
+def static_map(points: list[tuple[float, float]], out: str,
+               segment: list[tuple[float, float]] | None = None,
+               labels: tuple[str, str] = ("am", "bm")) -> None:
+    """Карта с линией маршрута; segment — выделенный кусок, под который и
+    выбирается масштаб (остальной маршрут остаётся тонкой серой линией)."""
+    focus = segment or points
+    params = {"l": "map", "size": "450,450"}
+    if segment:
+        lats = [lat for lat, _ in segment]
+        lons = [lon for _, lon in segment]
+        span_lat = max(lats) - min(lats)
+        span_lon = max(lons) - min(lons)
+        pad = max(span_lat, span_lon * math.cos(math.radians(lats[0])), 0.0015) * 0.35
+        params["ll"] = f"{(min(lons) + max(lons)) / 2:.5f},{(min(lats) + max(lats)) / 2:.5f}"
+        params["spn"] = f"{max(span_lon, 0.002) + pad * 2:.5f},{max(span_lat, 0.0015) + pad * 2:.5f}"
+    # Метки: А и Б у концов маршрута, зелёная/красная — у концов куска.
+    params["pt"] = (f"{focus[0][1]:.5f},{focus[0][0]:.5f},pm2{labels[0]}~"
+                    f"{focus[-1][1]:.5f},{focus[-1][0]:.5f},pm2{labels[1]}")
+    # Адрес картинки не длиннее ~2 КБ, иначе сервер отвечает 400: линию
+    # прореживаем, пока не уложимся; кусок рисуется подробнее всего маршрута.
+    for limit in (80, 60, 45, 30, 20, 12):
+        if segment:
+            lines = [f"c:9e9e9eff,w:3,{thin_line(points, max(10, limit * 2 // 3))}",
+                     f"c:1e64ffff,w:6,{thin_line(segment, limit)}"]
+        else:
+            lines = [f"c:1e64ffff,w:5,{thin_line(points, limit)}"]
+        params["pl"] = "~".join(lines)
+        url = STATIC_MAP + "?" + urllib.parse.urlencode(params)
+        if len(url) <= 2000:
+            break
     request = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(request, timeout=40) as response, open(out, "wb") as target:
         target.write(response.read())
+
+
+def split_route(points: list[tuple[float, float]], parts: int) -> list[list[tuple[float, float]]]:
+    """Режет линию маршрута на куски примерно равной длины."""
+    total = sum(distance(points[i], points[i + 1]) for i in range(len(points) - 1))
+    if parts < 2 or total <= 0:
+        return [points]
+    target = total / parts
+    pieces, current, walked = [], [points[0]], 0.0
+    for i in range(len(points) - 1):
+        walked += distance(points[i], points[i + 1])
+        current.append(points[i + 1])
+        if walked >= target * (len(pieces) + 1) and len(pieces) < parts - 1:
+            pieces.append(current)
+            current = [points[i + 1]]
+    if len(current) > 1 or not pieces:
+        pieces.append(current)
+    return pieces
 
 
 def main() -> int:
@@ -143,6 +195,8 @@ def main() -> int:
     parser.add_argument("--mode", choices=("foot", "bike", "car"), default="foot")
     parser.add_argument("--out", default="", help="куда положить карту (PNG)")
     parser.add_argument("--near", default="Москва", help="город, если в адресе его нет")
+    parser.add_argument("--parts", type=int, default=0, help="порезать маршрут на столько частей")
+    parser.add_argument("--parts-dir", default="", help="куда класть карты частей (part-N.png)")
     args = parser.parse_args()
 
     a_lat, a_lon, a_name = geocode(args.origin, args.near)
@@ -159,14 +213,41 @@ def main() -> int:
     best = route["routes"][0]
     how = {"foot": "пешком", "bike": "на велосипеде", "car": "на машине"}[args.mode]
     print(f"{a_name} → {b_name}: {meters(best['distance'])}, около {max(1, round(best['duration'] / 60))} мин {how}")
-    for step in best["legs"][0]["steps"]:
-        text = describe(step, args.mode)
-        if step["maneuver"]["type"] == "arrive":
-            print(f"- {text}")
-        elif step["distance"] >= 5:
-            print(f"- {text}, {meters(step['distance'])}")
+    steps = best["legs"][0]["steps"]
+    points = decode_polyline(best["geometry"])
+    pieces = split_route(points, args.parts) if args.parts else [points]
+    # Шаг относится к той части, где он начинается.
+    bounds: list[float] = []
+    walked = 0.0
+    for piece in pieces:
+        walked += sum(distance(piece[i], piece[i + 1]) for i in range(len(piece) - 1))
+        bounds.append(walked)
+    at, part = 0.0, 0
+    for step in steps:
+        while part < len(bounds) - 1 and at >= bounds[part] - 1:
+            part += 1
+        step["_part"] = part
+        at += step["distance"]
+    for index, piece in enumerate(pieces, start=1):
+        if len(pieces) > 1:
+            length = sum(distance(piece[i], piece[i + 1]) for i in range(len(piece) - 1))
+            print(f"Часть {index}/{len(pieces)}, {meters(length)}:")
+        for step in steps:
+            if step["_part"] != index - 1:
+                continue
+            text = describe(step, args.mode)
+            if step["maneuver"]["type"] == "arrive":
+                print(f"- {text}")
+            elif step["distance"] >= 5:
+                print(f"- {text}, {meters(step['distance'])}")
+        if len(pieces) > 1 and args.parts_dir:
+            os.makedirs(args.parts_dir, exist_ok=True)
+            out = os.path.join(args.parts_dir, f"part-{index}.png")
+            static_map(points, out, piece, labels=("am" if index == 1 else "gnm",
+                                                   "bm" if index == len(pieces) else "rdm"))
+            print(f"карта части: {out}")
     if args.out:
-        static_map(decode_polyline(best["geometry"]), args.out)
+        static_map(points, args.out)
         print(f"карта: {args.out}")
     return 0
 

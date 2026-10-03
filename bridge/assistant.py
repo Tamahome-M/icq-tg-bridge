@@ -50,8 +50,10 @@ IMAGES_PROMPT = (
 ROUTE_PROMPT = (
     " Маршрут словами и картой строит команда: {python} {route} \"откуда\" \"куда\" "
     "--out {outdir}/route.png (по умолчанию пешком; --mode bike|car, если просят иначе; "
-    "«куда» может быть «метро» — ближайшее); "
-    "её вывод перескажи как есть, картинка уйдёт сама."
+    "«куда» может быть «метро» — ближайшее); её вывод перескажи как есть, картинка уйдёт "
+    "сама. Если просят по частям или маршрут длиннее километра, добавь --parts N "
+    "--parts-dir {parts}: карты частей лягут туда как part-1.png…, а в {outdir} копируй "
+    "по одной — сначала первую, по просьбе «дальше» следующую, и пиши шаги только этой части."
 )
 SNAPSHOT_PROMPT = (
     " Снимок веб-страницы (например, маршрут на картах) делает команда: "
@@ -102,7 +104,8 @@ class Assistant:
         prompt = IMAGES_PROMPT.format(outdir=self.outdir)
         tools_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
         prompt += ROUTE_PROMPT.format(python=sys.executable, route=os.path.join(tools_dir, "route.py"),
-                                      outdir=self.outdir)
+                                      outdir=self.outdir,
+                                      parts=os.path.join(os.path.dirname(self.outdir), "route"))
         snapshot = os.path.join(tools_dir, "snapshot.py")
         try:
             import playwright  # noqa: F401
