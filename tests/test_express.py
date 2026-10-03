@@ -93,7 +93,7 @@ class FakeExpress:
         return [chat(GROUP, "group_chat", "Работа", None, 0),
                 chat(PERSONAL, "chat", "Шеф", BOSS, 2),
                 chat(THREAD, "thread", "Работа", None, 1, parent=GROUP,
-                     starter="Общий  сбор в пятницу, приходите все")]
+                     starter="Общий  сбор в пятницу, приходите все", starter_sender="Шеф")]
 
     async def history(self, chat_id, count=50):
         return [self.message(r) for r in self.rows[chat_id]][-count:]
@@ -236,6 +236,15 @@ async def run_side() -> None:
         ("Общий сбор в пятницу, приходите все", "chat", "Работа", True, 1, topic)], dialogs
     assert dialogs[2].peer_id == group
     assert await side.topic_title(group, topic) == "Общий сбор в пятницу, приходите все"
+    card = await side.chat_info(group, topic)
+    assert card["title"] == "Общий сбор в пятницу, приходите все" and card["kind"] == "Обсуждение"
+    assert card["about"] == "Чат: Работа\nНачато под сообщением — Шеф: Общий сбор в пятницу, приходите все", card
+    # Сообщение, под которым есть обсуждение, в истории помечено.
+    rooted = raw_event(12, GROUP, BOSS, "общий сбор")
+    rooted["threadStarted"], rooted["threadCount"] = True, 3
+    assert describe_message(fake.message(rooted)) == "общий сбор [обсуждение: 3]"
+    rooted["threadCount"] = 0
+    assert describe_message(fake.message(rooted)) == "общий сбор [есть обсуждение]"
     assert [i.text for i in await side.history(group, None, None, 50, topic)] == ["а когда?"]
     assert await side.send(group, "в семь", topic) and fake.sent[-1] == (THREAD, "в семь")
     await side._on_new_message(fake.message(raw_event(61, THREAD, BOSS, "ок")))

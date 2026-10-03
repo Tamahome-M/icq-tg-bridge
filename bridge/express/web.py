@@ -114,7 +114,10 @@ JS_HELPERS = """() => {
     }
     return {syncId: e.syncId, groupChatId: e.groupChatId, eventType: e.eventType, sender: e.sender,
             insertedAt: e.insertedAt, editedAt: e.editedAt, deletedAt: e.deletedAt, payload: p,
-            decryptionStatus: e.decryptionStatus};
+            decryptionStatus: e.decryptionStatus,
+            // Под сообщением начато обсуждение; счётчик ответов страница держит
+            // отдельно и не всегда.
+            threadStarted: !!(e.meta && e.meta.threadStarted), threadCount: e.threadMessagesCounter || 0};
   };
   window.__exName = (huid) => {
     const p = window.__store.getState().profiles[huid];
@@ -143,6 +146,7 @@ JS_HELPERS = """() => {
     // под которым оно начато, а само сообщение лежит в starterMessage.
     parent: c.parentChatId || null,
     starter: (c.starterMessage && c.starterMessage.payload && c.starterMessage.payload.body) || '',
+    starterSender: (c.starterMessage && c.starterMessage.sender && window.__exName(c.starterMessage.sender)) || '',
     left: !!c.left, membersCount: c.membersCount || (c.members || []).length, updatedAt: c.lastEventInsertedAt || c.updatedAt, last: window.__exSlim(c.lastEvent),
   });
 }"""
@@ -291,6 +295,8 @@ class Message:
     mentions: list[str] = field(default_factory=list)   # huid упомянутых людей
     attachment: Attachment | None = None
     call: str = ""              # incoming — мне звонят, missed — пропущенный; иначе пусто
+    thread_started: bool = False   # под этим сообщением есть обсуждение
+    thread_count: int = 0       # сколько в нём ответов, если страница знает
     sent_mark: int = 0          # время сообщения в мс, как его держит страница (для on_read)
     raw: dict = field(default_factory=dict, repr=False)
 
@@ -308,6 +314,7 @@ class Chat:
     left: bool
     parent: str | None = None   # у обсуждения (type == "thread") — чат, в котором оно начато
     starter: str = ""           # текст сообщения, под которым начато обсуждение
+    starter_sender: str = ""    # и кто его написал
     avatar: str = ""            # ссылка на аватарку как её знает страница; пусто — нет
     read_at: int = 0            # до какого времени (мс) чат прочитан собеседниками
     status: str = ""            # online / offline собеседника личного чата; пусто — неизвестно
@@ -519,6 +526,8 @@ class ExpressClient:
             mentions=mentions,
             attachment=attachment,
             call=call,
+            thread_started=bool(raw.get("threadStarted")),
+            thread_count=int(raw.get("threadCount") or 0),
             sent_mark=int(raw.get("insertedAt") or 0),
             raw=raw,
         )
@@ -575,6 +584,7 @@ class ExpressClient:
                                unread=row["unread"], muted=row["muted"], pinned=row["pinned"],
                                members=row["members"],
                                left=row["left"], parent=row["parent"], starter=row["starter"],
+                               starter_sender=row["starterSender"],
                                avatar=row["avatar"], read_at=int(row["readAt"]),
                                status=(row["presence"] or {}).get("status") or "",
                                status_changed=((row["presence"] or {}).get("changed") or 0) / 1000,

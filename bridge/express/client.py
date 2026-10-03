@@ -95,16 +95,21 @@ def media_kind(message) -> str:
 
 
 def describe_message(message) -> str:
-    """Текст сообщения; для вложений — пометка, как у остальных сетей."""
+    """Текст сообщения; для вложений — пометка, как у остальных сетей; под
+    сообщением с обсуждением — пометка о нём."""
     text = (message.text or "").strip()
     attachment = message.attachment
-    if attachment is None:
-        return text
-    if attachment.kind == "sticker":
-        return f"{TAGS['sticker']} {text}".strip()
-    kind = media_kind(message)
-    tag = TAGS.get(kind) or (f"[файл {attachment.name}]" if attachment.name else "[файл]")
-    return f"{tag} {text}".strip()
+    if attachment is not None:
+        if attachment.kind == "sticker":
+            text = f"{TAGS['sticker']} {text}".strip()
+        else:
+            kind = media_kind(message)
+            tag = TAGS.get(kind) or (f"[файл {attachment.name}]" if attachment.name else "[файл]")
+            text = f"{tag} {text}".strip()
+    if getattr(message, "thread_started", False) and text:
+        count = getattr(message, "thread_count", 0)
+        text += f" [обсуждение: {count}]" if count else " [есть обсуждение]"
+    return text
 
 
 class ExpressSide:
@@ -242,7 +247,8 @@ class ExpressSide:
                 peer, "chat", self._thread_title(thread)[:self.cfg.alias_max_chars],
                 self._title(parent)[:self.cfg.alias_max_chars], position,
                 status="online", unread=thread.unread, pinned=False,
-                muted=parent.muted or thread.muted, topic_id=topic, photo_id=0))
+                muted=parent.muted or thread.muted, topic_id=topic,
+                photo_id=zlib.crc32(parent.avatar.encode()) if parent.avatar else 0))
             position += 1
         log.debug("eXpress: получено %d чатов и %d обсуждений", len(self._chats), len(self._threads))
         return out
@@ -273,10 +279,23 @@ class ExpressSide:
                     break
         return found
 
-    async def chat_info(self, peer_id: int) -> dict | None:
+    async def chat_info(self, peer_id: int, topic_id: int = 0) -> dict | None:
         chat = await self._chat(peer_id)
         if chat is None:
             return None
+        if topic_id:
+            thread = await self._thread(peer_id, topic_id)
+            if thread is None:
+                return None
+            # Карточка обсуждения: откуда оно и под каким сообщением начато.
+            starter = " ".join((thread.starter or "").split())
+            author = f"{thread.starter_sender}: " if thread.starter_sender else ""
+            return {
+                "title": self._thread_title(thread), "kind": "Обсуждение",
+                "username": "", "phone": "",
+                "members": f"участников: {thread.members_count}" if thread.members_count else "",
+                "about": f"Чат: {self._title(chat)}\nНачато под сообщением — {author}{starter}",
+            }
         kind = self._kind(chat)
         count = chat.members_count
         return {
