@@ -13,6 +13,10 @@ Chromium без окна (см. web.py) и работает через него.
 же видно сеть, как у MAX), номер сообщения — тоже старшие биты UUID;
 обратное соответствие держим в памяти и восстанавливаем из списка чатов и
 истории.
+
+Обсуждения (треды) устроены как темы форума в Telegram: обсуждение — это
+отдельный собеседник того же чата с topic_id, равным номеру сообщения, под
+которым оно начато; группой контактов для него служит название чата.
 """
 
 from __future__ import annotations
@@ -53,6 +57,12 @@ def chat_peer(chat_id: str) -> int:
 
 def message_number(sync_id: str) -> int:
     return uuid.UUID(sync_id).int >> (128 - MESSAGE_BITS)
+
+
+def thread_topic(thread_id: str) -> int:
+    """topic_id обсуждения — номер сообщения, под которым оно начато: у
+    eXpress это один и тот же UUID."""
+    return message_number(thread_id)
 
 
 def is_express_peer(peer_id: int) -> bool:
@@ -109,6 +119,7 @@ class ExpressSide:
         self.on_read = on_read
         self.client = client              # подмена для проверок
         self._chats: dict[int, object] = {}        # peer_id -> Chat
+        self._threads: dict[tuple[int, int], object] = {}   # (peer_id, topic_id) -> Chat обсуждения
         self._messages: dict[int, object] = {}     # номер сообщения -> Message
         self._own_ids: set[str] = set()
         self._passed: dict[str, None] = {}         # что уже отдано мосту — чтобы не дважды
@@ -154,10 +165,19 @@ class ExpressSide:
     # --- контакт-лист ---------------------------------------------------
 
     async def _all_chats(self) -> list:
+        """Обычные чаты; обсуждения откладываются в _threads."""
         if self.client is None:
             raise RuntimeError("сторона eXpress выключена")
-        chats = [c for c in await self.client.chats() if not c.left]
+        chats, threads = [], {}
+        for chat in await self.client.chats():
+            if chat.left:
+                continue
+            if chat.type == "thread" and chat.parent:
+                threads[(chat_peer(chat.parent), thread_topic(chat.id))] = chat
+            else:
+                chats.append(chat)
         self._chats = {chat_peer(c.id): c for c in chats}
+        self._threads = threads
         return chats
 
     async def _chat(self, peer_id: int):
@@ -165,11 +185,31 @@ class ExpressSide:
             await self._all_chats()
         return self._chats.get(peer_id)
 
-    async def _chat_id(self, peer_id: int) -> str:
-        chat = await self._chat(peer_id)
+    async def _thread(self, peer_id: int, topic_id: int):
+        if (peer_id, topic_id) not in self._threads:
+            await self._all_chats()
+        return self._threads.get((peer_id, topic_id))
+
+    async def _chat_id(self, peer_id: int, topic_id: int = 0) -> str:
+        chat = await self._thread(peer_id, topic_id) if topic_id else await self._chat(peer_id)
         if chat is None:
-            raise LookupError(f"чат eXpress {peer_id} не найден")
+            raise LookupError(f"чат eXpress {peer_id}/{topic_id} не найден")
         return chat.id
+
+    def _locate(self, chat_id: str) -> tuple[int, int] | None:
+        """(peer_id, topic_id) по номеру чата страницы — обычного или обсуждения."""
+        peer = chat_peer(chat_id)
+        if peer in self._chats:
+            return peer, 0
+        for key, thread in self._threads.items():
+            if thread.id == chat_id:
+                return key
+        return None
+
+    @staticmethod
+    def _thread_title(thread) -> str:
+        text = " ".join((thread.starter or "").split())
+        return text or "Обсуждение"
 
     @staticmethod
     def _kind(chat) -> str:
@@ -190,8 +230,26 @@ class ExpressSide:
                         if self._kind(chat) == "user" else "online"),
                 unread=chat.unread, pinned=chat.pinned, muted=chat.muted,
                 photo_id=zlib.crc32(chat.avatar.encode()) if chat.avatar else 0))
-        log.debug("eXpress: получено %d чатов", len(out))
+        # Обсуждения — отдельными собеседниками в группе с названием чата,
+        # как темы форума; мьют берут у чата.
+        position = len(out)
+        for (peer, topic), thread in self._threads.items():
+            parent = self._chats.get(peer)
+            if parent is None:
+                continue
+            out.append(Dialog(
+                peer, "chat", self._thread_title(thread)[:self.cfg.alias_max_chars],
+                self._title(parent)[:self.cfg.alias_max_chars], position,
+                status="online", unread=thread.unread, pinned=False,
+                muted=parent.muted or thread.muted, topic_id=topic, photo_id=0))
+            position += 1
+        log.debug("eXpress: получено %d чатов и %d обсуждений", len(self._chats), len(self._threads))
         return out
+
+    async def topic_title(self, peer_id: int, topic_id: int) -> str:
+        """Название обсуждения — сообщение, под которым оно начато."""
+        thread = await self._thread(peer_id, topic_id)
+        return self._thread_title(thread) if thread is not None else ""
 
     async def title_for(self, peer_id: int) -> tuple[str, str]:
         chat = await self._chat(peer_id)
@@ -261,9 +319,13 @@ class ExpressSide:
             text = describe_message(message)
             if not text or not self._pass(message):
                 return
-            peer = chat_peer(message.chat_id)
+            where = self._locate(message.chat_id)
+            if where is None:
+                await self._all_chats()         # новый чат или обсуждение
+                where = self._locate(message.chat_id) or (chat_peer(message.chat_id), 0)
+            peer, topic = where
             chat = await self._chat(peer)
-            private = chat is not None and self._kind(chat) == "user"
+            private = not topic and chat is not None and self._kind(chat) == "user"
             sender = ""
             if message.outgoing:
                 sender = "Я"
@@ -274,7 +336,7 @@ class ExpressSide:
             log.debug("событие eXpress: сообщение %s в чате %s, %s%s",
                       message.id, message.chat_id, kind or "текст",
                       ", меня упомянули" if message.mentions_me else "")
-            shown = await self.on_message(peer, sender, text, int(message.ts), 0,
+            shown = await self.on_message(peer, sender, text, int(message.ts), topic,
                                           attach=f"{kind}:{number}" if kind else "",
                                           mention=message.mentions_me, always=bool(message.call))
             if self.cfg.mark_read and shown and not message.outgoing:
@@ -283,13 +345,14 @@ class ExpressSide:
             log.exception("ошибка обработки входящего сообщения eXpress")
 
     async def _on_typing(self, chat_id: str, active: bool) -> None:
-        if self.on_typing is not None:
+        # Набор в обсуждении телефону не показать: у «печатает» нет темы.
+        if self.on_typing is not None and chat_peer(chat_id) in self._chats:
             await self.on_typing(chat_peer(chat_id), active)
 
     async def _on_read(self, chat_id: str, at: int) -> None:
         """Отметка прочтения в eXpress — время, а не номер сообщения; отправка
         возвращает время сообщения тем же счётом, так что сравнение сходится."""
-        if self.on_read is not None:
+        if self.on_read is not None and chat_peer(chat_id) in self._chats:
             await self.on_read(chat_peer(chat_id), at)
 
     async def _on_presence(self, huid: str, status: str, changed: float) -> None:
@@ -322,17 +385,17 @@ class ExpressSide:
         return self._own(message)
 
     async def send(self, peer_id: int, text: str, topic_id: int = 0) -> int | None:
-        chat_id = await self._chat_id(peer_id)
+        chat_id = await self._chat_id(peer_id, topic_id)
         return await self._sent(chat_id, self.client.send(chat_id, text))
 
     async def _send_bytes(self, peer_id: int, data: bytes, name: str, caption: str = "",
-                          as_document: bool = False) -> int | None:
+                          as_document: bool = False, topic_id: int = 0) -> int | None:
         folder = tempfile.mkdtemp(prefix="express-")
         path = os.path.join(folder, name)
         try:
             with open(path, "wb") as out:
                 out.write(data)
-            return await self.send_document(peer_id, path, name, caption=caption,
+            return await self.send_document(peer_id, path, name, topic_id, caption=caption,
                                             as_document=as_document)
         finally:
             try:
@@ -347,25 +410,27 @@ class ExpressSide:
         другом имени файл отправляется из временной копии."""
         if os.path.basename(path) != name:
             with open(path, "rb") as source:
-                return await self._send_bytes(peer_id, source.read(), name, caption, as_document)
-        chat_id = await self._chat_id(peer_id)
+                return await self._send_bytes(peer_id, source.read(), name, caption, as_document,
+                                              topic_id)
+        chat_id = await self._chat_id(peer_id, topic_id)
         return await self._sent(chat_id, self.client.send_file(chat_id, path, caption,
                                                                as_document=as_document))
 
     async def send_photo(self, peer_id: int, data: bytes, caption: str = "",
                          topic_id: int = 0) -> int | None:
-        return await self._send_bytes(peer_id, data, "camera.jpg", caption)
+        return await self._send_bytes(peer_id, data, "camera.jpg", caption, topic_id=topic_id)
 
     async def send_voice(self, peer_id: int, data: bytes, seconds: int = 0,
                          voice: bool = True, topic_id: int = 0) -> int | None:
         """Голосовое с телефона уходит файлом: записать «настоящее» голосовое
         веб-клиент даёт только с микрофона."""
         return await self._send_bytes(peer_id, data, "voice.ogg" if voice else "voice.amr",
-                                      as_document=True)
+                                      as_document=True, topic_id=topic_id)
 
     async def send_video(self, peer_id: int, data: bytes, seconds: int = 0,
                          note: bool = True, topic_id: int = 0, name: str = "") -> int | None:
-        return await self._send_bytes(peer_id, data, name or ("note.mp4" if note else "video.3gp"))
+        return await self._send_bytes(peer_id, data, name or ("note.mp4" if note else "video.3gp"),
+                                      topic_id=topic_id)
 
     async def set_typing(self, peer_id: int, active: bool) -> None:
         """«Печатает» с телефона. Веб-клиент сообщает о наборе только из
@@ -392,11 +457,11 @@ class ExpressSide:
 
     # --- история --------------------------------------------------------
 
-    async def _fetch(self, peer_id: int, limit: int) -> list:
-        """Сообщения чата, новые первыми. Открытие чата веб-клиент считает
-        прочтением — так же, как если бы вы открыли его сами."""
+    async def _fetch(self, peer_id: int, limit: int, topic_id: int = 0) -> list:
+        """Сообщения чата или обсуждения, новые первыми. Открытие чата
+        веб-клиент считает прочтением — так же, как если бы вы открыли его сами."""
         try:
-            messages = await self.client.history(await self._chat_id(peer_id), limit)
+            messages = await self.client.history(await self._chat_id(peer_id, topic_id), limit)
         except Exception as exc:
             log.warning("eXpress: история чата %s не получена: %s", peer_id, exc)
             return []
@@ -418,10 +483,10 @@ class ExpressSide:
                       since: dt.datetime | None, cap: int,
                       topic_id: int = 0) -> list[HistoryItem]:
         chat = await self._chat(peer_id)
-        private = chat is not None and self._kind(chat) == "user"
+        private = not topic_id and chat is not None and self._kind(chat) == "user"
         chat_name = self._title(chat) if chat is not None else str(peer_id)
         items: list[HistoryItem] = []
-        for message in await self._fetch(peer_id, min(count or cap, cap)):
+        for message in await self._fetch(peer_id, min(count or cap, cap), topic_id):
             when = dt.datetime.fromtimestamp(message.ts, dt.timezone.utc)
             if since is not None and when < since:
                 break
@@ -437,9 +502,9 @@ class ExpressSide:
     async def missed(self, peer_id: int, since_ts: int, cap: int,
                      topic_id: int = 0) -> list[tuple[int, str, str]]:
         chat = await self._chat(peer_id)
-        private = chat is not None and self._kind(chat) == "user"
+        private = not topic_id and chat is not None and self._kind(chat) == "user"
         out: list[tuple[int, str, str]] = []
-        for message in await self._fetch(peer_id, cap):
+        for message in await self._fetch(peer_id, cap, topic_id):
             if int(message.ts) <= since_ts:
                 break
             if message.outgoing:
@@ -455,10 +520,10 @@ class ExpressSide:
                            since: dt.datetime | None, cap: int, topic_id: int = 0,
                            max_media_bytes: int = 0) -> list[dict]:
         chat = await self._chat(peer_id)
-        private = chat is not None and self._kind(chat) == "user"
+        private = not topic_id and chat is not None and self._kind(chat) == "user"
         chat_name = self._title(chat) if chat is not None else str(peer_id)
         out: list[dict] = []
-        for message in await self._fetch(peer_id, min(count or cap, cap)):
+        for message in await self._fetch(peer_id, min(count or cap, cap), topic_id):
             when = dt.datetime.fromtimestamp(message.ts, dt.timezone.utc)
             if since is not None and when < since:
                 break
@@ -485,10 +550,18 @@ class ExpressSide:
     # --- вложения -------------------------------------------------------
 
     async def _message(self, peer_id: int, number: int):
+        """Сообщение по номеру: из памяти, иначе из истории чата, а затем его
+        обсуждений — телефон просит вложение по номеру, не называя темы."""
         message = self._messages.get(number)
         if message is None:
             await self._fetch(peer_id, FIND_DEPTH)
             message = self._messages.get(number)
+        for (peer, topic) in list(self._threads):
+            if message is not None:
+                break
+            if peer == peer_id:
+                await self._fetch(peer_id, FIND_DEPTH, topic)
+                message = self._messages.get(number)
         if message is None:
             log.warning("eXpress: сообщение %s в чате %s не нашлось", number, peer_id)
         return message
@@ -526,7 +599,7 @@ class ExpressSide:
     async def last_photos(self, peer_id: int, count: int,
                           topic_id: int = 0) -> list[tuple[bytes, str]]:
         out: list[tuple[bytes, str]] = []
-        for message in await self._fetch(peer_id, FIND_DEPTH):
+        for message in await self._fetch(peer_id, FIND_DEPTH, topic_id):
             if len(out) >= count:
                 break
             if media_kind(message) != "photo":

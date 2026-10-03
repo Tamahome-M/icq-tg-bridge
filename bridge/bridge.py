@@ -912,7 +912,9 @@ class Bridge:
         gone = self.storage.mark_missing(present)
         # Форум разложен на темы — отдельный контакт «всего форума» лишний.
         # Такой заводился, пока сообщения из «General» считались обычными.
-        forums = {d.peer_id for d in dialogs if d.topic_id}
+        # У eXpress иначе: обсуждения живут рядом с чатом, и сам чат — тоже
+        # собеседник, его не трогаем.
+        forums = {d.peer_id for d in dialogs if d.topic_id and not is_express_peer(d.peer_id)}
         gone += self.storage.mark_forum_shells(forums)
         for contact in gone:
             log.info("чат %r исчез из Telegram — убираю из списка", contact.title)

@@ -24,6 +24,7 @@ ME = "11111111-aaaa-5bbb-8ccc-000000000001"
 BOSS = "22222222-aaaa-5bbb-8ccc-000000000002"
 PERSONAL = "33333333-aaaa-5bbb-8ccc-000000000003"
 GROUP = "44444444-aaaa-5bbb-8ccc-000000000004"
+THREAD = "66666666-aaaa-5bbb-8ccc-000000000006"      # обсуждение под сообщением группы
 MENTION = "55555555-aaaa-5bbb-8ccc-000000000005"
 NOW_MS = 1_790_967_000_000
 NAMES = {ME: "Вася", BOSS: "Шеф"}
@@ -66,6 +67,7 @@ class FakeExpress:
                                    "fileMimeType": "audio/mp3", "duration": 11}),
             ],
             GROUP: [raw_event(10, GROUP, BOSS, "общий сбор", NOW_MS - 500)],
+            THREAD: [raw_event(60, THREAD, BOSS, "а когда?", NOW_MS - 400)],
         }
 
     def message(self, raw: dict):
@@ -79,16 +81,19 @@ class FakeExpress:
     async def stop(self): self.stopped = True
 
     async def chats(self):
-        def chat(chat_id, kind, title, opponent, unread):
+        def chat(chat_id, kind, title, opponent, unread, **extra):
             rows = self.rows[chat_id]
             return Chat(id=chat_id, type=kind, title=title, opponent=opponent, unread=unread,
+                        **extra,
                         status="offline" if opponent else "",
                         avatar="https://x/a.png" if chat_id == GROUP else "",
                         muted=self.muted.get(chat_id, False), pinned=False, members=[ME, BOSS],
                         left=False, members_count=2, updated=rows[-1]["insertedAt"] / 1000,
                         last=self.message(rows[-1]))
         return [chat(GROUP, "group_chat", "Работа", None, 0),
-                chat(PERSONAL, "chat", "Шеф", BOSS, 2)]
+                chat(PERSONAL, "chat", "Шеф", BOSS, 2),
+                chat(THREAD, "thread", "Работа", None, 1, parent=GROUP,
+                     starter="Общий  сбор в пятницу, приходите все")]
 
     async def history(self, chat_id, count=50):
         return [self.message(r) for r in self.rows[chat_id]][-count:]
@@ -210,20 +215,32 @@ async def run_side() -> None:
     async def on_message(peer, sender, text, ts=0, topic=0, attach="", mention=False,
                          always=False):
         got.append((peer, sender, text, attach, mention))
+        got_topics.append(topic)
         if always:
             urgent.append(text)
         return True
 
     urgent: list = []
+    got_topics: list = []
     fake = FakeExpress()
     side = ExpressSide(cfg, on_message, client=fake)
     fake.on_message = side._on_new_message
     await side.start()
 
     dialogs = await side.dialogs()
-    assert [(d.title, d.kind, d.group_name, d.muted, d.unread) for d in dialogs] == [
-        ("Работа", "chat", "eXpress", True, 0), ("Шеф", "user", "eXpress", False, 2)], dialogs
     personal, group = chat_peer(PERSONAL), chat_peer(GROUP)
+    topic = message_number(THREAD)
+    # Обсуждение — собеседник группы с topic_id, в группе контактов с её именем.
+    assert [(d.title, d.kind, d.group_name, d.muted, d.unread, d.topic_id) for d in dialogs] == [
+        ("Работа", "chat", "eXpress", True, 0, 0), ("Шеф", "user", "eXpress", False, 2, 0),
+        ("Общий сбор в пятницу, приходите все", "chat", "Работа", True, 1, topic)], dialogs
+    assert dialogs[2].peer_id == group
+    assert await side.topic_title(group, topic) == "Общий сбор в пятницу, приходите все"
+    assert [i.text for i in await side.history(group, None, None, 50, topic)] == ["а когда?"]
+    assert await side.send(group, "в семь", topic) and fake.sent[-1] == (THREAD, "в семь")
+    await side._on_new_message(fake.message(raw_event(61, THREAD, BOSS, "ок")))
+    assert got[-1] == (group, "Шеф", "ок", "", False) and got_topics[-1] == topic, (got, got_topics)
+    got.clear()
     assert await side.title_for(personal) == ("Шеф", "user")
     assert (await side.chat_info(group))["members"] == "участников: 2"
     assert [f["title"] for f in await side.search_chats("раб", 5)] == ["Работа"]
@@ -255,7 +272,7 @@ async def run_side() -> None:
     # Отправка: своё сообщение эхом не возвращается; возвращается время
     # сообщения — тем же счётом потом приходит отметка прочтения.
     assert await side.send(personal, "привет") == NOW_MS
-    assert fake.sent == [(PERSONAL, "привет")] and got == [], got
+    assert fake.sent[-1] == (PERSONAL, "привет") and got == [], got
     await side.send_photo(group, b"\xff\xd8\xff", "подпись")
     assert fake.sent[-1] == (GROUP, "camera.jpg", b"\xff\xd8\xff", "подпись", False)
     await side.send_voice(personal, b"ogg", 3)
@@ -290,7 +307,7 @@ async def run_side() -> None:
     await side._on_presence(BOSS, "offline", time.time() - 86400)
     assert seen == [("typing", group, True), ("typing", group, False), ("status", personal, "online"),
                     ("status", personal, "away"), ("status", personal, "offline")], seen
-    assert [d.status for d in await side.dialogs()] == ["online", "offline"], "у группы статуса нет"
+    assert [d.status for d in await side.dialogs()] == ["online", "offline", "online"], "у группы статуса нет"
 
     # Прочтение собеседником, «печатает» с телефона, аватарка.
     side.on_read = lambda peer, mark: seen.append(("read", peer, mark)) or asyncio.sleep(0)
@@ -318,7 +335,7 @@ async def run_side() -> None:
 
     # Мьют с телефона.
     assert await side.set_muted(personal, True) and fake.muted[PERSONAL]
-    assert [d.muted for d in await side.dialogs()] == [True, True]
+    assert [d.muted for d in await side.dialogs()] == [True, True, True]
     await side.stop()
     print("  сторона eXpress: ок (список, история, вложения, отправка, упоминания, мьют)")
 
@@ -340,13 +357,14 @@ async def run_bridge() -> None:
     await bridge.refresh_roster()
 
     titles = {c.title: c for c in bridge.roster()}
-    assert set(titles) == {"Папа", "Работа", "Шеф"}, titles
+    assert set(titles) == {"Папа", "Работа", "Шеф", "Общий сбор в пятницу, приходите все"}, titles
+    assert titles["Общий сбор в пятницу, приходите все"].group_name == "Работа"
     assert titles["Шеф"].group_name == "eXpress" and titles["Работа"].muted
     assert titles["Работа"].position < titles["Папа"].position, "чаты eXpress идут перед Telegram"
     assert bridge.network_of(titles["Шеф"].peer_id) == "eXpress"
     assert bridge._mark(titles["Шеф"]) == "[E] Шеф" and bridge._mark(titles["Папа"]) == "[T] Папа"
     rows = {title: net for _, title, net, _, _ in await bridge.chat_list()}
-    assert rows == {"Папа": 0, "Работа": 2, "Шеф": 2}, rows
+    assert rows == {"Папа": 0, "Работа": 2, "Шеф": 2, "Общий сбор в пятницу, приходите все": 2}, rows
 
     await bridge.on_phone_message(titles["Шеф"].uin, "буду в десять")
     assert fake.sent == [(PERSONAL, "буду в десять")]
@@ -412,7 +430,8 @@ async def run_bridge() -> None:
     bridge.on_phone_profile()
     await asyncio.sleep(0.05)
     assert bridge.express_active and bridge.express.client is fake
-    assert {c.title for c in bridge.roster()} == {"Папа", "Работа", "Шеф"}
+    assert {c.title for c in bridge.roster()} == {"Папа", "Работа", "Шеф",
+                                                  "Общий сбор в пятницу, приходите все"}
     fake.on_message = bridge.express._on_new_message
     bridge.oscar.session = None
 
