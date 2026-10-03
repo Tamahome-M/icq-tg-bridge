@@ -214,10 +214,12 @@ public class Options
 	public static final int OPTION_MEDIA_ROSTER_LIMIT   = 124;   // «Медиа»: чатов в контакт-листе, 65535 — все, 0 — как в профиле
 	public static final int OPTION_MEDIA_VIDEO_KB       = 125;   // «Медиа»: предел размера ролика, КБ
 	public static final int OPTION_EXPRESS              = 126;   // сеть eXpress на мосту — 1 включена, 2 выключена
-	public static final int OPTION_TELEGRAM             = 171;   // сеть Telegram на мосту — 1 включена, 2 выключена
-	public static final int OPTION_MAX                  = 172;   // сеть MAX на мосту — 1 включена, 2 выключена
-	public static final int OPTION_MAX_ROSTER_LIMIT     = 173;   // чатов MAX в списке: 65535 — все, 0 — как в мосте
-	public static final int OPTION_EXPRESS_ROSTER_LIMIT = 174;   // чатов eXpress в списке: 65535 — все, 0 — как в мосте
+	// Тип настройки задан диапазоном номера (см. save()): 64–127 — число,
+	// 128–191 — флажок. Числовых номеров осталось два — они под ограничения.
+	public static final int OPTION_TELEGRAM_ON          = 131;   // сеть Telegram на мосту включена (флажок)
+	public static final int OPTION_MAX_ON               = 132;   // сеть MAX на мосту включена (флажок)
+	public static final int OPTION_MAX_ROSTER_LIMIT     = 94;    // чатов MAX в списке: 65535 — все, 0 — как в мосте
+	public static final int OPTION_EXPRESS_ROSTER_LIMIT = 127;   // чатов eXpress в списке: 65535 — все, 0 — как в мосте
 
 	/** «WxH» из настройки «Медиа» как {w, h}; пусто или негодно — null. */
 	public static int[] mediaSize(int key)
@@ -466,8 +468,8 @@ public class Options
 		setInt    (Options.OPTION_MEDIA_VIDEO_KB,      0);
 		setInt    (Options.OPTION_MEDIA_ROSTER_LIMIT,  0);
 		setInt    (Options.OPTION_EXPRESS,             1);
-		setInt    (Options.OPTION_TELEGRAM,            1);
-		setInt    (Options.OPTION_MAX,                 1);
+		setBoolean(Options.OPTION_TELEGRAM_ON,         true);
+		setBoolean(Options.OPTION_MAX_ON,              true);
 		setInt    (Options.OPTION_MAX_ROSTER_LIMIT,    0);
 		setInt    (Options.OPTION_EXPRESS_ROSTER_LIMIT, 0);
 
@@ -1680,11 +1682,20 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			optionsForm.addCommand(cmdDeleteAccount);
 	}
 
-	// Какая настройка держит выключатель и ограничение списка для пункта меню.
-	private static int netEnabledOption(int mode)
+	// Включена ли сеть по настройке пункта меню (у eXpress — число 1/2 с 0.71,
+	// у остальных — флажок).
+	private static boolean netEnabled(int mode)
 	{
-		return mode == OPTIONS_NET_TELEGRAM ? Options.OPTION_TELEGRAM
-				: (mode == OPTIONS_NET_MAX ? Options.OPTION_MAX : Options.OPTION_EXPRESS);
+		if (mode == OPTIONS_NET_TELEGRAM) return Options.getBoolean(Options.OPTION_TELEGRAM_ON);
+		if (mode == OPTIONS_NET_MAX) return Options.getBoolean(Options.OPTION_MAX_ON);
+		return Options.getInt(Options.OPTION_EXPRESS) != 2;
+	}
+
+	private static void setNetEnabled(int mode, boolean on)
+	{
+		if (mode == OPTIONS_NET_TELEGRAM) Options.setBoolean(Options.OPTION_TELEGRAM_ON, on);
+		else if (mode == OPTIONS_NET_MAX) Options.setBoolean(Options.OPTION_MAX_ON, on);
+		else Options.setInt(Options.OPTION_EXPRESS, on ? 1 : 2);
 	}
 
 	private static int netLimitOption(int mode)
@@ -1697,7 +1708,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	{
 		netEnabled = new ChoiceGroup(ResourceBundle.getString("net_bridge"), Choice.MULTIPLE);
 		netEnabled.append(ResourceBundle.getString("net_enabled"), null);
-		netEnabled.setSelectedIndex(0, Options.getInt(netEnabledOption(mode)) != 2);
+		netEnabled.setSelectedIndex(0, netEnabled(mode));
 		optionsForm.append(netEnabled);
 		int roster = Options.getInt(netLimitOption(mode));
 		netRosterLimit = new TextField(ResourceBundle.getString("media_roster_limit"),
@@ -1707,7 +1718,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 	private void readNetworkForm(int mode)
 	{
-		Options.setInt(netEnabledOption(mode), netEnabled.isSelected(0) ? 1 : 2);
+		setNetEnabled(mode, netEnabled.isSelected(0));
 		Options.setInt(netLimitOption(mode), parseRosterLimit(netRosterLimit.getString()));
 	}
 
