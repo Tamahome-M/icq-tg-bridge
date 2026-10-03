@@ -32,6 +32,7 @@ MUTE_FOREVER = 2 ** 31 - 1
 # приходят без заголовка темы — как в обычной супергруппе, — и отправляются
 # так же: без ответа на корень темы.
 GENERAL_TOPIC = 1
+LINKED_TTL = 6 * 3600          # как часто переспрашивать у канала его группу обсуждений
 
 
 @dataclass
@@ -71,6 +72,8 @@ class TelegramSide:
         # Что отправлено самим мостом: такие исходящие телефону не возвращаем.
         self._own_ids: dict[tuple[int, int], float] = {}
         self._sending: dict[int, int] = {}
+        # Группа обсуждений канала: peer канала -> (peer группы, когда узнали).
+        self._linked: dict[int, tuple[int, float]] = {}
 
     async def start(self) -> None:
         await self.client.connect()
@@ -107,6 +110,9 @@ class TelegramSide:
                      ", ".join(title for title, _ in folders))
         out: list[Dialog] = []
         position = 0
+        channels: list[tuple[int, bool, str, object]] = []   # каналы: peer, мьют, группа, entity
+        by_peer: dict[int, list[Dialog]] = {}
+        own_folder: set[int] = set()
         # Группа, ставшая супергруппой, остаётся в диалогах пустой оболочкой
         # с migrated_to — тот же чат живёт дальше под новым peer_id, и без
         # ignore_migrated он был бы в списке дважды.
@@ -123,9 +129,14 @@ class TelegramSide:
             muted = is_muted(dialog)
             archived = bool(getattr(dialog, "archived", False))
             unread = dialog.unread_count or 0
-            group = (self._folder_for(folders, entity, kind, muted, unread, archived)
+            folder = self._folder_for(folders, entity, kind, muted, unread, archived)
+            if folder:
+                own_folder.add(peer_id)
+            group = (folder
                      or (self.cfg.archive_group if archived and self.cfg.archive_group
                          else KIND_TITLES.get(kind, "Чаты")))
+            if kind == "channel":
+                channels.append((peer_id, muted, group, entity))
             status = status_of(entity, kind)
             photo_id = photo_id_of(entity)
 
@@ -144,7 +155,9 @@ class TelegramSide:
             out.append(Dialog(peer_id, kind, title, group, position,
                               status, dialog.unread_count or 0, pinned,
                               muted=muted, photo_id=photo_id))
+            by_peer.setdefault(peer_id, []).append(out[-1])
             position += 1
+        await self._inherit_from_channels(channels, by_peer, own_folder)
         spread: dict[str, int] = {}
         for dialog in out:
             spread[dialog.group_name] = spread.get(dialog.group_name, 0) + 1
@@ -164,6 +177,36 @@ class TelegramSide:
                         utils.get_display_name(entity), type(exc).__name__)
             return []
         return [t for t in result.topics if isinstance(t, types.ForumTopic)]
+
+    async def _linked_of(self, peer_id: int, entity) -> int | None:
+        """Группа обсуждений канала (комментарии под постами). Спрашивается
+        у Telegram раз в LINKED_TTL — запрос тяжёлый, а связь меняется редко."""
+        known = self._linked.get(peer_id)
+        if known is not None and time.time() - known[1] < LINKED_TTL:
+            return known[0] or None
+        linked = 0
+        try:
+            full = await self.client(functions.channels.GetFullChannelRequest(entity))
+            linked_id = getattr(full.full_chat, "linked_chat_id", None)
+            if linked_id:
+                linked = utils.get_peer_id(types.PeerChannel(linked_id))
+        except Exception as exc:
+            log.debug("обсуждения канала %s не узнать: %s", peer_id, type(exc).__name__)
+        self._linked[peer_id] = (linked, time.time())
+        return linked or None
+
+    async def _inherit_from_channels(self, channels, by_peer, own_folder) -> None:
+        """Группа обсуждений канала наследует его мьют, а без своей папки —
+        и его группу контактов: иначе заглушённый канал молчит, а комментарии
+        к его постам приходят отдельным чатом из ниоткуда."""
+        for peer_id, muted, group, entity in channels:
+            linked = await self._linked_of(peer_id, entity)
+            for dialog in by_peer.get(linked, []) if linked else []:
+                if muted and not dialog.muted:
+                    dialog.muted = True
+                    log.debug("обсуждения «%s» заглушены вместе с каналом", dialog.title)
+                if linked not in own_folder:
+                    dialog.group_name = group
 
     def _kind(self, entity) -> str:
         if isinstance(entity, types.User):
