@@ -917,7 +917,8 @@ class Bridge:
         forums = {d.peer_id for d in dialogs if d.topic_id and not is_express_peer(d.peer_id)}
         gone += self.storage.mark_forum_shells(forums)
         for contact in gone:
-            log.info("чат %r исчез из Telegram — убираю из списка", contact.title)
+            log.info("чат %r исчез из %s — убираю из списка", contact.title,
+                     self.network_of(contact.peer_id))
             self._statuses[contact.uin] = C.STATUS_OFFLINE
             self._shown[contact.uin] = C.STATUS_OFFLINE
             await self.oscar.notify_status(contact.uin, C.STATUS_OFFLINE)
