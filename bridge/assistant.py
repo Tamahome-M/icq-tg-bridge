@@ -47,6 +47,12 @@ IMAGES_PROMPT = (
     "или JPEG в каталог {outdir} — мост сам отправит её на телефон, ужав под экран; "
     "в тексте ответа имя файла не упоминай, просто скажи, что на картинке."
 )
+ROUTE_PROMPT = (
+    " Маршрут словами и картой строит команда: {python} {route} \"откуда\" \"куда\" "
+    "--out {outdir}/route.png (по умолчанию пешком; --mode bike|car, если просят иначе; "
+    "«куда» может быть «метро» — ближайшее); "
+    "её вывод перескажи как есть, картинка уйдёт сама."
+)
 SNAPSHOT_PROMPT = (
     " Снимок веб-страницы (например, маршрут на картах) делает команда: "
     "{python} {snapshot} URL файл.png — и файл тоже клади в {outdir}."
@@ -94,8 +100,10 @@ class Assistant:
         if not self.outdir:
             return ""
         prompt = IMAGES_PROMPT.format(outdir=self.outdir)
-        snapshot = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                "tools", "snapshot.py")
+        tools_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
+        prompt += ROUTE_PROMPT.format(python=sys.executable, route=os.path.join(tools_dir, "route.py"),
+                                      outdir=self.outdir)
+        snapshot = os.path.join(tools_dir, "snapshot.py")
         try:
             import playwright  # noqa: F401
         except ImportError:
