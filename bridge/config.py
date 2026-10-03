@@ -44,6 +44,7 @@ class Config:
     express_group: str = "eXpress"
     express_roster_limit: int = 0
     express_browser: str = ""
+    express_devtools_port: int = 0
 
     db: str = "bridge.db"
     grouping: str = "folders"
@@ -193,6 +194,7 @@ class Config:
             express_group=str(ex.get("group", cls.express_group)).strip() or cls.express_group,
             express_roster_limit=int(ex.get("roster_limit", cls.express_roster_limit)),
             express_browser=str(ex.get("browser", cls.express_browser)).strip(),
+            express_devtools_port=int(ex.get("devtools_port", cls.express_devtools_port)),
             db=_resolve(base, br.get("db", cls.db)),
             grouping=br.get("grouping", cls.grouping),
             other_group=br.get("other_group", cls.other_group),

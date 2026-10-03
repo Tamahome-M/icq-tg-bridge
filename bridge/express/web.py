@@ -322,9 +322,10 @@ class ExpressClient:
                  on_typing: Callable[[str, bool], Awaitable[None]] | None = None,
                  on_presence: Callable[[str, str, float], Awaitable[None]] | None = None,
                  on_read: Callable[[str, int], Awaitable[None]] | None = None,
-                 executable: str = ""):
+                 executable: str = "", devtools_port: int = 0):
         self.profile_dir = profile_dir
         self.executable = executable        # системный Chromium; пусто — скачанный Playwright
+        self.devtools_port = devtools_port  # отладочный порт Chrome на localhost; 0 — закрыт
         self.on_message = on_message
         self.on_typing = on_typing          # (чат, печатают ли)
         self.on_presence = on_presence      # (huid, online/offline, когда сменился)
@@ -351,7 +352,8 @@ class ExpressClient:
     async def _launch(self) -> None:
         prepare()
         self._pw = await async_playwright().start()
-        self._ctx = await open_context(self._pw, self.profile_dir, self.headless, self.executable)
+        self._ctx = await open_context(self._pw, self.profile_dir, self.headless, self.executable,
+                                       self.devtools_port)
         await self._ctx.expose_binding("__expressEmit", self._on_emit)
         await self._ctx.add_init_script(JS_BLOBS)
         # Содержимое забираем из памяти страницы, сохранение на диск не нужно.
