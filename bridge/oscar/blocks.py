@@ -57,21 +57,25 @@ def icon_reply(uin: int, icon_hash: bytes, image: bytes,
             + struct.pack(">H", len(image)) + image)
 
 
-def history_records(rows: list[tuple[str, str]], max_bytes: int, token_for) -> bytes:
+def history_records(rows: list[tuple], max_bytes: int, token_for,
+                    threads: bool = False) -> bytes:
     """Записи истории для TeleMotoMax: длина текста (2 байта), UTF-8, флаг
     и, если бит 1 флага взведён, 16-байтный токен вложения; бит 2 —
     это видео (превью и ролик), бит 3 — голосовое, оба разом (0x07) —
     документ, бит 4 — сообщение наше (клиент красит его как исходящее),
-    без них — фото. Не влезает — теряем самое старое (записи идут от
-    старых к новым)."""
+    без них — фото. Бит 5 (0x10) — под сообщением есть обсуждение, и за
+    токеном идёт его UIN (4 байта); клиент моложе 0.72 этого бита не
+    знает, ему threads=False. Не влезает — теряем самое старое (записи
+    идут от старых к новым)."""
     encoded: list[bytes] = []
     for row in rows:
         text, attach = row[0], row[1]
         mine = bool(row[2]) if len(row) > 2 else False
+        thread_uin = int(row[3]) if len(row) > 3 and threads else 0
         raw = text.encode("utf-8")[:4000]
         token = token_for(attach) if attach else None
         rec = struct.pack(">H", len(raw)) + raw
-        mark = 0x08 if mine else 0
+        mark = (0x08 if mine else 0) | (0x10 if thread_uin else 0)
         if token:
             flag = 0x01
             if attach.startswith("video:"):
@@ -83,6 +87,8 @@ def history_records(rows: list[tuple[str, str]], max_bytes: int, token_for) -> b
             rec += bytes([flag | mark]) + token
         else:
             rec += bytes([mark])
+        if thread_uin:
+            rec += struct.pack(">I", thread_uin)
         encoded.append(rec)
     while encoded and sum(len(r) for r in encoded) > max_bytes:
         encoded.pop(0)

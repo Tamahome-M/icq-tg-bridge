@@ -829,18 +829,35 @@ class Bridge:
         start = max(0, end - count)
         more = start > 0
         items = items[start:end]
-        out: list[tuple[str, str, bool]] = []
+        out: list[tuple[str, str, bool, int]] = []
         for i in items:
             line = f"[{i.when.astimezone():%d.%m %H:%M}] {i.who}: {i.text}"
             if self.cfg.emoji_to_text:
                 line = emoji.to_text(line)
             has_picture = i.kind in ("photo", "video", "voice", "file") and i.msg_id
-            out.append((line, f"{i.kind}:{i.msg_id}" if has_picture else "", i.who == "Я"))
+            thread_uin = await self._thread_uin(contact, i.thread) if i.thread else 0
+            out.append((line, f"{i.kind}:{i.msg_id}" if has_picture else "", i.who == "Я",
+                        thread_uin))
         log.info("история «%s» для TeleMotoMax: %d сообщений%s, с фото %d%s",
                  contact.title, len(items),
                  f" (пропущено свежих {offset})" if offset else "",
                  sum(1 for row in out if row[1]), ", есть ещё" if more else "")
         return out, more
+
+    async def _thread_uin(self, contact: Contact, topic_id: int) -> int:
+        """UIN обсуждения под сообщением чата — телефон откроет его историю.
+        Обсуждению, которого на телефоне ещё нет, заводится контакт."""
+        known = self.storage.contact_by_peer(contact.peer_id, topic_id)
+        if known is not None:
+            return known.uin
+        title = await self.topic_title(contact.peer_id, topic_id) or f"Обсуждение {topic_id}"
+        uin = self.storage.uin_for_peer(contact.peer_id, kind="chat",
+                                        title=title[:self.cfg.alias_max_chars],
+                                        group_name=contact.title[:self.cfg.alias_max_chars],
+                                        position=9999, topic_id=topic_id,
+                                        muted=int(contact.muted))
+        self._reload_roster()
+        return uin
 
     def icon_hash(self, uin: int) -> bytes | None:
         """Примета аватарки для блока сведений о контакте."""

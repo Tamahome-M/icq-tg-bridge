@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import struct
 import sys
 import tempfile
 import time
@@ -75,12 +76,15 @@ class FakeExpress:
 
     def __init__(self):
         self.stopped = False
+        self.extra_chats: list = []
         self._setup()
 
     async def start(self): self.stopped = False
     async def stop(self): self.stopped = True
 
     async def chats(self):
+        extra_chats = getattr(self, "extra_chats", [])
+
         def chat(chat_id, kind, title, opponent, unread, **extra):
             rows = self.rows[chat_id]
             return Chat(id=chat_id, type=kind, title=title, opponent=opponent, unread=unread,
@@ -93,7 +97,7 @@ class FakeExpress:
         return [chat(GROUP, "group_chat", "Работа", None, 0),
                 chat(PERSONAL, "chat", "Шеф", BOSS, 2),
                 chat(THREAD, "thread", "Работа", None, 1, parent=GROUP,
-                     starter="Общий  сбор в пятницу, приходите все", starter_sender="Шеф")]
+                     starter="Общий  сбор в пятницу, приходите все", starter_sender="Шеф")] + extra_chats
 
     async def history(self, chat_id, count=50):
         return [self.message(r) for r in self.rows[chat_id]][-count:]
@@ -200,6 +204,18 @@ def run_pure() -> None:
     assert not policy.allows(policy.FAVOURITES, "chat", False, True, mention=True)
     assert not policy.allows(policy.INVISIBLE, "chat", False, False, mention=True)
     assert policy.allows(policy.INVISIBLE, "chat", True, True, mention=True)
+
+    # История для TeleMotoMax: запись с обсуждением несёт бит 0x10 и UIN
+    # обсуждения — но только клиенту, который этот бит знает.
+    rows = [("привет", "", False, 0), ("сбор", "", True, 1000777), ("фото", "photo:5", False, 1000778)]
+    token = lambda attach: b"\x11" * 16
+    new = blocks.history_records(rows, 4096, token, threads=True)
+    old = blocks.history_records(rows, 4096, token, threads=False)
+    text = lambda word: struct.pack(">H", len(word.encode())) + word.encode()
+    with_thread = text("сбор") + bytes([0x08 | 0x10]) + struct.pack(">I", 1000777)
+    with_both = text("фото") + bytes([0x01 | 0x10]) + b"\x11" * 16 + struct.pack(">I", 1000778)
+    assert new == text("привет") + b"\x00" + with_thread + with_both, new
+    assert old == text("привет") + b"\x00" + text("сбор") + b"\x08" + text("фото") + b"\x01" + b"\x11" * 16, old
 
     # Список чатов для TeleMotoMax: у eXpress свой бит сети.
     data = blocks.chat_records([(1, "a", 0, 0, True), (2, "b", 1, 0, False), (3, "c", 2, 0, True)], 4096)
@@ -378,6 +394,26 @@ async def run_bridge() -> None:
     await bridge.on_phone_message(titles["Шеф"].uin, "буду в десять")
     assert fake.sent == [(PERSONAL, "буду в десять")]
 
+    # История группы для телефона: у сообщения с обсуждением — UIN обсуждения,
+    # а обсуждению, которого на телефоне ещё нет, заводится контакт.
+    # У eXpress номер обсуждения равен номеру сообщения, под которым оно начато.
+    fake.rows[GROUP][0]["syncId"], fake.rows[GROUP][0]["threadStarted"] = THREAD, True
+    other = "77777777-aaaa-5bbb-8ccc-000000000007"
+    fake.rows[other] = [raw_event(70, other, BOSS, "там тоже", NOW_MS - 300)]
+    fake.rows[GROUP].insert(0, raw_event(9, GROUP, BOSS, "старое", NOW_MS - 900))
+    fake.rows[GROUP][0]["syncId"] = other
+    fake.rows[GROUP][0]["threadStarted"] = True
+    fresh_thread = Chat(id=other, type="thread", title="Работа", opponent=None, unread=0,
+                        muted=False, pinned=False, members=[], left=False, parent=GROUP,
+                        starter="старое", members_count=2, updated=NOW_MS / 1000)
+    fake.extra_chats.append(fresh_thread)
+    rows, more = await bridge.fetch_history(titles["Работа"].uin, 10)
+    known = titles["Общий сбор в пятницу, приходите все"].uin
+    assert [(r[0].split("] ")[1], r[3]) for r in rows] == [
+        ("Шеф: старое [есть обсуждение]", bridge.storage.contact_by_peer(chat_peer(GROUP), message_number(other)).uin),
+        ("Шеф: общий сбор [есть обсуждение]", known)], rows
+    assert bridge.storage.contact_by_uin(rows[0][3]).title == "старое"
+
     queued: list = []
 
     async def deliver(uin, text, forced=False, url="", ts=0, attach=""):
@@ -440,7 +476,7 @@ async def run_bridge() -> None:
     await asyncio.sleep(0.05)
     assert bridge.express_active and bridge.express.client is fake
     assert {c.title for c in bridge.roster()} == {"Папа", "Работа", "Шеф",
-                                                  "Общий сбор в пятницу, приходите все"}
+                                                  "Общий сбор в пятницу, приходите все", "старое"}
     fake.on_message = bridge.express._on_new_message
     bridge.oscar.session = None
 
