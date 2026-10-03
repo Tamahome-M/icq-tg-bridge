@@ -104,6 +104,13 @@ session = "express.session"
 # "/usr/bin/chromium" или "/usr/bin/google-chrome-stable".
 browser = ""
 
+# Отладочный порт Chrome на localhost сервера: через него браузер моста
+# можно увидеть и пощёлкать из обычного Chrome на своей машине — пробросить
+# порт (ssh -L 9222:localhost:9222 сервер), открыть chrome://inspect,
+# добавить localhost:9222 в Configure и нажать inspect у «Web eXpress».
+# Удобно для капчи и QR-кода при входе. 0 — закрыт.
+devtools_port = 0
+
 # Группа контакт-листа для чатов eXpress.
 group = "eXpress"
 
