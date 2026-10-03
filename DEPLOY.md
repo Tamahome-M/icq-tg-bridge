@@ -184,7 +184,27 @@ find .browsers -name chrome-headless-shell -type f -exec ldd {} + | grep "not fo
 `e-file libИМЯ.so` (из `app-portage/pfl`) или `equery belongs` и доставьте.
 
 **4. Настройки и вход.** В `config.toml` — секция `[express]` с
-`enabled = true`, затем от пользователя моста:
+`enabled = true`. Если аккаунт корпоративный и сервер подписан сертификатом
+Минцифры (так у большинства российских компаний), положите рядом его
+корневой и промежуточный сертификаты и укажите их — иначе вход на
+корпоративном шаге ответит «Ошибка сервера»:
+
+```bash
+mkdir -p /opt/icq-tg-bridge/ca
+curl -sSo /opt/icq-tg-bridge/ca/russian_trusted_root_ca.pem \
+    https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt
+curl -sSo /opt/icq-tg-bridge/ca/russian_trusted_sub_ca.pem \
+    https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt
+chown -R icqbridge:icqbridge /opt/icq-tg-bridge/ca
+```
+
+```toml
+[express]
+enabled = true
+trust_ca = ["ca/russian_trusted_root_ca.pem", "ca/russian_trusted_sub_ca.pem"]
+```
+
+Затем вход от пользователя моста:
 
 ```bash
 sudo -u icqbridge .venv/bin/python run.py login express

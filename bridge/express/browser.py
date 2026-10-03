@@ -7,7 +7,10 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import os
+import re
 from pathlib import Path
 
 from playwright.async_api import BrowserContext, Page, Playwright
@@ -23,6 +26,42 @@ LOCAL_BROWSERS = ROOT / ".browsers"
 # Все экраны до входа (выбор способа, капча, код из СМС) свёрстаны
 # классами login*; в самом приложении их нет.
 LOGIN_SCREEN = '[class*="login"]'
+
+
+def _der_items(data: bytes, offset: int = 0):
+    """Элементы DER-последовательности: (тег, содержимое, весь элемент)."""
+    while offset < len(data):
+        tag = data[offset]
+        length = data[offset + 1]
+        head = 2
+        if length & 0x80:
+            count = length & 0x7F
+            length = int.from_bytes(data[offset + 2:offset + 2 + count], "big")
+            head += count
+        end = offset + head + length
+        yield tag, data[offset + head:end], data[offset:end]
+        offset = end
+
+
+def spki_hashes(path: str) -> list[str]:
+    """Отпечатки открытых ключей сертификатов из файла (PEM, можно несколько,
+    или DER) — в том виде, в каком их ждёт Chromium
+    (--ignore-certificate-errors-spki-list): base64 от SHA-256 по
+    SubjectPublicKeyInfo. Своих библиотек для этого не нужно: нужный
+    элемент — седьмой в tbsCertificate (шестой, если версии нет)."""
+    raw = Path(path).read_bytes()
+    blocks = re.findall(rb"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", raw, re.S)
+    certs = [base64.b64decode(b"".join(b.split())) for b in blocks] if blocks else [raw]
+    out = []
+    for der in certs:
+        _, cert, _ = next(_der_items(der))
+        _, tbs, _ = next(_der_items(cert))
+        fields = list(_der_items(tbs))
+        if fields and fields[0][0] == 0xA0:
+            fields = fields[1:]                # явная версия — пропускаем
+        spki = fields[5][2]                    # serial, sigAlg, issuer, validity, subject, spki
+        out.append(base64.b64encode(hashlib.sha256(spki).digest()).decode())
+    return out
 
 
 def prepare() -> None:
@@ -43,14 +82,21 @@ def _env(profile_dir: str) -> dict[str, str]:
 
 
 async def open_context(pw: Playwright, profile_dir: str, headless: bool = True,
-                       executable: str = "", devtools_port: int = 0) -> BrowserContext:
+                       executable: str = "", devtools_port: int = 0,
+                       trust_ca: list[str] | None = None) -> BrowserContext:
     """executable — путь к системному Chromium или Chrome; пусто — тот, что
     скачан командой playwright install chromium. devtools_port — открыть
     отладочный порт Chrome на localhost: через него браузер видно и им можно
-    управлять из обычного Chrome (chrome://inspect) по туннелю ssh."""
+    управлять из обычного Chrome (chrome://inspect) по туннелю ssh.
+    trust_ca — файлы сертификатов удостоверяющих центров, которым Chromium
+    сам не верит (корпоративный сервер с сертификатом Минцифры): доверять
+    только им, остальные проверки остаются."""
     Path(profile_dir).mkdir(parents=True, exist_ok=True)
     os.chmod(profile_dir, 0o700)
     args = [f"--remote-debugging-port={devtools_port}"] if devtools_port else []
+    hashes = [h for path in trust_ca or [] for h in spki_hashes(path)]
+    if hashes:
+        args.append("--ignore-certificate-errors-spki-list=" + ",".join(hashes))
     return await pw.chromium.launch_persistent_context(
         profile_dir,
         headless=headless,

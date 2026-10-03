@@ -121,6 +121,7 @@ class ExpressSide:
         return ExpressClient(self.cfg.express_session, self._on_new_message,
                              on_typing=self._on_typing, on_presence=self._on_presence,
                              on_read=self._on_read, executable=self.cfg.express_browser,
+                             trust_ca=list(self.cfg.express_trust_ca),
                              devtools_port=self.cfg.express_devtools_port)
 
     async def start(self) -> None:
@@ -138,7 +139,7 @@ class ExpressSide:
         """Интерактивный вход: телефон, текст с капчи, код из SMS."""
         from .login import main
         if await main(self.cfg.express_session, self.cfg.express_browser,
-                      self.cfg.express_devtools_port):
+                      self.cfg.express_devtools_port, list(self.cfg.express_trust_ca)):
             raise RuntimeError("вход прерван")
 
     async def stop(self) -> None:

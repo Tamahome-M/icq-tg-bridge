@@ -44,6 +44,7 @@ class Config:
     express_group: str = "eXpress"
     express_roster_limit: int = 0
     express_browser: str = ""
+    express_trust_ca: tuple = ()
     express_devtools_port: int = 0
 
     db: str = "bridge.db"
@@ -194,6 +195,7 @@ class Config:
             express_group=str(ex.get("group", cls.express_group)).strip() or cls.express_group,
             express_roster_limit=int(ex.get("roster_limit", cls.express_roster_limit)),
             express_browser=str(ex.get("browser", cls.express_browser)).strip(),
+            express_trust_ca=tuple(_resolve(base, p) for p in _listed(ex.get("trust_ca"))),
             express_devtools_port=int(ex.get("devtools_port", cls.express_devtools_port)),
             db=_resolve(base, br.get("db", cls.db)),
             grouping=br.get("grouping", cls.grouping),
@@ -374,6 +376,15 @@ def describe(cfg: "Config") -> list[str]:
     ]
     return lines
 
+
+
+def _listed(value) -> list[str]:
+    """Строка или список строк из TOML — всегда списком, без пустых."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    return [str(v).strip() for v in value if str(v).strip()]
 
 def _resolve(base: str, path: str) -> str:
     return path if os.path.isabs(path) else os.path.join(base, path)
