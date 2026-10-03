@@ -156,7 +156,7 @@ def run_pure() -> None:
                                           "fileMimeType": "application/pdf"}))
     assert media_kind(doc) == "file" and describe_message(doc) == "[файл отчёт.pdf]"
     sticker = fake.message(raw_event(6, PERSONAL, BOSS, "😀", sticker={"link": "/s.png"}))
-    assert media_kind(sticker) == "" and describe_message(sticker) == "[стикер] 😀"
+    assert media_kind(sticker) == "photo" and describe_message(sticker) == "[стикер] 😀"
 
     # Упоминания: заглушка в тексте меняется на имя, «меня» и «всех» видно.
     body = "глянь @{mention:%s} срочно" % MENTION

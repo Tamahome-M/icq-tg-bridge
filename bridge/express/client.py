@@ -80,11 +80,12 @@ def presence_name(status: str, changed: float) -> str:
 
 
 def media_kind(message) -> str:
-    """Что во вложении: photo, video, voice, file — или ничего."""
+    """Что во вложении: photo, video, voice, file — или ничего. Стикер —
+    тоже картинка: телефон получает его как фото."""
     attachment = message.attachment
-    if attachment is None or attachment.kind == "sticker":
+    if attachment is None:
         return ""
-    if attachment.kind == "image":
+    if attachment.kind in ("image", "sticker"):
         return "photo"
     if attachment.kind == "voice":
         return "voice"
