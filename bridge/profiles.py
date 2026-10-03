@@ -41,6 +41,8 @@ KEYS = {
     # контактов не тянет, V8 — тянет. Пишется в профиле как roster_limit,
     # а общее значение — [bridge] roster_limit.
     "roster_limit": "roster_limit",
+    "max_roster_limit": "max_roster_limit",
+    "express_roster_limit": "express_roster_limit",
     # Файлы в обе стороны, мегабайт: на GPRS мегабайт — минуты.
     "file_max_mb": "tmm_file_max_mb",
 }

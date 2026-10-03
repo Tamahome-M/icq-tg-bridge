@@ -394,6 +394,14 @@ async def run_bridge() -> None:
     await bridge.on_phone_message(titles["Шеф"].uin, "буду в десять")
     assert fake.sent == [(PERSONAL, "буду в десять")]
 
+    # Пути групп для дерева на телефоне (TeleMotoMax 0.73+): сеть, группа,
+    # а чат с обсуждениями — своя группа вместе с ними.
+    paths = bridge.group_paths(bridge.roster())
+    by_title = {c.title: paths[c.uin] for c in bridge.roster()}
+    assert by_title == {"Папа": "Telegram/Личные", "Шеф": "eXpress",
+                        "Работа": "eXpress/Работа",
+                        "Общий сбор в пятницу, приходите все": "eXpress/Работа"}, by_title
+
     # История группы для телефона: у сообщения с обсуждением — UIN обсуждения,
     # а обсуждению, которого на телефоне ещё нет, заводится контакт.
     # У eXpress номер обсуждения равен номеру сообщения, под которым оно начато.
@@ -464,19 +472,51 @@ async def run_bridge() -> None:
     # списка, выбор переживает перезапуск; включение возвращает всё назад.
     from types import SimpleNamespace
     bridge.express._make_client = lambda: fake
-    bridge.oscar.session = SimpleNamespace(express_on=False, profile={}, media={}, ready=False, closed=True)
+    bridge.oscar.session = SimpleNamespace(network_on={"express": False}, profile={}, media={},
+                                           ready=False, closed=True)
     bridge.on_phone_profile()
     await asyncio.sleep(0.05)
     assert not bridge.express_active and fake.stopped and bridge.express.client is None
-    assert bridge.storage.get_meta("express_on") == "0"
+    assert bridge.storage.get_meta("network_on:express") == "0"
     assert {c.title for c in bridge.roster()} == {"Папа"}, [c.title for c in bridge.roster()]
     assert Bridge(cfg).express_active is False, "выбор телефона помнится в базе"
-    bridge.oscar.session = SimpleNamespace(express_on=True, profile={}, media={}, ready=False, closed=True)
+    bridge.oscar.session = SimpleNamespace(network_on={"express": True}, profile={}, media={},
+                                           ready=False, closed=True)
     bridge.on_phone_profile()
     await asyncio.sleep(0.05)
     assert bridge.express_active and bridge.express.client is fake
-    assert {c.title for c in bridge.roster()} == {"Папа", "Работа", "Шеф",
-                                                  "Общий сбор в пятницу, приходите все", "старое"}
+
+    # Так же выключается и Telegram: отключение, чаты уходят, включение —
+    # соединение и список обратно.
+    tg_calls: list = []
+
+    async def tg_stop(): tg_calls.append("stop")
+    async def tg_connect(): tg_calls.append("connect")
+    bridge.telegram.stop = tg_stop
+    bridge.telegram.client = SimpleNamespace(connect=tg_connect, is_connected=lambda: True)
+    bridge.oscar.session = SimpleNamespace(network_on={"telegram": False}, profile={}, media={},
+                                           ready=False, closed=True)
+    bridge.on_phone_profile()
+    await asyncio.sleep(0.05)
+    assert tg_calls == ["stop"] and not bridge.active["telegram"]
+    assert "Папа" not in {c.title for c in bridge.roster()}
+    bridge.oscar.session = SimpleNamespace(network_on={"telegram": True}, profile={}, media={},
+                                           ready=False, closed=True)
+    bridge.on_phone_profile()
+    await asyncio.sleep(0.05)
+    assert tg_calls == ["stop", "connect"] and bridge.active["telegram"]
+    assert "Папа" in {c.title for c in bridge.roster()}
+    # Ограничение списка по сети приходит с телефона парой «Медиа».
+    bridge.oscar.session = SimpleNamespace(network_on={}, profile={}, media={"express_roster_limit": 1},
+                                           ready=False, closed=True)
+    bridge.on_phone_profile()
+    await asyncio.sleep(0.05)
+    assert sum(1 for c in bridge.roster() if c.group_name in ("eXpress", "Работа")) == 1, \
+        [c.title for c in bridge.roster()]
+    bridge.oscar.session = None             # телефон отключился — ограничение снято
+    bridge._reload_roster()
+    got_titles = {c.title for c in bridge.roster()}
+    assert got_titles == {"Папа", "Работа", "Шеф", "Общий сбор в пятницу, приходите все", "старое"}, got_titles
     fake.on_message = bridge.express._on_new_message
     bridge.oscar.session = None
 
