@@ -16,6 +16,7 @@ from playwright.async_api import async_playwright
 from .browser import is_logged_in, open_app, open_context, prepare
 
 DEFAULT_PROFILE = "express.session"
+QR_MINUTES = 10              # сколько ждать сканирования QR-кода
 
 
 FIFO: str | None = None
@@ -40,6 +41,25 @@ async def _show(page, shot: str) -> None:
     print(f"--- снимок: {shot} ---")
 
 
+async def by_qr(page, shot: str, profile: str) -> int:
+    """Вход сканированием QR-кода из мобильного приложения: без SMS, капчи и
+    кодов корпоративного сервера — телефон передаёт ключи сам. Код живёт
+    недолго, поэтому снимок обновляется, пока вход не состоится."""
+    print("В приложении eXpress: «Чаты» → ваш профиль → «Войти на компьютере» —"
+          " и отсканируйте QR-код со снимка. Снимок обновляется каждые 30 с.")
+    for _ in range(QR_MINUTES * 2):
+        await page.screenshot(path=shot)
+        print(f"снимок с QR-кодом: {shot}", flush=True)
+        for _ in range(10):
+            await page.wait_for_timeout(3000)
+            if await is_logged_in(page):
+                await page.wait_for_timeout(8000)
+                print("Вход выполнен, сессия сохранена в", profile)
+                return 0
+    print("QR-код так и не отсканировали — выхожу")
+    return 1
+
+
 async def main(profile: str, executable: str = "") -> int:
     global FIFO
     shot = f"{profile}/login.png"
@@ -56,7 +76,10 @@ async def main(profile: str, executable: str = "") -> int:
                 print("Уже в аккаунте.")
                 return 0
             if await page.locator("input[type=tel]").count():
-                phone = await asyncio.to_thread(ask, "Номер телефона без +7 (10 цифр): ")
+                phone = await asyncio.to_thread(
+                    ask, "Номер телефона без +7 (10 цифр) или qr — вход по QR-коду из приложения: ")
+                if phone.lower() == "qr":
+                    return await by_qr(page, shot, profile)
                 await page.locator("input[type=tel]").fill(phone)
                 await page.get_by_role("button", name="Продолжить").click()
             while True:
