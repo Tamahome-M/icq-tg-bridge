@@ -89,17 +89,18 @@ def history_records(rows: list[tuple[str, str]], max_bytes: int, token_for) -> b
     return b"".join(encoded)
 
 
-def chat_records(rows: list[tuple[int, str, bool, int, bool]], max_bytes: int) -> bytes:
+def chat_records(rows: list[tuple[int, str, int, int, bool]], max_bytes: int) -> bytes:
     """Список всех чатов для TeleMotoMax: UIN (4 байта), флаги, сколько дней
     молчит (2 байта, 0xFFFF — не писали никогда), длина названия и оно само
     в UTF-8. Во флагах: бит 1 — чат из MAX, бит 2 — он есть в контакт-листе
-    телефона. Не влезло — обрезаем хвост: список отсортирован, и начало
+    телефона, бит 3 — чат из eXpress (клиент, собранный до этого бита, покажет
+    такой чат как Telegram). Не влезло — обрезаем хвост: список отсортирован, и начало
     важнее."""
     out: list[bytes] = []
     size = 0
-    for uin, title, is_max, days, in_list in rows:
+    for uin, title, net, days, in_list in rows:
         raw = title.encode("utf-8")[:120]
-        flags = (0x01 if is_max else 0) | (0x02 if in_list else 0)
+        flags = (0x01 if net == 1 else 0) | (0x02 if in_list else 0) | (0x04 if net == 2 else 0)
         quiet = 0xFFFF if days < 0 else min(days, 0xFFFE)
         rec = (struct.pack(">IBH", uin, flags, quiet)
                + struct.pack(">H", len(raw)) + raw)

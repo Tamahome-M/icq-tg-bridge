@@ -36,7 +36,8 @@ import jimm.util.ResourceBundle;
  * back to it from the phone; this screen is that way back.
  *
  * The bridge sends one record per chat: UIN (4 bytes), flags (bit 1 — the
- * chat is in MAX, bit 2 — it is in the contact list), how many days it has
+ * chat is in MAX, bit 2 — it is in the contact list, bit 3 — the chat is
+ * in eXpress), how many days it has
  * been quiet (2 bytes, 0xFFFF — never), and the name in UTF-8. Choosing a
  * chat asks the bridge to bring it back: it unhides the chat and sends its
  * last message, so the conversation shows up in the client.
@@ -144,10 +145,11 @@ public class ChatListViewer implements CommandListener, VirtualListCommands, Jim
 		list.repaint();
 	}
 
-	// «[M] Таня, 12 дн.» — сеть, название и сколько там тихо.
+	// «[M] Таня, 12 дн.» — сеть ([T]elegram, [M]AX, [E]xpress), название и
+	// сколько там тихо.
 	private String line(int flags, int days, String name)
 	{
-		String text = ((flags & 1) != 0 ? "[M] " : "[T] ") + name;
+		String text = ((flags & 4) != 0 ? "[E] " : (flags & 1) != 0 ? "[M] " : "[T] ") + name;
 		if (days == 0xFFFF) return text;
 		if (days == 0) return text + ", " + ResourceBundle.getString("chats_today");
 		return text + ", " + days + " " + ResourceBundle.getString("chats_days");

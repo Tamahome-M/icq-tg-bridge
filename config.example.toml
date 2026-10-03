@@ -77,6 +77,40 @@ roster_limit = 0
 # ещё нет. Писать им можно сразу — первое сообщение заведёт чат.
 contacts = true
 
+[express]
+# Третья сеть — eXpress (corp.express, express.ms). Чаты eXpress приходят
+# на телефон одной группой: сообщения в обе стороны, фото, голосовые и
+# файлы, история (!last, !render, !lastfoto), «печатает», статусы
+# собеседников, отметки прочтения, звонки текстом.
+#
+# Официального API для аккаунта у eXpress нет, а переписка шифруется на
+# стороне клиента. Мост держит настоящий веб-клиент corp.express в Chromium
+# без окна и работает через него: это несколько сотен мегабайт памяти, а
+# после обновления веб-клиента что-то может перестать работать. Чтобы
+# показать историю или отправить сообщение, мост открывает чат — eXpress
+# при этом считает его прочитанным.
+#
+# Нужны playwright и Chromium:
+#   .venv/bin/python -m pip install -r requirements.txt
+#   .venv/bin/playwright install chromium
+# Вход один раз: python3 run.py login express (телефон, капча, код из SMS).
+enabled = false
+
+# Каталог профиля браузера: в нём сессия и ключи шифрования.
+session = "express.session"
+
+# Какой браузер запускать. Пусто — Chromium, скачанный командой
+# playwright install chromium. Можно указать системный:
+# "/usr/bin/chromium" или "/usr/bin/google-chrome-stable".
+browser = ""
+
+# Группа контакт-листа для чатов eXpress.
+group = "eXpress"
+
+# Сколько чатов eXpress класть в контакт-лист, отдельно от roster_limit
+# в [bridge]. 0 — все.
+roster_limit = 0
+
 [bridge]
 db = "bridge.db"
 
@@ -98,6 +132,11 @@ mirror_outgoing = false
 
 # Подставлять имя автора перед текстом в групповых чатах и каналах.
 show_sender_in_groups = true
+
+# Сообщение, где упомянули вас лично или всех участников (@all), приходит
+# на телефон в свой же чат, даже если тот заглушён. Упоминания пока
+# распознаются только в eXpress.
+mentions_through = true
 
 # Длинные сообщения режутся на куски по столько символов.
 max_message_chars = 900

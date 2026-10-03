@@ -3,6 +3,7 @@
 
   python3 run.py login       — один раз войти в аккаунт Telegram
   python3 run.py login max   — один раз войти в аккаунт MAX (если включён)
+  python3 run.py login express — один раз войти в аккаунт eXpress (если включён)
   python3 run.py             — запустить мост
 """
 
@@ -114,7 +115,8 @@ async def main() -> int:
 
     from bridge.config import warn_about_permissions
     loose = warn_about_permissions([CONFIG, cfg.tg_session, cfg.db]
-                                   + ([cfg.max_session] if cfg.max_enabled else []))
+                                   + ([cfg.max_session] if cfg.max_enabled else [])
+                                   + ([cfg.express_session] if cfg.express_enabled else []))
     for path in loose:
         logging.getLogger("bridge").warning(
             "файл %s доступен другим пользователям — сделайте chmod 600", path)
@@ -139,6 +141,16 @@ async def main() -> int:
                 # Сервер отвечает по-русски и по делу («Требуется установить
                 # 2FA») — этого достаточно, трассировка тут ни к чему.
                 print(f"Вход в MAX не удался: {exc}", file=sys.stderr)
+                return 1
+            return 0
+        if len(sys.argv) > 2 and sys.argv[2] == "express":
+            if bridge.express is None:
+                print("eXpress выключен: включите [express] enabled = true", file=sys.stderr)
+                return 1
+            try:
+                await bridge.express.login()
+            except Exception as exc:
+                print(f"Вход в eXpress не удался: {exc}", file=sys.stderr)
                 return 1
             return 0
         await bridge.telegram.login()

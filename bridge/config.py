@@ -39,12 +39,19 @@ class Config:
     max_roster_limit: int = 0
     max_contacts: bool = True
 
+    express_enabled: bool = False
+    express_session: str = "express.session"
+    express_group: str = "eXpress"
+    express_roster_limit: int = 0
+    express_browser: str = ""
+
     db: str = "bridge.db"
     grouping: str = "folders"
     other_group: str = "Прочее"
     archive_group: str = "Архив"
     mirror_outgoing: bool = False
     show_sender_in_groups: bool = True
+    mentions_through: bool = True
     max_message_chars: int = 900
     history_limit: int = 100
     idle_timeout: int = 360
@@ -151,6 +158,7 @@ class Config:
         tm = raw.get("telemotomax", {})
         tg = raw.get("telegram", {})
         mx = raw.get("max", {})
+        ex = raw.get("express", {})
         br = raw.get("bridge", {})
         base = os.path.dirname(os.path.abspath(path))
 
@@ -180,12 +188,18 @@ class Config:
             max_group=str(mx.get("group", cls.max_group)).strip() or cls.max_group,
             max_roster_limit=int(mx.get("roster_limit", cls.max_roster_limit)),
             max_contacts=bool(mx.get("contacts", cls.max_contacts)),
+            express_enabled=bool(ex.get("enabled", cls.express_enabled)),
+            express_session=_resolve(base, ex.get("session", cls.express_session)),
+            express_group=str(ex.get("group", cls.express_group)).strip() or cls.express_group,
+            express_roster_limit=int(ex.get("roster_limit", cls.express_roster_limit)),
+            express_browser=str(ex.get("browser", cls.express_browser)).strip(),
             db=_resolve(base, br.get("db", cls.db)),
             grouping=br.get("grouping", cls.grouping),
             other_group=br.get("other_group", cls.other_group),
             archive_group=br.get("archive_group", cls.archive_group),
             mirror_outgoing=bool(br.get("mirror_outgoing", cls.mirror_outgoing)),
             show_sender_in_groups=bool(br.get("show_sender_in_groups", True)),
+            mentions_through=bool(br.get("mentions_through", cls.mentions_through)),
             max_message_chars=int(br.get("max_message_chars", cls.max_message_chars)),
             history_limit=int(br.get("history_limit", cls.history_limit)),
             idle_timeout=int(br.get("idle_timeout", cls.idle_timeout)),
@@ -319,6 +333,9 @@ def describe(cfg: "Config") -> list[str]:
                    f"контакты без переписки — {onoff(cfg.max_contacts, 'да', 'нет')}, "
                    f"roster_limit {cfg.max_roster_limit or 'без ограничения'}"
                    if cfg.max_enabled else "выключен ([max] enabled = false)"),
+        "eXpress: " + (f"включён, профиль {cfg.express_session}, группа «{cfg.express_group}», "
+                       f"roster_limit {cfg.express_roster_limit or 'без ограничения'}"
+                       if cfg.express_enabled else "выключен ([express] enabled = false)"),
         f"контакт-лист: roster_limit {cfg.roster_limit or 'без ограничения'}, "
         + (f"фоновые группы: {', '.join(cfg.background_groups)} (давность {cfg.background_hours} ч)"
            if cfg.background_groups else "фоновых групп нет")

@@ -24,6 +24,7 @@ from .oscar import const as C
 from .oscar.server import OscarServer
 from .tg.client import GENERAL_TOPIC, KIND_TITLES, TelegramSide
 from .max.client import MaxSide, is_max_peer
+from .express.client import ExpressSide, is_express_peer
 
 log = logging.getLogger("bridge")
 
@@ -37,6 +38,8 @@ DEAD_SESSION = (
 )
 
 ROSTER_REFRESH_SECONDS = 600
+NET_MARKS = {"Telegram": "[T] ", "MAX": "[M] ", "eXpress": "[E] "}
+NET_CODES = {"Telegram": 0, "MAX": 1, "eXpress": 2}     # сеть в списке чатов TeleMotoMax
 MAX_ROSTER_SLOTS = 100_000       # чаты MAX стоят в списке раньше любого чата Telegram
 SEARCH_LIMIT = 10                # столько результатов отдаём телефону
 TG_RETRY_START = 5               # через сколько поднимать связь с Telegram
@@ -75,6 +78,18 @@ class Bridge:
                 raise RuntimeError("Для MAX укажите phone в секции [max]")
             self.max = MaxSide(cfg, self.on_telegram_message, self.on_telegram_status,
                                self.on_telegram_typing, self.on_telegram_read)
+        # Третья сеть: eXpress, тем же способом — свои номера, общие обработчики.
+        self.express: ExpressSide | None = None
+        if cfg.express_enabled:
+            try:
+                import playwright  # noqa: F401
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Для eXpress нужны playwright и Chromium: "
+                    ".venv/bin/python -m pip install playwright && "
+                    ".venv/bin/playwright install chromium") from exc
+            self.express = ExpressSide(cfg, self.on_telegram_message, self.on_telegram_status,
+                                       self.on_telegram_typing, self.on_telegram_read)
         self.oscar = OscarServer(cfg, self.storage, self.on_phone_message,
                                  self.roster, self.status_of, self.chat_info,
                                  self.search_chats, self.verdict_for,
@@ -148,13 +163,23 @@ class Bridge:
         return self._roster
 
     def side_for(self, peer_id: int):
-        """Сеть, которой принадлежит чат: по номеру видно, MAX это или Telegram."""
+        """Сеть, которой принадлежит чат: по номеру видно, чей он."""
         if self.max is not None and is_max_peer(peer_id):
             return self.max
+        if self.express is not None and is_express_peer(peer_id):
+            return self.express
         return self.telegram
 
     def network_of(self, peer_id: int) -> str:
-        return "MAX" if self.max is not None and is_max_peer(peer_id) else "Telegram"
+        if self.max is not None and is_max_peer(peer_id):
+            return "MAX"
+        if self.express is not None and is_express_peer(peer_id):
+            return "eXpress"
+        return "Telegram"
+
+    def _net_mark(self, peer_id: int) -> str:
+        """Пометка сети перед названием: [T] — Telegram, [M] — MAX, [E] — eXpress."""
+        return NET_MARKS[self.network_of(peer_id)]
 
     async def topic_title(self, peer_id: int, topic_id: int) -> str:
         """Название темы форума — если сторона сети умеет его узнать."""
@@ -171,6 +196,8 @@ class Bridge:
         """Группа для чата, впервые пришедшего сообщением или найденного поиском."""
         if self.max is not None and is_max_peer(peer_id):
             return self.cfg.max_group
+        if self.express is not None and is_express_peer(peer_id):
+            return self.cfg.express_group
         return KIND_TITLES.get(kind, "Чаты")
 
     def _reload_roster(self) -> None:
@@ -183,12 +210,16 @@ class Bridge:
         if self.cfg.background_groups and self.cfg.background_hours > 0:
             since = int(time.time()) - self.cfg.background_hours * 3600
         everyone = self.storage.contacts()
-        # У каждой сети своё ограничение: чатов в MAX обычно мало, и общий
-        # потолок с Telegram их бы просто вытеснил.
+        # У каждой сети своё ограничение: чатов в MAX и eXpress обычно мало,
+        # и общий потолок с Telegram их бы просто вытеснил.
         from_max = [c for c in everyone if self.max is not None and is_max_peer(c.peer_id)]
-        rest = [c for c in everyone if c not in from_max]
+        from_express = [c for c in everyone
+                        if self.express is not None and is_express_peer(c.peer_id)]
+        rest = [c for c in everyone if c not in from_max and c not in from_express]
         roster = (limit_contacts(rest, self.tmm("roster_limit"), self.cfg.background_groups, since)
                   + limit_contacts(from_max, self.cfg.max_roster_limit,
+                                   self.cfg.background_groups, since)
+                  + limit_contacts(from_express, self.cfg.express_roster_limit,
                                    self.cfg.background_groups, since))
         self._roster = sorted(roster, key=lambda c: (c.position, c.uin))
         self._by_uin = {c.uin: c for c in self._roster}
@@ -229,8 +260,8 @@ class Bridge:
             log.info("обновлено статусов контактов: %d", sent)
 
     def _mark(self, contact: Contact) -> str:
-        """Название с пометкой сети: [T] — Telegram, [M] — MAX."""
-        return ("[M] " if self.network_of(contact.peer_id) == "MAX" else "[T] ") + contact.title
+        """Название с пометкой сети: [T] — Telegram, [M] — MAX, [E] — eXpress."""
+        return self._net_mark(contact.peer_id) + contact.title
 
     def _quiet_days(self, contact: Contact) -> int:
         """Сколько дней в чате тихо; -1 — сообщений не было вовсе."""
@@ -238,7 +269,7 @@ class Bridge:
             return -1
         return max(0, int((time.time() - contact.last_ts) // 86400))
 
-    async def chat_list(self) -> list[tuple[int, str, bool, int, bool]]:
+    async def chat_list(self) -> list[tuple[int, str, int, int, bool]]:
         """Все чаты для отдельного экрана TeleMotoMax — и те, что в
         контакт-листе, и те, что в него не влезли или были убраны.
 
@@ -250,7 +281,7 @@ class Bridge:
             if contact.peer_id == ASSISTANT_PEER:
                 continue
             rows.append((contact.uin, contact.title,
-                         self.network_of(contact.peer_id) == "MAX",
+                         NET_CODES[self.network_of(contact.peer_id)],
                          self._quiet_days(contact), contact.uin in in_list))
         rows.sort(key=lambda row: row[1].lower())
         log.info("список чатов для телефона: %d, из них в контакт-листе %d",
@@ -287,11 +318,12 @@ class Bridge:
         needle = query.strip().lower()
         if needle in ("", "*", "все", "all"):
             rows = await self.chat_list()
-            found = [{"uin": uin, "title": ("[M] " if is_max else "[T] ") + title,
+            marks = {code: NET_MARKS[name] for name, code in NET_CODES.items()}
+            found = [{"uin": uin, "title": marks[net] + title,
                       "kind": ("молчит %d дн." % days) if days > 0 else
                               ("сегодня" if days == 0 else "без сообщений"),
                       "username": ""}
-                     for uin, title, is_max, days, _ in rows]
+                     for uin, title, net, days, _ in rows]
             log.info("поиск без запроса: отдаю %d чатов из %d",
                      min(len(found), SEARCH_ALL_LIMIT), len(found))
             return found[:SEARCH_ALL_LIMIT]
@@ -317,6 +349,8 @@ class Bridge:
         items = await self.telegram.search_chats(query, SEARCH_LIMIT)
         if self.max is not None:
             items += await self.max.search_chats(query, SEARCH_LIMIT)
+        if self.express is not None:
+            items += await self.express.search_chats(query, SEARCH_LIMIT)
         for item in items[:SEARCH_LIMIT]:
             known = self.storage.contact_by_peer(item["peer_id"])
             if known is not None:
@@ -326,7 +360,7 @@ class Bridge:
                 uin = self.storage.uin_for_peer(
                     item["peer_id"], kind=item["kind"], title=item["title"],
                     group_name=self.group_for(item["peer_id"], item["kind"]), position=9999)
-            mark = "[M] " if self.network_of(item["peer_id"]) == "MAX" else "[T] "
+            mark = self._net_mark(item["peer_id"])
             found.append({"uin": uin, "title": mark + item["title"],
                           "kind": KIND_TITLES.get(item["kind"], "Чат"),
                           "username": item["username"]})
@@ -799,6 +833,16 @@ class Bridge:
             for d in extra:
                 d.position -= MAX_ROSTER_SLOTS
             dialogs += extra
+        keep_express = False
+        if self.express is not None:
+            try:
+                extra = await self.express.dialogs()
+            except Exception:
+                log.exception("список чатов eXpress не получен — оставляю прежний")
+                extra, keep_express = [], True
+            for d in extra:
+                d.position -= 2 * MAX_ROSTER_SLOTS
+            dialogs += extra
         for d in dialogs:
             favourite = int(d.pinned or d.title.strip().lower() in self.cfg.favourites)
             uin = self.storage.uin_for_peer(d.peer_id, kind=d.kind, title=d.title,
@@ -813,6 +857,9 @@ class Bridge:
         if keep_max:
             # MAX не ответил — его чаты не пропали, просто не проверены.
             present += [c.peer_id for c in self.storage.contacts_all() if is_max_peer(c.peer_id)]
+        if keep_express:
+            present += [c.peer_id for c in self.storage.contacts_all()
+                        if is_express_peer(c.peer_id)]
         if self.assistant is not None:
             # Контакт Claude — не из Telegram, но в списке наравне со всеми:
             # избранный, чтобы roster_limit его не вытеснил.
@@ -874,7 +921,8 @@ class Bridge:
     # --- маршрутизация --------------------------------------------------
 
     async def on_telegram_message(self, peer_id: int, sender: str, text: str,
-                                  ts: int = 0, topic_id: int = 0, attach: str = "") -> bool:
+                                  ts: int = 0, topic_id: int = 0, attach: str = "",
+                                  mention: bool = False, always: bool = False) -> bool:
         """Возвращает True, если сообщение ушло телефону (или встало в очередь).
 
         По этому Telegram-сторона решает, помечать ли его прочитанным:
@@ -924,9 +972,11 @@ class Bridge:
 
         # Статус в Jimm решает, что доставлять, а что придержать или пропустить.
         net = self.network_of(peer_id)
-        if contact is not None and not policy.allows(self.mode, contact.kind,
-                                                     bool(contact.favourite),
-                                                     bool(contact.muted)):
+        mention = mention and self.cfg.mentions_through
+        # Звонок приходит всегда: ни мьют, ни статус его не останавливают.
+        if contact is not None and not always and not policy.allows(
+                self.mode, contact.kind, bool(contact.favourite),
+                bool(contact.muted), mention):
             why = (f"заглушён в {net}" if contact.muted
                    else f"режим «{policy.MODE_NAMES[self.mode]}»")
             # Отсеянных бывает много (заглушённые каналы шумят), поэтому
@@ -942,7 +992,8 @@ class Bridge:
             if ts:
                 self.storage.note_delivered(peer_id, ts, topic_id)
             return False
-        log.info("из %s: %s → в очередь телефону, %d симв.%s", net, name, len(text),
+        log.info("из %s: %s → в очередь телефону, %d симв.%s%s", net, name, len(text),
+                 ", звонок" if always else ", упоминание" if mention else "",
                  "" if self.oscar.online else " (телефон не в сети)")
         log.debug("из %s: %s: %s", net, name, text[:300])
         await self.oscar.deliver(uin, text, ts=ts, attach=attach)
@@ -1442,6 +1493,8 @@ class Bridge:
         await self.telegram.start()
         if self.max is not None:
             await self.max.start()
+        if self.express is not None:
+            await self.express.start()
         await self.refresh_roster()
         # Догрузка пропущенного идёт в своём потоке: она ходит в Telegram и
         # MAX за каждым непрочитанным чатом, и телефону незачем ждать её,
@@ -1522,5 +1575,7 @@ class Bridge:
         await self.oscar.stop()
         if self.max is not None:
             await self.max.stop()
+        if self.express is not None:
+            await self.express.stop()
         await self.telegram.stop()
         self.storage.close()

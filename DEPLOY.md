@@ -137,6 +137,117 @@ sudo -u icqbridge chmod 600 max.session
 Код придёт в SMS или в приложение MAX. Файл `max.session` — доступ к аккаунту,
 права `600`.
 
+### eXpress (если включён)
+
+Сторона eXpress держит веб-клиент corp.express в Chromium без окна, поэтому ей
+нужны сам Chromium и его системные библиотеки. Рассчитывайте на 400–600 МБ
+памяти сверх обычного и около 400 МБ на диске.
+
+**1. Библиотеки.** Chromium, который скачивает Playwright, собран под glibc
+(amd64) и ждёт в системе вот это:
+
+```bash
+emerge --ask --getbinpkg media-libs/alsa-lib app-accessibility/at-spi2-core \
+    sys-apps/dbus dev-libs/expat dev-libs/glib dev-libs/nspr dev-libs/nss \
+    media-libs/mesa x11-libs/libX11 x11-libs/libxcb x11-libs/libXcomposite \
+    x11-libs/libXdamage x11-libs/libXext x11-libs/libXfixes x11-libs/libXrandr \
+    x11-libs/libxkbcommon media-fonts/dejavu
+```
+
+`--getbinpkg` берёт готовые пакеты с бинарного хоста Gentoo, если он настроен, —
+иначе всё соберётся из исходников. Из `mesa` нужна только `libgbm`; X-сервер и
+видеодрайверы не нужны, окна у браузера нет. Шрифт — чтобы на снимке экрана
+входа читался текст.
+
+**2. Chromium — рядом с проектом.** Служба работает без домашнего каталога,
+поэтому браузер кладём в `.browsers` внутри установки: мост находит его там
+сам, а скрипт обновления каталоги с точкой не трогает.
+
+```bash
+cd /opt/icq-tg-bridge
+sudo -u icqbridge .venv/bin/python -m pip install -r requirements.txt
+sudo -u icqbridge env PLAYWRIGHT_BROWSERS_PATH=/opt/icq-tg-bridge/.browsers \
+    .venv/bin/playwright install chromium
+```
+
+Playwright предупредит, что Gentoo не в списке поддерживаемых систем, и скачает
+сборку для Ubuntu — она и нужна. `playwright install-deps` на Gentoo не
+работает (он умеет только apt), библиотеки ставятся шагом 1.
+
+**3. Проверка, что браузеру всего хватает:**
+
+```bash
+find .browsers -name chrome-headless-shell -type f -exec ldd {} + | grep "not found"
+```
+
+Пустой вывод — всё на месте. Если что-то названо, найдите пакет через
+`e-file libИМЯ.so` (из `app-portage/pfl`) или `equery belongs` и доставьте.
+
+**4. Настройки и вход.** В `config.toml` — секция `[express]` с
+`enabled = true`, затем от пользователя моста:
+
+```bash
+sudo -u icqbridge .venv/bin/python run.py login express
+```
+
+Команда спросит номер телефона (10 цифр без +7) и дальше будет показывать
+текст страницы и передавать ей то, что вы наберёте. Обычно шагов два:
+
+- **капча** — картинка с текстом. Снимок экрана лежит в
+  `express.session/login.png`; заберите его на свою машину
+  (`scp сервер:/opt/icq-tg-bridge/express.session/login.png .`), прочитайте и
+  введите текст;
+- **код из SMS.**
+
+После «Вход выполнен» сессия сохранена в каталоге `express.session` — это
+профиль браузера с ключами шифрования, он равносилен доступу к аккаунту.
+Права каталога — `700` (мост ставит их сам), владелец — `icqbridge`.
+
+**5. Запуск.** `rc-service icq-tg-bridge restart`; в журнале должна появиться
+строка «вошли в eXpress как …». Старт стороны занимает 10–15 секунд.
+
+#### Вариант: системный Google Chrome вместо шагов 1–3
+
+Проще взять готовый браузер из portage: `www-client/google-chrome` — бинарный
+пакет, собирать ничего не надо, а все его библиотеки portage поставит сам
+(гораздо больше, чем в шаге 1, — Chrome тянет и GTK). Лицензия у него своя:
+
+```bash
+echo "www-client/google-chrome google-chrome" >> /etc/portage/package.license
+emerge --ask www-client/google-chrome
+```
+
+Пакет кладёт браузер в `/usr/bin/google-chrome-stable`. Укажите этот путь в
+`config.toml`:
+
+```toml
+[express]
+enabled = true
+browser = "/usr/bin/google-chrome-stable"
+```
+
+Python-пакет Playwright нужен и в этом случае — через него мост управляет
+браузером, — а вот `playwright install chromium` не нужен:
+
+```bash
+cd /opt/icq-tg-bridge
+sudo -u icqbridge .venv/bin/python -m pip install -r requirements.txt
+sudo -u icqbridge .venv/bin/python run.py login express
+```
+
+Дальше — вход и запуск, как в шагах 4–5. Браузер запускается без окна и без
+своей песочницы (это штатный режим Playwright), так что ни X-сервер, ни
+пользовательские пространства имён в ядре не нужны.
+
+То же самое с `www-client/chromium` (`browser = "/usr/bin/chromium"`), но
+это сборка из исходников на несколько часов. На профиле с musl скачанный
+Chromium не запустится — там только системный браузер.
+
+**Обновление.** `tools/update-from-github.sh` доставляет Python-пакеты сам, а
+`express.session` и `.browsers` не трогает. После обновления самого Playwright
+(версия в `requirements.txt` выросла) повторите шаг 2 — новой версии нужен
+свой Chromium; вход повторять не надо.
+
 ## 6. Автозапуск (OpenRC)
 
 ```bash

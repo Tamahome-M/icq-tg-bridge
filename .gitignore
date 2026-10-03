@@ -20,3 +20,7 @@ bridge.db-shm
 photos/
 render/
 *.log
+
+# Chromium для стороны eXpress и его библиотеки, распакованные без root
+.browsers/
+.syslibs/
