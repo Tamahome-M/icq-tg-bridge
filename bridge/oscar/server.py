@@ -29,6 +29,7 @@ log = logging.getLogger("oscar")
 MAX_SNAC_PAYLOAD = 3800          # с запасом под скромные буферы телефона
 BUDDY_BURST = 20                 # по столько уведомлений об онлайне за раз
 SENDER_IDLE_POLL = 10            # как часто отправитель просыпается сам, секунды
+AUTH_TIMEOUT = 60               # общий срок входа, включая неполные кадры и пинги
 SERVICE_IDLE_TIMEOUT = 180       # столько молчит соединение за аватарками — и хватит
 SEND_TIMEOUT = 120               # столько телефон может не забирать отправленное
 CLOSE_TIMEOUT = 5                # столько ждём вежливого закрытия, дальше — обрыв
@@ -187,6 +188,7 @@ class Session:
         """False означает, что кадр до телефона не ушёл."""
         if self.closed:
             return False
+        failure = ""
         async with self._lock:
             self.seq = (self.seq + 1) & 0xFFFF
             try:
@@ -200,12 +202,16 @@ class Session:
             except asyncio.TimeoutError:
                 log.warning("телефон %s не забирает отправленное %d с — считаю связь "
                             "оборванной", self.peer, SEND_TIMEOUT)
-                self.spawn(self.close(f"не забирает отправленное {SEND_TIMEOUT} с"))
-                return False
+                failure = f"не забирает отправленное {SEND_TIMEOUT} с"
             except (ConnectionError, OSError) as exc:
                 log.warning("обрыв при отправке телефону: %s", exc)
-                self.closed = True
-                return False
+                failure = f"обрыв при отправке ({type(exc).__name__})"
+        if failure:
+            # Закрытие выполняет всю очистку: снимает сессию с сервера,
+            # возвращает неподтверждённое в очередь и отменяет её задачи.
+            # Замок отправки к этому моменту уже отпущен.
+            await self.close(failure)
+            return False
         self.last_sent = time.time()
         return True
 
@@ -219,7 +225,20 @@ class Session:
 
     # --- цикл чтения ----------------------------------------------------
 
+    async def watch_auth(self) -> None:
+        """До входа слот нельзя держать бесконечно, даже присылая пинги.
+
+        Общий срок от открытия соединения: частичные заголовки, тела кадров
+        и запросы ключа MD5 не дают начать отсчёт заново.
+        """
+        await asyncio.sleep(AUTH_TIMEOUT)
+        if not self.authorized and not self.closed:
+            log.warning("клиент %s не прошёл авторизацию за %s с — закрываю соединение",
+                        self.peer, AUTH_TIMEOUT)
+            await self.close(f"авторизация не завершена за {AUTH_TIMEOUT} с")
+
     async def run(self) -> None:
+        auth_watch = self.spawn(self.watch_auth())
         try:
             await self.send_flap(1, struct.pack(">I", 1))   # приветствие сервера
             while not self.closed:
@@ -238,6 +257,7 @@ class Session:
             log.exception("сбой в сессии %s", self.peer)
             self.close_reason = "внутренняя ошибка"
         finally:
+            auth_watch.cancel()
             await self.close()
 
     async def close(self, reason: str = "") -> None:
@@ -1668,7 +1688,7 @@ class OscarServer:
                  status_of: Callable[[int], int] | None = None,
                  chat_info: Callable[[int], Awaitable[dict | None]] | None = None,
                  search: Callable[[str], Awaitable[list[dict]]] | None = None,
-                 verdict_for: Callable[[int], str] | None = None,
+                 verdict_for: Callable[[int, bool], str] | None = None,
                  on_remove: Callable[[int, bool], Awaitable[None]] | None = None,
                  on_privacy: Callable[[int, bool], Awaitable[None]] | None = None,
                  avatar: Callable[[int], Awaitable[tuple[bytes, bytes] | None]] | None = None,
@@ -1695,7 +1715,7 @@ class OscarServer:
         self.chat_info = chat_info or self._no_info
         self.search = search or self._no_search
         # Решает судьбу записи очереди по текущему статусу: send, hold или drop.
-        self.verdict_for = verdict_for or (lambda uin: "send")
+        self.verdict_for = verdict_for or (lambda uin, mention=False: "send")
         self.on_remove = on_remove or self._ignore_remove
         self.on_privacy = on_privacy or self._ignore_privacy
         # Аватарки: примета для блока сведений и сама картинка по запросу.
@@ -2022,16 +2042,20 @@ class OscarServer:
         return True
 
     async def deliver(self, uin: int, text: str, forced: bool = False,
-                      url: str = "", ts: int = 0, attach: str = "") -> bool:
+                      url: str = "", ts: int = 0, attach: str = "", mention: bool = False,
+                      message_id: int | str = 0) -> bool:
         """Принимает сообщение к доставке.
 
         Пишем в очередь и будим отправителя. Ждать подтверждения прямо здесь
         нельзя: это застопорило бы приём сообщений из Telegram.
 
-        forced — ответ на команду с телефона: доставляется при любом статусе,
-        ведь его запросили руками.
+        forced — ответ на команду с телефона или звонок: доставляется при
+        любом статусе. mention — упоминание: обходит мьют, но зависит от
+        текущего статуса и избранного.
         """
-        self.storage.queue(uin, text, self.cfg.offline_queue_per_chat, forced, url, ts, attach)
+        if not self.storage.queue(uin, text, self.cfg.offline_queue_per_chat,
+                                  forced, url, ts, attach, mention, message_id):
+            return False
         self.wake_sender()
         return True
 
@@ -2201,13 +2225,13 @@ class OscarServer:
 
         Возвращает то, что можно слать. Статус мог смениться, пока сообщения
         лежали в очереди: что сейчас доставлять нельзя, придерживается или
-        выбрасывается. Ответы на команды идут мимо фильтра — их запросили
-        с телефона.
+        выбрасывается. Упоминания сохраняют исключение из мьюта; ответы на
+        команды и звонки идут мимо фильтра.
         """
         keep: list[tuple[int, int, str, int, str, str]] = []
         skipped = 0
-        for row_id, uin, text, ts, forced, url, attach in self.storage.peek_pending():
-            verdict = "send" if forced else self.verdict_for(uin)
+        for row_id, uin, text, ts, forced, url, attach, mention in self.storage.peek_pending():
+            verdict = "send" if forced else self.verdict_for(uin, mention)
             if verdict != "send":
                 self.storage.drop_pending(row_id)
                 if verdict == "hold":

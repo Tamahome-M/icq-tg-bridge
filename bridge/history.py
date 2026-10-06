@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
+from typing import NamedTuple
 
 PREFIX = "!"
 
@@ -37,6 +38,16 @@ class HistoryItem:
     msg_id: int = 0        # номер сообщения в сети — по нему достаётся вложение
     kind: str = ""         # photo, video, voice, audio — или пусто
     thread: int = 0        # topic_id обсуждения, начатого под этим сообщением; 0 — нет
+
+
+class MissedMessage(NamedTuple):
+    ts: int
+    sender: str
+    text: str
+    message_id: int | str
+    attach: str = ""
+    mention: bool = False
+    always: bool = False
 
 
 def parse(text: str) -> Command | None:

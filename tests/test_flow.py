@@ -191,7 +191,7 @@ async def run_case(login_mode: str) -> None:
     server.offline_wait = 3.0
     await server.deliver(uins["Дача 2026"], "в группе шумят")
     await server.deliver(uins["Мама"], "а я жду")
-    server.verdict_for = lambda uin: "drop" if uin == uins["Дача 2026"] else "send"
+    server.verdict_for = lambda uin, mention=False: "drop" if uin == uins["Дача 2026"] else "send"
     client4 = FakeJimm("127.0.0.1", PORT, cfg.oscar_uin, cfg.oscar_password)
     await client4.connect()
     await client4.bos(await client4.login_xor())
@@ -200,7 +200,7 @@ async def run_case(login_mode: str) -> None:
     assert "а я жду" in texts4, texts4
     assert "в группе шумят" not in texts4, "отсеянное по статусу не должно уезжать офлайн-пачкой"
     assert storage.pending_count() == 0, "отсеянное выбрасывается, доставленное подтверждено"
-    server.verdict_for = lambda uin: "send"
+    server.verdict_for = lambda uin, mention=False: "send"
     client2 = client4
 
     await client2.close()
