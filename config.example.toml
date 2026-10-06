@@ -413,6 +413,33 @@ session_hours = 0
 title = "Claude"
 group = "Боты"
 
+[codex]
+# Отдельный контакт Codex рядом с Claude: вопрос -> codex exec --json,
+# следующий вопрос продолжает его же сеанс. !reset — начать заново.
+# Нужны установленный Codex CLI и вход под пользователем службы моста:
+#   su -s /bin/sh icqbridge -c 'codex login --device-auth'
+enabled = false
+command = "codex"
+workdir = "codex"
+title = "Codex"
+group = "Боты"
+
+# Пустая модель — как настроено в Codex CLI; effort — усилие рассуждения.
+model = ""
+effort = "low"
+system = ""
+
+# В read-only Codex отвечает и ищет в сети, файлы не меняет.
+# workspace-write — может выполнять команды и сохранять картинки в workdir/out.
+# Вопросов о разрешении из CLI нет (approval never); действует выбранная песочница.
+sandbox = "read-only"
+search = true
+
+# Дополнительные ГЛОБАЛЬНЫЕ аргументы CLI, до exec (например --profile phone).
+args = ""
+timeout = 300
+session_hours = 0
+
 [telemotomax]
 # Свой клиент TeleMotoMax (каталог telemotomax/) получает от моста снимки из
 # сообщений прямо в чат — по запросу, через ту же службу, что и аватарки.

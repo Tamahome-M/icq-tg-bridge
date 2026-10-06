@@ -11,6 +11,7 @@ from telethon import errors
 
 from . import avatars as avatar_lib
 from .assistant import ASSISTANT_PEER, Assistant, AssistantError
+from .codex import CODEX_PEER, CodexAssistant
 from . import emoji, history, policy
 from .access import AccessControl
 from . import photos
@@ -28,6 +29,7 @@ from .max.client import MaxSide, is_max_peer
 from .express.client import ExpressSide, is_express_peer
 
 log = logging.getLogger("bridge")
+BOT_PEERS = (ASSISTANT_PEER, CODEX_PEER)
 
 # Ошибки, после которых сессия Telegram больше не оживёт — нужен новый вход.
 DEAD_SESSION = (
@@ -137,6 +139,16 @@ class Bridge:
         self.render: RenderStore | None = None
         self.videos: VideoStore | None = None
         self.assistant: Assistant | None = None
+        self.codex: CodexAssistant | None = None
+        if cfg.codex_enabled:
+            os.makedirs(cfg.codex_workdir, exist_ok=True)
+            self.codex = CodexAssistant(
+                cfg.codex_command, cfg.codex_workdir, cfg.codex_model,
+                cfg.codex_effort, cfg.codex_system, cfg.codex_sandbox,
+                cfg.codex_search, cfg.codex_args, cfg.codex_timeout, cfg.codex_session_hours)
+            if not self.codex.available:
+                log.warning("контакт %s включён, но %r не найден — вопросы закончатся ошибкой",
+                            cfg.codex_title, cfg.codex_command)
         if cfg.assistant_enabled:
             # Сеансы claude лежат в ~/.claude по рабочему каталогу — держим
             # ему свой, чтобы разговор продолжался и не цеплял чужих CLAUDE.md.
@@ -203,7 +215,7 @@ class Bridge:
         result: dict[int, str] = {}
         for c in contacts:
             net = self.network_of(c.peer_id)
-            if c.peer_id == ASSISTANT_PEER:
+            if c.peer_id in BOT_PEERS:
                 result[c.uin] = path(c.group_name)
             elif c.topic_id:
                 parent = parents.get(c.peer_id)
@@ -273,6 +285,11 @@ class Bridge:
             return self.express
         return self.telegram
 
+    def bot_for(self, peer_id: int) -> Assistant | None:
+        if peer_id == CODEX_PEER:
+            return self.codex
+        return self.assistant if peer_id == ASSISTANT_PEER else None
+
     def network_of(self, peer_id: int) -> str:
         if self.max is not None and is_max_peer(peer_id):
             return "MAX"
@@ -313,13 +330,14 @@ class Bridge:
         if self.cfg.background_groups and self.cfg.background_hours > 0:
             since = int(time.time()) - self.cfg.background_hours * 3600
         everyone = self.storage.contacts()
+        bots = [c for c in everyone if c.peer_id in BOT_PEERS]
         # У каждой сети своё ограничение: чатов в MAX и eXpress обычно мало,
         # и общий потолок с Telegram их бы просто вытеснил.
         from_max = [c for c in everyone if self.max is not None and is_max_peer(c.peer_id)]
         from_express = [c for c in everyone
                         if self.express is not None and is_express_peer(c.peer_id)]
-        rest = [c for c in everyone if c not in from_max and c not in from_express]
-        roster = (limit_contacts(rest, self.tmm("roster_limit"), self.cfg.background_groups, since)
+        rest = [c for c in everyone if c not in from_max and c not in from_express and c not in bots]
+        roster = (bots + limit_contacts(rest, self.tmm("roster_limit"), self.cfg.background_groups, since)
                   + limit_contacts(from_max, self.tmm("max_roster_limit"),
                                    self.cfg.background_groups, since)
                   + limit_contacts(from_express, self.tmm("express_roster_limit"),
@@ -381,7 +399,7 @@ class Bridge:
         in_list = {c.uin for c in self._roster}
         rows = []
         for contact in self.storage.contacts_all():
-            if contact.peer_id == ASSISTANT_PEER:
+            if contact.peer_id in BOT_PEERS:
                 continue
             rows.append((contact.uin, contact.title,
                          NET_CODES[self.network_of(contact.peer_id)],
@@ -534,10 +552,11 @@ class Bridge:
         contact = self.storage.contact_by_uin(uin)
         if contact is None:
             return None
-        if contact.peer_id == ASSISTANT_PEER:
+        if contact.peer_id in BOT_PEERS:
+            product = "Codex CLI" if contact.peer_id == CODEX_PEER else "Claude Code"
             return {"title": contact.title, "kind": "Бот", "username": "", "phone": "",
-                    "members": "", "marks": "", "network": "Claude Code",
-                    "about": ("Claude Code с этой машины. Пишите как обычно; "
+                    "members": "", "marks": "", "network": product,
+                    "about": (f"{product} с этой машины. Пишите как обычно; "
                               "!reset — начать разговор заново.")}
         try:
             info = await self.side_for(contact.peer_id).chat_info(contact.peer_id,
@@ -600,8 +619,9 @@ class Bridge:
         kind, _, ident = attach.partition(":")
         if contact is None or kind not in ("photo", "video") or not ident.isdigit():
             return None
-        if contact.peer_id == ASSISTANT_PEER:
-            raw = self.assistant.photo_bytes(int(ident)) if self.assistant else None
+        if contact.peer_id in BOT_PEERS:
+            bot = self.bot_for(contact.peer_id)
+            raw = bot.photo_bytes(int(ident)) if bot else None
         else:
             raw = await self.side_for(contact.peer_id).photo_bytes(contact.peer_id, int(ident))
         if not raw:
@@ -665,7 +685,7 @@ class Bridge:
         голосовое — это OGG, поэтому перекодируем. Не вышло — отправляем
         записанное как обычный звуковой файл, чтобы не потерять его."""
         contact = self.storage.contact_by_uin(uin)
-        if contact is None or contact.peer_id == ASSISTANT_PEER:
+        if contact is None or contact.peer_id in BOT_PEERS:
             return False
         transcoder = self._transcoder(self.tmm("voice_seconds"))
         ogg = await transcoder.to_ogg(data) if transcoder.available else None
@@ -695,7 +715,7 @@ class Bridge:
         MP4 с H.264, поэтому перекодируем. Нет H.264 в ffmpeg или не вышло —
         отправляем как обычное видео, чтобы запись не пропала."""
         contact = self.storage.contact_by_uin(uin)
-        if contact is None or contact.peer_id == ASSISTANT_PEER:
+        if contact is None or contact.peer_id in BOT_PEERS:
             return False
         transcoder = self._transcoder(max(seconds, 1) + 1)
         mp4 = await transcoder.to_note(data) if transcoder.available else None
@@ -736,7 +756,7 @@ class Bridge:
         1200×1600 и ролик, снятые штатной камерой телефона: из Java на V8
         больше 480×640 не снять, а файл с карты — любого размера."""
         contact = self.storage.contact_by_uin(uin)
-        if contact is None or contact.peer_id == ASSISTANT_PEER:
+        if contact is None or contact.peer_id in BOT_PEERS:
             return False
         what = "файл"
         try:
@@ -806,7 +826,7 @@ class Bridge:
     async def send_camera_photo(self, uin: int, data: bytes) -> bool:
         """Снимок с камеры телефона — в чат. True, если ушёл."""
         contact = self.storage.contact_by_uin(uin)
-        if contact is None or contact.peer_id == ASSISTANT_PEER:
+        if contact is None or contact.peer_id in BOT_PEERS:
             return False
         try:
             message_id = await self.side_for(contact.peer_id).send_photo(
@@ -902,7 +922,7 @@ class Bridge:
         Telegram это номер, у MAX — время, и общего у них нет.
         """
         contact = self.storage.contact_by_uin(uin)
-        if contact is None or contact.peer_id == ASSISTANT_PEER:
+        if contact is None or contact.peer_id in BOT_PEERS:
             return None
         count = min(count or 20, self.cfg.history_limit)
         cap = max(self.cfg.history_limit, self.tmm("history_max"))
@@ -1019,6 +1039,12 @@ class Bridge:
                                             position=-1, favourite=1)
             self._statuses[uin] = C.STATUS_ONLINE
             present.append(ASSISTANT_PEER)
+        if self.codex is not None:
+            uin = self.storage.uin_for_peer(CODEX_PEER, kind="bot",
+                                           title=self.cfg.codex_title, group_name=self.cfg.codex_group,
+                                           position=-2, favourite=1)
+            self._statuses[uin] = C.STATUS_ONLINE
+            present.append(CODEX_PEER)
         # Чаты, которых больше нет в Telegram, убираем из контакт-листа.
         gone = self.storage.mark_missing(present)
         # Форум разложен на темы — отдельный контакт «всего форума» лишний.
@@ -1259,7 +1285,7 @@ class Bridge:
         if contact is None:
             log.warning("список видимости для неизвестного UIN %d", uin)
             return
-        if contact.peer_id == ASSISTANT_PEER or bool(contact.muted) == muted:
+        if contact.peer_id in BOT_PEERS or bool(contact.muted) == muted:
             return
 
         if not await self.side_for(contact.peer_id).set_muted(contact.peer_id, muted):
@@ -1287,8 +1313,8 @@ class Bridge:
         if contact is None:
             log.warning("просьба удалить неизвестный UIN %d", uin)
             return
-        if contact.peer_id == ASSISTANT_PEER:
-            await self.reply(contact, "Контакт Claude выключается в настройках моста, "
+        if contact.peer_id in BOT_PEERS:
+            await self.reply(contact, f"Контакт {contact.title} выключается в настройках моста, "
                                       "а не удалением контакта.")
             return
 
@@ -1331,7 +1357,7 @@ class Bridge:
     async def on_phone_typing(self, uin: int, active: bool) -> None:
         """Владелец печатает в Jimm — передаём в Telegram."""
         contact = self.storage.contact_by_uin(uin)
-        if contact is not None and contact.peer_id != ASSISTANT_PEER:
+        if contact is not None and contact.peer_id not in BOT_PEERS:
             log.info("телефон %s в чате «%s»", "печатает" if active else "перестал печатать",
                      contact.title)
             await self.side_for(contact.peer_id).set_typing(contact.peer_id, active)
@@ -1343,9 +1369,9 @@ class Bridge:
             log.warning("сообщение на неизвестный UIN %d", uin)
             return None
 
-        if contact.peer_id == ASSISTANT_PEER:
+        if contact.peer_id in BOT_PEERS:
             # Галочку телефону — сразу, ответ придёт отдельным сообщением,
-            # когда Claude закончит думать.
+            # когда бот закончит думать.
             task = asyncio.create_task(self.ask_assistant(contact, text))
             self._background.add(task)
             task.add_done_callback(self._background.discard)
@@ -1372,47 +1398,49 @@ class Bridge:
             return None
 
     async def ask_assistant(self, contact: Contact, text: str) -> None:
-        """Вопрос Claude: пока он думает, на телефоне «печатает»."""
-        if self.assistant is None:
-            await self.reply(contact, "Контакт Claude выключен в настройках моста")
+        """Вопрос одному из ботов: пока он думает, на телефоне «печатает»."""
+        bot = self.bot_for(contact.peer_id)
+        name = "Codex" if contact.peer_id == CODEX_PEER else "Claude"
+        if bot is None:
+            await self.reply(contact, f"Контакт {name} выключен в настройках моста")
             return
         stripped = text.strip()
         if stripped.lower() in ("!reset", "!сброс"):
-            self.assistant.reset()
+            bot.reset()
             await self.reply(contact, "Разговор забыт, начнём заново.")
             return
         if stripped.lower() == "!help":
-            await self.reply(contact, "Это Claude Code: просто пишите вопрос. "
+            product = "Codex CLI" if contact.peer_id == CODEX_PEER else "Claude Code"
+            await self.reply(contact, f"Это {product}: просто пишите вопрос. "
                                       "!reset — начать разговор заново.")
             return
         if not stripped:
             return
-        log.info("вопрос Claude от телефона: %d симв.", len(stripped))
-        log.debug("вопрос Claude: %s", stripped[:300])
+        log.info("вопрос %s от телефона: %d симв.", name, len(stripped))
+        log.debug("вопрос %s: %s", name, stripped[:300])
         await self.oscar.notify_typing(contact.uin, True)
         try:
-            answer = await self.assistant.ask(stripped)
+            answer = await bot.ask(stripped)
         except AssistantError as exc:
-            log.warning("Claude не ответил: %s", exc)
-            await self.oscar.notify_typing(contact.uin, False)
-            await self.reply(contact, f"Claude не ответил: {exc}")
+            log.warning("%s не ответил: %s", name, exc)
+            await self.reply(contact, f"{name} не ответил: {exc}")
             return
         except Exception as exc:
-            log.warning("Claude не ответил: %s: %s", type(exc).__name__, str(exc)[:200])
-            await self.oscar.notify_typing(contact.uin, False)
-            await self.reply(contact, f"Claude не ответил: {type(exc).__name__}")
+            log.warning("%s не ответил: %s: %s", name, type(exc).__name__, str(exc)[:200])
+            await self.reply(contact, f"{name} не ответил: {type(exc).__name__}")
             return
-        await self.oscar.notify_typing(contact.uin, False)
+        finally:
+            await self.oscar.notify_typing(contact.uin, False)
         if self.cfg.emoji_to_text:
             answer = emoji.to_text(answer)
-        log.info("ответ Claude: %d симв.", len(answer))
-        log.debug("ответ Claude: %s", answer[:300])
+        log.info("ответ %s: %d симв.", name, len(answer))
+        log.debug("ответ %s: %s", name, answer[:300])
         await self.reply(contact, answer)
-        # Картинки, которые Claude сохранил, — следом, фотографиями: телефон
+        # Картинки, которые бот сохранил, — следом, фотографиями: телефон
         # попросит каждую по токену, и мост ужмёт её под экран.
-        for number, name in self.assistant.take_images():
-            log.info("Claude прислал картинку %s (№%d)", name, number)
-            await self.oscar.deliver(contact.uin, f"[фото] {os.path.splitext(name)[0]}",
+        for number, filename in bot.take_images():
+            log.info("%s прислал картинку %s (№%d)", name, filename, number)
+            await self.oscar.deliver(contact.uin, f"[фото] {os.path.splitext(filename)[0]}",
                                      forced=True, attach=f"photo:{number}")
 
     async def catch_up(self) -> None:
@@ -1753,8 +1781,10 @@ class Bridge:
         # закрытой.
         if self._refresh_task is not None:
             self._refresh_task.cancel()
-        for task in list(self._background):
+        background = list(self._background)
+        for task in background:
             task.cancel()
+        await asyncio.gather(*background, return_exceptions=True)
         for task in self._typing.values():
             task.cancel()
         self._typing.clear()

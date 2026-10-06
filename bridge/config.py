@@ -129,6 +129,19 @@ class Config:
     assistant_session_hours: int = 0
     assistant_title: str = "Claude"
     assistant_group: str = "Боты"
+    codex_enabled: bool = False
+    codex_command: str = "codex"
+    codex_workdir: str = "codex"
+    codex_model: str = ""
+    codex_effort: str = "low"
+    codex_system: str = ""
+    codex_sandbox: str = "read-only"
+    codex_search: bool = True
+    codex_args: str = ""
+    codex_timeout: int = 300
+    codex_session_hours: int = 0
+    codex_title: str = "Codex"
+    codex_group: str = "Боты"
     tmm_photo_width: int = 176
     tmm_photo_height: int = 176
     tmm_photo_max_kb: int = 20
@@ -157,6 +170,7 @@ class Config:
         lg = raw.get("log", {})
         dl = raw.get("downloads", {})
         ai = raw.get("assistant", {})
+        cx = raw.get("codex", {})
         tm = raw.get("telemotomax", {})
         tg = raw.get("telegram", {})
         mx = raw.get("max", {})
@@ -277,6 +291,19 @@ class Config:
             assistant_session_hours=int(ai.get("session_hours", cls.assistant_session_hours)),
             assistant_title=str(ai.get("title", cls.assistant_title)),
             assistant_group=str(ai.get("group", cls.assistant_group)),
+            codex_enabled=bool(cx.get("enabled", cls.codex_enabled)),
+            codex_command=str(cx.get("command", cls.codex_command)),
+            codex_workdir=_resolve(base, cx.get("workdir", cls.codex_workdir)),
+            codex_model=str(cx.get("model", "")),
+            codex_effort=str(cx.get("effort", cls.codex_effort)),
+            codex_system=str(cx.get("system", "")),
+            codex_sandbox=str(cx.get("sandbox", cls.codex_sandbox)),
+            codex_search=bool(cx.get("search", cls.codex_search)),
+            codex_args=str(cx.get("args", "")),
+            codex_timeout=int(cx.get("timeout", cls.codex_timeout)),
+            codex_session_hours=int(cx.get("session_hours", cls.codex_session_hours)),
+            codex_title=str(cx.get("title", cls.codex_title)),
+            codex_group=str(cx.get("group", cls.codex_group)),
             tmm_photo_width=int(tm.get("photo_width", cls.tmm_photo_width)),
             tmm_photo_height=int(tm.get("photo_height", cls.tmm_photo_height)),
             tmm_photo_max_kb=int(tm.get("photo_max_kb", cls.tmm_photo_max_kb)),
@@ -370,6 +397,8 @@ def describe(cfg: "Config") -> list[str]:
         "контакт «Claude»: " + (f"включён, команда «{cfg.assistant_command}», инструменты "
                                 f"{cfg.assistant_tools or 'никаких'}" if cfg.assistant_enabled
                                 else "выключен ([assistant] enabled = false)"),
+        "контакт «Codex»: " + (f"включён, команда «{cfg.codex_command}», sandbox {cfg.codex_sandbox}"
+                               if cfg.codex_enabled else "выключен ([codex] enabled = false)"),
         f"журнал: {cfg.log_level}, telethon {cfg.log_telethon_level}, pymax {cfg.log_max_level}"
         + (f", файл {cfg.log_file}" if cfg.log_file else ", только консоль")
         + (", отсеянные на INFO" if cfg.log_filtered else ", отсеянные на DEBUG"),

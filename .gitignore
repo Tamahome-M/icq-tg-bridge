@@ -19,6 +19,7 @@ bridge.db-wal
 bridge.db-shm
 photos/
 render/
+/codex/
 *.log
 
 # Chromium для стороны eXpress и его библиотеки, распакованные без root
