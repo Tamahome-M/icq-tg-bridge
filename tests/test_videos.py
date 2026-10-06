@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from pathlib import Path
@@ -110,6 +111,13 @@ async def run_pages() -> None:
         restored = VideoStore(str(directory / "videos"), fetch)
         assert b"/0.3gp" in restored.resolve(path, start=False)[0]
         assert restored.resolve(path + "/0.3gp")[0] == b"FAKEMEDIA"
+        metadata = directory / "videos" / f"{page.token}.json"
+        old = json.loads(metadata.read_text())
+        old["spec"].pop("encoding_version")
+        metadata.write_text(json.dumps(old))
+        legacy = VideoStore(str(directory / "videos"), fetch)
+        assert legacy.register(100500, "video:42", "Чат", spec) != path, "новый формат не должен брать старый 3GP из кеша"
+        await legacy.stop()
         restored.pages[page.token].made = time.time() - 49 * 3600
         restored.cleanup()
         assert restored.resolve(path) is None
@@ -198,9 +206,12 @@ async def run_delivery() -> None:
                 ((0, 78), 176, 2, False),    # V8-сборка: режим важнее размера экрана
                 ((0, 78), 240, None, False), # без режима — безопасный выбор по профилю
                 ((0, 78), 0, None, False),   # неизвестный телефон: встроенный плеер
+                ((0, 79), 240, 2, False),   # явно только встроенный плеер
                 ((0, 77), 176, None, True),
                 ((0, 78), 176, 1, True),
                 ((0, 78), 240, 1, True),    # V3/Light-сборка: явный режим
+                ((0, 79), 176, 3, True),    # оба действия на V3/Light
+                ((0, 79), 240, 3, True),    # оба действия на V8
             ]
             for version, width, mode, browser in cases:
                 client = FakeJimm("127.0.0.1", port, "100500", "test")
@@ -232,6 +243,20 @@ async def run_delivery() -> None:
                             r"\[видео\]\(([^)]+)\)", rows[0][0])[1], "очередь и история должны использовать одну страницу"
                         assert not any(page.jobs for page in bridge.videos.pages.values())
                         assert not list((directory / "photos/videos").glob("*.source"))
+                        if mode == 3:
+                            assert client.attachments, "для выбора плеера нужен токен"
+                            got = await client.request_video(uin, client.attachments[-1][1])
+                            assert got == b"native-3gp-video", got
+                            assert native_requests == [(uin, "video:42", 0)], native_requests
+                            native_requests.clear()
+                            client.received.clear()
+                            client.attachments.clear()
+                            await bridge.oscar.deliver(uin, "[видео 2:05] " + "подпись " * 400,
+                                                       attach="video:42")
+                            await client.drain_for(0.3)
+                            assert len(client.received) > 1, "длинная подпись должна разбиться"
+                            assert "[видео](" in client.received[0][1]
+                            assert len(client.attachments) == 2, "токен нужен у ссылки и последней части"
                 finally:
                     await client.close()
                     await asyncio.sleep(0.05)
@@ -239,7 +264,7 @@ async def run_delivery() -> None:
             await bridge.oscar.stop()
             await bridge.photo_server.stop()
             bridge.storage.close()
-    print("  доставка: ок (V3/Light — браузер; V8 — вложение; очередь, история, 0.76/0.77)")
+    print("  доставка: ок (оба действия на V3/V8, очередь, история, длинная подпись, 0.76–0.79)")
 
 
 async def main() -> None:

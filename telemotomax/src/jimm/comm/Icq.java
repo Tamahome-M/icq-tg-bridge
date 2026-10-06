@@ -390,8 +390,8 @@ public class Icq implements Runnable
 		// способностей, а мосту версия нужна уже при сборке контакт-листа
 		// (вложенные группы шлются только клиенту, который их понимает).
 		n = pair(out, n, MEDIA_CLIENT_VERSION, TMM_VERSION_MAJOR * 100 + TMM_VERSION_MINOR);
-		// 1 — браузер (V3/Light), 2 — встроенный плеер (V8).
-		n = pair(out, n, MEDIA_VIDEO_MODE, jimm.VideoLink.browserMode() ? 1 : 2);
+		// 3 — выбор между встроенным плеером и браузером (0.79+).
+		n = pair(out, n, MEDIA_VIDEO_MODE, 3);
 		int[] size = jimm.Options.mediaSize(jimm.Options.OPTION_MEDIA_PHOTO_SIZE);
 		if (size != null) { out[n++] = MEDIA_PHOTO_W; out[n++] = size[0]; out[n++] = MEDIA_PHOTO_H; out[n++] = size[1]; }
 		n = pair(out, n, MEDIA_PHOTO_Q, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_PHOTO_QUALITY));

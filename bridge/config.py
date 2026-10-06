@@ -96,7 +96,7 @@ class Config:
     render_ffmpeg: str = "ffmpeg"
     render_video_seconds: int = 60
     render_video_codec: str = "h263"
-    render_video_kbps: int = 64
+    render_video_kbps: int = 90
     render_video_fps: int = 15
     render_audio_seconds: int = 300
     render_source_max_mb: int = 25

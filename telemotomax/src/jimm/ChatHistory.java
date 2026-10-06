@@ -348,14 +348,9 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		else if (c == cmdPlayVideo)
 		{
 			MessData md = messAt(textList.getCurrTextIndex());
-			if (md != null && md.videoUrl != null)
-			{
-				VideoLink.open(md.videoUrl);
-				return;
-			}
 			byte[] token = currentAttach();
-			if (token != null)
-				MediaPlayer.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), token, this);
+			VideoMenu.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), token,
+					md == null ? null : md.videoUrl, this);
 		}
 		else if (c == cmdShowPhoto)
 		{
@@ -506,7 +501,8 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	public void vlItemClicked(VirtualList sender)
 	{
 		MessData md = messAt(textList.getCurrTextIndex());
-		if (md != null && md.videoUrl != null) VideoLink.open(md.videoUrl);
+		if (md != null && (md.videoUrl != null || md.attachKind == 2))
+			VideoMenu.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), md.attach, md.videoUrl, this);
 	}
 	
 	public void vlKeyPress(VirtualList sender, int keyCode, int type) 

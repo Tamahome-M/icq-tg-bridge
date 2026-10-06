@@ -36,15 +36,18 @@ def link_text(text: str, url: str) -> str:
 
 @dataclass(frozen=True)
 class VideoSpec:
+    # Изменение формата создаёт новую ссылку вместо старого файла из кеша.
+    # Поле в конце сохраняет порядок позиционных параметров.
     ffmpeg: str = "ffmpeg"
     seconds: int = 60
     timeout: int = 120
     codec: str = "h263"
-    kbps: int = 64
+    kbps: int = 90
     fps: int = 15
     width: int = 176
     height: int = 144
     rotate: bool = False
+    encoding_version: int = 2
 
     def coder(self, directory: str) -> Transcoder:
         return Transcoder(self.ffmpeg, self.seconds, timeout=self.timeout,
@@ -82,6 +85,7 @@ class VideoStore:
                 continue
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
+                data["spec"].setdefault("encoding_version", 1)
                 page = VideoPage(path.stem, int(data["uin"]), data["attach"], data["title"],
                                  float(data["made"]), VideoSpec(**data["spec"]), data.get("duration"))
                 self.pages[page.token] = page

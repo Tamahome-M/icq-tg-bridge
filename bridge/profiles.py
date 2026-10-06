@@ -60,11 +60,8 @@ BUILTIN: dict[str, dict] = {
            "photo_max_kb": 60, "photo_quality": 85, "video_seconds": 30, "video_max_kb": 400,
            "voice_kbps": 12.2,
            "history_max": 400, "roster_limit": 0, "file_max_mb": 5,
-           # Кадр остаётся QCIF — на GPRS ролик 320×240 весил в четыре
-           # раза больше и плеер его не взял; повёрнутый QCIF (144×176) —
-           # те же 99 макроблоков, MPEG-4 Level 0, плеер растянет на
-           # экран сам. Битрейт — общий из [render].
-           "video_rotate": True},
+           # H.263 QCIF 176×144, без автоматического поворота.
+           "video_rotate": False},
 }
 
 
