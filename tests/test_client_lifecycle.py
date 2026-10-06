@@ -19,6 +19,7 @@ package jimm;
 public class Jimm extends javax.microedition.midlet.MIDlet {
     public static final Jimm jimm = new Jimm();
     public static String openedUrl;
+    public static javax.microedition.lcdui.Display display = new javax.microedition.lcdui.Display();
     private static java.util.Timer timer = new java.util.Timer(true);
     public static java.util.Timer getTimerRef() { return timer; }
     public void cancelTimer() { timer.cancel(); timer = new java.util.Timer(true); }
@@ -27,6 +28,7 @@ public class Jimm extends javax.microedition.midlet.MIDlet {
     "jimm/Options.java": """
 package jimm;
 public class Options {
+    public static int[] mediaSize(int key) { return null; }
     public static int getInt(int key) { return 0; }
     public static long getLong(int key) { return 0; }
     public static String getString(int key) { return "3600"; }
@@ -63,6 +65,44 @@ public abstract class MIDlet {
 """,
 }
 
+STUBS.update({
+    "javax/microedition/lcdui/Command.java": """
+package javax.microedition.lcdui;
+public class Command { public static final int BACK=2; public Command(String s,int t,int p) {} }
+""",
+    "javax/microedition/lcdui/Displayable.java": """
+package javax.microedition.lcdui;
+public class Displayable { public CommandListener listener; public void addCommand(Command c) {} public void setCommandListener(CommandListener l) {listener=l;} }
+""",
+    "javax/microedition/lcdui/Display.java": """
+package javax.microedition.lcdui;
+public class Display { private Displayable current; public void setCurrent(Displayable d) {current=d;} public Displayable getCurrent() {return current;} }
+""",
+    "javax/microedition/lcdui/List.java": """
+package javax.microedition.lcdui;
+public class List extends Displayable {
+ public static final int IMPLICIT=3;
+ public static final Command SELECT_COMMAND=new Command("Select",1,1);
+ public java.util.Vector labels=new java.util.Vector(); public int selected;
+ public List(String title,int type) {}
+ public int append(String label,Image image) {labels.addElement(label);return labels.size()-1;}
+ public void addCommand(Command c) {}
+ public void setCommandListener(CommandListener l) {listener=l;}
+ public int getSelectedIndex() {return selected;}
+ public void choose(int index) {selected=index;listener.commandAction(SELECT_COMMAND,this);}
+}
+""",
+    "jimm/JimmUI.java": """
+package jimm;
+public class JimmUI { public static final javax.microedition.lcdui.Command cmdBack=new javax.microedition.lcdui.Command("Back",2,1); }
+""",
+    "jimm/MediaPlayer.java": """
+package jimm;
+public class MediaPlayer { public static String playedUin; public static byte[] playedToken; public static JimmScreen playedBack;
+ public static void show(String uin,byte[] token,JimmScreen back) {playedUin=uin;playedToken=token;playedBack=back;} }
+""",
+})
+
 
 def run(work: Path, client: Path | None = None) -> None:
     root = Path(__file__).resolve().parents[1]
@@ -80,6 +120,8 @@ def run(work: Path, client: Path | None = None) -> None:
         checks = ["ClientLifecycleTest"]
         if (classes / "jimm/VideoLink.class").exists():
             checks.append("VideoLinkTest")
+        if (classes / "jimm/VideoMenu.class").exists():
+            checks.append("VideoMenuTest")
         subprocess.run(
             [str(work / "jdk/bin/javac"), "-encoding", "UTF-8", "-cp", classpath,
              "-d", str(temporary), *sources,

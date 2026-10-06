@@ -443,7 +443,7 @@ async def run_video_rotate() -> None:
     # Аргументы ffmpeg: боком — MPEG-4 и вертикальный кадр; QCIF — H.263.
     t = Transcoder("ffmpeg", 30, video_codec="h263", video_size=(320, 240), video_rotate=True)
     args = " ".join(t.video_args("in", "out"))
-    assert "transpose=1" in args and "scale=240:320" in args and "-c:v mpeg4" in args, args
+    assert "transpose=1" in args and "scale=176:144" in args and "-c:v h263" in args, args
     t = Transcoder("ffmpeg", 10)
     args = " ".join(t.video_args("in", "out"))
     assert "transpose" not in args and "-c:v h263" in args, args

@@ -44,10 +44,8 @@ COLOR_NAME = "#3a76a1"
 COLOR_TIME = "#8397a8"
 
 # H.263 понимает только стандартные размеры кадра; QCIF — то, что подходит
-# экрану такого телефона и что точно проигрывает его плеер. Плеер RAZR V3
-# декодирует H.263 Baseline Level 10 и MPEG-4 Simple Profile Level 0: обоим
-# положено не больше 64 кбит/с и 15 кадров в секунду — выше плеер файл
-# просто не откроет.
+# экрану такого телефона. Для H.263 сохраняем стандартный размер даже
+# при ручном повороте: нестандартный кадр не должен менять кодек на MPEG-4.
 VIDEO_WIDTH = 176
 VIDEO_HEIGHT = 144
 # Кодировщики каждой сборки ffmpeg — спрашиваем по одному разу на путь.
@@ -74,7 +72,7 @@ def amr_rate(kbps: float) -> float:
     return min(AMR_RATES, key=lambda rate: abs(rate - kbps))
 
 
-VIDEO_KBPS = 64
+VIDEO_KBPS = 90
 VIDEO_FPS = 15
 VIDEO_CODECS = {
     "h263": ["-c:v", "h263"],
@@ -311,36 +309,31 @@ class Transcoder:
         codec = self.video_codec
         # Кадр «боком»: ролик поворачивается на 90°, и на вертикальном экране
         # телефона его смотрят, повернув сам телефон, — картинка во всю
-        # ширину, а не полоска посередине. Размер кадра при этом тоже
-        # становится вертикальным.
+        # ширину, а не полоска посередине. Для MPEG-4 размер кадра тоже
+        # становится вертикальным; для H.263 он остаётся стандартным.
         rotate = "transpose=1," if self.video_rotate else ""
-        if self.video_rotate:
+        if self.video_rotate and codec != "h263":
             width, height = height, width
         if codec == "h263" and (width, height) not in ((176, 144), (352, 288), (128, 96)):
-            # H.263 знает только стандартные кадры; повёрнутый или иной
-            # размер — это уже MPEG-4.
-            codec = "mpeg4"
+            # H.263 знает только стандартные кадры. Возвращаем QCIF,
+            # сохраняя выбранный кодек вместо скрытой замены на MPEG-4.
+            width, height = VIDEO_WIDTH, VIDEO_HEIGHT
         codec_args = list(VIDEO_CODECS[codec])
         if codec == "mpeg4" and width * height > 176 * 144:
             # Simple Profile Level 0 — это QCIF и не больше: кадр 320×240 с
             # таким заголовком плеер телефона отвергал («MediaException:
             # convert»). До CIF (352×288) — Level 3.
             codec_args = ["-c:v", "mpeg4", "-profile:v", "0", "-level", "3", "-vtag", "mp4v"]
-        # Кадр дополняем полями до ровного размера: плеер телефона ждёт
-        # именно объявленный размер.
-        scale = (f"{rotate}scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2")
+        scale = f"{rotate}scale={width}:{height},fps={self.video_fps},setsar=1"
         kbps = f"{self.video_kbps}k"
         # -ss перед -i: ffmpeg доматывает по ключевым кадрам, не разбирая
         # всё до нужной секунды, — на длинном ролике это разница в минуты.
         seek = ["-ss", str(start)] if start > 0 else []
         duration = ["-t", str(self.video_seconds)] if self.video_seconds > 0 else []
         return ([self.ffmpeg, "-y", "-loglevel", "error"] + seek + ["-i", src] + duration +
-                ["-vf", scale, "-r", str(self.video_fps)]
+                ["-vf", scale, "-pix_fmt", "yuv420p"]
                 + codec_args
-                # Ровный битрейт под потолок уровня: без maxrate кодер даёт
-                # пики выше, чем плеер готов принять.
-                + ["-b:v", kbps, "-maxrate", kbps, "-bufsize", kbps,
+                + ["-b:v", kbps,
                    "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1", "-b:a", "12.2k",
                    # moov в начале: старый плеер не станет искать его в конце файла.
                    "-movflags", "+faststart", "-f", "3gp", dst])

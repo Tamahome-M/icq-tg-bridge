@@ -146,6 +146,7 @@ class Session:
         # Что за телефон (TeleMotoMax присылает после входа) и его профиль.
         self.device: profiles.Device | None = None
         self.profile_name = ""
+        self.browser_video: bool | None = None  # режим клиента; 0.77 выбираем по профилю
         self.media: dict = {}           # «Медиа» из настроек телефона поверх профиля
         self.express_on: bool | None = None   # выключатель eXpress с телефона; None — не присылал
         self.network_on: dict[str, bool] = {}  # выключатели сетей с телефона (telegram, max, express)
@@ -955,6 +956,7 @@ class Session:
     # парой: сведения о телефоне приходят раньше способностей, а версия
     # нужна уже при сборке контакт-листа.
     VERSION_KEY = 19
+    VIDEO_MODE_KEY = 20  # 1 — браузер, 2 — плеер, 3 — выбор между ними (0.79+)
     # Ограничение контакт-листа: 0 в паре значит «как в профиле», поэтому
     # «все чаты» телефон шлёт этим числом (TeleMotoMax 0.70+).
     ROSTER_ALL = 0xFFFF
@@ -971,6 +973,9 @@ class Session:
             network_on: dict[str, bool] = {}
             while r.left >= 4:
                 key, value = r.u16(), r.u16()
+                if key == self.VIDEO_MODE_KEY and value in (1, 2, 3):
+                    self.browser_video = value != 2
+                    continue
                 if key in self.NETWORK_KEYS and value in (1, 2):
                     network_on[self.NETWORK_KEYS[key]] = value == 1
                     continue
@@ -1160,7 +1165,12 @@ class Session:
                              + pstr8(str(uin).encode("ascii")))
 
     def video_link_text(self, uin: int, text: str, attach: str) -> str:
-        if (self.tmm_version or (0, 0)) < (0, 77) or not attach.startswith("video:"):
+        # История может идти по служебному соединению без сведений о телефоне.
+        owner = self.server.session if self.service_only else self
+        if owner is None or (owner.tmm_version or (0, 0)) < (0, 77) or not attach.startswith("video:"):
+            return text
+        browser_video = owner.browser_video if owner.browser_video is not None else owner.profile_name == "v3"
+        if not browser_video:
             return text
         if self.server.video_link is None:
             return text
@@ -1210,7 +1220,10 @@ class Session:
         for index, part in enumerate(parts):
             cookie = blocks.new_cookie()
             sender = blocks.user_info(str(uin), signon_time=self.signon_time)
-            tail = extra if index == len(parts) - 1 else b""
+            # Для длинной подписи ссылка находится в первой части; токен
+            # нужен там же, чтобы меню сохранило оба способа просмотра.
+            video_link_part = attach.startswith("video:") and "[видео](" in part
+            tail = extra if index == len(parts) - 1 or video_link_part else b""
 
             if wait_ack:
                 # Ссылку отдаём только с последней частью: клиент показывает

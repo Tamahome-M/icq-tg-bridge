@@ -199,4 +199,3 @@ if [ -n "${TMM_DIST:-}" ]; then
 	fi
 	say "В репозиторий: telemotomax/dist/$BASE.jar"
 fi
-

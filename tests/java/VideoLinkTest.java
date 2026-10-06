@@ -6,9 +6,15 @@ public final class VideoLinkTest {
         if (!ok) throw new AssertionError(message);
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         String url = "http://host:8080/s/session/v/Abc_123-token4567";
         String message = "[06.10 12:00] [видео](" + url + ") 2:05\nПодпись :)";
+        java.lang.reflect.Method media = jimm.comm.Icq.class.getDeclaredMethod("mediaPairs", new Class[0]);
+        media.setAccessible(true);
+        int[] pairs = (int[]) media.invoke(null, new Object[0]);
+        int mode = 0;
+        for (int i = 0; i < pairs.length; i += 2) if (pairs[i] == 20) mode = pairs[i + 1];
+        check(mode == 3, "client must announce both video actions to the bridge");
         check(url.equals(VideoLink.url(message)), "video URL was not extracted");
         check(VideoLink.start(message) == message.indexOf("[видео]("), "wrong label position");
         check(message.substring(VideoLink.end(message)).equals(" 2:05\nПодпись :)"),

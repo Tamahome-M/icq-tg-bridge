@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -109,6 +111,13 @@ async def run_pages() -> None:
         restored = VideoStore(str(directory / "videos"), fetch)
         assert b"/0.3gp" in restored.resolve(path, start=False)[0]
         assert restored.resolve(path + "/0.3gp")[0] == b"FAKEMEDIA"
+        metadata = directory / "videos" / f"{page.token}.json"
+        old = json.loads(metadata.read_text())
+        old["spec"].pop("encoding_version")
+        metadata.write_text(json.dumps(old))
+        legacy = VideoStore(str(directory / "videos"), fetch)
+        assert legacy.register(100500, "video:42", "Чат", spec) != path, "новый формат не должен брать старый 3GP из кеша"
+        await legacy.stop()
         restored.pages[page.token].made = time.time() - 49 * 3600
         restored.cleanup()
         assert restored.resolve(path) is None
@@ -179,13 +188,36 @@ async def run_delivery() -> None:
             return [("[06.10 12:00] Я: подпись [видео 2:05]", "video:42", True)], False
 
         bridge.oscar.fetch_history = history
+        native_requests = []
+
+        async def native_video(target, attach, rotate="auto", segment=0):
+            native_requests.append((target, attach, segment))
+            return b"native-3gp-video"
+
+        bridge.oscar.fetch_video = native_video
         await bridge.oscar.start()
         port = bridge.oscar._server.sockets[0].getsockname()[1]
         cfg.oscar_port = port
         try:
-            for version in ((0, 76), (0, 77)):
+            cases = [
+                ((0, 76), 176, None, False),
+                ((0, 77), 240, None, False),  # установленная 0.77 на V8
+                ((0, 78), 240, 2, False),
+                ((0, 78), 176, 2, False),    # V8-сборка: режим важнее размера экрана
+                ((0, 78), 240, None, False), # без режима — безопасный выбор по профилю
+                ((0, 78), 0, None, False),   # неизвестный телефон: встроенный плеер
+                ((0, 79), 240, 2, False),   # явно только встроенный плеер
+                ((0, 77), 176, None, True),
+                ((0, 78), 176, 1, True),
+                ((0, 78), 240, 1, True),    # V3/Light-сборка: явный режим
+                ((0, 79), 176, 3, True),    # оба действия на V3/Light
+                ((0, 79), 240, 3, True),    # оба действия на V8
+            ]
+            for version, width, mode, browser in cases:
                 client = FakeJimm("127.0.0.1", port, "100500", "test")
                 client.tmm_version = version
+                client.device = ("j2me", width, 320 if width == 240 else 182, 8192 if width == 240 else 781)
+                client.media = {"video_mode": mode} if mode is not None else None
                 try:
                     # Видео, сохранённое до входа, уходит обычным потоком после офлайн-пачки.
                     await bridge.oscar.deliver(uin, "подпись [видео 2:05]", attach="video:42")
@@ -194,15 +226,37 @@ async def run_delivery() -> None:
                     await client.drain_for(0.3)
                     text = "\n".join(row[1] for row in client.received)
                     rows = await client.request_history(uin, 1)
-                    if version == (0, 76):
+                    if not browser:
                         assert "[видео](" not in text and "[видео](" not in rows[0][0]
                         assert not bridge.videos.pages
+                        assert client.attachments, "встроенный плеер должен получить токен видео"
+                        assert not native_requests, "видео не должно скачиваться до команды плеера"
+                        token = client.attachments[-1][1]
+                        got = await client.request_video(uin, token)
+                        assert got == b"native-3gp-video", got
+                        assert native_requests == [(uin, "video:42", 0)], native_requests
+                        native_requests.clear()
                     else:
                         assert "[видео](http://host:8080/v/" in text, text
                         assert "[видео](http://host:8080/v/" in rows[0][0], rows
-                        assert len(bridge.videos.pages) == 1
-                        assert not next(iter(bridge.videos.pages.values())).jobs
+                        assert re.search(r"\[видео\]\(([^)]+)\)", text)[1] == re.search(
+                            r"\[видео\]\(([^)]+)\)", rows[0][0])[1], "очередь и история должны использовать одну страницу"
+                        assert not any(page.jobs for page in bridge.videos.pages.values())
                         assert not list((directory / "photos/videos").glob("*.source"))
+                        if mode == 3:
+                            assert client.attachments, "для выбора плеера нужен токен"
+                            got = await client.request_video(uin, client.attachments[-1][1])
+                            assert got == b"native-3gp-video", got
+                            assert native_requests == [(uin, "video:42", 0)], native_requests
+                            native_requests.clear()
+                            client.received.clear()
+                            client.attachments.clear()
+                            await bridge.oscar.deliver(uin, "[видео 2:05] " + "подпись " * 400,
+                                                       attach="video:42")
+                            await client.drain_for(0.3)
+                            assert len(client.received) > 1, "длинная подпись должна разбиться"
+                            assert "[видео](" in client.received[0][1]
+                            assert len(client.attachments) == 2, "токен нужен у ссылки и последней части"
                 finally:
                     await client.close()
                     await asyncio.sleep(0.05)
@@ -210,7 +264,7 @@ async def run_delivery() -> None:
             await bridge.oscar.stop()
             await bridge.photo_server.stop()
             bridge.storage.close()
-    print("  доставка: ок (render выключен, очередь, история и совместимость с 0.76)")
+    print("  доставка: ок (оба действия на V3/V8, очередь, история, длинная подпись, 0.76–0.79)")
 
 
 async def main() -> None:

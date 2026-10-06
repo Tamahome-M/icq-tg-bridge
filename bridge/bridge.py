@@ -621,9 +621,8 @@ class Bridge:
         kbps = self.tmm("video_kbps")
         limit_kb = self.tmm("video_max_kb")
         if limit_kb and seconds > 0:
-            # 8 кбит на килобайт; часть места съест звук и заголовки — берём
-            # с запасом в четверть.
-            fit = int(limit_kb * 8 / seconds * 0.75)
+            # Бюджет в байтах: AMR-NB 12.2 кбит/с и 8 КБ на контейнер.
+            fit = int(max(0, limit_kb - 8) * 1024 * 8 / seconds / 1000 - 12.2)
             if fit < kbps:
                 kbps = max(8, fit)
         return kbps

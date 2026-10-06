@@ -481,8 +481,12 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	public void vlItemClicked(VirtualList sender)
 	{
 		String videoUrl = currentVideoUrl();
-		if (videoUrl != null) { VideoLink.open(videoUrl); return; }
 		byte[] token = currentToken();
+		if (videoUrl != null || (token != null && currentKind() == 2))
+		{
+			VideoMenu.show(uin, token, videoUrl, this);
+			return;
+		}
 		if (token == null)
 		{
 			// Без вложения выбор записи открывает обсуждение под ней, если есть.
@@ -519,9 +523,8 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		if (c == ChatTextList.cmdPlayVideo)
 		{
 			String videoUrl = currentVideoUrl();
-			if (videoUrl != null) { VideoLink.open(videoUrl); return; }
 			byte[] token = currentToken();
-			if (token != null) MediaPlayer.show(uin, token, this);
+			VideoMenu.show(uin, token, videoUrl, this);
 			return;
 		}
 		if (c == ChatTextList.cmdPlayVoice)
