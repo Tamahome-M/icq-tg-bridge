@@ -19,6 +19,7 @@ from typing import Awaitable, Callable
 from ..access import AccessControl
 from ..db import Contact, Storage
 from .. import profiles
+from ..videos import link_text
 from . import blocks
 from . import const as C
 from .proto import (Reader, Snac, flap, pstr8, pstr16, roast_password, snac,
@@ -1158,6 +1159,18 @@ class Session:
                              cookie + struct.pack(">H", channel)
                              + pstr8(str(uin).encode("ascii")))
 
+    def video_link_text(self, uin: int, text: str, attach: str) -> str:
+        if (self.tmm_version or (0, 0)) < (0, 77) or not attach.startswith("video:"):
+            return text
+        if self.server.video_link is None:
+            return text
+        try:
+            url = self.server.video_link(uin, attach)
+        except Exception:
+            log.exception("не удалось создать ссылку на %s", attach)
+            return text
+        return link_text(text, url) if url else text
+
     async def deliver(self, uin: int, text: str, wait_ack: bool = False,
                       row_id: int | None = None, url: str = "", attach: str = "") -> bool:
         """Отправляет текст телефону. True — кадры ушли в сокет.
@@ -1166,6 +1179,7 @@ class Session:
         а запись из очереди удалит уже пришедшее позже SNAC 04/0B. Ждать его
         здесь нельзя: очередь встала бы на всё время ожидания.
         """
+        text = self.video_link_text(uin, text, attach)
         parts = _split_text(text, self.server.max_message_chars)
         # Это отправка, не доставка: доставку по каналу 2 подтверждает сам
         # телефон (строка «телефон подтвердил» ниже), по каналу 1 подтверждений
@@ -1498,6 +1512,7 @@ class Session:
                 await self.send_error(C.SSBI, 0x0001, s.request_id)
                 return
             rows, more = got
+            rows = [(self.video_link_text(int(target), row[0], row[1]), *row[1:]) for row in rows]
             data = blocks.history_records(rows, C.HISTORY_MAX_BYTES,
                                           lambda attach: self.server.register_attachment(
                                               int(target), attach),
@@ -1706,7 +1721,8 @@ class OscarServer:
                  on_file: Callable[[int, str, str, int], Awaitable[bool]] | None = None,
                  chat_list: Callable[[], Awaitable[list]] | None = None,
                  open_chat: Callable[[int], Awaitable[bool]] | None = None,
-                 group_paths: Callable[[list], dict[int, str]] | None = None):
+                 group_paths: Callable[[list], dict[int, str]] | None = None,
+                 video_link: Callable[[int, str], str] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -1727,6 +1743,7 @@ class OscarServer:
         # Снимки для расширенного клиента: токен → (uin, вложение), а сам
         # снимок достаёт мост, когда клиент за ним пришёл.
         self.fetch_attachment = fetch_attachment
+        self.video_link = video_link
         self.attachments: dict[bytes, tuple[int, str, float]] = {}
         # История чата для расширенного клиента — текстом, на отдельный экран.
         self.fetch_history = fetch_history

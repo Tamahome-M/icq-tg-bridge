@@ -234,6 +234,7 @@ class Transcoder:
             if os.path.sep in self.ffmpeg else "ffprobe"
         stamp = _token()
         src = os.path.join(self.workdir, f"probe-{stamp}")
+        proc = None
         try:
             os.makedirs(self.workdir, exist_ok=True)
             with open(src, "wb") as fh:
@@ -267,6 +268,37 @@ class Transcoder:
             log.warning("не смог узнать размер ролика: %s", exc)
             return None
         finally:
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            try:
+                os.unlink(src)
+            except OSError:
+                pass
+
+    async def probe_duration(self, raw: bytes) -> float | None:
+        """Длина исходника для навигации между частями страницы видео."""
+        probe = os.path.join(os.path.dirname(self.ffmpeg), "ffprobe") \
+            if os.path.sep in self.ffmpeg else "ffprobe"
+        src = os.path.join(self.workdir, f"duration-{_token()}")
+        proc = None
+        try:
+            os.makedirs(self.workdir, exist_ok=True)
+            with open(src, "wb") as fh:
+                fh.write(raw)
+            proc = await asyncio.create_subprocess_exec(
+                probe, "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", src,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+            duration = float(out.strip())
+            return duration if duration > 0 and duration < float("inf") else None
+        except (OSError, ValueError, asyncio.TimeoutError):
+            return None
+        finally:
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
             try:
                 os.unlink(src)
             except OSError:
@@ -302,8 +334,9 @@ class Transcoder:
         # -ss перед -i: ffmpeg доматывает по ключевым кадрам, не разбирая
         # всё до нужной секунды, — на длинном ролике это разница в минуты.
         seek = ["-ss", str(start)] if start > 0 else []
-        return ([self.ffmpeg, "-y", "-loglevel", "error"] + seek + ["-i", src,
-                 "-t", str(self.video_seconds), "-vf", scale, "-r", str(self.video_fps)]
+        duration = ["-t", str(self.video_seconds)] if self.video_seconds > 0 else []
+        return ([self.ffmpeg, "-y", "-loglevel", "error"] + seek + ["-i", src] + duration +
+                ["-vf", scale, "-r", str(self.video_fps)]
                 + codec_args
                 # Ровный битрейт под потолок уровня: без maxrate кодер даёт
                 # пики выше, чем плеер готов принять.
@@ -428,6 +461,7 @@ class Transcoder:
         stamp = _token()
         src = os.path.join(self.workdir, f"in-{stamp}")
         dst = os.path.join(self.workdir, f"out-{stamp}.{ext}")
+        proc = None
         if kind == "video":
             args = self.video_args(src, dst, start)
         elif kind == "voice":
@@ -464,6 +498,9 @@ class Transcoder:
             log.warning("не смог перекодировать %s: %s", kind, exc)
             return None
         finally:
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
             for path in (src, dst):
                 try:
                     os.unlink(path)

@@ -55,6 +55,7 @@ class MessData
 	int attachKind;
 	// UIN обсуждения, начатого под этим сообщением (из истории моста), или null
 	String thread;
+	String videoUrl;
 
 	public MessData(boolean incoming, long time, int textOffset,
 			boolean contains_url, int messId)
@@ -346,6 +347,12 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		}
 		else if (c == cmdPlayVideo)
 		{
+			MessData md = messAt(textList.getCurrTextIndex());
+			if (md != null && md.videoUrl != null)
+			{
+				VideoLink.open(md.videoUrl);
+				return;
+			}
 			byte[] token = currentAttach();
 			if (token != null)
 				MediaPlayer.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), token, this);
@@ -391,7 +398,9 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA" | target is "SIEMENS2"#
 		else if (c == JimmUI.cmdGotoURL)
 		{
-			JimmUI.gotoURL(textList.getCurrText(0, false));
+			MessData md = messAt(textList.getCurrTextIndex());
+			if (md != null && md.videoUrl != null) VideoLink.open(md.videoUrl);
+			else JimmUI.gotoURL(textList.getCurrText(0, false));
 		}
 		//#sijapp cond.end#
 		
@@ -494,7 +503,11 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		checkTextForPhoto();
 	}
 	
-	public void vlItemClicked(VirtualList sender) {}
+	public void vlItemClicked(VirtualList sender)
+	{
+		MessData md = messAt(textList.getCurrTextIndex());
+		if (md != null && md.videoUrl != null) VideoLink.open(md.videoUrl);
+	}
 	
 	public void vlKeyPress(VirtualList sender, int keyCode, int type) 
 	{
@@ -533,7 +546,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 				textList.addCommandEx(HistoryViewer.cmdThread, VirtualList.MENU_TYPE_RIGHT);
 			if (md.attach != null && (md.attachKind == 1 || md.attachKind == 2))
 				textList.addCommandEx(cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
-			if (md.attach != null && md.attachKind == 2)
+			if (md.videoUrl != null || (md.attach != null && md.attachKind == 2))
 				textList.addCommandEx(cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
 			if (md.attach != null && md.attachKind == 3)
 				textList.addCommandEx(cmdPlayVoice, VirtualList.MENU_TYPE_RIGHT);
@@ -722,6 +735,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		md.attach = attach;
 		md.attachKind = attachKind;
 		md.thread = thread;
+		md.videoUrl = VideoLink.url(message);
 		getMessData().addElement(md);
 		messTotalCounter++;
 		lastMsgTime = (shortMsg) ? lastMsgTime : time;
