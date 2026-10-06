@@ -437,6 +437,12 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		return (String) threads.elementAt(index);
 	}
 
+	private String currentVideoUrl()
+	{
+		int index = list.getCurrTextIndex();
+		return index < 0 || index >= texts.size() ? null : VideoLink.url((String) texts.elementAt(index));
+	}
+
 	private int currentKind()
 	{
 		int index = list.getCurrTextIndex();
@@ -451,12 +457,13 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		list.removeCommandEx(ChatTextList.cmdPlayVoice);
 		list.removeCommandEx(cmdThread);
 		if (currentThread() != null) list.addCommandEx(cmdThread, VirtualList.MENU_TYPE_RIGHT);
+		if (currentVideoUrl() != null) list.addCommandEx(ChatTextList.cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
 		if (currentToken() != null)
 		{
 			int kind = currentKind();
 			// У голосового и файла картинки нет — только своё действие.
 			if (kind == 1 || kind == 2) list.addCommandEx(ChatTextList.cmdShowPhoto, VirtualList.MENU_TYPE_RIGHT);
-			if (kind == 2) list.addCommandEx(ChatTextList.cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
+			if (kind == 2 && currentVideoUrl() == null) list.addCommandEx(ChatTextList.cmdPlayVideo, VirtualList.MENU_TYPE_RIGHT);
 			if (kind == 3) list.addCommandEx(ChatTextList.cmdPlayVoice, VirtualList.MENU_TYPE_RIGHT);
 //#sijapp cond.if modules_CAMERA="true"#
 			if (kind == 4) list.addCommandEx(ChatTextList.cmdGetFile, VirtualList.MENU_TYPE_RIGHT);
@@ -473,6 +480,8 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	// голосовое.
 	public void vlItemClicked(VirtualList sender)
 	{
+		String videoUrl = currentVideoUrl();
+		if (videoUrl != null) { VideoLink.open(videoUrl); return; }
 		byte[] token = currentToken();
 		if (token == null)
 		{
@@ -509,6 +518,8 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		}
 		if (c == ChatTextList.cmdPlayVideo)
 		{
+			String videoUrl = currentVideoUrl();
+			if (videoUrl != null) { VideoLink.open(videoUrl); return; }
 			byte[] token = currentToken();
 			if (token != null) MediaPlayer.show(uin, token, this);
 			return;

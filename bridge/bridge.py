@@ -17,6 +17,7 @@ from . import photos
 from .photos import PhotoStore
 from . import profiles
 from .render import Item, RenderStore, Transcoder
+from .videos import VideoSpec, VideoStore
 from .webserver import PhotoServer
 from .config import Config
 from .db import Contact, Storage, limit_contacts
@@ -100,7 +101,8 @@ class Bridge:
                                  self.fetch_voice, self.send_voice_message,
                                  self.send_video_note, self.on_phone_profile,
                                  self.fetch_file, self.send_document,
-                                 self.chat_list, self.open_chat, self.group_paths)
+                                 self.chat_list, self.open_chat, self.group_paths,
+                                 video_link=self.video_link)
         # Любую сеть можно выключить с телефона (настройки сетей в
         # TeleMotoMax): выбор запоминается в базе и действует и после
         # перезапуска, пока телефон не пришлёт другой.
@@ -133,6 +135,7 @@ class Bridge:
         self.photos: PhotoStore | None = None
         self.photo_server: PhotoServer | None = None
         self.render: RenderStore | None = None
+        self.videos: VideoStore | None = None
         self.assistant: Assistant | None = None
         if cfg.assistant_enabled:
             # Сеансы claude лежат в ~/.claude по рабочему каталогу — держим
@@ -158,6 +161,9 @@ class Bridge:
                 lambda: self.storage.next_seq("render"), cfg.render_index,
                 cfg.render_page_max_kb * 1024)
         if cfg.photos_enabled:
+            self.videos = VideoStore(os.path.join(cfg.photos_dir, "videos"),
+                                     self.fetch_browser_video, cfg.photo_keep_hours,
+                                     cfg.render_source_max_mb * 1024 * 1024)
             self.photos = PhotoStore(cfg.photos_dir, cfg.photo_width, cfg.photo_height,
                                      cfg.photo_max_kb * 1024, cfg.photo_keep_hours)
             self.photo_server = PhotoServer(self.photos, cfg.photos_host, cfg.photos_port,
@@ -170,7 +176,7 @@ class Bridge:
                                             downloads_protected=cfg.downloads_protected,
                                             client_dir=os.path.join(
                                                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                                "telemotomax", "dist"))
+                                                "telemotomax", "dist"), videos=self.videos)
 
     # --- контакт-лист ---------------------------------------------------
 
@@ -863,6 +869,28 @@ class Bridge:
                      contact.title, start)
         return data
 
+    def video_link(self, uin: int, attach: str) -> str:
+        if self.videos is None:
+            return ""
+        contact = self.storage.contact_by_uin(uin)
+        if contact is None:
+            return ""
+        spec = VideoSpec(self.cfg.render_ffmpeg, self.cfg.render_video_seconds,
+                         self.cfg.render_timeout, self.cfg.render_video_codec,
+                         self.tmm("video_kbps"), self.cfg.render_video_fps,
+                         self.tmm("video_width"), self.tmm("video_height"),
+                         self.tmm("video_rotate"))
+        path = self.videos.register(uin, attach, contact.title, spec)
+        return self.web_url(path) if path else ""
+
+    async def fetch_browser_video(self, uin: int, attach: str) -> bytes | None:
+        contact = self.storage.contact_by_uin(uin)
+        kind, _, ident = attach.partition(":")
+        if contact is None or kind != "video" or not ident.isdigit():
+            return None
+        return await self.side_for(contact.peer_id).video_bytes(
+            contact.peer_id, int(ident), self.cfg.render_source_max_mb * 1024 * 1024)
+
     async def fetch_history(self, uin: int, count: int,
                             offset: int = 0) -> tuple[list[tuple[str, str, bool]], bool] | None:
         """История чата для TeleMotoMax — то же, что !last, но не в переписку,
@@ -1041,6 +1069,8 @@ class Bridge:
                     self.photos.cleanup()
                 if self.render is not None:
                     self.render.cleanup()
+                if self.videos is not None:
+                    self.videos.cleanup()
             except Exception:
                 log.exception("не удалось обновить контакт-лист")
 

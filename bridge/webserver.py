@@ -3,7 +3,8 @@
 
 Своих зависимостей не тянет. Маршруты: /p/<токен>.jpg — снимок, страница
 !render по адресу из настроек (по умолчанию /r/<номер>), /m/<токен>.<тип> —
-вложение страницы, /r/ — список страниц, если он включён, /login — вход.
+вложение страницы, /v/<токен> — видео по клику, /r/ — список страниц,
+если он включён, /login — вход.
 
 Пароль, если задан, проверяется тремя способами, потому что браузер старого
 телефона может не уметь какой-то из них: HTTP Basic, cookie после формы входа
@@ -27,6 +28,7 @@ from urllib.parse import parse_qs, quote, unquote
 from .access import AccessControl
 from .photos import PhotoStore
 from .render import RenderStore
+from .videos import VideoStore
 
 log = logging.getLogger("web")
 
@@ -96,9 +98,10 @@ class PhotoServer:
                  access: AccessControl | None = None,
                  render: RenderStore | None = None, password: str = "",
                  downloads_dir: str = "", downloads_protected: bool = False,
-                 client_dir: str = ""):
+                 client_dir: str = "", videos: VideoStore | None = None):
         self.store = store
         self.render = render
+        self.videos = videos
         self.host = host
         self.port = port
         self.access = access or AccessControl()
@@ -124,6 +127,8 @@ class PhotoServer:
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
+        if self.videos is not None:
+            await self.videos.stop()
 
     # --- разбор запроса ---------------------------------------------------
 
@@ -203,7 +208,8 @@ class PhotoServer:
                 await self._challenge(writer, path, head_only)
                 return
 
-        found = self._find(path)
+        found = (self.videos.resolve(path, start=not head_only)
+                 if self.videos is not None and path.startswith("/v/") else self._find(path))
         if found is None:
             log.info("запрос мимо: %s от %s", path[:64], (writer.get_extra_info("peername") or ("?",))[0])
             await self._reply(writer, 404, "text/plain; charset=utf-8", _NOT_FOUND_BODY)

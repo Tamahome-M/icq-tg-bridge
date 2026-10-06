@@ -2,7 +2,8 @@
 
 Usage: python3 tests/test_client_lifecycle.py /tmp/telemotomax-build
 An optional second argument selects another compiled client for regression checks.
-The client classes are real; only UI, settings and the MIDlet timer are stubbed.
+The client classes are real; only UI, settings and the MIDlet API/timer are stubbed.
+Builds with VideoLink also check labelled links and the browser request.
 """
 
 from pathlib import Path
@@ -15,8 +16,9 @@ import tempfile
 STUBS = {
     "jimm/Jimm.java": """
 package jimm;
-public class Jimm {
+public class Jimm extends javax.microedition.midlet.MIDlet {
     public static final Jimm jimm = new Jimm();
+    public static String openedUrl;
     private static java.util.Timer timer = new java.util.Timer(true);
     public static java.util.Timer getTimerRef() { return timer; }
     public void cancelTimer() { timer.cancel(); timer = new java.util.Timer(true); }
@@ -50,6 +52,15 @@ public class ResourceBundle {
     public static String remove(String key) { return key; }
 }
 """,
+    "javax/microedition/midlet/MIDlet.java": """
+package javax.microedition.midlet;
+public abstract class MIDlet {
+    public final boolean platformRequest(String url) {
+        jimm.Jimm.openedUrl = url;
+        return false;
+    }
+}
+""",
 }
 
 
@@ -66,17 +77,21 @@ def run(work: Path, client: Path | None = None) -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(source, encoding="utf-8")
             sources.append(str(path))
+        checks = ["ClientLifecycleTest"]
+        if (classes / "jimm/VideoLink.class").exists():
+            checks.append("VideoLinkTest")
         subprocess.run(
             [str(work / "jdk/bin/javac"), "-encoding", "UTF-8", "-cp", classpath,
              "-d", str(temporary), *sources,
-             str(root / "tests/java/ClientLifecycleTest.java")],
+             *[str(root / f"tests/java/{check}.java") for check in checks]],
             check=True,
         )
-        subprocess.run(
-            [str(work / "jdk/bin/java"), "-cp",
-             str(temporary) + os.pathsep + classpath, "ClientLifecycleTest"],
-            check=True, timeout=30,
-        )
+        for check in checks:
+            subprocess.run(
+                [str(work / "jdk/bin/java"), "-cp",
+                 str(temporary) + os.pathsep + classpath, check],
+                check=True, timeout=30,
+            )
 
 
 if __name__ == "__main__":

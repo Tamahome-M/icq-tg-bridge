@@ -1146,12 +1146,26 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	static public void addMessageText(TextList textList, String text, int color,
 			int messTotalCounter)
 	{
+		int start = VideoLink.start(text);
+		if (start >= 0)
+		{
+			addMessageFragment(textList, text.substring(0, start), color, messTotalCounter);
+			textList.addBigText(VideoLink.LABEL, 0x285AA8, Font.STYLE_UNDERLINED, messTotalCounter);
+			addMessageFragment(textList, text.substring(VideoLink.end(text)), color, messTotalCounter);
+		}
+		else addMessageFragment(textList, text, color, messTotalCounter);
+		textList.doCRLF(messTotalCounter);
+	}
+
+	private static void addMessageFragment(TextList textList, String text, int color,
+			int messTotalCounter)
+	{
+		if (text.length() == 0) return;
 		//#sijapp cond.if modules_SMILES_STD="true" | modules_SMILES_ANI="true" #
 		Emoticons.addTextWithEmotions(textList, text, Font.STYLE_PLAIN, color, messTotalCounter);
 		//#sijapp cond.else#
 		//#		textList.addBigText(text, textList.getTextColor(), Font.STYLE_PLAIN, messTotalCounter);
 		//#sijapp cond.end#
-		textList.doCRLF(messTotalCounter);
 	}
 
 ///////////////////////////////////////////////////////////////////////////////
