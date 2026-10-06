@@ -2,6 +2,7 @@
 
 Usage: python3 tests/test_client_lifecycle.py /tmp/telemotomax-build
 An optional second argument selects another compiled client for regression checks.
+An optional third argument selects the expected video mode: browser or native.
 The client classes are real; only UI, settings and the MIDlet API/timer are stubbed.
 Builds with VideoLink also check labelled links and the browser request.
 """
@@ -27,6 +28,7 @@ public class Jimm extends javax.microedition.midlet.MIDlet {
     "jimm/Options.java": """
 package jimm;
 public class Options {
+    public static int[] mediaSize(int key) { return null; }
     public static int getInt(int key) { return 0; }
     public static long getLong(int key) { return 0; }
     public static String getString(int key) { return "3600"; }
@@ -64,7 +66,7 @@ public abstract class MIDlet {
 }
 
 
-def run(work: Path, client: Path | None = None) -> None:
+def run(work: Path, client: Path | None = None, video_mode: str = "browser") -> None:
     root = Path(__file__).resolve().parents[1]
     classes = client or work / "src/build/compile/classes"
     api = sorted((work / "wtk/lib").glob("*.jar"))
@@ -89,10 +91,12 @@ def run(work: Path, client: Path | None = None) -> None:
         for check in checks:
             subprocess.run(
                 [str(work / "jdk/bin/java"), "-cp",
-                 str(temporary) + os.pathsep + classpath, check],
+                 str(temporary) + os.pathsep + classpath, check,
+                 *([video_mode] if check == "VideoLinkTest" else [])],
                 check=True, timeout=30,
             )
 
 
 if __name__ == "__main__":
-    run(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None)
+    run(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else None,
+        sys.argv[3] if len(sys.argv) > 3 else "browser")

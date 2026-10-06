@@ -77,10 +77,11 @@ MINOR=${VERSION#*.}; MINOR=${MINOR%%.*}
 # без (ICQ-смайлы в переписке из Telegram/MAX редкость, а набор картинок
 # держит ~32 КБ кучи). CAMERA — снимок, кружок и файлы с карты (JSR-75):
 # на V3 недоступно, сборка v8 включает.
+# VIDEO_BROWSER — видео по ссылке на V3/Light; V8 оставляет встроенный плеер.
 MODULES=${TMM_MODULES:-v3}
 case "$MODULES" in
-	v3)      MODULES="SMILES_STD,AVATARS" ;;
-	v3light) MODULES="AVATARS" ;;
+	v3)      MODULES="SMILES_STD,AVATARS,VIDEO_BROWSER" ;;
+	v3light) MODULES="AVATARS,VIDEO_BROWSER" ;;
 	v8)      MODULES="SMILES_STD,AVATARS,CAMERA" ;;
 esac
 sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION###|$STAMP|; \
@@ -199,4 +200,3 @@ if [ -n "${TMM_DIST:-}" ]; then
 	fi
 	say "В репозиторий: telemotomax/dist/$BASE.jar"
 fi
-

@@ -181,6 +181,9 @@ Author(s): Manuel Linsmayer, Andreas Rossbacher
 		<condition property="modules/CAMERA" value="true">
 			<contains string="${modules}" substring="CAMERA" />
 		</condition>
+		<condition property="modules/VIDEO_BROWSER" value="true">
+			<contains string="${modules}" substring="VIDEO_BROWSER" />
+		</condition>
 		<condition property="modules/PIM" value="true">
 			<contains string="${modules}" substring="PIM" />
 		</condition>
@@ -221,6 +224,7 @@ Author(s): Manuel Linsmayer, Andreas Rossbacher
 			<define name="modules_ANTISPAM" value="${modules/ANTISPAM}" />
 			<define name="modules_AVATARS" value="${modules/AVATARS}" />
 			<define name="modules_CAMERA" value="${modules/CAMERA}" />
+			<define name="modules_VIDEO_BROWSER" value="${modules/VIDEO_BROWSER}" />
 			<define name="modules_PIM" value="${modules/PIM}" />
 		</sijapp>
 		<replace dir="${build}/init/src" encoding="UTF-8">

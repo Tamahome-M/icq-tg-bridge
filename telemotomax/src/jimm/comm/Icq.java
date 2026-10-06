@@ -380,16 +380,18 @@ public class Icq implements Runnable
 			MEDIA_VIDEO_ROTATE = 8, MEDIA_VOICE_KBPS10 = 9, MEDIA_VOICE_SEC = 10, MEDIA_PHOTO_KB = 11,
 			MEDIA_VIDEO_KB = 12, MEDIA_ROSTER_LIMIT = 13, MEDIA_EXPRESS = 14,
 			MEDIA_MAX = 15, MEDIA_TELEGRAM = 16, MEDIA_MAX_ROSTER_LIMIT = 17,
-			MEDIA_EXPRESS_ROSTER_LIMIT = 18, MEDIA_CLIENT_VERSION = 19;
+			MEDIA_EXPRESS_ROSTER_LIMIT = 18, MEDIA_CLIENT_VERSION = 19, MEDIA_VIDEO_MODE = 20;
 
 	private static int[] mediaPairs()
 	{
-		int[] out = new int[38];
+		int[] out = new int[40];
 		int n = 0;
 		// Версия клиента — первой парой: сведения о телефоне уходят раньше
 		// способностей, а мосту версия нужна уже при сборке контакт-листа
 		// (вложенные группы шлются только клиенту, который их понимает).
 		n = pair(out, n, MEDIA_CLIENT_VERSION, TMM_VERSION_MAJOR * 100 + TMM_VERSION_MINOR);
+		// 1 — браузер (V3/Light), 2 — встроенный плеер (V8).
+		n = pair(out, n, MEDIA_VIDEO_MODE, jimm.VideoLink.browserMode() ? 1 : 2);
 		int[] size = jimm.Options.mediaSize(jimm.Options.OPTION_MEDIA_PHOTO_SIZE);
 		if (size != null) { out[n++] = MEDIA_PHOTO_W; out[n++] = size[0]; out[n++] = MEDIA_PHOTO_H; out[n++] = size[1]; }
 		n = pair(out, n, MEDIA_PHOTO_Q, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_PHOTO_QUALITY));

@@ -6,9 +6,18 @@ public final class VideoLink
 	public static final String LABEL = "[видео]";
 	private static final String PREFIX = LABEL + "(";
 
+	public static boolean browserMode()
+	{
+		//#sijapp cond.if modules_VIDEO_BROWSER="true"#
+		return true;
+		//#sijapp cond.else#
+		//# return false;
+		//#sijapp cond.end#
+	}
+
 	public static int start(String text)
 	{
-		if (text == null) return -1;
+		if (!browserMode() || text == null) return -1;
 		int start = text.indexOf(PREFIX);
 		while (start >= 0)
 		{
