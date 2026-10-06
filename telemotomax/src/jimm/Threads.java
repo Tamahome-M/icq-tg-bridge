@@ -58,9 +58,11 @@ public class Threads implements Runnable
 				{
 					try {Thread.sleep(delay);} catch (Exception e) {}
 					// За время паузы могли отключиться руками — тогда не лезем.
-					if (Icq.isDisconnected() || Icq.isConnected())
+					if (Icq.isDisconnected() || Icq.isConnected() || Icq.isConnecting())
 					{
-						ConnLog.note(Icq.isConnected() ? "попытка отменена: уже в сети" : "попытка отменена: отключено руками");
+						ConnLog.note(Icq.isConnected() ? "попытка отменена: уже в сети" :
+								(Icq.isConnecting() ? "попытка отменена: уже подключаемся" :
+								"попытка отменена: отключено руками"));
 						break;
 					}
 					ConnLog.note("попытка входа");

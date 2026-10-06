@@ -116,6 +116,11 @@ public class Icq implements Runnable
 		lastPingAt = now;
 	}
 
+	static public synchronized void notePingSent(Thread owner, Connection connection)
+	{
+		if (isCurrentConnection(owner, connection) && connected) notePingSent();
+	}
+
 	static public void resetPingWatch()
 	{
 		lastServerData = System.currentTimeMillis();
@@ -136,19 +141,32 @@ public class Icq implements Runnable
 	}
 
 	// Flag for indicate that connection was reset _by_user_
-	public static boolean isDisconnected()
+	public static synchronized boolean isDisconnected()
 	{
-		synchronized (_this)
-		{
-			return disconnected;
-		}
+		return disconnected;
 	}
 	
-	public static void setDisconnected(boolean value)
+	public static synchronized void setDisconnected(boolean value)
 	{
-		synchronized (_this)
+		disconnected = value;
+	}
+
+	public static synchronized boolean isConnecting()
+	{
+		return thread != null && !connected;
+	}
+
+	public static synchronized boolean isCurrentConnection(Thread owner, Connection connection)
+	{
+		return owner != null && owner == thread && connection == c;
+	}
+
+	private static void cancelKeepAlive()
+	{
+		if (keepAliveTimerTask != null)
 		{
-			disconnected = value;
+			keepAliveTimerTask.cancel();
+			keepAliveTimerTask = null;
 		}
 	}
 
@@ -158,25 +176,36 @@ public class Icq implements Runnable
 		// Set reference to this ICQ object for callbacks
 		act.setIcq(_this);
 
-		// Look whether action is executable at the moment
-		if (!act.isExecutable())
-		{
-			throw (new JimmException(140, 0));
-		}
-
-		// Queue requested action
-		synchronized (_this)
-		{
-			reqAction.addElement(act);
-		}
-
-		// Connect?
 		if (act instanceof ConnectAction)
 		{
-			// Create new thread and start
-			thread = new Thread(_this);
-			thread.start();
-
+			// «Не в сети» означает и незаконченный вход. Проверка и
+			// запуск под одним замком: второй вход не создаёт ещё один
+			// поток и таймер, пока первый подключается.
+			synchronized (Icq.class)
+			{
+				if (connected || thread != null) return;
+				Thread next = new Thread(_this);
+				reqAction.addElement(act);
+				thread = next;
+				try { next.start(); }
+				catch (RuntimeException t)
+				{
+					thread = null;
+					reqAction.removeElement(act);
+					throw t;
+				}
+				catch (Error t)
+				{
+					thread = null;
+					reqAction.removeElement(act);
+					throw t;
+				}
+			}
+		}
+		else
+		{
+			if (!act.isExecutable()) throw new JimmException(140, 0);
+			synchronized (_this) { reqAction.addElement(act); }
 		}
 
 		// Notify main loop
@@ -200,6 +229,12 @@ public class Icq implements Runnable
 	// «Подключиться». Тихий вход заставку не трогает, отмены у него нет.
 	static public synchronized void connect(boolean quiet)
 	{
+		if (connected || thread != null)
+		{
+			jimm.ConnLog.note(connected ? "вход пропущен: уже в сети" :
+					"вход пропущен: уже подключаемся");
+			return;
+		}
 		setDisconnected(false);
 		//#sijapp cond.if target isnot "MOTOROLA"#
 		if (Options.getBoolean(Options.OPTION_SHADOW_CON))
@@ -254,18 +289,14 @@ public class Icq implements Runnable
 		//#sijapp cond.end#
 
 
-		if (c == null) return;
-		
 		setDisconnected(true);
-
-		if (keepAliveTimerTask != null)
-		{
-			keepAliveTimerTask.cancel();      // иначе задачи копятся с каждым сеансом
-			keepAliveTimerTask = null;
-		}
+		cancelKeepAlive();
 		
 		thread = null;
+		setNotConnected();
 		synchronized (wait) { wait.notifyAll(); }		
+		// Отключение могло прийти до того, как новый поток создал сокет.
+		if (c == null) return;
 		
 		if (force) c.forceDisconnect();
 		else c.notifyToDisconnect();
@@ -723,41 +754,47 @@ public class Icq implements Runnable
 
 		// Get thread object
 		Thread thread = Thread.currentThread();
+		TimerTasks sessionKeepAlive = null;
 		// Required variables
 		Action newAction = null;
 
-		// Instantiate connections
-		switch (Options.getInt(Options.OPTION_CONN_TYPE))
-		{
-			case Options.CONN_TYPE_SOCKET:
-				c = new SOCKETConnection();
-				break;
-			case Options.CONN_TYPE_HTTP:
-				c = new HTTPConnection();
-				break;
-			//#sijapp cond.if modules_PROXY is "true"#
-			case Options.CONN_TYPE_PROXY:
-				c = new SOCKSConnection();
-				break;
-			//#sijapp cond.end#
-		}
-
-		// Instantiate active actions vector
-		actAction = new Vector();
-
-		// Instantiate action listener
-		actListener = new ActionListener();
-
-		resetPingWatch();        // новый сеанс — счёт пингов с чистого листа
-		keepAliveTimerTask = new TimerTasks(TimerTasks.ICQ_KEEPALIVE);
-		long keepAliveInterv = Integer.parseInt(Options
-				.getString(Options.OPTION_CONN_ALIVE_INVTERV)) * 1000;
-		Jimm.getTimerRef().schedule(keepAliveTimerTask, keepAliveInterv,
-				keepAliveInterv);
-
-		// Catch All Exceptions
 		try
 		{
+			synchronized (Icq.class)
+			{
+				// Поток, отменённый ещё до запуска, не должен создавать
+				// сокет и таймер поверх следующего сеанса.
+				if (Icq.thread != thread) return;
+
+				// Instantiate connections
+				switch (Options.getInt(Options.OPTION_CONN_TYPE))
+				{
+					case Options.CONN_TYPE_SOCKET:
+						c = new SOCKETConnection();
+						break;
+					case Options.CONN_TYPE_HTTP:
+						c = new HTTPConnection();
+						break;
+					//#sijapp cond.if modules_PROXY is "true"#
+					case Options.CONN_TYPE_PROXY:
+						c = new SOCKSConnection();
+						break;
+					//#sijapp cond.end#
+				}
+
+				actAction = new Vector();
+				actListener = new ActionListener();
+
+				resetPingWatch();        // новый сеанс — счёт пингов с чистого листа
+				cancelKeepAlive();
+				sessionKeepAlive = new TimerTasks(TimerTasks.ICQ_KEEPALIVE, thread, c);
+				keepAliveTimerTask = sessionKeepAlive;
+				long keepAliveInterv = Integer.parseInt(Options
+						.getString(Options.OPTION_CONN_ALIVE_INVTERV)) * 1000;
+				Jimm.getTimerRef().schedule(sessionKeepAlive, keepAliveInterv,
+						keepAliveInterv);
+			}
+
 			// Abort only in error state
 			while (Icq.thread == thread)
 			{
@@ -847,6 +884,7 @@ public class Icq implements Runnable
 					try
 					{
 						newAction.init();
+						if (Icq.thread != thread) break;
 						actAction.addElement(newAction);
 					} catch (JimmException e)
 					{
@@ -865,6 +903,7 @@ public class Icq implements Runnable
 					}
 				}
 
+				if (Icq.thread != thread) break;
 				//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 				bi = bartC;
 				biPacketAvailable = (bi != null) ? ((bi.available() > 0) ? true : false ) : false;
@@ -873,12 +912,12 @@ public class Icq implements Runnable
 				// Read next packet, if available
 				Packet packet;
 				boolean consumed;
-				while (
+				while (Icq.thread == thread && (
 					(c.available() > 0)
 				//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 					|| biPacketAvailable
 				//  #sijapp cond.end#
-				)
+				))
 				{
 					// Try to get packet
 					packet = null;
@@ -956,7 +995,7 @@ public class Icq implements Runnable
 			DebugLog.addText ("MainThread: Exception: " + e.toString());
 			e.printStackTrace();
 
-			if (c != null && Icq.thread == thread) {// Construct and handle exception
+			if (Icq.thread == thread) {// Construct and handle exception
 				// Как ошибка связи: закрыть сокет и переподключиться.
 				// Некритичный вариант оставлял открытое соединение без
 				// обработчика — «в сети», но ничего не приходит.
@@ -966,15 +1005,25 @@ public class Icq implements Runnable
 			}
 		}
 
-		if (!Options.getBoolean(Options.OPTION_RECONNECT) && c != null)
+		finally
 		{
-			// Close connection
-			c.notifyToDisconnect();
-
-			resetServerCon();
-
-			/* Reset all contacts offine */
-			MainThread.resetContactsOffline();
+			// Ушедший поток убирает свою задачу, даже если уже есть новый
+			// сеанс. Его таймер и соединение трогать нельзя.
+			if (sessionKeepAlive != null) sessionKeepAlive.cancel();
+			synchronized (Icq.class)
+			{
+				if (keepAliveTimerTask == sessionKeepAlive) keepAliveTimerTask = null;
+				if (Icq.thread == thread)
+				{
+					if (!Options.getBoolean(Options.OPTION_RECONNECT) && c != null)
+					{
+						c.notifyToDisconnect();
+						resetServerCon();
+						MainThread.resetContactsOffline();
+					}
+					Icq.thread = null;
+				}
+			}
 		}
 
 	}

@@ -9,6 +9,7 @@ import DrawControls.VirtualList;
 
 import jimm.comm.Action;
 import jimm.comm.Icq;
+import jimm.comm.connections.Connection;
 
 public class TimerTasks extends TimerTask
 {
@@ -25,6 +26,8 @@ public class TimerTasks extends TimerTask
 	private int type = -1;
 
 	private Action action;
+	private Thread connectionThread;
+	private Connection connection;
 
 	boolean wasError = false;
 	boolean canceled = false;
@@ -41,6 +44,13 @@ public class TimerTasks extends TimerTask
 	public TimerTasks(int type)
 	{
 		this.type = type;
+	}
+
+	public TimerTasks(int type, Thread connectionThread, Connection connection)
+	{
+		this.type = type;
+		this.connectionThread = connectionThread;
+		this.connection = connection;
 	}
 	
 	public TimerTasks(Object displ, String text, int counter, int type)
@@ -92,6 +102,11 @@ public class TimerTasks extends TimerTask
 				break;
 
 			case ICQ_KEEPALIVE:
+				if (!Icq.isCurrentConnection(connectionThread, connection))
+				{
+					cancel();
+					break;
+				}
 				if (Icq.isConnected()
 						&& Options.getBoolean(Options.OPTION_KEEP_CONN_ALIVE))
 				{
@@ -110,10 +125,17 @@ public class TimerTasks extends TimerTask
 					// Instantiate and send an alive packet
 					try
 					{
-						Icq.sendPacket(new jimm.comm.Packet(5, new byte[0]));
-						Icq.notePingSent();
+						// Сокет своего сеанса: отменённая задача, уже начавшая
+						// отправку, не должна пинговать новый вход.
+						connection.sendPacket(new jimm.comm.Packet(5, new byte[0]));
+						Icq.notePingSent(connectionThread, connection);
 					} catch (JimmException e)
 					{
+						if (!Icq.isCurrentConnection(connectionThread, connection))
+						{
+							cancel();
+							break;
+						}
 						JimmException.handleException(e);
 						if (e.isCritical())
 							cancel();
