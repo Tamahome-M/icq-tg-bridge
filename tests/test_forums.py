@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bridge.bridge import Bridge
 from bridge.config import Config
+from bridge.history import MissedMessage
 from bridge.tg.client import GENERAL_TOPIC, reply_target, topic_of
 
 FORUM = -1001234567890
@@ -177,7 +178,7 @@ async def main() -> None:
 
     async def missed(peer_id, since_ts, cap, topic_id=0):
         calls.append((peer_id, since_ts, topic_id))
-        return [(1_500, "Вася", "новое в теме")] if since_ts < 1_500 else []
+        return [MissedMessage(1_500, "Вася", "новое в теме", 15)] if since_ts <= 1_500 else []
 
     bridge.telegram.missed = missed
     await bridge.catch_up()

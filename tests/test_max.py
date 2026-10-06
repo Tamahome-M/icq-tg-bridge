@@ -187,7 +187,7 @@ async def run_side() -> None:
     typing: list = []
     reads: list = []
 
-    async def on_message(peer, sender, text, ts, topic, attach=""):
+    async def on_message(peer, sender, text, ts, topic, attach="", message_id=0):
         got.append((peer, sender, text, ts, topic))
         return True
 
@@ -253,7 +253,9 @@ async def run_side() -> None:
     items = await side.history(to_peer(DIALOG_ID), 10, None, 50)
     assert [(i.who, i.text) for i in items] == [("Мама Петровна", "привет"), ("Я", "и тебе"), ("Мама Петровна", "[фото]")], items
     missed = await side.missed(to_peer(DIALOG_ID), (NOW_MS - 25_000) // 1000, 50)
-    assert [(s, t) for _, s, t in missed] == [("", "[фото]")], missed
+    assert [(m.sender, m.text) for m in missed] == [("", "[фото]")], missed
+    boundary = await side.missed(to_peer(DIALOG_ID), (NOW_MS - 10_000) // 1000, 50)
+    assert [m.message_id for m in boundary] == [3], "граничная секунда MAX должна включаться"
 
     # Страница: фото с загрузчиком, своё помечено.
     rows = await side.render_items(to_peer(DIALOG_ID), 10, None, 50)
@@ -334,7 +336,8 @@ async def run_bridge() -> None:
     # Входящее из MAX — в очередь телефону под нужным UIN и отмечено прочитанным.
     queued: list = []
 
-    async def deliver(uin, text, forced=False, url="", ts=0, attach=""):
+    async def deliver(uin, text, forced=False, url="", ts=0, attach="", mention=False,
+                      message_id=0):
         queued.append((uin, text))
         return True
 

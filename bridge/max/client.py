@@ -24,7 +24,7 @@ import zlib
 from types import SimpleNamespace
 from typing import Awaitable, Callable
 
-from ..history import HistoryItem
+from ..history import HistoryItem, MissedMessage
 from ..tg.client import Dialog, RECENTLY_SECONDS
 
 log = logging.getLogger("max")
@@ -635,7 +635,8 @@ class MaxSide:
             kind = media_kind(message)
             attach = (f"{kind}:{_attr(message, 'id', 0)}"
                       if kind in ("photo", "video", "voice", "file") else "")
-            shown = await self.on_message(to_peer(chat_id), sender, text, ts, 0, attach=attach)
+            shown = await self.on_message(to_peer(chat_id), sender, text, ts, 0, attach=attach,
+                                          message_id=_attr(message, "id", 0))
             if self.cfg.mark_read and shown and not mine:
                 try:
                     await self.client.read_message(int(message.id), chat_id)
@@ -810,14 +811,14 @@ class MaxSide:
         return items
 
     async def missed(self, peer_id: int, since_ts: int, cap: int,
-                     topic_id: int = 0) -> list[tuple[int, str, str]]:
+                     topic_id: int = 0) -> list[MissedMessage]:
         chat_id = from_peer(peer_id)
         chat = await self._chat(chat_id)
         private = chat is not None and self._kind(chat) == "user"
-        out: list[tuple[int, str, str]] = []
+        out: list[MissedMessage] = []
         for msg in await self._fetch(chat_id, cap):
             ts = _seconds(_attr(msg, "time", 0))
-            if ts <= since_ts:
+            if ts < since_ts:
                 break
             if self.me_id and int(_attr(msg, "sender", 0) or 0) == self.me_id:
                 continue
@@ -826,7 +827,10 @@ class MaxSide:
                 continue
             sender = "" if private else (self._user_name(
                 await self._user(int(_attr(msg, "sender", 0) or 0))) or "?")
-            out.append((ts, sender, text))
+            message_id = _attr(msg, "id", 0)
+            kind = media_kind(msg)
+            attach = f"{kind}:{message_id}" if kind in ("photo", "video", "voice", "file") else ""
+            out.append(MissedMessage(ts, sender, text, message_id, attach))
         out.reverse()
         return out
 

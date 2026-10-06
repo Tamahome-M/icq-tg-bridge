@@ -466,7 +466,7 @@ class Bridge:
             self._reload_roster()
         return found
 
-    def verdict_for(self, uin: int) -> str:
+    def verdict_for(self, uin: int, mention: bool = False) -> str:
         """Что делать с накопленным сообщением при текущем статусе.
 
         Статус мог смениться, пока сообщения лежали в очереди: доставлять
@@ -477,7 +477,7 @@ class Bridge:
         if contact is None:
             return "send"
         if policy.allows(self.mode, contact.kind, bool(contact.favourite),
-                         bool(contact.muted)):
+                         bool(contact.muted), mention and self.cfg.mentions_through):
             return "send"
         return "hold" if policy.holds(self.mode) else "drop"
 
@@ -1048,7 +1048,8 @@ class Bridge:
 
     async def on_telegram_message(self, peer_id: int, sender: str, text: str,
                                   ts: int = 0, topic_id: int = 0, attach: str = "",
-                                  mention: bool = False, always: bool = False) -> bool:
+                                  mention: bool = False, always: bool = False,
+                                  message_id: int | str = 0) -> bool:
         """Возвращает True, если сообщение ушло телефону (или встало в очередь).
 
         По этому Telegram-сторона решает, помечать ли его прочитанным:
@@ -1066,7 +1067,7 @@ class Bridge:
         if contact is not None and contact.hidden:
             log.debug("чат %r убран с телефона — сообщение не доставляю", contact.title)
             if ts:
-                self.storage.note_delivered(peer_id, ts, topic_id)
+                self.storage.note_delivered(peer_id, ts, topic_id, message_id)
             return False
         if contact is None:
             title, kind = await self.side_for(peer_id).title_for(peer_id)
@@ -1095,6 +1096,9 @@ class Bridge:
 
         # Сообщение пришло — значит набор закончен.
         await self.stop_typing(uin)
+        if self.storage.message_processed(uin, message_id):
+            log.debug("повтор сообщения %s в %s — уже обработано", message_id, name)
+            return False
 
         # Статус в Jimm решает, что доставлять, а что придержать или пропустить.
         net = self.network_of(peer_id)
@@ -1116,18 +1120,19 @@ class Bridge:
                 log.log(level, "из %s: %s — не доставляю (%s)", net, name, why)
             log.debug("из %s: %s: %s", net, name, text[:300])
             if ts:
-                self.storage.note_delivered(peer_id, ts, topic_id)
+                self.storage.note_delivered(peer_id, ts, topic_id, message_id)
             return False
         log.info("из %s: %s → в очередь телефону, %d симв.%s%s", net, name, len(text),
                  ", звонок" if always else ", упоминание" if mention else "",
                  "" if self.oscar.online else " (телефон не в сети)")
         log.debug("из %s: %s: %s", net, name, text[:300])
-        await self.oscar.deliver(uin, text, ts=ts, attach=attach)
+        accepted = await self.oscar.deliver(uin, text, forced=always, ts=ts, attach=attach,
+                                           mention=mention, message_id=message_id)
         # Отмечаем даже то, что легло в очередь: оно уже сохранено в базе,
         # и при следующем запуске догружать его повторно не нужно.
-        if ts:
+        if accepted and ts:
             self.storage.note_delivered(peer_id, ts, topic_id)
-        return True
+        return accepted
 
     async def on_telegram_status(self, peer_id: int, status: str) -> None:
         contact = self.storage.contact_by_peer(peer_id)
@@ -1384,8 +1389,9 @@ class Bridge:
     async def catch_up(self) -> None:
         """Догружает в очередь то, что пришло, пока мост не работал.
 
-        Берём только чаты с непрочитанным и только сообщения новее последнего
-        доставленного — иначе при каждом запуске приезжало бы одно и то же.
+        Берём только чаты с непрочитанным. Граничную секунду читаем целиком:
+        одинаковое время не означает один и тот же ID. Повторы событий и
+        догрузки отсеиваются по сохранённым ID в той же транзакции, что очередь.
         """
         if not self.cfg.catch_up:
             return
@@ -1413,13 +1419,18 @@ class Bridge:
 
         total = 0
         for contact, missed in await asyncio.gather(*(fetch(c) for c in wanted)):
-            for ts, sender, text in missed:
+            for message in missed:
+                ts, sender, text = message.ts, message.sender, message.text
                 if sender:
                     text = f"{sender}: {text}"
                 if self.cfg.emoji_to_text:
                     text = emoji.to_text(text)
-                self.storage.queue(contact.uin, text, self.cfg.offline_queue_per_chat,
-                                   ts=ts)
+                if not self.storage.queue(
+                        contact.uin, text, self.cfg.offline_queue_per_chat,
+                        forced=message.always, ts=ts, attach=message.attach,
+                        mention=message.mention and self.cfg.mentions_through,
+                        message_id=message.message_id):
+                    continue
                 self.storage.note_delivered(contact.peer_id, ts, contact.topic_id)
                 total += 1
         log.info("догружено %d пропущенных сообщений из %d чатов за %.1f с",

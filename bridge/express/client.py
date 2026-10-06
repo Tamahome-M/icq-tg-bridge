@@ -31,7 +31,7 @@ import uuid
 import zlib
 from typing import Awaitable, Callable
 
-from ..history import HistoryItem
+from ..history import HistoryItem, MissedMessage
 from ..tg.client import Dialog, RECENTLY_SECONDS
 
 log = logging.getLogger("express")
@@ -383,7 +383,8 @@ class ExpressSide:
                       ", меня упомянули" if message.mentions_me else "")
             shown = await self.on_message(peer, sender, text, int(message.ts), topic,
                                           attach=f"{kind}:{number}" if kind else "",
-                                          mention=message.mentions_me, always=bool(message.call))
+                                          mention=message.mentions_me, always=bool(message.call),
+                                          message_id=message.id)
             if self.cfg.mark_read and shown and not message.outgoing:
                 await self.client.mark_read(message.chat_id)
         except Exception:
@@ -546,19 +547,24 @@ class ExpressSide:
         return items
 
     async def missed(self, peer_id: int, since_ts: int, cap: int,
-                     topic_id: int = 0) -> list[tuple[int, str, str]]:
+                     topic_id: int = 0) -> list[MissedMessage]:
         chat = await self._chat(peer_id)
         private = not topic_id and chat is not None and self._kind(chat) == "user"
-        out: list[tuple[int, str, str]] = []
+        out: list[MissedMessage] = []
         for message in await self._fetch(peer_id, cap, topic_id):
-            if int(message.ts) <= since_ts:
+            if int(message.ts) < since_ts:
                 break
             if message.outgoing:
                 continue
             text = describe_message(message)
-            if not text or not self._pass(message):
+            if not text:
                 continue
-            out.append((int(message.ts), "" if private else (message.sender_name or "?"), text))
+            number = self._remember(message)
+            kind = media_kind(message)
+            out.append(MissedMessage(
+                int(message.ts), "" if private else (message.sender_name or "?"), text,
+                message.id, f"{kind}:{number}" if kind else "",
+                message.mentions_me, bool(message.call)))
         out.reverse()
         return out
 

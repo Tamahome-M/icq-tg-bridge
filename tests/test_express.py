@@ -231,7 +231,7 @@ async def run_side() -> None:
     got: list = []
 
     async def on_message(peer, sender, text, ts=0, topic=0, attach="", mention=False,
-                         always=False):
+                         always=False, message_id=0):
         got.append((peer, sender, text, attach, mention))
         got_topics.append(topic)
         if always:
@@ -277,11 +277,15 @@ async def run_side() -> None:
     assert [(i.who, i.text, i.kind) for i in items] == [
         ("Я", "123", ""), ("Шеф", "[фото] Фото сервера", "photo"), ("Шеф", "[голосовое]", "voice")]
     missed = await side.missed(personal, (NOW_MS - 2500) // 1000, 30)
-    assert [text for _, _, text in missed] == ["[фото] Фото сервера", "[голосовое]"], missed
-    # То же сообщение следом событием (старт: догрузка и события идут разом)
-    # второй раз мосту не отдаётся.
+    assert [m.text for m in missed] == ["[фото] Фото сервера", "[голосовое]"], missed
+    boundary = await side.missed(personal, (NOW_MS - 1000) // 1000, 30)
+    assert [m.text for m in boundary] == ["[голосовое]"], "граничная секунда eXpress должна включаться"
+    assert boundary[0].message_id == fake.rows[PERSONAL][2]["syncId"]
+    # Событие может пересечься с догрузкой: обе доставки несут один ID,
+    # поэтому дедупликацию делает мост после сохранения в своей базе.
     await side._on_new_message(fake.message(fake.rows[PERSONAL][2]))
-    assert got == [], got
+    assert len(got) == 1 and got[0][2] == "[голосовое]", got
+    got.clear()
     assert [m[1] for m in await side.missed(group, 0, 30)] == ["Шеф"]
 
     # Вложение достаётся по номеру сообщения — и после перезапуска, когда
@@ -442,10 +446,12 @@ async def run_bridge() -> None:
     assert bridge.storage.contact_by_uin(rows[0][3]).title == "старое"
 
     queued: list = []
+    queue_message = bridge.oscar.deliver
 
-    async def deliver(uin, text, forced=False, url="", ts=0, attach=""):
+    async def deliver(uin, text, forced=False, url="", ts=0, attach="", mention=False,
+                      message_id=0):
         queued.append((uin, text))
-        return True
+        return await queue_message(uin, text, forced, url, ts, attach, mention, message_id)
 
     bridge.oscar.deliver = deliver
     # Заглушённая группа молчит, но упоминание из неё доходит.
@@ -458,12 +464,16 @@ async def run_bridge() -> None:
                                                  **mention("all", "", "all"))))
     uin = titles["Работа"].uin
     assert queued == [(uin, "Шеф: ответь @Вася"), (uin, "Шеф: все сюда @all")], queued
+    assert [row[2] for row in bridge.oscar.sift_pending()] == [text for _, text in queued], \
+        "упоминания должны пройти и повторную фильтрацию очереди"
     # Звонок в заглушённую группу доходит при любом статусе телефона.
     bridge.mode = policy.INVISIBLE
     ring = raw_event(35, GROUP, BOSS)
     ring["eventType"] = "call_start"
     await fake.on_message(fake.message(ring))
     assert queued[-1] == (uin, "Шеф: [входящий звонок]"), queued
+    assert [row[2] for row in bridge.oscar.sift_pending()] == ["Шеф: [входящий звонок]"], \
+        "звонок должен пройти очередь и в невидимости"
     queued.pop()
     bridge.mode = policy.UNMUTED
     # Чужое упоминание мьют не пробивает; выключенная настройка — тоже.

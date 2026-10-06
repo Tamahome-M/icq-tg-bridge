@@ -133,7 +133,7 @@ def check_events() -> None:
     cfg.mark_read = True
     seen: list[tuple] = []
 
-    async def on_message(peer_id, sender, text, ts, topic_id=0, attach=""):
+    async def on_message(peer_id, sender, text, ts, topic_id=0, attach="", message_id=0):
         seen.append(("msg", peer_id, text))
         return "покажем" in text            # мост говорит, показал ли телефону
 
@@ -184,7 +184,7 @@ def check_events() -> None:
     # в обычной супергруппе — просто чат (0).
     topics: list[int] = []
 
-    async def on_message_topic(peer_id, sender, text, ts, topic_id=0, attach=""):
+    async def on_message_topic(peer_id, sender, text, ts, topic_id=0, attach="", message_id=0):
         topics.append(topic_id)
         return False
 

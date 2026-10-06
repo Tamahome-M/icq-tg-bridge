@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 # UIN чатов начинаются отсюда: семизначные, как настоящие ICQ-номера,
 # и заведомо выше UIN владельца из конфига.
 UIN_BASE = 1000000
+PROCESSED_PER_CHAT = 2000       # память о повторах событий и граничной секунде догрузки
 
 
 def limit_contacts(contacts: list["Contact"], limit: int, background: tuple[str, ...] = (),
@@ -85,9 +87,15 @@ class Storage:
                 ts      INTEGER NOT NULL,
                 sent_at INTEGER NOT NULL DEFAULT 0,
                 forced  INTEGER NOT NULL DEFAULT 0,
+                mention INTEGER NOT NULL DEFAULT 0,
                 url     TEXT    NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS pending_uin ON pending(uin);
+            CREATE TABLE IF NOT EXISTS processed_messages (
+                uin        INTEGER NOT NULL,
+                message_id TEXT NOT NULL,
+                PRIMARY KEY (uin, message_id)
+            );
             CREATE TABLE IF NOT EXISTS held (
                 id   INTEGER PRIMARY KEY AUTOINCREMENT,
                 uin  INTEGER NOT NULL,
@@ -157,6 +165,11 @@ class Storage:
         if "forced" not in pending_columns:
             self.conn.execute(
                 "ALTER TABLE pending ADD COLUMN forced INTEGER NOT NULL DEFAULT 0")
+        if "mention" not in pending_columns:
+            # Упоминание обходит мьют, но по-прежнему зависит от статуса
+            # и избранного — поэтому оно не равнозначно forced.
+            self.conn.execute(
+                "ALTER TABLE pending ADD COLUMN mention INTEGER NOT NULL DEFAULT 0")
         if "url" not in pending_columns:
             # Ссылка, ради которой сообщение отправляется URL-сообщением ICQ:
             # клиент показывает её отдельной строкой и даёт открыть браузером.
@@ -320,33 +333,81 @@ class Storage:
 
     # --- очередь офлайна ------------------------------------------------
 
+    @contextmanager
+    def _message_transaction(self):
+        """Очередь, ID сообщения и отметка времени фиксируются вместе."""
+        self.conn.execute("SAVEPOINT incoming_message")
+        try:
+            yield
+        except BaseException:
+            self.conn.execute("ROLLBACK TO incoming_message")
+            raise
+        finally:
+            self.conn.execute("RELEASE incoming_message")
+
+    def message_processed(self, uin: int, message_id: int | str) -> bool:
+        return bool(message_id) and self.conn.execute(
+            "SELECT 1 FROM processed_messages WHERE uin = ? AND message_id = ?",
+            (uin, str(message_id)),
+        ).fetchone() is not None
+
+    def _remember_message(self, uin: int, message_id: int | str) -> bool:
+        if not message_id:
+            return True
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO processed_messages (uin, message_id) VALUES (?, ?)",
+            (uin, str(message_id)),
+        )
+        if not cur.rowcount:
+            return False
+        self.conn.execute(
+            "DELETE FROM processed_messages WHERE uin = ? AND rowid NOT IN ("
+            " SELECT rowid FROM processed_messages WHERE uin = ? ORDER BY rowid DESC LIMIT ?)",
+            (uin, uin, PROCESSED_PER_CHAT),
+        )
+        return True
+
     def queue(self, uin: int, text: str, limit_per_chat: int, forced: bool = False,
-              url: str = "", ts: int = 0, attach: str = "") -> None:
-        """forced — ответ на команду с телефона: такое доставляем при любом статусе.
+              url: str = "", ts: int = 0, attach: str = "", mention: bool = False,
+              message_id: int | str = 0) -> bool:
+        """forced — ответ на команду или звонок: доставляем при любом статусе.
+
+        mention — обращение ко мне: обходит мьют, сохраняя ограничения
+        текущего статуса и избранного при отправке очереди.
 
         url — ссылка, которую стоит отдать URL-сообщением, а не простым текстом.
         ts — когда сообщение было написано на самом деле: по нему ставится
         метка времени и время в офлайн-пачке. Без него — сейчас.
+        message_id — ID в исходной сети; False в ответе означает повтор.
         """
-        self.conn.execute(
-            "INSERT INTO pending (uin, text, ts, forced, url, attach) VALUES (?, ?, ?, ?, ?, ?)",
-            (uin, text, int(ts or time.time()), int(forced), url, attach),
-        )
-        self.conn.execute(
-            "DELETE FROM pending WHERE uin = ? AND id NOT IN ("
-            "  SELECT id FROM pending WHERE uin = ? ORDER BY id DESC LIMIT ?)",
-            (uin, uin, limit_per_chat),
-        )
+        ts = int(ts or time.time())
+        with self._message_transaction():
+            if not self._remember_message(uin, message_id):
+                return False
+            self.conn.execute(
+                "INSERT INTO pending (uin, text, ts, forced, url, attach, mention) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (uin, text, ts, int(forced), url, attach, int(mention)),
+            )
+            self.conn.execute(
+                "DELETE FROM pending WHERE uin = ? AND id NOT IN ("
+                "  SELECT id FROM pending WHERE uin = ? ORDER BY id DESC LIMIT ?)",
+                (uin, uin, limit_per_chat),
+            )
+            if message_id:
+                self.conn.execute(
+                    "UPDATE contacts SET last_ts = MAX(last_ts, ?) WHERE uin = ?", (ts, uin))
+        return True
 
-    def peek_pending(self) -> list[tuple[int, int, str, int, bool, str, str]]:
+    def peek_pending(self) -> list[tuple[int, int, str, int, bool, str, str, bool]]:
         """Записи, ожидающие отправки. Уже отправленные, но ещё не
         подтверждённые, пропускаем — чтобы не слать их повторно."""
         rows = self.conn.execute(
-            "SELECT id, uin, text, ts, forced, url, attach FROM pending WHERE sent_at = 0 "
+            "SELECT id, uin, text, ts, forced, url, attach, mention FROM pending WHERE sent_at = 0 "
             "ORDER BY id"
         ).fetchall()
         return [(r["id"], r["uin"], r["text"], r["ts"], bool(r["forced"]), r["url"],
-                 r["attach"]) for r in rows]
+                 r["attach"], bool(r["mention"])) for r in rows]
 
     def mark_sent(self, row_id: int) -> None:
         self.conn.execute("UPDATE pending SET sent_at = ? WHERE id = ?",
@@ -397,12 +458,18 @@ class Storage:
     def held_count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) AS c FROM held").fetchone()["c"]
 
-    def note_delivered(self, peer_id: int, ts: int, topic_id: int = 0) -> None:
-        """Запоминает, до какого момента чат уже доставлен на телефон."""
-        self.conn.execute(
-            "UPDATE contacts SET last_ts = ? WHERE peer_id = ? AND topic_id = ? AND last_ts < ?",
-            (ts, peer_id, topic_id, ts),
-        )
+    def note_delivered(self, peer_id: int, ts: int, topic_id: int = 0,
+                       message_id: int | str = 0) -> None:
+        """Запоминает время и ID обработанного сообщения, включая отсеянное."""
+        with self._message_transaction():
+            if message_id:
+                contact = self.contact_by_peer(peer_id, topic_id)
+                if contact is not None:
+                    self._remember_message(contact.uin, message_id)
+            self.conn.execute(
+                "UPDATE contacts SET last_ts = ? WHERE peer_id = ? AND topic_id = ? AND last_ts < ?",
+                (ts, peer_id, topic_id, ts),
+            )
 
     # --- прочее ---------------------------------------------------------
 

@@ -12,7 +12,7 @@ from typing import Awaitable, Callable
 
 from telethon import TelegramClient, events, functions, types, utils
 
-from ..history import HistoryItem
+from ..history import HistoryItem, MissedMessage
 
 log = logging.getLogger("telegram")
 
@@ -333,7 +333,8 @@ class TelegramSide:
             await self.on_message(peer_id, "Я", text,
                                   int(event.message.date.timestamp()),
                                   await self._topic_in(event),
-                                  attach=attachment_of(event.message))
+                                  attach=attachment_of(event.message),
+                                  message_id=getattr(event.message, "id", 0))
         except Exception:
             log.exception("ошибка обработки своего сообщения")
 
@@ -396,7 +397,7 @@ class TelegramSide:
             attach = attachment_of(event.message)
             shown = await self.on_message(peer_id, sender, text,
                                           int(event.message.date.timestamp()), topic_id,
-                                          attach=attach)
+                                          attach=attach, message_id=getattr(event.message, "id", 0))
             if self.cfg.mark_read and shown:
                 await event.message.mark_read()
         except Exception:
@@ -816,8 +817,8 @@ class TelegramSide:
         return info
 
     async def missed(self, peer_id: int, since_ts: int, cap: int,
-                     topic_id: int = 0) -> list[tuple[int, str, str]]:
-        """Входящие сообщения чата новее since_ts — то, что мост пропустил."""
+                     topic_id: int = 0) -> list[MissedMessage]:
+        """Входящие начиная с since_ts; уже обработанные ID отсеет мост."""
         try:
             chat = await self.client.get_entity(peer_id)
         except Exception:
@@ -825,10 +826,10 @@ class TelegramSide:
         private = isinstance(chat, types.User)
         names: dict[int, str] = {}
 
-        out: list[tuple[int, str, str]] = []
+        out: list[MissedMessage] = []
         async for msg in self.client.iter_messages(peer_id, limit=cap,
                                                   reply_to=topic_id or None):
-            if int(msg.date.timestamp()) <= since_ts:
+            if int(msg.date.timestamp()) < since_ts:
                 break
             if msg.out:
                 continue
@@ -836,7 +837,8 @@ class TelegramSide:
             if not text:
                 continue
             sender = "" if private else await self._sender_name(msg, names)
-            out.append((int(msg.date.timestamp()), sender, text))
+            out.append(MissedMessage(int(msg.date.timestamp()), sender, text, msg.id,
+                                     attachment_of(msg)))
         out.reverse()
         return out
 

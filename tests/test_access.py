@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import os
+import struct
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bridge.access import AccessControl
 from bridge.config import Config
 from bridge.db import Storage
+from bridge.oscar import const as C
 from bridge.oscar.server import OscarServer
+from bridge.oscar import server as oscar_server
+from bridge.oscar.proto import flap, tlv
 from bridge.photos import PhotoStore
 from tests.fake_jimm import FakeJimm
 
@@ -87,6 +92,110 @@ async def run_limits() -> None:
     print("  список адресов и лимит соединений: ок")
 
 
+async def run_auth_timeout() -> None:
+    """Молчание, неполные кадры и пинги не удерживают слот до входа."""
+    cfg = make_config()
+    cfg.oscar_port = 0
+    cfg.max_connections = 1
+    cfg.idle_timeout = 0             # защита входа не зависит от сторожа BOS
+    storage = Storage(":memory:")
+
+    async def on_outgoing(*_):
+        return 1
+
+    server = OscarServer(cfg, storage, on_outgoing, storage.contacts)
+    await server.start()
+    port = server._server.sockets[0].getsockname()[1]
+    clients = []
+    ping_task = None
+    try:
+        with patch.object(oscar_server, "AUTH_TIMEOUT", 0.5):
+            for mode in ("silent", "header", "payload", "pings"):
+                reader, writer = await asyncio.open_connection("127.0.0.1", port)
+                clients.append(writer)
+                await asyncio.wait_for(reader.readexactly(10), timeout=2)
+                assert server.access.connections == 1
+
+                # Все слоты действительно заняты: следующее подключение
+                # отвергается, пока первое не освободится по сроку входа.
+                blocked_r, blocked_w = await asyncio.open_connection("127.0.0.1", port)
+                clients.append(blocked_w)
+                assert await asyncio.wait_for(blocked_r.read(), timeout=2) == b""
+                blocked_w.close()
+                await blocked_w.wait_closed()
+
+                if mode == "header":
+                    writer.write(b"\x2a")
+                    await writer.drain()
+                elif mode == "payload":
+                    writer.write(flap(1, 1, struct.pack(">I", 1))[:-1])
+                    await writer.drain()
+                elif mode == "pings":
+                    async def ping():
+                        while True:
+                            writer.write(flap(5, 1, b""))
+                            await writer.drain()
+                            await asyncio.sleep(0.05)
+                    ping_task = asyncio.create_task(ping())
+
+                # read() завершается только на EOF; ответы на пинги сами
+                # по себе не считаются освобождением соединения.
+                await asyncio.wait_for(reader.read(), timeout=2)
+                if ping_task is not None:
+                    ping_task.cancel()
+                    await asyncio.gather(ping_task, return_exceptions=True)
+                    ping_task = None
+                writer.close()
+                await writer.wait_closed()
+                for _ in range(100):
+                    if server.access.connections == 0:
+                        break
+                    await asyncio.sleep(0.01)
+                assert server.access.connections == 0, f"слот после {mode} не освобождён"
+                assert not server._active, f"соединение после {mode} осталось в активных"
+
+        # После освобождения слота обычный вход по MD5 снова работает.
+        # Получившие cookie BOS и служба аватарок живут дольше срока входа.
+        cfg.max_connections = server.access.max_connections = 3
+        client = FakeJimm("127.0.0.1", port, cfg.oscar_uin, cfg.oscar_password)
+        bart = FakeJimm("127.0.0.1", port, cfg.oscar_uin, cfg.oscar_password)
+        try:
+            await client.connect()
+            cookie = await client.login_md5_jimm()
+            with patch.object(oscar_server, "AUTH_TIMEOUT", 0.5):
+                await client.bos(cookie)
+                session = server.session
+                await bart.connect()
+                await bart.send_flap(1, struct.pack(">I", 1)
+                                     + tlv(C.TLV_AUTH_COOKIE, server.new_cookie("bart")))
+                await bart.expect(C.OSERVICE, C.SRV_READY)
+                await asyncio.sleep(0.6)
+                assert session is not None and session.authorized and not session.closed
+                await client.ping()
+                channel, _ = await client.recv_flap()
+                while channel != 5:
+                    channel, _ = await client.recv_flap()
+                await bart.ping()
+                channel, _ = await bart.recv_flap()
+                assert channel == 5, "служба аватарок закрылась по сроку входа"
+        finally:
+            await client.close()
+            await bart.close()
+    finally:
+        if ping_task is not None:
+            ping_task.cancel()
+            await asyncio.gather(ping_task, return_exceptions=True)
+        for writer in clients:
+            writer.close()
+        await asyncio.gather(*(w.wait_closed() for w in clients), return_exceptions=True)
+        await server.stop()
+        for task in list(server._own_tasks):
+            task.cancel()
+        await asyncio.gather(*server._own_tasks, return_exceptions=True)
+        storage.close()
+    print("  срок входа: ок (молчание, части кадра, пинги, освобождение слота, MD5/BOS/BART)")
+
+
 def run_photo_paths() -> None:
     """Токен в ссылке не должен уводить за пределы каталога."""
     import tempfile
@@ -100,6 +209,7 @@ def run_photo_paths() -> None:
 async def main() -> None:
     await run_bruteforce()
     await run_limits()
+    await run_auth_timeout()
     run_photo_paths()
     print("ОГРАНИЧЕНИЯ ДОСТУПА ПРОВЕРЕНЫ")
 
