@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 from . import photos
+from .threegp import h263_without_display_atoms
 
 log = logging.getLogger("render")
 
@@ -491,7 +492,14 @@ class Transcoder:
                             (err or b"").decode("utf-8", "replace")[:200])
                 return None
             with open(dst, "rb") as fh:
-                return fh.read() or None
+                data = fh.read()
+            if data and kind == "video" and self.video_codec == "h263":
+                fixed = h263_without_display_atoms(data)
+                if len(fixed) != len(data):
+                    log.info("видео 3GP: удалены блоки fiel/pasp, %d байт; видео и звук сохранены",
+                             len(data) - len(fixed))
+                data = fixed
+            return data or None
         except Exception as exc:
             log.warning("не смог перекодировать %s: %s", kind, exc)
             return None

@@ -22,6 +22,7 @@ from bridge.videos import ENCODING_VERSION, VideoSpec, VideoStore, link_text
 from bridge.webserver import PhotoServer
 from tests.fake_jimm import FakeJimm
 from tests.test_render import fake_ffmpeg
+from tests.test_threegp import FAKE_VIDEO
 
 
 def ffmpeg(directory: Path) -> str:
@@ -92,9 +93,9 @@ async def run_pages() -> None:
             assert "Обновить" not in body.decode()
             assert "&lt;&amp;&gt;" in body.decode()
             code, head, body = await request(port, asset_url, headers="Range: bytes=1-3\r\n")
-            assert code == 206 and body == b"AKE"
+            assert code == 206 and body == FAKE_VIDEO[1:4]
             assert "video/3gpp" in head and f'filename="0-v{ENCODING_VERSION}.3gp"' in head
-            assert (await request(port, protected + "/0.3gp"))[2] == b"FAKEMEDIA", "старый адрес файла остаётся доступен"
+            assert (await request(port, protected + "/0.3gp"))[2] == FAKE_VIDEO, "старый адрес файла остаётся доступен"
             assert (await request(port, protected + f"/0-v{ENCODING_VERSION - 1}.3gp"))[0] == 404
             await request(port, protected + "/2")
             await asyncio.gather(*list(page.jobs.values()))
@@ -113,11 +114,11 @@ async def run_pages() -> None:
         # Метаданные и готовое видео доступны после перезапуска хранилища.
         restored = VideoStore(str(directory / "videos"), fetch)
         assert f"/0-v{ENCODING_VERSION}.3gp".encode() in restored.resolve(path, start=False)[0]
-        assert restored.resolve(path + "/0.3gp")[0] == b"FAKEMEDIA"
+        assert restored.resolve(path + "/0.3gp")[0] == FAKE_VIDEO
         metadata = directory / "videos" / f"{page.token}.json"
-        # И последний формат с fiel/pasp (v3), и старые записи без версии
+        # И последние форматы с fiel/pasp (v3/v4), и старые записи без версии
         # должны перейти на новый формат с сохранением исходника и ссылки.
-        for version in (3, None):
+        for version in (4, 3, None):
             old = json.loads(metadata.read_text())
             if version is None:
                 old["spec"].pop("encoding_version")
@@ -131,9 +132,9 @@ async def run_pages() -> None:
             assert json.loads(metadata.read_text())["spec"]["encoding_version"] == ENCODING_VERSION
             legacy.resolve(path)
             await asyncio.gather(*list(legacy.pages[page.token].jobs.values()))
-            assert legacy.resolve(path + "/0.3gp")[0] == b"FAKEMEDIA"
+            assert legacy.resolve(path + "/0.3gp")[0] == FAKE_VIDEO
             assert f"/0-v{ENCODING_VERSION}.3gp".encode() in legacy.resolve(path)[0]
-            assert legacy.resolve(path + "/0-v3.3gp") is None, "прежний адрес файла не должен отдавать кеш браузера"
+            assert legacy.resolve(path + "/0-v4.3gp") is None, "прежний адрес файла не должен отдавать кеш браузера"
             assert len(calls) == 1, "смена формата не должна повторно скачивать исходник"
             await legacy.stop()
         restored.pages[page.token].made = time.time() - 49 * 3600
