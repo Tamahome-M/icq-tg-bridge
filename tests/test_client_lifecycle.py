@@ -94,7 +94,68 @@ public class List extends Displayable {
 """,
     "jimm/JimmUI.java": """
 package jimm;
-public class JimmUI { public static final javax.microedition.lcdui.Command cmdBack=new javax.microedition.lcdui.Command("Back",2,1); }
+import DrawControls.TextList;
+import DrawControls.VirtualList;
+import javax.microedition.lcdui.Command;
+public class JimmUI {
+ public static final Command cmdBack=new Command("Back",2,1), cmdSelect=new Command("Select",4,1), cmdMenu=new Command("Menu",1,1);
+ public static java.util.Vector bodies=new java.util.Vector();
+ public static void setColorScheme(VirtualList list,boolean a,int b,boolean c) {}
+ public static void addMessageText(TextList list,String text,int color,int index) {bodies.addElement(text);}
+ public static void backToLastScreen() {}
+}
+""",
+    "DrawControls/VirtualListCommands.java": """
+package DrawControls;
+public interface VirtualListCommands {
+ void vlItemClicked(VirtualList list);
+ void vlCursorMoved(VirtualList list);
+ void vlKeyPress(VirtualList list,int key,int type);
+}
+""",
+    "DrawControls/VirtualList.java": """
+package DrawControls;
+import javax.microedition.lcdui.*;
+public class VirtualList extends Displayable {
+ public static final int CURSOR_MODE_ENABLED=2,MENU_TYPE_LEFT_BAR=1,MENU_TYPE_RIGHT_BAR=2,MENU_TYPE_RIGHT=4;
+ public java.util.Vector commands=new java.util.Vector();
+ public VirtualListCommands callbacks;
+ public void setMode(int mode) {}
+ public void setVLCommands(VirtualListCommands value) {callbacks=value;}
+ public void addCommandEx(Command command,int type) {commands.addElement(command);}
+ public void removeCommandEx(Command command) {commands.removeElement(command);}
+ public void activate(Display display) {display.setCurrent(this);}
+ public boolean isActive() {return jimm.Jimm.display.getCurrent()==this;}
+ public void repaint() {}
+ public void lock() {}
+ public void unlock() {}
+ public void setCaption(String caption) {}
+ public int getTextColor() {return 0;}
+}
+""",
+    "DrawControls/TextList.java": """
+package DrawControls;
+import javax.microedition.lcdui.*;
+public class TextList extends VirtualList {
+ public java.util.Vector labels=new java.util.Vector(),headers=new java.util.Vector();
+ public int selected;
+ public TextList(String caption) {}
+ public TextList addBigText(String label,int color,int style,int index) {labels.addElement(label);if(style==1)headers.addElement(label);return this;}
+ public TextList doCRLF(int index) {return this;}
+ public int getCurrTextIndex() {return selected;}
+ public int getSize() {return labels.size();}
+ public void setTopItem(int index) {}
+ public void clear() {labels.removeAllElements();headers.removeAllElements();}
+ public void choose(int index) {selected=index;listener.commandAction(jimm.JimmUI.cmdSelect,this);}
+}
+""",
+    "jimm/ChatTextList.java": """
+package jimm;
+import javax.microedition.lcdui.Command;
+public class ChatTextList {
+ public static final Command cmdShowPhoto=new Command("Photo",8,1),cmdPlayVideo=new Command("Video",8,2),cmdPlayVoice=new Command("Voice",8,3),cmdGetFile=new Command("File",8,4);
+ public static int getInOutColor(boolean incoming) {return 0;}
+}
 """,
     "jimm/MediaPlayer.java": """
 package jimm;
@@ -122,6 +183,7 @@ def run(work: Path, client: Path | None = None) -> None:
             checks.append("VideoLinkTest")
         if (classes / "jimm/VideoMenu.class").exists():
             checks.append("VideoMenuTest")
+            checks.append("HistoryVideoMenuTest")
         subprocess.run(
             [str(work / "jdk/bin/javac"), "-encoding", "UTF-8", "-cp", classpath,
              "-d", str(temporary), *sources,

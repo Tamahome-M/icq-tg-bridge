@@ -191,7 +191,15 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			// сообщения в переписке: обычным цветом и со смайлами.
 			int cut = -1;
 			int close = line.indexOf("] ");
-			if (close > 0) cut = line.indexOf(": ", close);
+			int newline = line.indexOf('\n');
+			// Ссылка видео может стоять перед строкой с датой/автором.
+			// Заголовок ищем только в первой строке, иначе URL попадал
+			// в красный текст заголовка и обходил скрытие адреса.
+			if (close > 0 && (newline < 0 || close < newline))
+			{
+				cut = line.indexOf(": ", close);
+				if (newline >= 0 && cut >= newline) cut = -1;
+			}
 			if (cut > 0 && cut + 2 <= line.length())
 			{
 				list.addBigText(line.substring(0, cut + 1),
