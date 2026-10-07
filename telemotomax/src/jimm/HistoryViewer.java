@@ -60,6 +60,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	private Vector texts = new Vector();     // per message: String
 	private Vector tokens = new Vector();    // per message: byte[16] or null
 	private Vector kinds = new Vector();     // per message: Integer kind (1 photo, 2 video)
+	private Vector refs = new Vector();
 	private Vector threads = new Vector();   // per message: String UIN обсуждения или null
 	private int shown;                       // сколько сообщений уже загружено
 	private boolean more;                    // осталось ли что подгружать
@@ -134,12 +135,21 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 				// Обсуждение под сообщением — его UIN за токеном (мост 0.74+).
 				String thread = null;
 				if ((flag & 0x10) != 0 && marker + 4 <= data.length)
+				{
 					thread = String.valueOf(Util.getDWord(data, marker));
+					marker += 4;
+				}
+				byte[] ref = null;
+				if ((flag & 0x20) != 0 && marker + 8 <= data.length)
+				{
+					ref = new byte[8];
+					System.arraycopy(data, marker, ref, 0, 8);
+				}
 				// Вид вложения — как в полной истории: бит 2 — видео,
 				// бит 4 — голосовое, иначе фото. Раньше голосовое здесь
 				// считалось фото, и в чате была кнопка «Показать фото».
 				int kind = ((flag & 6) == 6) ? 4 : ((flag & 4) != 0 ? 3 : ((flag & 2) != 0 ? 2 : 1));
-				ChatHistory.addHistoryLine(uin, text, photo, kind, thread);
+				ChatHistory.addHistoryLine(uin, text, photo, kind, thread, ref);
 			}
 		};
 		try
@@ -174,6 +184,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		tokens.addElement(token);
 		kinds.addElement(new Integer(kind));
 		threads.addElement(null);
+		refs.addElement(null);
 	}
 
 	// Список перерисовывается целиком: подгруженная пачка встаёт перед уже
@@ -258,16 +269,19 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		tokens.removeAllElements();
 		kinds.removeAllElements();
 		threads.removeAllElements();
+		refs.removeAllElements();
 		texts.addElement(ResourceBundle.getString("history_failed") + " " + name);
 		tokens.addElement(null);
 		kinds.addElement(new Integer(1));
 		threads.addElement(null);
+		refs.addElement(null);
 		if (size > 0)
 		{
 			texts.addElement(size + " " + ResourceBundle.getString("bytes"));
 			tokens.addElement(null);
 			kinds.addElement(new Integer(1));
 			threads.addElement(null);
+			refs.addElement(null);
 		}
 		fill();
 		list.unlock();
@@ -285,6 +299,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		Vector newTokens = new Vector();
 		Vector newKinds = new Vector();
 		Vector newThreads = new Vector();
+		Vector newRefs = new Vector();
 		if (data != null)
 		{
 			// Мосты разных возрастов отвечают по-разному: со страницами
@@ -334,6 +349,14 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 					thread = String.valueOf(Util.getDWord(data, marker));
 					marker += 4;
 				}
+				byte[] ref = null;
+				if ((flag & 0x20) != 0 && marker + 8 <= data.length)
+				{
+					ref = new byte[8];
+					System.arraycopy(data, marker, ref, 0, 8);
+					marker += 8;
+				}
+				newRefs.addElement(ref);
 				newTexts.addElement(text);
 				newTokens.addElement(token);
 				newThreads.addElement(thread);
@@ -351,6 +374,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			tokens.removeAllElements();
 			kinds.removeAllElements();
 			threads.removeAllElements();
+			refs.removeAllElements();
 		}
 		// Подгруженное старее уже показанного, поэтому встаёт перед ним.
 		for (int i = newTexts.size() - 1; i >= 0; i--)
@@ -359,6 +383,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			tokens.insertElementAt(newTokens.elementAt(i), 0);
 			kinds.insertElementAt(newKinds.elementAt(i), 0);
 			threads.insertElementAt(newThreads.elementAt(i), 0);
+			refs.insertElementAt(newRefs.elementAt(i), 0);
 		}
 		shown += newTexts.size();
 		if (newTexts.size() == 0) exhausted = true;
@@ -371,6 +396,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			tokens.addElement(null);
 			kinds.addElement(new Integer(1));
 			threads.addElement(null);
+			refs.addElement(null);
 		}
 		else if (failed)
 		{
@@ -404,7 +430,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			marker += len;
 			int flag = Util.getByte(data, marker);
 			marker += 1;
-			if ((flag & 0xE0) != 0) return false;        // старшие биты не наши
+			if ((flag & 0xC0) != 0) return false;        // старшие биты не наши
 			if ((flag & 1) != 0)
 			{
 				if (marker + 16 > data.length) return false;
@@ -415,6 +441,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 				if (marker + 4 > data.length) return false;
 				marker += 4;
 			}
+			if ((flag & 0x20) != 0) { if (marker + 8 > data.length) return false; marker += 8; }
 			records++;
 		}
 		return records > 0 && marker == data.length;
@@ -458,8 +485,19 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		return ((Integer) kinds.elementAt(index)).intValue() & 7;   // без пометки «моё»
 	}
 
+	private byte[] currentRef()
+	{
+		int index = list.getCurrTextIndex();
+		return index < 0 || index >= refs.size() ? null : (byte[])refs.elementAt(index);
+	}
+	public static void refreshQuoteMenu()
+	{
+		if (current != null) NativeQuote.updateMenu(current.list, current.currentRef());
+	}
+
 	private void checkPhoto()
 	{
+		NativeQuote.updateMenu(list, currentRef());
 		list.removeCommandEx(ChatTextList.cmdShowPhoto);
 		list.removeCommandEx(ChatTextList.cmdPlayVideo);
 		list.removeCommandEx(ChatTextList.cmdPlayVoice);
@@ -514,6 +552,8 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 
 	public void commandAction(Command c, Displayable d)
 	{
+		if (c == NativeQuote.cmdSelect) { NativeQuote.select(uin, currentRef()); return; }
+		if (c == NativeQuote.cmdPaste) { NativeQuote.paste(uin); return; }
 //#sijapp cond.if modules_CAMERA="true"#
 		if (c == ChatTextList.cmdGetFile)
 		{

@@ -1564,7 +1564,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
     private static final int USER_MENU_HISTORY = 10;
 	private static final int USER_MENU_LOCAL_INFO = 11;
 	private static final int USER_MENU_USER_INFO = 12;
-	private static final int USER_MENU_QUOTA = 14;
 	private static final int USER_MENU_MOVE_TO_GROUP = 15;
 	private static final int USER_MENU_TO_IGN_LIST = 16;
 	private static final int USER_MENU_REM_IGN_LIST = 17;
@@ -1612,8 +1611,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			addTextListItem(tlContactMenu, "send_message", null, USER_MENU_MESSAGE, true, -1, Font.STYLE_PLAIN);
 //#sijapp cond.end#			
 			
-			if (JimmUI.getClipBoardText() != null)
-				addTextListItem(tlContactMenu, "quote", null, USER_MENU_QUOTA, true, -1, Font.STYLE_PLAIN);
 			
 			if (contact.getBooleanValue(ContactItem.CONTACTITEM_NO_AUTH))
 				addTextListItem(tlContactMenu, "requauth", null, USER_MENU_REQU_AUTH, true, -1, Font.STYLE_PLAIN);
@@ -1675,9 +1672,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			writeMessage(clciContactMenu, null);
 			break;
 			
-		case USER_MENU_QUOTA:
-			writeMessage(clciContactMenu, JimmUI.getClipBoardText());
-			break;
 			
 
 			

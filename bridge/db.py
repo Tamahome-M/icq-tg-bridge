@@ -181,6 +181,14 @@ class Storage:
             self.conn.execute(
                 "ALTER TABLE pending ADD COLUMN attach TEXT NOT NULL DEFAULT ''")
 
+        for table in ("pending", "held"):
+            columns = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}
+            if "message_id" not in columns:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN message_id TEXT NOT NULL DEFAULT ''")
+        held_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(held)")}
+        if "attach" not in held_columns:
+            self.conn.execute("ALTER TABLE held ADD COLUMN attach TEXT NOT NULL DEFAULT ''")
+
     # --- контакты -------------------------------------------------------
 
     def uin_for_peer(self, peer_id: int, *, kind: str, title: str,
@@ -369,7 +377,7 @@ class Storage:
 
     def queue(self, uin: int, text: str, limit_per_chat: int, forced: bool = False,
               url: str = "", ts: int = 0, attach: str = "", mention: bool = False,
-              message_id: int | str = 0) -> bool:
+              message_id: int | str = 0, source_message_id: int | str | None = None) -> bool:
         """forced — ответ на команду или звонок: доставляем при любом статусе.
 
         mention — обращение ко мне: обходит мьют, сохраняя ограничения
@@ -385,9 +393,9 @@ class Storage:
             if not self._remember_message(uin, message_id):
                 return False
             self.conn.execute(
-                "INSERT INTO pending (uin, text, ts, forced, url, attach, mention) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (uin, text, ts, int(forced), url, attach, int(mention)),
+                "INSERT INTO pending (uin, text, ts, forced, url, attach, mention, message_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (uin, text, ts, int(forced), url, attach, int(mention), str((message_id if source_message_id is None else source_message_id) or "")),
             )
             self.conn.execute(
                 "DELETE FROM pending WHERE uin = ? AND id NOT IN ("
@@ -408,6 +416,10 @@ class Storage:
         ).fetchall()
         return [(r["id"], r["uin"], r["text"], r["ts"], bool(r["forced"]), r["url"],
                  r["attach"], bool(r["mention"])) for r in rows]
+
+    def pending_message_id(self, row_id: int) -> str:
+        row = self.conn.execute("SELECT message_id FROM pending WHERE id = ?", (row_id,)).fetchone()
+        return row["message_id"] if row else ""
 
     def mark_sent(self, row_id: int) -> None:
         self.conn.execute("UPDATE pending SET sent_at = ? WHERE id = ?",
@@ -439,21 +451,23 @@ class Storage:
 
     # --- придержанное на время «занят» ----------------------------------
 
-    def hold(self, uin: int, text: str, ts: int, limit_per_chat: int) -> None:
-        self.conn.execute("INSERT INTO held (uin, text, ts) VALUES (?, ?, ?)",
-                          (uin, text, ts))
+    def hold(self, uin: int, text: str, ts: int, limit_per_chat: int,
+             message_id: int | str = 0, attach: str = "") -> None:
+        self.conn.execute("INSERT INTO held (uin, text, ts, message_id, attach) VALUES (?, ?, ?, ?, ?)",
+                          (uin, text, ts, str(message_id or ""), attach))
         self.conn.execute(
             "DELETE FROM held WHERE uin = ? AND id NOT IN ("
             "  SELECT id FROM held WHERE uin = ? ORDER BY id DESC LIMIT ?)",
             (uin, uin, limit_per_chat),
         )
 
-    def take_held(self) -> list[tuple[int, str, int]]:
+    def take_held(self, with_source: bool = False) -> list[tuple]:
         """Забирает придержанное целиком: что доставить, решает мост."""
-        rows = self.conn.execute("SELECT uin, text, ts FROM held ORDER BY id").fetchall()
+        rows = self.conn.execute("SELECT uin, text, ts, message_id, attach FROM held ORDER BY id").fetchall()
         if rows:
             self.conn.execute("DELETE FROM held")
-        return [(r["uin"], r["text"], r["ts"]) for r in rows]
+        return [(r["uin"], r["text"], r["ts"], r["message_id"], r["attach"]) if with_source
+                else (r["uin"], r["text"], r["ts"]) for r in rows]
 
     def held_count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) AS c FROM held").fetchone()["c"]

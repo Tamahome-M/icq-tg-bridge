@@ -327,6 +327,20 @@ public class ActionListener
 
 			/** ********************************************************************* */
 
+			if (snacPacket.getFamily() == 4 && snacPacket.getCommand() == 0x15)
+			{
+				byte[] data = snacPacket.getData();
+				if (data.length >= 17)
+				{
+					int len = Util.getByte(data, 8);
+					if (data.length == 9 + len + 8)
+					{
+						byte[] ref = new byte[8];
+						System.arraycopy(data, 9 + len, ref, 0, 8);
+						MainThread.setMessageRef(Util.byteArrayToString(data, 9, len), (int)Util.getDWord(data, 0), ref);
+					}
+				}
+			}
 			// Watch out for CLI_ACKMSG_COMMAND packets
 			else if ((snacPacket.getFamily() == SnacPacket.CLI_ACKMSG_FAMILY)
 					&& (snacPacket.getCommand() == SnacPacket.CLI_ACKMSG_COMMAND))
@@ -425,6 +439,7 @@ public class ActionListener
 				// body — kind (1 byte) and a 16-byte token of an attached
 				// picture. Plain Jimm never looks past the body, so it is
 				// harmless for it.
+				byte[] messageRef = null;
 				byte[] attachToken = null;
 				int attachKind = 0;
 				int extMarker = marker;
@@ -433,6 +448,7 @@ public class ActionListener
 					int extType = Util.getWord(buf, extMarker);
 					byte[] extData = Util.getTlv(buf, extMarker);
 					if (extData == null) break;
+					if (extType == 0x9002 && extData.length == 8) messageRef = extData;
 					// kind 1 = photo, 2 = video preview, 3 = voice message, 4 = file
 					if ((extType == 0x9001) && (extData.length == 17)
 							&& (extData[0] >= 1) && (extData[0] <= 4))
@@ -517,6 +533,7 @@ public class ActionListener
 								.getString(Options.OPTION_UIN), Util
 								.createCurrentDate(false), text, false);
 						plainMsg.setAttach(attachToken, attachKind);
+						plainMsg.setMessageRef(messageRef);
 						MainThread.addMessageSerially(plainMsg);
 					}
 
@@ -694,6 +711,7 @@ public class ActionListener
 
 						// Forward message object to contact list
 						if (message instanceof PlainMessage) ((PlainMessage) message).setAttach(attachToken, attachKind);
+						message.setMessageRef(messageRef);
 						MainThread.addMessageSerially(message);
 
 						// Acknowledge message
@@ -797,6 +815,7 @@ public class ActionListener
 							UrlMessage message = new UrlMessage(uin, Options
 									.getString(Options.OPTION_UIN), Util
 									.createCurrentDate(false), url, urlText);
+							message.setMessageRef(messageRef);
 							MainThread.addMessageSerially(message);
 
 							// Acknowledge message

@@ -24,7 +24,7 @@ import zlib
 from types import SimpleNamespace
 from typing import Awaitable, Callable
 
-from ..history import HistoryItem, MissedMessage
+from ..history import HistoryItem, MissedMessage, SentMessage
 from ..tg.client import Dialog, RECENTLY_SECONDS
 
 log = logging.getLogger("max")
@@ -690,7 +690,13 @@ class MaxSide:
             if len(self._own_ids) > 500:
                 oldest = min(self._own_ids, key=self._own_ids.get)
                 self._own_ids.pop(oldest, None)
-        return int(_attr(message, "time", 0) or 0) or message_id or None
+        receipt = int(_attr(message, "time", 0) or 0) or message_id
+        return SentMessage(receipt, message_id) if receipt else None
+
+    async def quote(self, peer_id: int, source_peer: int, message_id: int, topic_id: int = 0) -> int | None:
+        message = await self.client.forward_message(chat_id=from_peer(peer_id), message_id=message_id,
+                                                    source_chat_id=from_peer(source_peer))
+        return int(_attr(message, "id", 0) or 0) or None
 
     async def set_typing(self, peer_id: int, active: bool) -> None:
         return None                        # PyMax этого не умеет

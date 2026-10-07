@@ -184,14 +184,19 @@ public final class ClientUiTest {
             check(message.getText().equals(name.equals("plain")?"Привет":"[видео]"),"incoming UTF-8 text lost");
             if(name.equals("plain")){
                 check(message.getAttachKind()==2 && message.getAttachToken().length==16,"video attachment marker lost");
+                check(message.getMessageRef()!=null && message.getMessageRef()[0]==(byte)0x80,"native message reference lost or narrowed");
             }else{
                 check(message instanceof UrlMessage && ((UrlMessage)message).getUrl().equals("http://bridge.example/v/token"),"browser URL lost");
+                check(message.getMessageRef()!=null && message.getMessageRef()[7]==44,"URL message reference lost");
             }
             check(socket.packets.size()==1,"incoming message no longer acknowledged exactly once");
             SnacPacket ack=(SnacPacket)socket.packets.lastElement();byte[] data=ack.getData();
             check(ack.getFamily()==4 && ack.getCommand()==0x0b,"wrong delivery ACK");
             for(int i=0;i<8;i++)check(data[i]==i,"delivery cookie changed");
         }
+        byte[] own=java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(dir,"own.bin"));
+        forward.invoke(listener,new SnacPacket(4,0x15,0,new byte[0],own));
+        check(jimm.MainThread.refUin.equals("1000070") && jimm.MainThread.ref[0]==(byte)0x80,"own message ID was not routed to its chat");
         System.out.println("PASS: actual server channel-2 text, video token, browser URL and delivery ACK; status requests ignored");
     }
     static void preferences() throws Exception {

@@ -12,7 +12,7 @@ from typing import Awaitable, Callable
 
 from telethon import TelegramClient, events, functions, types, utils
 
-from ..history import HistoryItem, MissedMessage
+from ..history import HistoryItem, MissedMessage, SentMessage
 
 log = logging.getLogger("telegram")
 
@@ -866,7 +866,19 @@ class TelegramSide:
         message_id = getattr(message, "id", None)
         if message_id:
             self._own_ids[(peer_id, message_id)] = time.time()
-        return message_id
+        return SentMessage(message_id, message_id) if message_id else None
+
+    async def quote(self, peer_id: int, source_peer: int, message_id: int, topic_id: int = 0) -> int | None:
+        # Native forwarding retains author, entities and attachments; top_msg_id
+        # routes a forward to a forum topic (the high-level helper has no topic argument).
+        peer = await self.client.get_input_entity(peer_id)
+        source = await self.client.get_input_entity(source_peer)
+        request = functions.messages.ForwardMessagesRequest(
+            from_peer=source, id=[message_id], to_peer=peer, top_msg_id=reply_target(topic_id))
+        result = await self.client(request)
+        messages = self.client._get_response_message(request, result, peer)
+        message = messages[0] if isinstance(messages, list) and messages else messages
+        return getattr(message, "id", None)
 
     async def title_for(self, peer_id: int) -> tuple[str, str]:
         """Название и тип чата — нужны, когда сообщение пришло из нового чата."""
