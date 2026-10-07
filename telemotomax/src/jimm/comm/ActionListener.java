@@ -23,7 +23,6 @@
 
 package jimm.comm;
 
-import jimm.util.ResourceBundle;
 
 import java.io.ByteArrayInputStream;
 
@@ -36,7 +35,6 @@ import jimm.MainThread;
 import jimm.JimmException;
 import jimm.Options;
 import jimm.SplashCanvas;
-import jimm.StatusInfo;
 
 
 
@@ -209,9 +207,6 @@ public class ActionListener
 			{
 
 
-				boolean statusChange = true;
-				int dwFT1 = 0, dwFT2 = 0, dwFT3 = 0;
-				// int wVersion = 0;
 				byte[] capabilities_old = null; // Buffer for old style capabilities (TLV 0x000D)
 				byte[] capabilities_new = null; // Buffer for new style capabilities (TLV 0x0019)
 
@@ -303,7 +298,7 @@ public class ActionListener
 				if (item != null)
 				{
 					byte[] capsArray = Icq.mergeCapabilities(capabilities_old, capabilities_new);
-					Icq.detectUserClientAndParseCaps(item, dwFT1, dwFT2, dwFT3, capsArray, 0, statusChange);
+					Icq.parseCapabilities(item, capsArray);
 				}
 				MainThread.updateContactList(uin, status, null, null, 0, 0, 0, 0, signon, online, idle, regdate
 					//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
@@ -348,8 +343,6 @@ public class ActionListener
 
 				// Get message type
 				int msgType = Util.getWord(buf, 58 + uinLen, false); // TODO: fix java.lang.ArrayIndexOutOfBoundsException
-				boolean gotStausMsg = false;
-				int skip = 0;
 
 				if (((msgType == Message.MESSAGE_TYPE_NORM) || (msgType == 26)) // 26 is sended from ICQ6
 					&& (msgId2 == 0x0002) 
@@ -359,35 +352,6 @@ public class ActionListener
 					return;
 				}
 				
-				if ((msgType >= Message.MESSAGE_TYPE_AWAY)	&& (msgType <= Message.MESSAGE_TYPE_FFC))
-				{
-					skip = 64;
-					gotStausMsg = true;
-				} 
-				if (msgType == Message.MESSAGE_TYPE_EXTENDED)
-				{
-					// Handle ICQ6 status message reply
-					skip = 111;
-					gotStausMsg = true;
-				}
-				if (gotStausMsg)
-				{
-					// Create an message entry
-					long textLen = 0;
-					int lenSkip = 0;
-					if (msgType == Message.MESSAGE_TYPE_EXTENDED)
-					{
-						textLen = Util.getDWord(buf, skip + uinLen, false);
-						lenSkip = 4;
-					}
-					else
-					{
-						textLen = Util.getWord(buf, skip + uinLen, false);
-						lenSkip = 2;
-					}
-					
-					MainThread.showStatusString(Util.byteArrayToString(buf, skip + lenSkip + uinLen, (int)textLen,false), uin);
-				}
 			}
 		
 			/** ********************************************************************* */
@@ -622,7 +586,7 @@ public class ActionListener
 					int msgType = Util.getWord(msg2Buf, msg2Marker, false);
 					msg2Marker += 2;
 					if (!((msgType == Message.MESSAGE_TYPE_NORM) || (msgType == Message.MESSAGE_TYPE_URL)
-							|| (msgType == Message.MESSAGE_TYPE_EXTENDED) || ((msgType >= Message.MESSAGE_TYPE_AWAY) && (msgType <= Message.MESSAGE_TYPE_FFC))))
+							|| (msgType == Message.MESSAGE_TYPE_EXTENDED)))
 						return;
 
 					msg2Marker += 2;
@@ -635,11 +599,10 @@ public class ActionListener
 					msg2Marker += 2;
 
 					// Check length
-					if (!((msgType >= 1000) && (msgType <= 1004)))
-						if (msg2Buf.length < msg2Marker + textLen + 4 + 4)
-						{
-							throw (new JimmException(152, 4, false));
-						}
+					if (msg2Buf.length < msg2Marker + textLen + 4 + 4)
+					{
+						throw (new JimmException(152, 4, false));
+					}
 
 					// Get raw text
 					byte[] rawText = new byte[textLen];
@@ -873,55 +836,6 @@ public class ActionListener
 							// Discard
 						}
 
-					}
-					// Status message requests
-					else if (((msgType >= 1000) && (msgType <= 1004)))
-					{
-						String statusMess = "---";
-
-						int currStatus = (int)Options.getLong(Options.OPTION_ONLINE_STATUS);
-						StatusInfo statInfo = JimmUI.findStatus(StatusInfo.TYPE_STATUS, currStatus);
-						
-						if (statInfo.testFlag(StatusInfo.FLAG_HAVE_DESCR))
-						{
-							statusMess = ResourceBundle.getString("status_message_text");
-							statusMess = (statusMess != null) ? Util.replaceStr(statusMess, "%TIME%", Icq.getLastStatusChangeTime()) : "---";
-						}
-
-						// Acknowledge message with away message
-						final byte[] statusMessBytes = Util.stringToByteArray(statusMess, false);
-
-						if (statusMessBytes.length < 1) return;
-
-						byte[] ackBuf = new byte[10 + 1 + uinLen + 2 + 51 + 2
-								+ statusMessBytes.length + 1];
-						int ackMarker = 0;
-						System.arraycopy(buf, 0, ackBuf, ackMarker, 10);
-						ackMarker += 10;
-						Util.putByte(ackBuf, ackMarker, uinLen);
-						ackMarker += 1;
-						byte[] uinRaw = Util.stringToByteArray(uin);
-						System.arraycopy(uinRaw, 0, ackBuf, ackMarker,
-								uinRaw.length);
-						ackMarker += uinRaw.length;
-						Util.putWord(ackBuf, ackMarker, 0x0003);
-						ackMarker += 2;
-						System.arraycopy(msg2Buf, 0, ackBuf, ackMarker, 51);
-						Util.putWord(ackBuf, ackMarker + 2, 0x0800);
-						ackMarker += 51;
-						Util.putWord(ackBuf, ackMarker,
-								statusMessBytes.length + 1, false);
-						ackMarker += 2;
-						System.arraycopy(statusMessBytes, 0, ackBuf, ackMarker,
-								statusMessBytes.length);
-						Util.putByte(ackBuf,
-								ackMarker + statusMessBytes.length, 0x00);
-						SnacPacket ackPacket = new SnacPacket(
-								SnacPacket.CLI_ACKMSG_FAMILY,
-								SnacPacket.CLI_ACKMSG_COMMAND, 0, new byte[0],
-								ackBuf);
-
-						Icq.sendPacket(ackPacket);
 					}
 
 				}

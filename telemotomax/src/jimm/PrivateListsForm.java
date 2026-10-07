@@ -173,7 +173,7 @@ public class PrivateListsForm extends VirtualList implements VirtualListCommands
 			color = getBkgrndColor();
 			color1 = transformColorLight(color, 20);
 			color2 = transformColorLight(color, -20);
-			drawRect(g, color1, color2, rectX, rectY, rectX+rectW, rectY+rectH, 255);
+			drawRect(g, color1, color2, rectX, rectY, rectX+rectW, rectY+rectH);
 			
 			value = ((values[index] & (1 << col)) != 0);
 			if (value)

@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import struct
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.test_client_lifecycle import STUBS as BASE
@@ -21,6 +22,14 @@ from tests.test_video_settings import CHOICE
 
 STUBS = {name: value for name, value in BASE.items()
          if name not in {"jimm/Options.java", "jimm/SplashCanvas.java"}}
+STUBS["jimm/MainThread.java"] = """
+package jimm;
+public class MainThread {
+ public static java.util.Vector messages=new java.util.Vector();
+ public static void addMessageSerially(Object message){messages.addElement(message);}
+ public static void resetContactsOffline(){}
+}
+"""
 STUBS["jimm/Jimm.java"] = """
 package jimm;
 public class Jimm extends javax.microedition.midlet.MIDlet {
@@ -71,7 +80,7 @@ package javax.microedition.lcdui;
 public class Display {
  private Displayable current;
  public void setCurrent(Displayable d){current=d;} public Displayable getCurrent(){return current;}
- public boolean flashBacklight(int n){return true;} public int numAlphaLevels(){return 2;}
+ public boolean flashBacklight(int n){return true;} public int numAlphaLevels(){return 256;}
 }
 """
 STUBS["javax/microedition/lcdui/Font.java"] = """
@@ -146,24 +155,25 @@ public class RecordStore {
  public void closeRecordStore(){}
 }
 """
-STUBS["javax/microedition/lcdui/Item.java"] = "package javax.microedition.lcdui; public abstract class Item {}"
+STUBS["javax/microedition/lcdui/Item.java"] = "package javax.microedition.lcdui; public abstract class Item {public String label; public String getLabel(){return label;}}"
 STUBS["javax/microedition/lcdui/TextField.java"] = """
 package javax.microedition.lcdui;
 public class TextField extends Item {
- private String value; public TextField(String l,String v,int m,int c){value=v;}
+ private String value; public TextField(String l,String v,int m,int c){label=l;value=v;}
  public String getString(){return value;} public void setString(String v){value=v;}
 }
 """
 STUBS["javax/microedition/lcdui/Form.java"] = """
 package javax.microedition.lcdui;
 public class Form extends Displayable {
- public Form(String title){} public int append(Item i){return 0;}
+ public java.util.Vector items=new java.util.Vector();
+ public Form(String title){} public int append(Item i){items.addElement(i);return items.size()-1;}
  public void setItemStateListener(ItemStateListener l){}
 }
 """
 STUBS["javax/microedition/lcdui/ChoiceGroup.java"] = CHOICE.replace(
     "private int selected;", "private int selected; private java.util.Hashtable flags=new java.util.Hashtable(); private int type;").replace(
-    "public ChoiceGroup(String label,int type) {}", "public ChoiceGroup(String label,int type) {this.type=type;}\n"
+    "public ChoiceGroup(String label,int type) {}", "public ChoiceGroup(String label,int type) {this.type=type;this.label=label;}\n"
     " public ChoiceGroup(String label,int type,String[] labels,Image[] images){this(label,type);for(int i=0;i<labels.length;i++)append(labels[i],null);}").replace(
     "return selected==i;", "return type==2 ? Boolean.TRUE.equals(flags.get(new Integer(i))) : selected==i;").replace(
     "if(value)selected=i;", "flags.put(new Integer(i),Boolean.valueOf(value));if(value)selected=i;")
@@ -210,10 +220,25 @@ public class ResourceBundle {
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(source)
             sources.append(str(path))
+        # Feed actual server-built packets to the client's ActionListener.
+        from bridge.oscar import blocks
+        from bridge.oscar.proto import tlv
+        cookie = bytes(range(8))
+        sender = blocks.user_info("1000037")
+        token = bytes(range(16))
+        def message(body, extra=b""):
+            return cookie + struct.pack(">H", 2) + sender + tlv(5, body) + extra
+        (directory / "plain.bin").write_bytes(message(blocks.channel2_message(cookie, "Привет"),
+                                                     tlv(0x9001, bytes([2]) + token)))
+        (directory / "url.bin").write_bytes(message(blocks.channel2_message(cookie, "[видео]", "http://bridge.example/v/token")))
+        away = bytearray(blocks.channel2_message(cookie, ""))
+        offset = away.index(bytes([0x27, 0x11])) + 4 + 45
+        away[offset:offset+2] = struct.pack("<H", 1000)
+        (directory / "status.bin").write_bytes(message(bytes(away)))
         subprocess.run([str(work / "jdk/bin/javac"), "-encoding", "UTF-8", "-cp", classpath,
                         "-d", str(directory), *sources, str(root / "tests/java/ClientUiTest.java")], check=True)
         subprocess.run([str(work / "jdk/bin/java"), "-cp", str(directory) + os.pathsep + classpath,
-                        "ClientUiTest"], check=True, timeout=30)
+                        "ClientUiTest", str(directory)], check=True, timeout=30)
 
 
 if __name__ == "__main__":

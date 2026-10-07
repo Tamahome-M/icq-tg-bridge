@@ -37,26 +37,6 @@ public abstract class Message
 
 	public static final int MESSAGE_TYPE_EXTENDED = 0x001a;
 
-	public static final int MESSAGE_TYPE_AWAY = 0x03e8;
-
-	public static final int MESSAGE_TYPE_OCC = 0x03e9;
-
-	public static final int MESSAGE_TYPE_NA = 0x03ea;
-
-	public static final int MESSAGE_TYPE_DND = 0x03eb;
-
-	public static final int MESSAGE_TYPE_FFC = 0x03ec;
-
-	public static final int MESSAGE_TYPE_EVIL = 0x03e8;
-
-	public static final int MESSAGE_TYPE_DEPRESSION = 0x03e8;
-
-	public static final int MESSAGE_TYPE_HOME = 0x03e8;
-
-	public static final int MESSAGE_TYPE_WORK = 0x03e8;
-
-	public static final int MESSAGE_TYPE_LUNCH = 0x03e8;
-
 	// Message type
 	private int messageType;
 

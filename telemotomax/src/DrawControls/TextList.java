@@ -516,7 +516,7 @@ public class TextList extends VirtualList implements Runnable
 		return getLine(currItemIndex).bigTextIndex;
 	}
 
-	public void setColors(int capTxt, int capbk, int bkgrnd, int cursor, int text, int crsFrame, int cursorAlpha, int menuAlpha)
+	public void setColors(int capTxt, int capbk, int bkgrnd, int cursor, int text, int crsFrame)
 	{
 		if (getTextColor() != text)
 		{
@@ -524,7 +524,7 @@ public class TextList extends VirtualList implements Runnable
 			while (allLines.hasMoreElements())
 				((TextLine) allLines.nextElement()).setItemColor(text);
 		}
-		super.setColors(capTxt, capbk, bkgrnd, cursor, text, crsFrame, cursorAlpha, menuAlpha);
+		super.setColors(capTxt, capbk, bkgrnd, cursor, text, crsFrame);
 	}
 
 	public TextList doCRLF(int blockTextIndex)
