@@ -115,18 +115,27 @@ async def run_pages() -> None:
         assert f"/0-v{ENCODING_VERSION}.3gp".encode() in restored.resolve(path, start=False)[0]
         assert restored.resolve(path + "/0.3gp")[0] == b"FAKEMEDIA"
         metadata = directory / "videos" / f"{page.token}.json"
-        old = json.loads(metadata.read_text())
-        old["spec"].pop("encoding_version")
-        metadata.write_text(json.dumps(old))
-        legacy = VideoStore(str(directory / "videos"), fetch)
-        assert legacy.register(100500, "video:42", "Чат", spec) == path, "старые ссылки должны продолжать работать"
-        assert legacy.resolve(path + "/0.3gp") is None, "старый 3GP должен быть удалён"
-        assert (directory / "videos" / f"{page.token}.source").is_file(), "исходник нельзя удалять при смене формата"
-        legacy.resolve(path)
-        await asyncio.gather(*list(legacy.pages[page.token].jobs.values()))
-        assert legacy.resolve(path + "/0.3gp")[0] == b"FAKEMEDIA"
-        assert len(calls) == 1, "смена формата не должна повторно скачивать исходник"
-        await legacy.stop()
+        # И последний формат с fiel/pasp (v3), и старые записи без версии
+        # должны перейти на новый формат с сохранением исходника и ссылки.
+        for version in (3, None):
+            old = json.loads(metadata.read_text())
+            if version is None:
+                old["spec"].pop("encoding_version")
+            else:
+                old["spec"]["encoding_version"] = version
+            metadata.write_text(json.dumps(old))
+            legacy = VideoStore(str(directory / "videos"), fetch)
+            assert legacy.register(100500, "video:42", "Чат", spec) == path, "старые ссылки должны продолжать работать"
+            assert legacy.resolve(path + "/0.3gp") is None, "старый 3GP должен быть удалён"
+            assert (directory / "videos" / f"{page.token}.source").is_file(), "исходник нельзя удалять при смене формата"
+            assert json.loads(metadata.read_text())["spec"]["encoding_version"] == ENCODING_VERSION
+            legacy.resolve(path)
+            await asyncio.gather(*list(legacy.pages[page.token].jobs.values()))
+            assert legacy.resolve(path + "/0.3gp")[0] == b"FAKEMEDIA"
+            assert f"/0-v{ENCODING_VERSION}.3gp".encode() in legacy.resolve(path)[0]
+            assert legacy.resolve(path + "/0-v3.3gp") is None, "прежний адрес файла не должен отдавать кеш браузера"
+            assert len(calls) == 1, "смена формата не должна повторно скачивать исходник"
+            await legacy.stop()
         restored.pages[page.token].made = time.time() - 49 * 3600
         restored.cleanup()
         assert restored.resolve(path) is None

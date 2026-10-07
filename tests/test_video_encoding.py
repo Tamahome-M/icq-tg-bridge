@@ -14,6 +14,47 @@ from bridge.config import Config
 from bridge.profiles import BUILTIN
 
 
+def container_boxes(data: bytes) -> list[bytes]:
+    """Read atom boundaries, including the children of the H.263 sample entry."""
+    names = []
+
+    def walk(start: int, end: int) -> None:
+        while start < end:
+            assert start + 8 <= end, "truncated 3GP atom header"
+            size = int.from_bytes(data[start:start + 4], "big")
+            name = data[start + 4:start + 8]
+            header = 8
+            if size == 1:
+                assert start + 16 <= end
+                size = int.from_bytes(data[start + 8:start + 16], "big")
+                header = 16
+            elif size == 0:
+                size = end - start
+            assert header <= size <= end - start, (name, size)
+            names.append(name)
+            payload = start + header
+            if name in (b"moov", b"trak", b"mdia", b"minf", b"stbl"):
+                walk(payload, start + size)
+            elif name == b"stsd":
+                walk(payload + 8, start + size)
+            elif name == b"s263":
+                walk(payload + 78, start + size)
+            start += size
+
+    walk(0, len(data))
+    assert b"s263" in names and b"d263" in names, names
+    return names
+
+
+def packets(probe: Path, path: Path) -> list[dict]:
+    result = subprocess.run([str(probe), "-v", "error", "-show_packets",
+                             "-show_data_hash", "sha256", "-show_entries",
+                             "packet=stream_index,pts,dts,duration,size,data_hash",
+                             "-of", "json", str(path)],
+                            capture_output=True, check=True, timeout=15)
+    return json.loads(result.stdout)["packets"]
+
+
 async def run(encoder: Path) -> None:
     probe = encoder.with_name("ffprobe")
     with tempfile.TemporaryDirectory(prefix="tmm-real-video-") as temp:
@@ -32,7 +73,10 @@ async def run(encoder: Path) -> None:
         bridge.side_for = lambda _: SimpleNamespace(video_bytes=video_bytes)
         assert bridge._video_kbps(30) == 90, "V8 budget must retain requested 90 kbps"
         try:
-            for number, size in enumerate(("320x240", "240x320")):
+            cases = (("320x240", False), ("240x320", False), ("320x240", True))
+            for number, (size, rotate) in enumerate(cases):
+                bridge.oscar.session.media = {"video_rotate": rotate}
+                label = size + ("-rotated" if rotate else "")
                 incoming = directory / "input.mp4"
                 subprocess.run([str(encoder), "-y", "-loglevel", "error", "-f", "lavfi",
                                 "-i", f"testsrc2=size={size}:rate=30", "-f", "lavfi", "-i",
@@ -40,10 +84,15 @@ async def run(encoder: Path) -> None:
                                 "mpeg4", "-c:a", "aac", str(incoming)], check=True, timeout=30)
                 source = incoming.read_bytes()
                 reference = directory / "recipe.3gp"
+                filters = ("transpose=1," if rotate else "") + "scale=176:144,fps=15"
                 subprocess.run([str(encoder), "-y", "-v", "error", "-i", str(incoming),
-                                "-c:v", "h263", "-vf", "scale=176:144,fps=15", "-b:v", "90k",
+                                "-c:v", "h263", "-vf", filters, "-b:v", "90k",
                                 "-c:a", "libopencore_amrnb", "-b:a", "12.2k", "-ar", "8000",
                                 "-ac", "1", "-f", "3gp", str(reference)], check=True, timeout=30)
+                baseline_boxes = container_boxes(reference.read_bytes())
+                assert b"fiel" in baseline_boxes and b"pasp" in baseline_boxes, \
+                    "the old recipe must reproduce the incompatible container atoms"
+                baseline_packets = packets(probe, reference)
                 attach = f"video:{number + 1}"
                 native = await bridge.fetch_video(uin, attach)
                 assert native, "native video conversion failed"
@@ -54,9 +103,13 @@ async def run(encoder: Path) -> None:
                 browser = bridge.videos.resolve(path + "/0.3gp")
                 assert browser, "browser video conversion failed"
                 for mode, data in (("native", native), ("browser", browser[0])):
-                    assert data == reference.read_bytes(), f"{mode}: bytes differ from the requested ffmpeg recipe"
-                    output = directory / f"{size}-{mode}.3gp"
+                    atoms = container_boxes(data)
+                    assert b"fiel" not in atoms and b"pasp" not in atoms, \
+                        f"{mode}: Motorola V3 rejects these optional container atoms"
+                    output = directory / f"{label}-{mode}.3gp"
                     output.write_bytes(data)
+                    assert packets(probe, output) == baseline_packets, \
+                        f"{mode}: suppressing container atoms must preserve encoded packets and timestamps"
                     result = subprocess.run([str(probe), "-v", "error", "-show_streams",
                                              "-show_format", "-of", "json", str(output)],
                                             capture_output=True, check=True, timeout=15)
@@ -77,7 +130,7 @@ async def run(encoder: Path) -> None:
                     assert info["format"]["tags"]["major_brand"].startswith("3gp"), info
                     subprocess.run([str(encoder), "-v", "error", "-i", str(output),
                                     "-f", "null", "-"], check=True, timeout=15)
-                    print(f"  {size}, {mode}: H.263 176×144 15 fps + AMR-NB 8 kHz mono, decode OK")
+                    print(f"  {label}, {mode}: H.263 + AMR-NB, no fiel/pasp, packets unchanged, decode OK")
         finally:
             await bridge.photo_server.stop()
             bridge.storage.close()
