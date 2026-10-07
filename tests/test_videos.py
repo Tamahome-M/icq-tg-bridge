@@ -18,7 +18,7 @@ from bridge.bridge import Bridge
 from bridge.config import Config
 from bridge.photos import PhotoStore
 from bridge.render import Transcoder
-from bridge.videos import VideoSpec, VideoStore, link_text
+from bridge.videos import ENCODING_VERSION, VideoSpec, VideoStore, link_text
 from bridge.webserver import PhotoServer
 from tests.fake_jimm import FakeJimm
 from tests.test_render import fake_ffmpeg
@@ -86,13 +86,16 @@ async def run_pages() -> None:
             release.set()
             await asyncio.gather(*list(page.jobs.values()))
             code, _, body = await request(port, protected)
-            assert code == 200 and b"/0.3gp" in body
+            asset_url = protected + f"/0-v{ENCODING_VERSION}.3gp"
+            assert code == 200 and f'href="{asset_url}"'.encode() in body
             assert f'href="{protected}/1"'.encode() in body
             assert "Обновить" not in body.decode()
             assert "&lt;&amp;&gt;" in body.decode()
-            code, head, body = await request(port, protected + "/0.3gp", headers="Range: bytes=1-3\r\n")
+            code, head, body = await request(port, asset_url, headers="Range: bytes=1-3\r\n")
             assert code == 206 and body == b"AKE"
-            assert "video/3gpp" in head and 'filename="0.3gp"' in head
+            assert "video/3gpp" in head and f'filename="0-v{ENCODING_VERSION}.3gp"' in head
+            assert (await request(port, protected + "/0.3gp"))[2] == b"FAKEMEDIA", "старый адрес файла остаётся доступен"
+            assert (await request(port, protected + f"/0-v{ENCODING_VERSION - 1}.3gp"))[0] == 404
             await request(port, protected + "/2")
             await asyncio.gather(*list(page.jobs.values()))
             _, _, body = await request(port, protected + "/2")
@@ -109,14 +112,20 @@ async def run_pages() -> None:
 
         # Метаданные и готовое видео доступны после перезапуска хранилища.
         restored = VideoStore(str(directory / "videos"), fetch)
-        assert b"/0.3gp" in restored.resolve(path, start=False)[0]
+        assert f"/0-v{ENCODING_VERSION}.3gp".encode() in restored.resolve(path, start=False)[0]
         assert restored.resolve(path + "/0.3gp")[0] == b"FAKEMEDIA"
         metadata = directory / "videos" / f"{page.token}.json"
         old = json.loads(metadata.read_text())
         old["spec"].pop("encoding_version")
         metadata.write_text(json.dumps(old))
         legacy = VideoStore(str(directory / "videos"), fetch)
-        assert legacy.register(100500, "video:42", "Чат", spec) != path, "новый формат не должен брать старый 3GP из кеша"
+        assert legacy.register(100500, "video:42", "Чат", spec) == path, "старые ссылки должны продолжать работать"
+        assert legacy.resolve(path + "/0.3gp") is None, "старый 3GP должен быть удалён"
+        assert (directory / "videos" / f"{page.token}.source").is_file(), "исходник нельзя удалять при смене формата"
+        legacy.resolve(path)
+        await asyncio.gather(*list(legacy.pages[page.token].jobs.values()))
+        assert legacy.resolve(path + "/0.3gp")[0] == b"FAKEMEDIA"
+        assert len(calls) == 1, "смена формата не должна повторно скачивать исходник"
         await legacy.stop()
         restored.pages[page.token].made = time.time() - 49 * 3600
         restored.cleanup()
@@ -146,7 +155,7 @@ async def run_retry_and_cancel() -> None:
         good = True
         store.resolve(path + "/0/retry")
         await asyncio.gather(*list(page.jobs.values()))
-        assert b"/0.3gp" in store.resolve(path)[0]
+        assert f"/0-v{ENCODING_VERSION}.3gp".encode() in store.resolve(path)[0]
 
         # Остановка сервера должна завершить ffmpeg, а не оставить процесс.
         slow = directory / "ffmpeg-slow"

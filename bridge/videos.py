@@ -10,7 +10,7 @@ import os
 import re
 import secrets
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -18,10 +18,11 @@ from .render import Transcoder
 
 log = logging.getLogger("video")
 TOKEN = re.compile(r"[A-Za-z0-9_-]{16}\Z")
-ROUTE = re.compile(r"/v/([A-Za-z0-9_-]{16})(?:/(\d+)(\.3gp)?)?(?:/(retry))?\Z")
+ROUTE = re.compile(r"/v/([A-Za-z0-9_-]{16})(?:/(\d+)(?:-v(\d+))?(\.3gp)?)?(?:/(retry))?\Z")
 VIDEO_TAG = re.compile(r"\[(?:видео|видеосообщение)(?: ([^]\n]+))?\]")
 MAX_PAGES = 500
 MAX_SEGMENT = 10000
+ENCODING_VERSION = 3
 
 
 def link_text(text: str, url: str) -> str:
@@ -47,7 +48,7 @@ class VideoSpec:
     width: int = 176
     height: int = 144
     rotate: bool = False
-    encoding_version: int = 2
+    encoding_version: int = ENCODING_VERSION
 
     def coder(self, directory: str) -> Transcoder:
         return Transcoder(self.ffmpeg, self.seconds, timeout=self.timeout,
@@ -88,6 +89,13 @@ class VideoStore:
                 data["spec"].setdefault("encoding_version", 1)
                 page = VideoPage(path.stem, int(data["uin"]), data["attach"], data["title"],
                                  float(data["made"]), VideoSpec(**data["spec"]), data.get("duration"))
+                if page.spec.encoding_version < ENCODING_VERSION:
+                    # Старые ссылки тоже должны получить новый формат: удаляем
+                    # только готовые части, исходник остаётся для перекодировки.
+                    for asset in self.directory.glob(f"{page.token}.*.3gp"):
+                        asset.unlink()
+                    page.spec = replace(page.spec, encoding_version=ENCODING_VERSION)
+                    self._save(page)
                 self.pages[page.token] = page
                 self._keys[self._key(page.uin, page.attach, page.spec)] = page.token
             except (OSError, ValueError, KeyError, TypeError):
@@ -155,15 +163,17 @@ class VideoStore:
         segment = int(match[2] or 0)
         if page is None or segment > MAX_SEGMENT or (segment and page.spec.seconds <= 0):
             return None
+        if match[3] and (not match[4] or int(match[3]) != page.spec.encoding_version):
+            return None
         asset = self.directory / f"{page.token}.{segment}.3gp"
-        if match[3]:
+        if match[4]:
             if not asset.is_file():
                 return None
             return asset.read_bytes(), "video/3gpp", "вложение"
         state = "ready" if asset.is_file() else page.states.get(segment, "new")
         if page.duration is not None and segment * page.spec.seconds >= page.duration:
             state = "end"
-        if match[4] and state == "error":
+        if match[5] and state == "error":
             state = "new"
         if start and state == "new":
             page.states[segment] = "pending"
@@ -222,7 +232,9 @@ class VideoStore:
             rows.append(f"<p>Видео: {start // 60}:{start % 60:02d}–{finish // 60}:{finish % 60:02d}</p>")
         if state == "ready":
             size = (self.directory / f"{page.token}.{segment}.3gp").stat().st_size
-            rows.append(f'<p><a href="{path}.3gp">Смотреть видео</a> ({(size + 1023) // 1024} КБ)</p>')
+            # Новая версия формата получает новый URL: браузер не должен
+            # брать прежний 3GP из суточного HTTP-кеша после перекодировки.
+            rows.append(f'<p><a href="{path}-v{page.spec.encoding_version}.3gp">Смотреть видео</a> ({(size + 1023) // 1024} КБ)</p>')
             if page.spec.seconds > 0 and (page.duration is None or (segment + 1) * page.spec.seconds < page.duration):
                 rows.append(f'<p><a href="/v/{page.token}/{segment + 1}">Дальше</a></p>')
         elif state == "end":
