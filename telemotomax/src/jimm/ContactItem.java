@@ -43,7 +43,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 	public static final int CONTACTITEM_UIN           = 0; 
 	public static final int CONTACTITEM_NAME          = 1;
 	public static final int CONTACTITEM_CLIVERSION    = 2;	
-	public static final int CONTACTITEM_XSTATUSMSG    = 3;	
 	
 	/* Integer */
 	public static final int CONTACTITEM_ID            = 64; 
@@ -51,7 +50,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 	public static final int CONTACTITEM_IDLE          = 71;
 	public static final int CONTACTITEM_CAPABILITIES  = 75;
 	public static final int CONTACTITEM_CLIENT        = 76;
-	public static final int CONTACTITEM_XSTATUS       = 78;
 	public static final int CONTACTITEM_STATUS        = 79;
 	public static final int CONTACTITEM_SIGNON        = 81;
 	public static final int CONTACTITEM_ONLINE        = 82;
@@ -96,12 +94,10 @@ public class ContactItem implements ContactListItem, JimmScreen
 	private int signOn;
 	private int status;
 	private int regdate;
-	private byte xStatusId;
 
 	private String name;
 	private String clientVersion;
 	private String lowerText;
-	private String xStatusMessage;
 	private byte[] ssData; // server-size raw data
 	//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 	private byte[] biHash; // buddy-icon hash
@@ -142,11 +138,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 		case CONTACTITEM_CLIVERSION:
 			clientVersion = value;
 			return;
-		case CONTACTITEM_XSTATUSMSG:
-			if (value == null) return;
-			if (value.length() == 0) value = null;
-			xStatusMessage = value;
-			return;
 		}
 	}
 
@@ -160,8 +151,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 			return name;
 		case CONTACTITEM_CLIVERSION:
 			return clientVersion;
-		case CONTACTITEM_XSTATUSMSG:
-			return xStatusMessage;
 		}
 		return null;
 	}
@@ -225,8 +214,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 			status = value;
 			if (status == ContactList.STATUS_OFFLINE)
 			{
-				xStatusMessage = null;
-				setIntValue(CONTACTITEM_XSTATUS, -1);
 				//#sijapp cond.if target isnot "DEFAULT"#
 				typing = false;
 				//#sijapp cond.end#
@@ -244,9 +231,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 			regdate = value;
 			return;
 			
-		case CONTACTITEM_XSTATUS:
-			xStatusId = (byte)value;
-			return;
 			
 		case CONTACTITEM_INV_ID:
 			privacyData = (privacyData & 0xFFFFFFFFFFFF0000l) | (long)(value);
@@ -291,8 +275,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 			return signOn;
 		case CONTACTITEM_REG:
 			return regdate;
-		case CONTACTITEM_XSTATUS:
-			return xStatusId;
 			
 		case CONTACTITEM_INV_ID: return (int)(privacyData&0xFFFF);
 		case CONTACTITEM_VIS_ID: return (int)((privacyData >> 16)&0xFFFF);
@@ -438,7 +420,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 			setIntValue_(ContactItem.CONTACTITEM_GROUP, group);
 			setStringValue_(ContactItem.CONTACTITEM_UIN, uin);
 			setStringValue_(ContactItem.CONTACTITEM_NAME, name);
-			setStringValue_(ContactItem.CONTACTITEM_XSTATUSMSG, new String(""));
 			setBooleanValue_(ContactItem.CONTACTITEM_NO_AUTH, noAuth);
 			setBooleanValue_(ContactItem.CONTACTITEM_IS_TEMP, false);
 			setBooleanValue_(ContactItem.CONTACTITEM_HAS_CHAT, false);
@@ -471,7 +452,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 		setIntValue_(ContactItem.CONTACTITEM_IDLE, -1);
 		setIntValue_(ContactItem.CONTACTITEM_CLIENT, Icq.CLI_NONE);
 		setStringValue_(ContactItem.CONTACTITEM_CLIVERSION, "");
-		xStatusId = -1;
 	}
 	
 	public static void updateColorValues()
@@ -490,7 +470,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 
 	public ContactItem()
 	{
-		xStatusId = -1;
 	}
 
 	//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
@@ -578,17 +557,8 @@ public class ContactItem implements ContactListItem, JimmScreen
 		return result;
 	}
 	
-	public Image getSecondLeftImage()
-	{
-		StatusInfo xStInfo = JimmUI.findStatus(StatusInfo.TYPE_X_STATUS, getIntValue(ContactItem.CONTACTITEM_XSTATUS));
-		return (xStInfo != null) ? xStInfo.getImage() : null;
-	}
 	
 	/* Returns image index client */
-	public Image getRightImage()
-	{
-		return ContactList.cliImages.elementAt(Icq.getClientImageID(getIntValue(CONTACTITEM_CLIENT))); 
-	}
 
 	static private StringBuffer tmpStringBuffer = new StringBuffer();	
 	
@@ -733,7 +703,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 	/* Activates the contact item menu */
 	public void activate()
 	{
-		Jimm.aaUserActivity();
 		
 		String currentUin = getStringValue(ContactItem.CONTACTITEM_UIN);
 
@@ -756,7 +725,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 	public void setStatusImage()
 	{
 		Image image = null;
-		Image xImage = null;
 
 //#sijapp cond.if target isnot "DEFAULT"#
 		if (typing) image = JimmUI.imgTyping;
@@ -764,8 +732,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 		{
 			StatusInfo statInfo = JimmUI.findStatus(StatusInfo.TYPE_STATUS, getIntValue(CONTACTITEM_STATUS));
 			if (statInfo != null) image = statInfo.getImage();  
-			StatusInfo xStatInfo = JimmUI.findStatus(StatusInfo.TYPE_X_STATUS, getIntValue(CONTACTITEM_XSTATUS));
-			if (xStatInfo != null) xImage = xStatInfo.getImage();  
 		}
 //#sijapp cond.else#
 //#		StatusInfo statInfo = JimmUI.findStatus(StatusInfo.TYPE_STATUS, getIntValue(CONTACTITEM_STATUS));
@@ -782,7 +748,7 @@ public class ContactItem implements ContactListItem, JimmScreen
 
 		ChatTextList chat = ChatHistory.getChatHistoryAt(getStringValue(CONTACTITEM_UIN));
 		
-		if (chat != null) chat.setImages(new Image[] {image, xImage});
+		if (chat != null) chat.setImages(new Image[] {image});
 	}
 }
 

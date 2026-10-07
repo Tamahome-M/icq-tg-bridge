@@ -122,7 +122,6 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	static final Command cmdGetFile = new Command(ResourceBundle.getString("get_file"), Command.ITEM, 3);
 //#sijapp cond.end#
 	// Журнал «Связь» — сообщением в чат; нужен и на V3, где камеры нет.
-	static final Command cmdSendLog = new Command(ResourceBundle.getString("send_log"), Command.ITEM, 5);
 	// TeleMotoMax: chat history from the bridge on its own screen
 	static final Command cmdServerHistory = new Command(ResourceBundle.getString("server_history"), Command.ITEM, 5);
 	private static final Command cmdReplWithQuota = new Command(ResourceBundle.getString("quote", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 3);
@@ -241,7 +240,6 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		textList.addCommandEx(cmdSendFile, VirtualList.MENU_TYPE_RIGHT);
 		textList.addCommandEx(cmdSendMedia, VirtualList.MENU_TYPE_RIGHT);
 //#sijapp cond.end#
-		textList.addCommandEx(cmdSendLog, VirtualList.MENU_TYPE_RIGHT);
 		textList.addCommandEx(cmdServerHistory, VirtualList.MENU_TYPE_RIGHT);
 		textList.addCommandEx(cmdContactMenu, VirtualList.MENU_TYPE_RIGHT);
 		
@@ -262,7 +260,6 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	
 	public void commandAction(Command c, Displayable d)
 	{
-		Jimm.aaUserActivity();
 		
 		/* User selected chat to delete */
 		if (JimmUI.getCurScreenTag() == UI_MODE_DEL_CHAT)
@@ -315,13 +312,6 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 			FileSender.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), this, true);
 		}
 //#sijapp cond.end#
-		else if (c == cmdSendLog)
-		{
-			// Журнал «Связь» — сообщением в этот чат: разбирать по тексту, а
-			// не по фотографии экрана телефона.
-			String log = ConnLog.text();
-			JimmUI.sendMessage("Связь:\n" + (log.length() == 0 ? "пусто" : log), contact);
-		}
 //#sijapp cond.if modules_CAMERA="true"#
 		else if (c == cmdGetFile)
 		{

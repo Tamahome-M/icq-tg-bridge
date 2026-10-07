@@ -376,7 +376,6 @@ class FileSystem2 implements CommandListener, Runnable
 	
 	public void commandAction(Command c, Displayable d)
 	{
-		Jimm.aaUserActivity();
 		
 		if (c == JimmUI.cmdSelect2 || c == JimmUI.cmdOk || c == JimmUI.cmdSelect) 
 		{

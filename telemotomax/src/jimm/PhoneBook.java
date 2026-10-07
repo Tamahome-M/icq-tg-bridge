@@ -176,7 +176,6 @@ public class PhoneBook implements CommandListener {
 	}
 
 	public void commandAction(Command c, Displayable d) {
-		Jimm.aaUserActivity();
 
 		if (c == backCommand) {
 			MainThread.backToLastScreenMT();

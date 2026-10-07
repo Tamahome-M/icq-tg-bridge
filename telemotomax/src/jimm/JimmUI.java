@@ -114,7 +114,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	public final static Command cmdBack = new Command(ResourceBundle.getString("back"), Jimm.cmdBack, 1);
 	public final static Command cmdCopyText = new Command(ResourceBundle.getString("copy_text"), Command.ITEM, 3);
 	public final static Command cmdCopyAll = new Command(ResourceBundle.getString("copy_all_text"), Command.ITEM, 4);
-	public final static Command cmdEdit = new Command(ResourceBundle.getString("edit"), Command.ITEM, 1);
 	public final static Command cmdMenu = new Command(ResourceBundle.getString("menu"), Command.ITEM, 1);
 	public final static Command cmdSelect = new Command(ResourceBundle.getString("select"), Command.OK, 2);
 	public final static Command cmdSelect2 = new Command(ResourceBundle.getString("select"), Command.ITEM, 2);
@@ -176,7 +175,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 
 	public void commandAction(Command c, Displayable d)
 	{
-		Jimm.aaUserActivity();
 		
 		if (isControlActive(tlStatusMessage))
 		{
@@ -368,10 +366,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 				backToLastScreen();
 			}
 
-			else if (c == cmdEdit)
-			{
-				EditInfo.showEditForm(last_user_info);
-			}
 
 			// "User info" -> "Copy text, Copy all"
 			else if ((c == cmdCopyText) || (c == cmdCopyAll))
@@ -796,7 +790,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	final public static int UI_FIRST_NAME    = 43;
 	final public static int UI_LAST_NAME     = 44;
 	final public static int UI_ONLINE_STATUS = 45;
-	final public static int UI_XSTATUS       = 46;
 	final public static int UI_CAPS          = 47;
 
 	//////
@@ -909,7 +902,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		
 		uiSectName = "dc_info";
 		addToTextList(UI_ONLINE_STATUS, data, "status", list, true);
-		addToTextList(UI_XSTATUS, data, "xstatus", list, true);
 		addToTextList(UI_REG_DATE, data, "li_reg_date", list, true);
 		addToTextList(UI_SIGNON, data, "li_signon_time", list, true);
 		addToTextList(UI_ONLINETIME, data, "li_online_time", list, true);
@@ -948,7 +940,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	}
 	//  #sijapp cond.end#
 
-	static public void requiestUserInfo(String uin, String name, boolean allowToEdit
+	static public void requiestUserInfo(String uin, String name
 		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 		, byte[] hash
 		//  #sijapp cond.end#
@@ -959,8 +951,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 
 		if (Icq.isConnected())
 		{
-			if (allowToEdit)
-				infoTextList.addCommandEx(cmdEdit, VirtualList.MENU_TYPE_RIGHT);
 
 			//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 			if (hash != null) {
@@ -1041,12 +1031,10 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		}
 	}
 
-	static private String[] last_user_info;
 	static private ContactItem lastUserInfoContact;
 
 	static public void showUserInfo(String[] data)
 	{
-		last_user_info = data;
 		if (infoTextList == null) return;
 		infoTextList.clear();
 		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
@@ -1174,7 +1162,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	
 	final private static ImageList messImgList = new ImageList();
 	final private static ImageList statusImgList = new ImageList();
-	final public static ImageList xStatusImages  = new ImageList();
 	
 	final public static Image statusEvilImg;
 	final public static Image statusDepressionImg;
@@ -1205,7 +1192,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 //#sijapp cond.if target="MIDP2" | target="SIEMENS2"#
 		int imgScale = Options.getInt(Options.OPTION_IMG_SCALE);
 		statusImgList.setScale(imgScale);
-		xStatusImages.setScale(imgScale);
 		messImgList.setScale(imgScale);
 //#sijapp cond.end#
 		
@@ -1217,7 +1203,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		
 		
 		try { statusImgList.load("/statuses.png", -1, -1, -1, isNokia); } catch (Exception e) {}
-		try { xStatusImages.load("/xstatus.png", -1, -1, -1, isNokia); } catch (Exception e) {}
 		try { messImgList.load("/messages.png", -1, -1, -1, isNokia); } catch (Exception e) {}
 		
 		
@@ -1261,44 +1246,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_LUNCH,      "status_lunch",      statusLunchImg,      StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
 		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_OFFLINE,    "status_offline",    statusOfflineImg,    0);
 		
-		/* Extended statuses */
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS,   -2, "xstatus_none",            null,                        StatusInfo.FLAG_IN_MENU);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x17, "xstatus_angry",           xStatusImages.elementAt(0),  StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x01, "xstatus_duck",            xStatusImages.elementAt(1),  StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x02, "xstatus_tired",           xStatusImages.elementAt(2),  StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x03, "xstatus_party",           xStatusImages.elementAt(3),  StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x04, "xstatus_beer",            xStatusImages.elementAt(4),  StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x05, "xstatus_thinking",        xStatusImages.elementAt(5),  StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x06, "xstatus_eating",          xStatusImages.elementAt(6),  StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x07, "xstatus_tv",              xStatusImages.elementAt(7),  StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x08, "xstatus_friends",         xStatusImages.elementAt(8),  StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x09, "xstatus_coffee",          xStatusImages.elementAt(9),  StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x0A, "xstatus_music",           xStatusImages.elementAt(10), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x0B, "xstatus_business",        xStatusImages.elementAt(11), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x0C, "xstatus_camera",          xStatusImages.elementAt(12), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x0D, "xstatus_funny",           xStatusImages.elementAt(13), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x0E, "xstatus_phone",           xStatusImages.elementAt(14), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x0F, "xstatus_games",           xStatusImages.elementAt(15), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x10, "xstatus_college",         xStatusImages.elementAt(16), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x00, "xstatus_shopping",        xStatusImages.elementAt(17), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x11, "xstatus_sick",            xStatusImages.elementAt(18), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x12, "xstatus_sleeping",        xStatusImages.elementAt(19), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x13, "xstatus_surfing",         xStatusImages.elementAt(20), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x14, "xstatus_internet",        xStatusImages.elementAt(21), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x15, "xstatus_engineering",     xStatusImages.elementAt(22), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x16, "xstatus_typing",          xStatusImages.elementAt(23), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x18, "xstatus_unk",             xStatusImages.elementAt(24), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x19, "xstatus_ppc",             xStatusImages.elementAt(25), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x1A, "xstatus_mobile",          xStatusImages.elementAt(26), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x1B, "xstatus_man",             xStatusImages.elementAt(27), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x1C, "xstatus_wc",              xStatusImages.elementAt(28), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x1D, "xstatus_question",        xStatusImages.elementAt(29), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x1E, "xstatus_way",             xStatusImages.elementAt(30), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x1F, "xstatus_heart",           xStatusImages.elementAt(31), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x20, "xstatus_cigarette",       xStatusImages.elementAt(32), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x21, "xstatus_sex",             xStatusImages.elementAt(33), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x22, "xstatus_rambler_search",  xStatusImages.elementAt(34), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-        addStatusInfo(data, StatusInfo.TYPE_X_STATUS, 0x23, "xstatus_rambler_journal", xStatusImages.elementAt(35), StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
 		
 		statusInfos = new StatusInfo[data.size()];
 		data.copyInto(statusInfos);
@@ -1319,50 +1266,15 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		vct.addElement(new StatusInfo(type, value, ResourceBundle.getString(text), image, flags));
 	}
 	
-	public static final int SHOW_STATUSES_NAME  = 1 << 0;
-	public static final int SHOW_STATUSES_DESCR = 1 << 1;
 	
-	public static void fillStatusesInList(TextList list, int type, int flags, int showFlags)
+	public static void fillStatusesInList(TextList list)
 	{
-		boolean showDescr = (showFlags&SHOW_STATUSES_DESCR) != 0;
-		boolean showName  = (showFlags&SHOW_STATUSES_NAME)  != 0;
-		
 		for (int i = 0; i < statusInfos.length; i++)
 		{
 			StatusInfo info = statusInfos[i];
-			if (info.getType() != type) continue;
-			if ((info.getFlags()&flags) == 0) continue;
-			
-			if (showName)
-			{
-				addTextListItem
-				(
-					list, 
-					info.getText(), 
-					info.getImage(), 
-					info.getValue(), 
-					true, 
-					-1, 
-					showDescr||((info.getFlags()&StatusInfo.FLAG_STD) != 0) ? Font.STYLE_BOLD : Font.STYLE_PLAIN
-				);
-			}
-			
-			if (showDescr)
-			{
-				int value = info.getValue();
-				String descr = Options.getStatusString(type, value);
-				if (descr == null) descr = info.getText();
-				addTextListItem
-				(
-					list, 
-					descr, 
-					(!showName) ? info.getImage() : null, 
-					info.getValue(), 
-					true, 
-					-1, 
-					(!showName)&&((info.getFlags()&StatusInfo.FLAG_STD) != 0) ? Font.STYLE_BOLD : Font.STYLE_PLAIN
-				);
-			}
+			if (!info.testFlag(StatusInfo.FLAG_IN_MENU)) continue;
+			addTextListItem(list, info.getText(), info.getImage(), info.getValue(), true, -1,
+				info.testFlag(StatusInfo.FLAG_STD) ? Font.STYLE_BOLD : Font.STYLE_PLAIN);
 		}
 	}
 
@@ -1848,8 +1760,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 				JimmUI.requiestUserInfo
 				(
 					clciContactMenu.getStringValue(ContactItem.CONTACTITEM_UIN), 
-					clciContactMenu.getStringValue(ContactItem.CONTACTITEM_NAME), 
-					false
+					clciContactMenu.getStringValue(ContactItem.CONTACTITEM_NAME)
 					//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 					,clciContactMenu.getBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH)
 					//  #sijapp cond.end#
@@ -1972,22 +1883,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		/* Status */
 		statusInfo = JimmUI.findStatus(StatusInfo.TYPE_STATUS, cItem.getIntValue(ContactItem.CONTACTITEM_STATUS));
 		clInfoData[JimmUI.UI_ONLINE_STATUS] = (statusInfo != null) ? statusInfo.getText() : null;
-		
-		/* X-status */
-		int xStatus = cItem.getIntValue(ContactItem.CONTACTITEM_XSTATUS);
-		statusInfo = JimmUI.findStatus(StatusInfo.TYPE_X_STATUS, xStatus);
-		String rcvdXMsg = cItem.getStringValue(ContactItem.CONTACTITEM_XSTATUSMSG);
-
-		String stText = (statusInfo != null) ? ResourceBundle.getString(statusInfo.getText()) : "";
-
-		if (rcvdXMsg != null)
-		{
-			clInfoData[JimmUI.UI_XSTATUS] = ((rcvdXMsg.length() > 0) ? stText+" ("+rcvdXMsg+")" : stText);
-		}
-		else
-		{
-			clInfoData[JimmUI.UI_XSTATUS] = stText;
-		}
 		
 		/* registration date */
 		long regDate = cItem.getIntValue(ContactItem.CONTACTITEM_REG);
@@ -2216,7 +2111,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	
 	public void vlKeyPress(VirtualList sender, int keyCode, int type)
 	{
-		Jimm.aaUserActivity();
 		
 		if (type == VirtualList.KEY_PRESSED)
 				lockPressedTime = System.currentTimeMillis();
@@ -2287,8 +2181,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			requiestUserInfo
 			(
 				cItem.getStringValue(ContactItem.CONTACTITEM_UIN),
-				cItem.getStringValue(ContactItem.CONTACTITEM_NAME),
-				false
+				cItem.getStringValue(ContactItem.CONTACTITEM_NAME)
 //#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 				,cItem.getBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH)
 //#sijapp cond.end#

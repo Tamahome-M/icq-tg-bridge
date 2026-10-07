@@ -460,7 +460,7 @@ public class Search
 			{
 				String[] resultData = getResult(selectedIndex);
 				JimmUI.requiestUserInfo(resultData[JimmUI.UI_UIN_LIST],
-						resultData[JimmUI.UI_NICK], false
+						resultData[JimmUI.UI_NICK]
 				//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 				, null
 				//#sijapp cond.end#

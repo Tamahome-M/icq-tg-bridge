@@ -126,7 +126,6 @@ public class PrivateListsForm extends VirtualList implements VirtualListCommands
 	
 	public void vlCursorMoved(VirtualList sender) 
 	{
-		Jimm.aaUserActivity();
 	}
 	
 	public void vlItemClicked(VirtualList sender) {}
@@ -202,7 +201,6 @@ public class PrivateListsForm extends VirtualList implements VirtualListCommands
 	
 	public void commandAction(Command c, Displayable d)
 	{
-		Jimm.aaUserActivity();
 		
 		if (c == cmdChange)
 		{
@@ -236,8 +234,7 @@ public class PrivateListsForm extends VirtualList implements VirtualListCommands
 			JimmUI.requiestUserInfo
 			(
 				items[index].getStringValue(ContactItem.CONTACTITEM_UIN),
-				items[index].getStringValue(ContactItem.CONTACTITEM_NAME),
-				false
+				items[index].getStringValue(ContactItem.CONTACTITEM_NAME)
 				//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 				,items[index].getBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH)
 				//  #sijapp cond.end#

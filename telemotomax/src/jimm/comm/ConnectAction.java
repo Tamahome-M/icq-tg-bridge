@@ -866,7 +866,7 @@ public class ConnectAction extends Action
 						// Send a client status packet
 						Icq.setOnlineStatus(
 							(int)Options.getLong(Options.OPTION_ONLINE_STATUS), 
-							Icq.XSTATUS_CURRENT, 
+
 							true
 						);
 

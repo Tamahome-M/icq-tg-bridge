@@ -89,7 +89,6 @@ public class Options
 	public static final int OPTION_MESS_NOTIF_FILE    = 4;
 	public static final int OPTION_ONLINE_NOTIF_FILE  = 5;
 	public static final int OPTION_CURRENCY           = 6;
-	public static final int OPTION_STATUS_MESSAGE     = 7;
 	public static final int OPTION_PRX_SERV           = 8;
 	public static final int OPTION_PRX_PORT           = 9;
 	public static final int OPTION_AUTORETRY_COUNT    = 10;
@@ -139,11 +138,8 @@ public class Options
 	public static final int OPTION_TYPING_VOL         = 89;
 	public static final int OPTION_LOCAL_OFFSET       = 90;
 	public static final int OPTION_RECONNECT_NUMBER   = 91;
-	public static final int OPTION_XSTATUS            = 92; 
 	public static final int OPTION_DAYLIGHT_SAVING    = 93;
 //	public static final int OPTION_CAMERA_LOCATOR     = 95;
-	public static final int OPTION_AUTOAWAY_TIME1     = 96;
-	public static final int OPTION_AUTOAWAY_TIME2     = 97;
 	public static final int OPTION_CAMERA_ENCODING    = 98;
 	public static final int OPTION_CAMERA_RES         = 99;
 	public static final int OPTION_CAPTION_OFFSET     = 100;
@@ -186,10 +182,7 @@ public class Options
 	public static final int OPTION_SHOW_MESS_DATE    = 155;
 	public static final int OPTION_SHOW_MESS_CLRF    = 156;
 	public static final int OPTION_MESS_COLORED_TEXT = 157;
-	public static final int OPTION_CL_CLIENTS        = 158;
-	public static final int OPTION_XSTATUSES         = 159;
 	public static final int OPTION_ASK_FOR_WEB_FT    = 160;
-	public static final int OPTION_USE_AUTOAWAY      = 161;
 	public static final int OPTION_DELIV_MES_INFO    = 162;
 	public static final int OPTION_MIRROR_MENU       = 163;
 	public static final int OPTION_SHOW_DELETED_CONT = 164;
@@ -390,7 +383,6 @@ public class Options
 			checkKeys = false;
 			//#sijapp cond.else#
 			//#			Options.setDefaults();
-			//#			resetLangDependedOpts();
 			//#sijapp cond.end #
 
 			load();
@@ -398,31 +390,17 @@ public class Options
 			if (getBoolean(OPTION_LANG_CHANGED))
 			{
 				setBoolean(OPTION_LANG_CHANGED, false);
-				resetLangDependedOpts();
-				//System.out.println("Options.resetLangDependedOpts()");
 			}
 		}
 		// Use default values if loading option values from record store failed
 		catch (Exception e)
 		{
 			setDefaults();
-			resetLangDependedOpts();
 		}
 
 		ResourceBundle.setCurrUiLanguage(getString(Options.OPTION_UI_LANGUAGE));
 		
-		/* Default values for status strings */
-		setDefaultStatusStrings(statusStrings, StatusInfo.TYPE_STATUS);
-		setDefaultStatusStrings(xStatusStrings, StatusInfo.TYPE_X_STATUS);
-		String awayStatStr = ResourceBundle.getString("status_message_text");
-		setStatusString(StatusInfo.TYPE_STATUS, ContactList.STATUS_AWAY, awayStatStr);
-		setStatusString(StatusInfo.TYPE_STATUS, ContactList.STATUS_DND, awayStatStr);
-		setStatusString(StatusInfo.TYPE_STATUS, ContactList.STATUS_NA, awayStatStr);
-		setStatusString(StatusInfo.TYPE_STATUS, ContactList.STATUS_OCCUPIED, awayStatStr);
 
-		/* Load values for status strings */
-		loadStatusStrings(statusStrings, statusRmsName);
-		loadStatusStrings(xStatusStrings, xStatusRmsName);
 	}
 
 	/* Set default values
@@ -600,10 +578,7 @@ public class Options
 		// обновился со старой сборки, не срабатывало ни разу.
 		setBoolean(OPTION_MESS_COLORED_TEXT, false);
 		setBoolean(OPTION_PLAIN_TEXT_DONE, false);
-		setBoolean(OPTION_CL_CLIENTS, true);
-		setBoolean(OPTION_XSTATUSES, true);
 		setBoolean(OPTION_ASK_FOR_WEB_FT, true);
-		setInt(OPTION_XSTATUS, -1);
 
 //#sijapp cond.if modules_CAMERA="true"#
 //		setInt(OPTION_CAMERA_LOCATOR, 0);
@@ -618,9 +593,6 @@ public class Options
 //#sijapp cond.end#		
 		
 		
-		setBoolean(OPTION_USE_AUTOAWAY, true);
-		setInt(OPTION_AUTOAWAY_TIME1, 5);
-		setInt(OPTION_AUTOAWAY_TIME2, 15);
 		
 		setBoolean(OPTION_DELIV_MES_INFO, true);
 		setBoolean(OPTION_MIRROR_MENU, false);
@@ -650,11 +622,6 @@ public class Options
 //#sijapp cond.end#
 	}
 
-	static public void resetLangDependedOpts()
-	{
-		setString(Options.OPTION_STATUS_MESSAGE, ResourceBundle
-				.getString("status_message_text"));
-	}
 
 	/* Delete all record stores */
 	static public void reset_rms() throws RecordStoreException
@@ -698,6 +665,9 @@ public class Options
 							optionValue.length, true));
 				}
 			}
+			// Retired status/editor and icon preferences; never reuse these RMS IDs.
+			int[] retired = {7, 92, 96, 97, 158, 159, 161};
+			for (int i = 0; i < retired.length; i++) options.remove(key(retired[i]));
 			// Обновившимся со старой сборки один раз выключаем цветной текст
 			// сообщения: ник и время остаются цветными, а сам текст — обычным.
 			// В настройках, сохранённых прежней сборкой, этой пометки нет —
@@ -927,119 +897,7 @@ public class Options
 	
 
 	
-	/*************************************/
-	/*                                   */
-	/*   Working with statuses strings   */
-	/*                                   */
-	/*************************************/
-	
-	final private static Hashtable statusStrings = new Hashtable();
-	final private static Hashtable xStatusStrings = new Hashtable();
-	
-	final private static String statusRmsName = "JimmStatus";
-	final private static String xStatusRmsName = "JimmXStatus";
-	private static final String STATUS_RMS_VERS = "v2"; 
-	
-	public static String getStatusString(int mode, int status)
-	{
-		switch (mode)
-		{
-		case StatusInfo.TYPE_STATUS:
-			synchronized (statusStrings) { return (String)statusStrings.get(new Integer(status)); }
-			
-		case StatusInfo.TYPE_X_STATUS:
-			synchronized (xStatusStrings) { return (String)xStatusStrings.get(new Integer(status)); }
-		}
-		return null;
-	}
-	
-	public static void setStatusString(int mode, int status, String text)
-	{
-		switch (mode)
-		{
-		case StatusInfo.TYPE_STATUS:
-			synchronized (statusStrings) { statusStrings.put(new Integer(status), text); }
-			break;
-			
-		case StatusInfo.TYPE_X_STATUS:
-			synchronized (xStatusStrings) { xStatusStrings.put(new Integer(status), text); }
-			break;
-		}
-	}
 
-	private static void setDefaultStatusStrings(Hashtable tbl, int type)
-	{
-		tbl.clear();
-		for (int i = 0; i < JimmUI.statusInfos.length; i++)
-		{
-			StatusInfo info = JimmUI.statusInfos[i];
-			if (info.getType() != type) continue;
-			if (!info.testFlag(StatusInfo.FLAG_HAVE_DESCR)) continue;
-			tbl.put(new Integer(info.getValue()), info.getText());
-		}
-	}
-	
-	private static void saveStatusStrings(Hashtable tbl, String rmsName)
-	{
-		try
-		{
-			ByteArrayOutputStream baos = new ByteArrayOutputStream();
-			DataOutputStream dos = new DataOutputStream(baos);
-			
-			dos.writeInt(tbl.size());
-
-			Enumeration keys = tbl.keys();
-			while (keys.hasMoreElements()) 
-			{
-				Integer statInt = (Integer)keys.nextElement(); 
-				int status = statInt.intValue();
-				String statDescr = (String)tbl.get(statInt);
-				if (statDescr == null || statDescr.length() == 0) continue;
-				dos.writeInt(status);
-				dos.writeUTF(statDescr);
-			}
-			
-			Util.saveStreamToRms(baos.toByteArray(), rmsName, STATUS_RMS_VERS);
-		}
-		catch (Exception e)
-		{
-			e.printStackTrace();
-		}
-	}
-	
-	private static void loadStatusStrings(Hashtable tbl, String rmsName)
-	{
-		try
-		{
-			DataInputStream dis = Util.getRmsInputStream(rmsName, STATUS_RMS_VERS);
-			if (dis == null) return;
-			int size = dis.readInt();
-			for (int i = 0; i < size; i++)
-			{
-				int status = dis.readInt();
-				String statDescr = dis.readUTF();
-				tbl.put(new Integer(status), statDescr);
-			}
-		}
-		catch (Exception e)
-		{
-			e.printStackTrace();
-		}
-	}
-	
-	static void saveStatusStringsByType(int type)
-	{
-		switch (type)
-		{
-		case StatusInfo.TYPE_STATUS:
-			saveStatusStrings(statusStrings, statusRmsName);
-			break;
-			
-		case StatusInfo.TYPE_X_STATUS:
-			saveStatusStrings(xStatusStrings, xStatusRmsName);
-			break;
-		}
-	}
 }
 
 /**************************************************************************/
@@ -1092,14 +950,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private static final int OPTIONS_TRAFFIC     = 8;
 	private static final int OPTIONS_TIMEZONE    = 9;
 	private static final int OPTIONS_COLOR_THEME = 10;
-	private static final int OPTIONS_AUTOAWAY    = 11;
-	private static final int OPTIONS_MY_INFO     = 12;
 	private static final int OPTIONS_MANAGE_CL   = 13;
 	private static final int OPTIONS_RESET_RMS   = 14;
 	private static final int OPTIONS_ANTISPAM    = 15;
 	private static final int OPTIONS_TRANSP      = 16;
-	private static final int OPTIONS_STAT_STR    = 17;
-	private static final int OPTIONS_XSTAT_STR   = 18;
 	private static final int OPTIONS_TEMPLATES   = 19;
 
 	// Constants for contact list menu
@@ -1224,16 +1078,11 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private TextField txtfAntispamA;
 //#sijapp cond.end#
 	
-	private ChoiceGroup chgrUseAutoAway;
-	private TextField tfAutoAwayTime1;
-	private TextField tfAutoAwayTime2;
 	private TextList keysMenu;
 	private TextList actionMenu;
 	private TextList tlColorScheme;
 	private TextList tlRmsAsk;
 	private TextList groupSelector;
-	private TextList statusStrings;
-	private TextBox  statusString;
 
 
 	private static OptionsForm _this;
@@ -1282,7 +1131,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		if (type != currOptType) currOptMode = 0;
 		currOptType = type;
 		
-		boolean connected = Icq.isConnected();
 		
 		optionsMenu.clear();
 		JimmUI.setColorScheme(optionsMenu, false, -1, true);
@@ -1314,22 +1162,15 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			JimmUI.addTextListItem(optionsMenu, "options_net_express", MainMenu.menuIcons.elementAt(11), OPTIONS_NET_EXPRESS, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "options_hotkeys", MainMenu.menuIcons.elementAt(18), OPTIONS_HOTKEYS, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "options_signaling", MainMenu.menuIcons.elementAt(19), OPTIONS_SIGNALING, true, -1, Font.STYLE_PLAIN);
-			JimmUI.addTextListItem(optionsMenu, "auto_away", MainMenu.menuIcons.elementAt(20), OPTIONS_AUTOAWAY, true, -1, Font.STYLE_PLAIN);
 //#sijapp cond.if modules_TRAFFIC is "true"#
 			JimmUI.addTextListItem(optionsMenu, "traffic_lng", MainMenu.menuIcons.elementAt(21), OPTIONS_TRAFFIC, true, -1, Font.STYLE_PLAIN); 
 //#sijapp cond.end#
 			JimmUI.addTextListItem(optionsMenu, "time_zone", MainMenu.menuIcons.elementAt(22), OPTIONS_TIMEZONE, true, -1, Font.STYLE_PLAIN);
 			
-			if (connected)
-			{
-				JimmUI.addTextListItem(optionsMenu, "myself", MainMenu.menuIcons.elementAt(23), OPTIONS_MY_INFO, true, -1, Font.STYLE_PLAIN);
-			}
 //#sijapp cond.if modules_ANTISPAM="true"#			
 			JimmUI.addTextListItem(optionsMenu, "antispam", MainMenu.menuIcons.elementAt(25), OPTIONS_ANTISPAM, true, -1, Font.STYLE_PLAIN);
 //#sijapp cond.end#
 			
-			JimmUI.addTextListItem(optionsMenu, "status", JimmUI.statusAwayImg, OPTIONS_STAT_STR, true, -1, Font.STYLE_PLAIN);
-			JimmUI.addTextListItem(optionsMenu, "xstatus", JimmUI.xStatusImages.elementAt(1), OPTIONS_XSTAT_STR, true, -1, Font.STYLE_PLAIN);
 			JimmUI.addTextListItem(optionsMenu, "templates", MainMenu.menuIcons.elementAt(35), OPTIONS_TEMPLATES, true, -1, Font.STYLE_PLAIN); 
 			
 			JimmUI.addTextListItem(optionsMenu, "reset_rms_caption", MainMenu.menuIcons.elementAt(26), OPTIONS_RESET_RMS, true, -1, Font.STYLE_PLAIN);
@@ -1555,38 +1396,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 /*****************************************************************************/
 /*****************************************************************************/	
 	
-	private int statusStrMode;
-	private void initStatusMenu(int type, boolean restorePos)
-	{
-		String cap = null;
-		int lastPos = -1;
-		
-		switch (type)
-		{
-		case StatusInfo.TYPE_STATUS: cap = "status"; break;
-		case StatusInfo.TYPE_X_STATUS: cap = "xstatus"; break;
-		}
-		
-		if (statusStrings == null) statusStrings = new TextList(ResourceBundle.getString(cap));
-		if (restorePos) lastPos = statusStrings.getCurrTextIndex();
-		statusStrings.lock();
-		statusStrings.clear();
-		statusStrings.setMode(VirtualList.CURSOR_MODE_DISABLED);
-		JimmUI.setColorScheme(statusStrings, false, -1, true);
-		statusStrings.setCyclingCursor(true);
-		JimmUI.fillStatusesInList(statusStrings, type, StatusInfo.FLAG_HAVE_DESCR, JimmUI.SHOW_STATUSES_DESCR|JimmUI.SHOW_STATUSES_NAME);
-		statusStrings.unlock();
-		
-		statusStrings.addCommandEx(JimmUI.cmdBack, VirtualList.MENU_TYPE_LEFT_BAR);
-		statusStrings.addCommandEx(JimmUI.cmdSelect, VirtualList.MENU_TYPE_RIGHT_BAR);
-		statusStrings.setCommandListener(this);
-		
-		if (restorePos) statusStrings.selectTextByIndex(lastPos);
-		
-		statusStrings.activate(Jimm.display);
-		
-		statusStrMode = type;
-	}
 	
 	/* Show form for adding user */
 	private void showTextBoxForm(String caption, String label, String text, int fieldType)
@@ -1966,9 +1775,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			showSignalingOptions();
 			break;
 			
-		case OPTIONS_AUTOAWAY:
-			showAutoAwayOptions();
-			break;
 
 		//#sijapp cond.if modules_TRAFFIC is "true"#
 		case OPTIONS_TRAFFIC:
@@ -1980,13 +1786,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			showTimezoneOptions();
 			break;
 			
-		case OPTIONS_MY_INFO:
-			JimmUI.requiestUserInfo(Options.getString(Options.OPTION_UIN), "", true
-				//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-				, null
-				//  #sijapp cond.end#
-				);
-			return;
 			
 		case OPTIONS_MANAGE_CL:
 			initOptionsList(TYPE_MCL_OPTIONS);
@@ -2031,13 +1830,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			groupSelector = JimmUI.showGroupSelector("rename_group", this, JimmUI.SHS_TYPE_ALL, -1);
 			return;
 			
-		case OPTIONS_STAT_STR:
-			initStatusMenu(StatusInfo.TYPE_STATUS, false);
-			return;
 			
-		case OPTIONS_XSTAT_STR:
-			initStatusMenu(StatusInfo.TYPE_X_STATUS, false);
-			return;
 			
 		case OPTIONS_TEMPLATES:
 			Templates.showTemplates(null);
@@ -2249,19 +2042,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	}
 //#sijapp cond.end#
 
-	private void showAutoAwayOptions()
-	{
-		chgrUseAutoAway = new ChoiceGroup(ResourceBundle.getString("auto_away"), Choice.MULTIPLE);
-		setChecked(chgrUseAutoAway, "yes", Options.OPTION_USE_AUTOAWAY);
-		tfAutoAwayTime1 = new TextField(ResourceBundle.getString("auto_away_time1"), 
-				Integer.toString(Options.getInt(Options.OPTION_AUTOAWAY_TIME1)), 2, TextField.NUMERIC);
-		tfAutoAwayTime2 = new TextField(ResourceBundle.getString("auto_away_time2"), 
-				Integer.toString(Options.getInt(Options.OPTION_AUTOAWAY_TIME2)), 2, TextField.NUMERIC);
-		
-		optionsForm.append(chgrUseAutoAway);
-		optionsForm.append(tfAutoAwayTime1);
-		optionsForm.append(tfAutoAwayTime2);
-	}
 
 //#sijapp cond.if modules_ANTISPAM="true"#	
 	private void showAntispamOptions()
@@ -2411,8 +2191,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		setChecked(choiceContactList, "show_user_groups", Options.OPTION_USE_GROUPS);
 		setChecked(choiceContactList, "hide_empty", Options.OPTION_CL_HIDE_EMPTY);
 		setChecked(choiceContactList, "hide_offline", Options.OPTION_CL_HIDE_OFFLINE);
-		setChecked(choiceContactList, "show_xstatuses", Options.OPTION_XSTATUSES);
-		setChecked(choiceContactList, "show_clients", Options.OPTION_CL_CLIENTS);
 		setChecked(choiceContactList, "show_deleted_contacts", Options.OPTION_SHOW_DELETED_CONT);
 
 		chrgChat = new ChoiceGroup(ResourceBundle.getString("chat"),
@@ -2614,9 +2392,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			break;
 //#sijapp cond.end#			
 			
-		case OPTIONS_AUTOAWAY:
-			readAutoawayOptions();
-			break;
 
 //#sijapp cond.if modules_TRAFFIC is "true"#
 		case OPTIONS_TRAFFIC:
@@ -2702,16 +2477,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	}
 //#sijapp cond.end#	
 
-	private void readAutoawayOptions()
-	{
-		Options.setBoolean(Options.OPTION_USE_AUTOAWAY, chgrUseAutoAway.isSelected(0));
-		int time1 = Util.strToIntDef(tfAutoAwayTime1.getString(), 5);
-		int time2 = Util.strToIntDef(tfAutoAwayTime2.getString(), 5);
-		if (time1 < 2) time1 = 2;
-		if (time2 <= time1) time2 = time1+1;
-		Options.setInt(Options.OPTION_AUTOAWAY_TIME1, time1);
-		Options.setInt(Options.OPTION_AUTOAWAY_TIME2, time2);
-	}
 
 
 //#sijapp cond.if target!="DEFAULT"#
@@ -2912,17 +2677,12 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		boolean newUseGroups = choiceContactList.isSelected(idx++);
 		boolean newHideEmpty = choiceContactList.isSelected(idx++);
 		boolean newHideOffline = choiceContactList.isSelected(idx++);
-		boolean newShowXStatuses = choiceContactList.isSelected(idx++);
-		boolean newShowClients = choiceContactList.isSelected(idx++);
 		boolean newShowDeletedCont = choiceContactList.isSelected(idx++);
 
 		int newSortMethod = clSortByChoiceGroup.getSelectedIndex();
 		Options.setInt(Options.OPTION_CL_SORT_BY, newSortMethod);
 		Options.setBoolean(Options.OPTION_CL_HIDE_OFFLINE, newHideOffline);
 		Options.setBoolean(Options.OPTION_CL_HIDE_EMPTY, newHideEmpty);
-		//setChecked(choiceContactList, "show_xstatuses", Options.OPTION_XSTATUSES);
-		Options.setBoolean(Options.OPTION_XSTATUSES, newShowXStatuses);
-		Options.setBoolean(Options.OPTION_CL_CLIENTS, newShowClients); 
 		Options.setBoolean(Options.OPTION_SHOW_DELETED_CONT, newShowDeletedCont); 
 
 		idx = 0;
@@ -3061,37 +2821,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	/* Command listener */
 	public void commandAction(Command c, Displayable d)
 	{
-		Jimm.aaUserActivity();
 		
-		if (statusString != null && statusString.isShown())
-		{
-			if (c == JimmUI.cmdCancel) statusStrings.activate(Jimm.display);
-			else if (c == JimmUI.cmdOk)
-			{
-				Options.setStatusString(statusStrMode, statusStrings.getCurrTextIndex(), statusString.getString());
-				Options.saveStatusStringsByType(statusStrMode);
-				initStatusMenu(statusStrMode, true);
-			}
-			statusString = null;
-		}
-		
-		else if (JimmUI.isControlActive(statusStrings))
-		{
-			if (c == JimmUI.cmdBack) initOptionsList(TYPE_TOP_OPTIONS);
-			else if (c == JimmUI.cmdSelect)
-			{
-				StatusInfo statInfo = JimmUI.findStatus(statusStrMode, statusStrings.getCurrTextIndex());
-				if (statInfo == null) return;
-				statusString = new TextBox(statInfo.getText(), Options.getStatusString(statusStrMode, statInfo.getValue()), 512, TextField.ANY);
-				statusString.addCommand(JimmUI.cmdOk);
-				statusString.addCommand(JimmUI.cmdCancel);
-				statusString.setCommandListener(this);
-				Jimm.display.setCurrent(statusString);
-				Jimm.setBkltOn(true);
-			}
-		}
-			
-		else if (JimmUI.isControlActive(groupSelector))
+		if (JimmUI.isControlActive(groupSelector))
 		{
 			if (c == JimmUI.cmdOk)
 			{
@@ -3316,4 +3047,3 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	}
 
 } // end of 'class OptionsForm'
-
