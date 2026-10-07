@@ -18,6 +18,7 @@ from bridge.bridge import Bridge
 from bridge.config import Config
 from bridge.photos import PhotoStore
 from bridge.webserver import PhotoServer
+from tests.test_threegp import FAKE_VIDEO, video_fixture
 
 PORT = 15700
 
@@ -41,12 +42,18 @@ def fake_ffmpeg(directory: str) -> str:
             "#!/bin/sh\n"
             "out=\"\"\n"
             "prev=\"\"\n"
+            "video=0\n"
             "for arg in \"$@\"; do\n"
             "  out=\"$arg\"\n"
             "  prev=\"$prev $arg\"\n"
+            "  [ \"$arg\" = '-c:v' ] && video=1\n"
             "done\n"
             "echo \"$prev\" > \"$0.args\"\n"
-            "printf 'FAKEMEDIA' > \"$out\"\n"
+            "if [ \"$video\" = 1 ]; then\n"
+            "  printf '" + "".join(f"\\{byte:03o}" for byte in video_fixture()) + "' > \"$out\"\n"
+            "else\n"
+            "  printf 'FAKEMEDIA' > \"$out\"\n"
+            "fi\n"
         )
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return path
@@ -79,7 +86,7 @@ async def run_transcoder() -> None:
     assert args[args.index("-ar") + 1] == "8000", "AMR-NB — это 8 кГц"
 
     got = await coder.convert(b"raw video", "video")
-    assert got == b"FAKEMEDIA", got
+    assert got == FAKE_VIDEO, "готовое видео должно пройти удаление блоков, даже если ffmpeg их вернул"
     assert not [n for n in os.listdir(work) if n.startswith(("in-", "out-"))], \
         "временные файлы должны убираться за собой"
 
