@@ -30,6 +30,7 @@ package jimm;
 public class Options {
     public static int[] mediaSize(int key) { return null; }
     public static int getInt(int key) { return 0; }
+    public static int mediaVideoKbps() { return getInt(118); }
     public static long getLong(int key) { return 0; }
     public static String getString(int key) { return "3600"; }
     public static boolean getBoolean(int key) { return key == 149 || key == 128; }

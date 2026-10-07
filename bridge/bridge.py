@@ -236,6 +236,8 @@ class Bridge:
         профиль, а выключатели сетей — в работу."""
         self._reload_roster()
         session = self.oscar.session
+        if self.videos is not None and getattr(session, "device", None) is not None:
+            self.videos.update_spec(self.browser_video_spec())
         wanted = getattr(session, "network_on", None) if session is not None else None
         for name, on in (wanted or {}).items():
             if on != self.active.get(name):
@@ -894,13 +896,15 @@ class Bridge:
         contact = self.storage.contact_by_uin(uin)
         if contact is None:
             return ""
-        spec = VideoSpec(self.cfg.render_ffmpeg, self.cfg.render_video_seconds,
+        path = self.videos.register(uin, attach, contact.title, self.browser_video_spec())
+        return self.web_url(path) if path else ""
+
+    def browser_video_spec(self) -> VideoSpec:
+        return VideoSpec(self.cfg.render_ffmpeg, self.cfg.render_video_seconds,
                          self.cfg.render_timeout, self.cfg.render_video_codec,
                          self.tmm("video_kbps"), self.cfg.render_video_fps,
                          self.tmm("video_width"), self.tmm("video_height"),
                          self.tmm("video_rotate"))
-        path = self.videos.register(uin, attach, contact.title, spec)
-        return self.web_url(path) if path else ""
 
     async def fetch_browser_video(self, uin: int, attach: str) -> bytes | None:
         contact = self.storage.contact_by_uin(uin)

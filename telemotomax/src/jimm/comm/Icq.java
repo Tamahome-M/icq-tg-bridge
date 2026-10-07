@@ -398,7 +398,7 @@ public class Icq implements Runnable
 		n = pair(out, n, MEDIA_PHOTO_KB, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_PHOTO_KB));
 		size = jimm.Options.mediaSize(jimm.Options.OPTION_MEDIA_VIDEO_SIZE);
 		if (size != null) { out[n++] = MEDIA_VIDEO_W; out[n++] = size[0]; out[n++] = MEDIA_VIDEO_H; out[n++] = size[1]; }
-		n = pair(out, n, MEDIA_VIDEO_KBPS, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VIDEO_KBPS));
+		n = pair(out, n, MEDIA_VIDEO_KBPS, jimm.Options.mediaVideoKbps());
 		n = pair(out, n, MEDIA_VIDEO_SEC, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VIDEO_SECONDS));
 		n = pair(out, n, MEDIA_VIDEO_KB, jimm.Options.getInt(jimm.Options.OPTION_MEDIA_VIDEO_KB));
 		n = pair(out, n, MEDIA_VIDEO_ROTATE, jimm.Options.getInt(jimm.Options.OPTION_VIDEO_ROTATE));

@@ -131,6 +131,32 @@ async def run(encoder: Path) -> None:
                     subprocess.run([str(encoder), "-v", "error", "-i", str(output),
                                     "-f", "null", "-"], check=True, timeout=15)
                     print(f"  {label}, {mode}: H.263 + AMR-NB, no fiel/pasp, packets unchanged, decode OK")
+            bridge.oscar.session.profile = BUILTIN["v3"]
+            for width, height in ((128, 96), (176, 144)):
+                for kbps in (16, 24, 32, 48, 64, 96, 120):
+                    bridge.oscar.session.media = {"video_width": width, "video_height": height,
+                                                   "video_kbps": kbps, "video_rotate": False}
+                    attach = f"video:{width * 1000 + kbps}"
+                    path = bridge.video_link(uin, attach).split("http://host:8080", 1)[1]
+                    page = bridge.videos.pages[path.rsplit("/", 1)[1]]
+                    args = page.spec.coder(temp).video_args("in", "out")
+                    assert args[args.index("-b:v") + 1] == f"{kbps}k"
+                    bridge.videos.resolve(path)
+                    await asyncio.gather(*list(page.jobs.values()))
+                    data = bridge.videos.resolve(path + "/0.3gp")[0]
+                    atoms = container_boxes(data)
+                    assert b"fiel" not in atoms and b"pasp" not in atoms
+                    output = directory / f"v3-{width}x{height}-{kbps}.3gp"
+                    output.write_bytes(data)
+                    result = subprocess.run([str(probe), "-v", "error", "-show_streams", "-of", "json", str(output)],
+                                            capture_output=True, check=True, timeout=15)
+                    streams = json.loads(result.stdout)["streams"]
+                    video = next(s for s in streams if s["codec_type"] == "video")
+                    assert video["codec_name"] == "h263" and (video["width"], video["height"]) == (width, height)
+                    assert video["r_frame_rate"] == "15/1", video
+                    subprocess.run([str(encoder), "-v", "error", "-i", str(output), "-f", "null", "-"],
+                                   check=True, timeout=15)
+            print("  V3: all 14 resolution/bitrate choices encoded, dimensions verified, no fiel/pasp, decode OK")
         finally:
             await bridge.photo_server.stop()
             bridge.storage.close()
