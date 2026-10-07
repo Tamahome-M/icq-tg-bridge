@@ -64,11 +64,14 @@ async def run_transcoder() -> None:
     assert f"{render.VIDEO_WIDTH}:{render.VIDEO_HEIGHT}" in " ".join(args), args
     assert args[args.index("-t") + 1] == "30", "ограничение по времени видео"
     assert args[args.index("-b:v") + 1] == "90k", args
-    assert args[args.index("-vf") + 1] == "scale=176:144,fps=15", args
+    assert args[args.index("-vf") + 1] == "scale=176:144,fps=15,setsar=0", args
+    assert args[args.index("-field_order") + 1] == "0", args
     assert args[args.index("-pix_fmt") + 1] == "yuv420p", args
     assert "-maxrate" not in args and "-movflags" not in args, args
     mp4 = render.Transcoder("x", video_codec="mpeg4").video_args("in", "out")
     assert "mpeg4" in mp4 and "mp4v" in mp4 and "h263" not in mp4, mp4
+    assert mp4[mp4.index("-vf") + 1] == "scale=176:144,fps=15", mp4
+    assert "-field_order" not in mp4, mp4
     assert render.Transcoder("x", video_codec="чушь").video_codec == "h263", "неизвестный кодек — h263"
 
     args = coder.audio_args("in.ogg", "out.amr")

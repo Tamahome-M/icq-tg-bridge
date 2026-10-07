@@ -22,7 +22,7 @@ ROUTE = re.compile(r"/v/([A-Za-z0-9_-]{16})(?:/(\d+)(?:-v(\d+))?(\.3gp)?)?(?:/(r
 VIDEO_TAG = re.compile(r"\[(?:видео|видеосообщение)(?: ([^]\n]+))?\]")
 MAX_PAGES = 500
 MAX_SEGMENT = 10000
-ENCODING_VERSION = 3
+ENCODING_VERSION = 4
 
 
 def link_text(text: str, url: str) -> str:

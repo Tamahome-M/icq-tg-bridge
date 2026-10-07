@@ -325,6 +325,12 @@ class Transcoder:
             # convert»). До CIF (352×288) — Level 3.
             codec_args = ["-c:v", "mpeg4", "-profile:v", "0", "-level", "3", "-vtag", "mp4v"]
         scale = f"{rotate}scale={width}:{height},fps={self.video_fps}"
+        if codec == "h263":
+            # V3r открывает тот же H.263/AMR после удаления из 3GP только
+            # fiel и pasp. Не записываем эти необязательные блоки: нулевой
+            # SAR и неизвестный порядок полей отключают их в MOV-мультиплексоре.
+            scale += ",setsar=0"
+            codec_args += ["-field_order", "0"]
         kbps = f"{self.video_kbps}k"
         # -ss перед -i: ffmpeg доматывает по ключевым кадрам, не разбирая
         # всё до нужной секунды, — на длинном ролике это разница в минуты.
