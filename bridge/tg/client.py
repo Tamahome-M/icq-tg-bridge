@@ -13,6 +13,7 @@ from typing import Awaitable, Callable
 from telethon import TelegramClient, events, functions, types, utils
 
 from ..history import HistoryItem, MissedMessage, SentMessage
+from ..mentions import mentions_all, utf16_text
 
 log = logging.getLogger("telegram")
 
@@ -397,7 +398,8 @@ class TelegramSide:
             attach = attachment_of(event.message)
             shown = await self.on_message(peer_id, sender, text,
                                           int(event.message.date.timestamp()), topic_id,
-                                          attach=attach, message_id=getattr(event.message, "id", 0))
+                                          attach=attach, message_id=getattr(event.message, "id", 0),
+                                          mention=self.mentions_me(event.message))
             if self.cfg.mark_read and shown:
                 await event.message.mark_read()
         except Exception:
@@ -838,7 +840,7 @@ class TelegramSide:
                 continue
             sender = "" if private else await self._sender_name(msg, names)
             out.append(MissedMessage(int(msg.date.timestamp()), sender, text, msg.id,
-                                     attachment_of(msg)))
+                                     attachment_of(msg), self.mentions_me(msg)))
         out.reverse()
         return out
 
@@ -851,7 +853,49 @@ class TelegramSide:
                 cache[sender_id] = "?"
         return cache[sender_id]
 
-    async def send(self, peer_id: int, text: str, topic_id: int = 0) -> int | None:
+    def mentions_me(self, message) -> bool:
+        if getattr(message, "out", False):
+            return False
+        # Telegram сам отмечает адресованное нам сообщение. ID/@username
+        # остаются полезны в истории, где отметка упоминания уже прочитана.
+        if getattr(message, "mentioned", False):
+            return True
+        me = getattr(self, "me", None)
+        me_id = getattr(me, "id", 0)
+        usernames = {name.lower() for name in [getattr(me, "username", None)] if name}
+        usernames.update(u.username.lower() for u in getattr(me, "usernames", ()) or ()
+                         if getattr(u, "active", False) and getattr(u, "username", None))
+        text = getattr(message, "message", "") or ""
+        blocked = []
+        for entity in getattr(message, "entities", ()) or ():
+            if isinstance(entity, types.MessageEntityMentionName):
+                if me_id and entity.user_id == me_id:
+                    return True
+                blocked.append((entity.offset, entity.length))
+            elif isinstance(entity, types.MessageEntityMention):
+                name = utf16_text(text, entity.offset, entity.length).lower()
+                if name.startswith("@") and name[1:] in usernames:
+                    return True
+            elif type(entity).__name__ in (
+                    "MessageEntityCode", "MessageEntityPre", "MessageEntityUrl",
+                    "MessageEntityTextUrl", "MessageEntityEmail", "MessageEntityBlockquote"):
+                blocked.append((entity.offset, entity.length))
+        return mentions_all(text, blocked)
+
+    async def quote_text(self, peer_id: int, message_id: int, topic_id: int = 0) -> str | None:
+        message = await self.client.get_messages(peer_id, ids=message_id)
+        if not isinstance(message, types.Message) or message.id != message_id:
+            return None
+        if not message.peer_id or utils.get_peer_id(message.peer_id) != peer_id or message.noforwards:
+            return None
+        chat = await self.client.get_entity(peer_id)
+        if getattr(chat, "noforwards", False):
+            return None
+        if topic_id and (topic_of(message) or GENERAL_TOPIC) != topic_id:
+            return None
+        return describe_message(message) or None
+
+    async def send(self, peer_id: int, text: str, topic_id: int = 0, *, plain: bool = False) -> int | None:
         """Отправляет сообщение и возвращает его номер в Telegram.
 
         Для форума ответ уходит в нужную тему: у Telegram тема — это ответ
@@ -860,7 +904,8 @@ class TelegramSide:
         self._sending[peer_id] = self._sending.get(peer_id, 0) + 1
         try:
             message = await self.client.send_message(peer_id, text,
-                                                     reply_to=reply_target(topic_id))
+                                                     reply_to=reply_target(topic_id),
+                                                     **({"parse_mode": None} if plain else {}))
         finally:
             self._sending[peer_id] -= 1
         message_id = getattr(message, "id", None)

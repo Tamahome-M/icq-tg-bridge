@@ -25,6 +25,7 @@ from types import SimpleNamespace
 from typing import Awaitable, Callable
 
 from ..history import HistoryItem, MissedMessage, SentMessage
+from ..mentions import mentions_all
 from ..tg.client import Dialog, RECENTLY_SECONDS
 
 log = logging.getLogger("max")
@@ -101,7 +102,7 @@ def _seconds(value: int | None) -> int:
 
 
 def _attr(obj, name: str, default=None):
-    value = getattr(obj, name, default)
+    value = obj.get(name, default) if isinstance(obj, dict) else getattr(obj, name, default)
     return default if value is None else value
 
 
@@ -111,7 +112,7 @@ def _enum_value(value) -> str:
 
 def attachment_tag(attach) -> str:
     """Короткая пометка вложения, понятная старому клиенту."""
-    kind = _enum_value(_attr(attach, "type", "")).upper()
+    kind = _enum_value(_attr(attach, "type", _attr(attach, "_type", ""))).upper()
     if kind == "FILE":
         name = _attr(attach, "name", "")
         return f"[файл {name}]" if name else "[файл]"
@@ -636,7 +637,8 @@ class MaxSide:
             attach = (f"{kind}:{_attr(message, 'id', 0)}"
                       if kind in ("photo", "video", "voice", "file") else "")
             shown = await self.on_message(to_peer(chat_id), sender, text, ts, 0, attach=attach,
-                                          message_id=_attr(message, "id", 0))
+                                          message_id=_attr(message, "id", 0),
+                                          mention=not mine and self.mentions_me(message))
             if self.cfg.mark_read and shown and not mine:
                 try:
                     await self.client.read_message(int(message.id), chat_id)
@@ -679,11 +681,55 @@ class MaxSide:
 
     # --- сообщения ------------------------------------------------------
 
-    async def send(self, peer_id: int, text: str, topic_id: int = 0) -> int | None:
+    def mentions_me(self, message) -> bool:
+        if self.me_id and str(_attr(message, "sender", "")) == str(self.me_id):
+            return False
+        blocked = []
+        for element in _attr(message, "elements", []) or []:
+            kind = _enum_value(_attr(element, "type", "")).upper()
+            # entityId сохраняется в дополнительных полях модели PyMax.
+            if kind == "USER_MENTION":
+                entity_id = _attr(element, "entity_id", _attr(element, "entityId", None))
+                if self.me_id and str(entity_id) == str(self.me_id):
+                    return True
+            if kind in ("USER_MENTION", "LINK", "CODE", "MONOSPACED", "QUOTE"):
+                offset = _attr(element, "from_", _attr(element, "from", None))
+                length = _attr(element, "length", None)
+                if isinstance(offset, int) and isinstance(length, int):
+                    blocked.append((offset, length))
+        return mentions_all(_attr(message, "text", ""), blocked)
+
+    async def quote_text(self, peer_id: int, message_id: int, topic_id: int = 0) -> str | None:
+        chat_id = from_peer(peer_id)
+        message = await self.client.get_message(chat_id, message_id)
+        if str(_attr(message, "id", "")) != str(message_id):
+            return None
+        if _attr(message, "chat_id", chat_id) != chat_id:
+            return None
+        text = describe_message(message)
+        link = _attr(message, "link", None)
+        if not text and _enum_value(_attr(link, "type", "")).upper() == "FORWARD":
+            text = describe_message(_attr(link, "message", None))
+        return text or None
+
+    async def send(self, peer_id: int, text: str, topic_id: int = 0, *, plain: bool = False) -> int | None:
         """Отправляет сообщение; возвращает его время в счёте MAX — по нему
         же потом приходит отметка прочтения."""
         chat_id = from_peer(peer_id)
-        message = await self.client.send_message(chat_id, text)
+        if plain:
+            # В PyMax send_message всегда разбирает Markdown (даже экранированный).
+            # Для цитаты передаём исходный текст и пустую разметку напрямую.
+            from pymax.api.messages.payloads import SendMessagePayload, SendMessagePayloadMessage
+            from pymax.api.response import require_payload_model
+            from pymax.protocol import Opcode
+            from pymax.types.domain import Message
+            app = self.client._app
+            payload = SendMessagePayload(chat_id=chat_id, notify=True,
+                message=SendMessagePayloadMessage(text=text, cid=app.api.messages._next_cid(),
+                                                  elements=[], attaches=[]))
+            message = require_payload_model(await app.invoke(Opcode.MSG_SEND, payload.to_payload()), Message)
+        else:
+            message = await self.client.send_message(chat_id, text)
         message_id = int(_attr(message, "id", 0) or 0)
         if message_id:
             self._own_ids[(chat_id, message_id)] = time.time()
@@ -836,7 +882,7 @@ class MaxSide:
             message_id = _attr(msg, "id", 0)
             kind = media_kind(msg)
             attach = f"{kind}:{message_id}" if kind in ("photo", "video", "voice", "file") else ""
-            out.append(MissedMessage(ts, sender, text, message_id, attach))
+            out.append(MissedMessage(ts, sender, text, message_id, attach, self.mentions_me(msg)))
         out.reverse()
         return out
 

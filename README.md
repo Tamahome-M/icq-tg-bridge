@@ -1113,6 +1113,8 @@ INFO    oscar    сессия 91.78.159.171:24529 закрыта: молчани
 .venv/bin/python tests/test_codex.py           # отдельный контакт «Codex»
 .venv/bin/python tests/test_max.py             # сторона MAX
 .venv/bin/python tests/test_express.py         # сторона eXpress: вложения, упоминания, мьют
+.venv/bin/python tests/test_mentions.py        # упоминания Telegram/MAX: мьют, очередь, догрузка
+.venv/bin/python tests/test_cross_quote.py     # пересылка Telegram ↔ MAX с сетью и названием чата
 .venv/bin/python tests/test_discussions.py     # обсуждения канала наследуют его мьют
 .venv/bin/python tests/test_telemotomax.py     # опознание TeleMotoMax
 ```
@@ -1185,7 +1187,7 @@ for t in tests/test_*.py; do .venv/bin/python "$t" || echo "СБОЙ: $t"; done
 | `archive_group` | `Архив` | куда попадают чаты из архива Telegram; пусто — как обычные |
 | `mirror_outgoing` | `false` | показывать на телефоне свои сообщения с других устройств («Я: …») |
 | `show_sender_in_groups` | `true` | подставлять имя автора в групповых чатах |
-| `mentions_through` | `true` | сообщение с упоминанием вас или всех участников приходит в свой чат, даже если тот заглушён (упоминания распознаются в eXpress) |
+| `mentions_through` | `true` | упоминания вас в Telegram, MAX и eXpress приходят в свой чат, даже если тот заглушён; обращение ко всем — штатное в eXpress, отдельный `@all` по правилу моста в Telegram/MAX (вне ссылок, кода и цитат) |
 | `max_message_chars` | `900` | на такие куски режутся длинные сообщения |
 | `allow_delete` | `true` | разрешено ли удалять чат в Telegram по «Удалить» |
 | `allow_delete_revoke` | `true` | разрешено ли удалять переписку у обеих сторон |
