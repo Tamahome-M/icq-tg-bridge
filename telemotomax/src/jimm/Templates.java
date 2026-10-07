@@ -111,7 +111,6 @@ public class Templates implements VirtualListCommands, CommandListener
 
 	public void commandAction(Command c, Displayable d)
 	{
-		Jimm.aaUserActivity();
 		
 		if (c == JimmUI.cmdBack && JimmUI.isControlActive(templateList))
 		{

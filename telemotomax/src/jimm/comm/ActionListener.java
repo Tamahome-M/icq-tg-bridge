@@ -23,6 +23,8 @@
 
 package jimm.comm;
 
+import jimm.util.ResourceBundle;
+
 import java.io.ByteArrayInputStream;
 
 import jimm.ContactList;
@@ -205,8 +207,6 @@ public class ActionListener
 			else if ((snacPacket.getFamily() == SnacPacket.SRV_USERONLINE_FAMILY)
 					&& (snacPacket.getCommand() == SnacPacket.SRV_USERONLINE_COMMAND))
 			{
-				int xStatus = -1;
-				String xStatusMessage = null;
 
 
 				boolean statusChange = true;
@@ -271,21 +271,7 @@ public class ActionListener
 							{
 								System.arraycopy(tlvData, marker1d, biHash, 0, (bart_len < 17) ? bart_len : 0x0010);
 							}
-							else
 							//#sijapp cond.end#
-							if ((bart_id == 0x0002) && (bart_flg == 0x0004))
-							{
-								if (bart_len > 0) {
-									int textLen = (int)Util.getWord(tlvData, marker1d);
-									xStatusMessage = Util.byteArrayToString(tlvData, marker1d+2, textLen, true);
-								}
-								if (xStatusMessage == null) xStatusMessage = new String();
-							}
-							else if ((bart_id == 0x000E) && (bart_flg == 0x0000))
-							{
-								String strData = Util.byteArrayToString(tlvData, marker1d, bart_len, false);
-								xStatus = Icq.detectStandartXStatus(strData);
-							}
 							marker1d += bart_len;
 						}
 					}
@@ -318,10 +304,8 @@ public class ActionListener
 				{
 					byte[] capsArray = Icq.mergeCapabilities(capabilities_old, capabilities_new);
 					Icq.detectUserClientAndParseCaps(item, dwFT1, dwFT2, dwFT3, capsArray, 0, statusChange);
-					if (xStatus == -1)
-						xStatus = Icq.detectXStatus(capsArray);
 				}
-				MainThread.updateContactList(uin, status, xStatus, xStatusMessage, null, null, 0, 0, 0, 0, signon, online, idle, regdate
+				MainThread.updateContactList(uin, status, null, null, 0, 0, 0, 0, signon, online, idle, regdate
 					//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 					, biHash
 					//#sijapp cond.end#
@@ -900,7 +884,7 @@ public class ActionListener
 						
 						if (statInfo.testFlag(StatusInfo.FLAG_HAVE_DESCR))
 						{
-							statusMess = Options.getStatusString(StatusInfo.TYPE_STATUS, currStatus);
+							statusMess = ResourceBundle.getString("status_message_text");
 							statusMess = (statusMess != null) ? Util.replaceStr(statusMess, "%TIME%", Icq.getLastStatusChangeTime()) : "---";
 						}
 

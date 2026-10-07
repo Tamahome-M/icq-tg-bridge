@@ -47,7 +47,6 @@ public class MainThread implements Runnable
 	final static private int TYPE_RESET_CONTACTS      = 10;
 	final static private int TYPE_SHOW_TIME           = 11;
 	final static private int TYPE_ADD_CONTACT         = 12;
-	final static private int TYPE_MINUTE_TASK         = 14;
 	final static private int TYPE_MESS_DELIVERED      = 15;
 	final static private int TYPE_SHOW_STATUS_STR     = 18;
 	final static private int TYPE_BACK_TO_LAST_SCR    = 19;
@@ -160,12 +159,11 @@ public class MainThread implements Runnable
 			break;
 
 		case TYPE_UPDATE_CONTACT_LIST:
-			ContactList.update((String) data[0], getInt(data, 1), getInt(data, 2), (String) data[3],
-					(byte[]) data[4], (byte[]) data[5], getInt(data, 6),
-					getInt(data, 7), getInt(data, 8), getInt(data, 9), getInt(
-							data, 10), getInt(data, 11), getInt(data, 12), getInt(data, 13)
+			ContactList.update((String) data[0], getInt(data, 1),
+					(byte[]) data[2], (byte[]) data[3], getInt(data, 4),
+					getInt(data, 5), getInt(data, 6), getInt(data, 7), getInt(data, 8), getInt(data, 9), getInt(data, 10), getInt(data, 11)
 							//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-							,(byte[]) data[14]
+							,(byte[]) data[12]
 							//  #sijapp cond.end#
 			);
 
@@ -195,9 +193,6 @@ public class MainThread implements Runnable
 			ChatHistory.updateChatIfExists(citem);
 			break;
 			
-		case TYPE_MINUTE_TASK:
-			Jimm.aaNextMinute();
-			break;
 			
 		case TYPE_MESS_DELIVERED:
 			ChatHistory.messageIsDelivered((String)data[0], getInt(data, 1));
@@ -258,7 +253,7 @@ public class MainThread implements Runnable
 //#sijapp cond.end #
 	}
 
-	static public void updateContactList(String uin, int status, int xStatus, String xStatusMessage,
+	static public void updateContactList(String uin, int status,
 			byte[] internalIP, byte[] externalIP, int dcPort, int dcType,
 			int icqProt, int authCookie, int signon, int online, int idle, int regdate
 //#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
@@ -268,27 +263,25 @@ public class MainThread implements Runnable
 	{
 		Object[] arguments;
 //#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-		arguments = new Object[16];
+		arguments = new Object[13];
 //#sijapp cond.else#
-		arguments = new Object[15];
+		arguments = new Object[12];
 //#sijapp cond.end#
 
 		arguments[0] = uin;
 		setInt(arguments, 1, status);
-		setInt(arguments, 2, xStatus);
-		arguments[3] = xStatusMessage;
-		arguments[4] = internalIP;
-		arguments[5] = externalIP;
-		setInt(arguments, 6, dcPort);
-		setInt(arguments, 7, dcType);
-		setInt(arguments, 8, icqProt);
-		setInt(arguments, 9, authCookie);
-		setInt(arguments, 10, signon);
-		setInt(arguments, 11, online);
-		setInt(arguments, 12, idle);
-		setInt(arguments, 13, regdate);
+		arguments[2] = internalIP;
+		arguments[3] = externalIP;
+		setInt(arguments, 4, dcPort);
+		setInt(arguments, 5, dcType);
+		setInt(arguments, 6, icqProt);
+		setInt(arguments, 7, authCookie);
+		setInt(arguments, 8, signon);
+		setInt(arguments, 9, online);
+		setInt(arguments, 10, idle);
+		setInt(arguments, 11, regdate);
 		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-		arguments[14] = biHash;
+		arguments[12] = biHash;
 		//#sijapp cond.end#
 
 		addMainThreadTask(TYPE_UPDATE_CONTACT_LIST, arguments);
@@ -333,10 +326,6 @@ public class MainThread implements Runnable
 		addMainThreadTask(TYPE_ADD_CONTACT, cItem);
 	}
 	
-	static public void minuteTask()
-	{
-		addMainThreadTask(TYPE_MINUTE_TASK);
-	}
 	
 	static public void messageIsDelevered(String uin, int messId)
 	{

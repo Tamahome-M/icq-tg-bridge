@@ -134,29 +134,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	/* Tree object */
 	private static VirtualTree tree;
 
-	/* Images for icons */
-	final public static ImageList cliImages = new ImageList();
-
-	//
 	private static int onlineCounter;
-
-	private static boolean Params[] = new boolean[2];
-
-	/* Initializer */
-	static
-	{
-		try
-		{
-//#sijapp cond.if target="MIDP2" | target="SIEMENS2"#	
-			cliImages.setScale(Options.getInt(Options.OPTION_IMG_SCALE));
-//#sijapp cond.end#
-			cliImages.load("/clicons.png", -1, -1, -1, Jimm.getPhoneVendor() == Device.PHONE_NOKIA);
-		} 
-		catch (Exception e) 
-		{
-			e.printStackTrace();
-		}
-	}
 
 	/* Constructor */
 	public ContactList()
@@ -301,15 +279,10 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		}
 	}
 	
-	static public void showStatusInCaption(int status, int xStatus)
+	static public void showStatusInCaption(int status)
 	{
 		StatusInfo statInfo = JimmUI.findStatus(StatusInfo.TYPE_STATUS, status == -1 ? Icq.getCurrentStatus() : status);
-		StatusInfo xStatInfo = JimmUI.findStatus(StatusInfo.TYPE_X_STATUS, xStatus == -1 ? Options.getInt(Options.OPTION_XSTATUS) : xStatus);
-		
-		tree.setCapImage(new Image[] {
-			statInfo != null ? statInfo.getImage() : null,
-			xStatInfo != null ? xStatInfo.getImage() : null
-		});
+		tree.setCapImage(new Image[] {statInfo != null ? statInfo.getImage() : null});
 	}
 	
 	public void activate()
@@ -331,10 +304,8 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	// Request display of the main menu
 	static public void activateList()
 	{
-		Params[0] = Options.getBoolean(Options.OPTION_CL_CLIENTS);
-		Params[1] = Options.getBoolean(Options.OPTION_XSTATUSES);
 
-		showStatusInCaption(-1, -1);
+		showStatusInCaption(-1);
 		
 		//#sijapp cond.if modules_TRAFFIC is "true" #
 		updateTitle(Traffic.getSessionTraffic());
@@ -1070,7 +1041,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	// Updates the client-side contact list (called when a contact changes status)
 	// DO NOT CALL THIS DIRECTLY FROM OTHER THREAND THAN MAIN!
 	// USE RunnableImpl.updateContactList INSTEAD!
-	static public synchronized void update(String uin, int status, int xStatus, String xStatusMessage,
+	static public synchronized void update(String uin, int status,
 			byte[] internalIP, byte[] externalIP, int dcPort, int dcType,
 			int icqProt, int authCookie, int signon, int online, int idle, int regdate
 			//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
@@ -1089,9 +1060,8 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		}
 
 		long oldStatus = cItem.getIntValue(ContactItem.CONTACTITEM_STATUS);
-		long oldXStatus = cItem.getIntValue(ContactItem.CONTACTITEM_XSTATUS);
 
-		boolean statusChanged = (oldStatus != trueStatus) || (xStatus != oldXStatus);
+		boolean statusChanged = (oldStatus != trueStatus);
 		boolean wasOnline = (oldStatus != STATUS_OFFLINE);
 		boolean nowOnline = (trueStatus != STATUS_OFFLINE);
 
@@ -1108,12 +1078,6 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		// Set Status
 		cItem.setIntValue(ContactItem.CONTACTITEM_STATUS, trueStatus);
 		
-		// Set x-status
-		cItem.setIntValue(ContactItem.CONTACTITEM_XSTATUS, xStatus);
-
-		// Set x-status message
-		cItem.setStringValue (ContactItem.CONTACTITEM_XSTATUSMSG, xStatusMessage);
-
 		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 		// Bridge build: the short update(uin, status) used for "user offline"
 		// passes null here and wiped the icon hash, so the card of an offline
@@ -1152,11 +1116,6 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 				text = (statInfo != null) ? statInfo.getText() : null;
 			}
 			
-			if (xStatus != oldXStatus)
-			{
-				StatusInfo statInfo = JimmUI.findStatus(StatusInfo.TYPE_X_STATUS, xStatus);
-				if (statInfo != null) text = statInfo.getText();
-			}
 			if (text != null) JimmUI.showCapText(curScr, cItem.getStringValue(ContactItem.CONTACTITEM_NAME)+": "+text, TimerTasks.TYPE_FLASH);
 		}
 	}
@@ -1164,7 +1123,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	// Updates the client-side contact list (called when a contact changes status)
 	static public synchronized void update(String uin, int status)
 	{
-		update(uin, status, -1, Options.emptyString, null, null, 0, 0, -1, 0, -1, -1, -1, -1
+		update(uin, status, null, null, 0, 0, -1, 0, -1, -1, -1, -1
 		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 		, null
 		//#sijapp cond.end#
@@ -1779,8 +1738,8 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		ContactListItem item = (ContactListItem) src.getData();
 		dst.text            = item.getText();
 		dst.leftImage       = item.getLeftImage(src.getExpanded());
-		dst.rightImage      = Params[0] ? item.getRightImage() : null;
-		dst.secondLeftImage = Params[1] ? item.getSecondLeftImage() : null;
+		dst.rightImage      = null;
+		dst.secondLeftImage = null;
 		dst.color           = item.getTextColor();
 		dst.fontStyle       = item.getFontStyle();
 	}
@@ -1825,7 +1784,6 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	// Command listener
 	public void commandAction(Command c, Displayable d)
 	{
-		Jimm.aaUserActivity();
 		
 		// Activate main menu
 		if (c == JimmUI.cmdMenu)

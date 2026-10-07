@@ -346,7 +346,6 @@ public class Jimm extends MIDlet
 		JimmUI.startTaskForTimeString();
 		
 		// Start one minute task 
-		new Timer().schedule(new TimerTasks(TimerTasks.TYPE_MINUTE), 60*1000, 60*1000);
 	}
 
 	// Запомнить ошибку так, чтобы она пережила вылет: в журнал «Связь» и в
@@ -517,84 +516,6 @@ public class Jimm extends MIDlet
 	//#sijapp cond.end #
 	
 /* ************************************************************************* */
-	
-	/* Auto away stuff */
-	
-	static public final int AA_MODE_NONE = 0;
-	static public final int AA_MODE_AWAY = 1;
-	static public final int AA_MODE_NA = 2;
-	
-	static private int aaInactivityCounter;
-	static private int aaMode;
-	
-	public static void aaUserActivity()
-	{
-		synchronized (jimm)
-		{
-			aaInactivityCounter = 0;
-			
-			if (Icq.isConnected() && (aaMode != AA_MODE_NONE))
-			{
-				aaMode = AA_MODE_NONE;
-				try { 
-					Icq.setOnlineStatus((int)Options.getLong(Options.OPTION_ONLINE_STATUS), Icq.XSTATUS_CURRENT, false);
-					Icq.setInactiveTime(0x00000000);
-				} catch (Exception e) {}
-				ContactList.showStatusInCaption(-1, -1);
-			}
-		}
-	}
-	
-	public static int aaGetMode()
-	{
-		synchronized (jimm)
-		{
-			return aaMode;
-		}
-	}
-	
-	public static void aaNextMinute()
-	{
-		if ( !Icq.isConnected() || !Options.getBoolean(Options.OPTION_USE_AUTOAWAY)) return;
-		
-		int time1 = Options.getInt(Options.OPTION_AUTOAWAY_TIME1);
-		int time2 = Options.getInt(Options.OPTION_AUTOAWAY_TIME2);
-		
-		synchronized (jimm)
-		{
-			aaInactivityCounter++;
-			switch (aaMode)
-			{
-			case AA_MODE_NONE:
-				int status = (int)Options.getLong(Options.OPTION_ONLINE_STATUS);
-				if ((aaInactivityCounter >= time1) && 
-					(status != ContactList.STATUS_AWAY) && 
-					(status != ContactList.STATUS_NA) &&
-					(status != ContactList.STATUS_DND) &&
-					(status != ContactList.STATUS_OCCUPIED) &&
-					(status != ContactList.STATUS_INVIS_ALL) &&
-					(status != ContactList.STATUS_INVISIBLE))
-				{
-					try {
-						Icq.setOnlineStatus(ContactList.STATUS_AWAY, Icq.XSTATUS_CURRENT, false);
-						Icq.setInactiveTime(time1 * 60);
-					} catch (Exception e) {}
-					ContactList.showStatusInCaption(ContactList.STATUS_AWAY, -1);
-					aaMode = AA_MODE_AWAY;
-				}
-				break;
-				
-			case AA_MODE_AWAY:
-				if (aaInactivityCounter >= time2)
-				{
-					try { Icq.setOnlineStatus(ContactList.STATUS_NA, Icq.XSTATUS_CURRENT, false); } catch (Exception e) {}
-					ContactList.showStatusInCaption(ContactList.STATUS_NA, -1);
-					aaMode = AA_MODE_NA;
-				}
-				break;
-			}
-		}
-	}
 	
 /* ************************************************************************** */
 	

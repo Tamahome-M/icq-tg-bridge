@@ -126,7 +126,7 @@ mkdir -p "$WORK/out" && cp dist/bin/Jimm.jar "$WORK/out/TeleMotoMax.jar" \
 python3 - "$WORK/out/TeleMotoMax.jar" "$WORK/out/TeleMotoMax.jad" <<'PY'
 import os, sys, zipfile
 jar, jad = sys.argv[1], sys.argv[2]
-strip = {"xstatus.png", "micons.png", "clicons.png", "logo.png"}
+strip = {"micons.png", "logo.png"}
 tmp = jar + ".tmp"
 with zipfile.ZipFile(jar) as src, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as dst:
     for item in src.infolist():

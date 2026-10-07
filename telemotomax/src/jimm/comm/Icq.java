@@ -1052,17 +1052,9 @@ public class Icq implements Runnable
 				: ContactList.STATUS_OFFLINE;
 	}
 
-	static public void setInactiveTime(long inactiveTime) throws JimmException
-	{
-		byte[] buf = new byte[4];
-		
-		Util.putDWord(buf, 0, inactiveTime);
-		sendPacket(new SnacPacket(0x0001, 0x0011, 0x0011, new byte[0], buf));
-	}
 
-	public static final int XSTATUS_CURRENT = -10;
 	
-	static public void setOnlineStatus(int status, int xStatus, boolean dcInfo) throws JimmException
+	static public void setOnlineStatus(int status, boolean dcInfo) throws JimmException
 	{
 		ByteArrayOutputStream statBuffer = new ByteArrayOutputStream();
 		ByteArrayOutputStream visBuffer = new ByteArrayOutputStream();
@@ -1126,23 +1118,6 @@ public class Icq implements Runnable
 			Util.writeWord(statBuffer, 0x0000, true);
 		}
 
-		/* xStatus */
-		if (xStatus == XSTATUS_CURRENT) xStatus = Options.getInt(Options.OPTION_XSTATUS);
-		String statDescr = Options.getStatusString(StatusInfo.TYPE_X_STATUS, xStatus);
-		if (statDescr == null) statDescr = Options.emptyString;
-		byte[] szMoodId = Util.stringToByteArray(statDescr, true);
-		Util.writeWord(statBuffer, 0x1D, true); // TLV (0x1D)
-		String message = xStatus != -1 ? ("icqmood" + xStatus) : Options.emptyString;
-		Util.writeWord(statBuffer, 12 + szMoodId.length + message.length(), true); // TLV Length
-		Util.writeWord(statBuffer, 0x0002, true); // Text Status
-		Util.writeByte(statBuffer, 0x04);
-		Util.writeByte(statBuffer, szMoodId.length + 0x04);
-		Util.writeWord(statBuffer, szMoodId.length, true);
-		Util.writeByteArray(statBuffer, szMoodId);
-		Util.writeWord(statBuffer, 0x0000, true);
-		Util.writeWord(statBuffer, 0x000E, true);
-		Util.writeLenAndString(statBuffer, message, false);
-
 		if (statBuffer.size() != 0)
 		{
 			SnacPacket packet = new SnacPacket(SnacPacket.CLI_SETSTATUS_FAMILY,
@@ -1197,8 +1172,6 @@ public class Icq implements Runnable
 			if (Options.getInt(Options.OPTION_TYPING_MODE) > 0) capsStream.write(CAP_MTN);
 			//#sijapp cond.end#
 			
-			int xStatus = Options.getInt(Options.OPTION_XSTATUS);
-			if (xStatus != -1) capsStream.write(XSTATUS_CONSTS, xStatus*16, 16);
 			
 			packet = capsStream.toByteArray();
 			Util.putWord(packet, 2, packet.length-4);
@@ -1281,50 +1254,7 @@ public class Icq implements Runnable
 	private static final byte[] CAP_OLD_TAIL = Util.explodeToBytes("4C,7F,11,D1,82,22,44,45,53,54,00,00", ',', 16);
 
 	
-	private static final byte[] XSTATUS_CONSTS = Util.explodeToBytes(
-		"63,62,73,37,A0,3F,49,FF,80,E5,F7,09,CD,E0,A4,EE,"+ // 00 SHOPPING
-		"5A,58,1E,A1,E5,80,43,0C,A0,6F,61,22,98,B7,E4,C7,"+ // 01 DUCK
-		"83,C9,B7,8E,77,E7,43,78,B2,C5,FB,6C,FC,C3,5B,EC,"+ // 02 TIRED
-		"E6,01,E4,1C,33,73,4B,D1,BC,06,81,1D,6C,32,3D,81,"+ // 03 PARTY
-		"8C,50,DB,AE,81,ED,47,86,AC,CA,16,CC,32,13,C7,B7,"+ // 04 BEER
-		"3F,B0,BD,36,AF,3B,4A,60,9E,EF,CF,19,0F,6A,5A,7F,"+ // 05 THINKING
-		"F8,E8,D7,B2,82,C4,41,42,90,F8,10,C6,CE,0A,89,A6,"+ // 06 EATING
-		"80,53,7D,E2,A4,67,4A,76,B3,54,6D,FD,07,5F,5E,C6,"+ // 07 TV
-		"F1,8A,B5,2E,DC,57,49,1D,99,DC,64,44,50,24,57,AF,"+ // 08 FRIENDS
-		"1B,78,AE,31,FA,0B,4D,38,93,D1,99,7E,EE,AF,B2,18,"+ // 09 COFFEE
-		"61,BE,E0,DD,8B,DD,47,5D,8D,EE,5F,4B,AA,CF,19,A7,"+ // 0A MUSIC
-		"48,8E,14,89,8A,CA,4A,08,82,AA,77,CE,7A,16,52,08,"+ // 0B BUSINESS
-		"10,7A,9A,18,12,32,4D,A4,B6,CD,08,79,DB,78,0F,09,"+ // 0C CAMERA
-		"6F,49,30,98,4F,7C,4A,FF,A2,76,34,A0,3B,CE,AE,A7,"+ // 0D FUNNY
-		"12,92,E5,50,1B,64,4F,66,B2,06,B2,9A,F3,78,E4,8D,"+ // 0E PHONE
-		"D4,A6,11,D0,8F,01,4E,C0,92,23,C5,B6,BE,C6,CC,F0,"+ // 0F GAMES
-		"60,9D,52,F8,A2,9A,49,A6,B2,A0,25,24,C5,E9,D2,60,"+ // 10 COLLEGE
-		"1F,7A,40,71,BF,3B,4E,60,BC,32,4C,57,87,B0,4C,F1,"+ // 11 SICK
-		"78,5E,8C,48,40,D3,4C,65,88,6F,04,CF,3F,3F,43,DF,"+ // 12 SLEEPING
-		"A6,ED,55,7E,6B,F7,44,D4,A5,D4,D2,E7,D9,5C,E8,1F,"+ // 13 SURFING
-		"12,D0,7E,3E,F8,85,48,9E,8E,97,A7,2A,65,51,E5,8D,"+ // 14 INTERNET
-		"BA,74,DB,3E,9E,24,43,4B,87,B6,2F,6B,8D,FE,E5,0F,"+ // 15 ENGINEERING
-		"63,4F,6B,D8,AD,D2,4A,A1,AA,B9,11,5B,C2,6D,05,A1,"+ // 16 TYPING
-		"01,D8,D7,EE,AC,3B,49,2A,A5,8D,D3,D8,77,E6,6B,92,"+ // 17 ANGRY
-		"2C,E0,E4,E5,7C,64,43,70,9C,3A,7A,1C,E8,78,A7,DC,"+ // 18 UNK
-		"10,11,17,C9,A3,B0,40,F9,81,AC,49,E1,59,FB,D5,D4,"+ // 19 PPC
-		"16,0C,60,BB,DD,44,43,F3,91,40,05,0F,00,E6,C0,09,"+ // 1A MOBILE
-		"64,43,C6,AF,22,60,45,17,B5,8C,D7,DF,8E,29,03,52,"+ // 1B MAN
-		"16,F5,B7,6F,A9,D2,40,35,8C,C5,C0,84,70,3C,98,FA,"+ // 1C WC
-		"63,14,36,FF,3F,8A,40,D0,A5,CB,7B,66,E0,51,B3,64,"+ // 1D QUESTION
-		"B7,08,67,F5,38,25,43,27,A1,FF,CF,4C,C1,93,97,97,"+ // 1E WAY
-		"DD,CF,0E,A9,71,95,40,48,A9,C6,41,32,06,D6,F2,80,"+ // 1F HEART
-		"3F,B0,BD,36,AF,3B,4A,60,9E,EF,CF,19,0F,6A,5A,7E,"+ // 20 CIGARETTE
-		"E6,01,E4,1C,33,73,4B,D1,BC,06,81,1D,6C,32,3D,82,"+ // 21 SEX
-		"D4,E2,B0,BA,33,4E,4F,A5,98,D0,11,7D,BF,4D,3C,C8,"+ // 22 SEARCH
-		"00,72,D9,08,4A,D1,43,DD,91,99,6F,02,69,66,02,6F",  // 23 DIARY
-		
-		/*"64,43,c6,af,22,60,45,17,b5,8c,d7,df,8e,29,03,52,"+ // I'm hight (miranda)
-		"63,14,36,ff,3f,8a,40,d0,a5,cb,7b,66,e0,51,b3,64,"+ // To be or not to be? (miranda)
-		"10,11,17,c9,a3,b0,40,f9,81,ac,49,e1,59,fb,d5,d4",  // Cooking (miranda) */
-		',', 16);
 
-	/* Capabilities */
 	public static final int CAPF_NO_INTERNAL     = 0;      // No capability
 	public static final int CAPF_AIM_SERVERRELAY = 1 << 0; // Client unterstands type-2 messages
 	public static final int CAPF_UTF8_INTERNAL   = 1 << 1; // Client unterstands UTF-8 messages
@@ -1429,64 +1359,62 @@ public class Icq implements Runnable
 	public static final byte CLI_RANDQ = 48;
 	
 	private static int[] clientIndexes;
-	private static int[] clientImageIndexes;
 	private static String[] clientNames;
 	
 	private static void initClientIndData()
 	{
 		Vector vInd = new Vector();
-		Vector vImg = new Vector();
 		Vector vNames = new Vector();
-		//                    name                      index              image index
-		initClientIndDataItem("Not detected",           CLI_NONE,          -1, vInd, vImg, vNames);
-		initClientIndDataItem("QIP",                    CLI_QIP,           1,  vInd, vImg, vNames);
-		initClientIndDataItem("Miranda",                CLI_MIRANDA,       2,  vInd, vImg, vNames);
-		initClientIndDataItem("LIcq",                   CLI_LICQ,          26, vInd, vImg, vNames);
-		initClientIndDataItem("Trillian",               CLI_TRILLIAN,      5,  vInd, vImg, vNames);
-		initClientIndDataItem("SIM",                    CLI_SIM,           6,  vInd, vImg, vNames);
-		initClientIndDataItem("Kopete",                 CLI_KOPETE,        7,  vInd, vImg, vNames);
-		initClientIndDataItem("MICQ",                   CLI_MICQ,          -1, vInd, vImg, vNames);
-		initClientIndDataItem("&RQ",                    CLI_ANDRQ,         4,  vInd, vImg, vNames);
-		initClientIndDataItem("IM2",                    CLI_IM2,           29, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ for MAC",            CLI_MACICQ,        23, vInd, vImg, vNames);
-		initClientIndDataItem("AIM",                    CLI_AIM,           -1, vInd, vImg, vNames);
-		initClientIndDataItem("UIM",                    CLI_UIM,           -1, vInd, vImg, vNames);
-		initClientIndDataItem("WebICQ",                 CLI_WEBICQ,        -1, vInd, vImg, vNames);
-		initClientIndDataItem("Gaim",                   CLI_GAIM,          24, vInd, vImg, vNames);
-		initClientIndDataItem("Alicq",                  CLI_ALICQ,         -1, vInd, vImg, vNames);
-		initClientIndDataItem("StrICQ",                 CLI_STRICQ,        -1, vInd, vImg, vNames);
-		initClientIndDataItem("YSM",                    CLI_YSM,           -1, vInd, vImg, vNames);
-		initClientIndDataItem("vICQ",                   CLI_VICQ,          -1, vInd, vImg, vNames);
-		initClientIndDataItem("Libicq2000",             CLI_LIBICQ2000,    11, vInd, vImg, vNames);
-		initClientIndDataItem("Jimm",                   CLI_JIMM,           8, vInd, vImg, vNames);
-		initClientIndDataItem("SmartICQ",               CLI_SMARTICQ,      -1, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ Lite v4",            CLI_ICQLITE4,      18, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ Lite v5",            CLI_ICQLITE5,      19, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ 98",                 CLI_ICQ98,         -1, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ 99",                 CLI_ICQ99,         -1, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ 2001b",              CLI_ICQ2001B,      -1, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ 2002a/2003a",        CLI_ICQ2002A2003A, -1, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ 2000",               CLI_ICQ2000,       -1, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ 2003b",              CLI_ICQ2003B,      20, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ Lite",               CLI_ICQLITE,       17, vInd, vImg, vNames);
-		initClientIndDataItem("Gnome ICQ",              CLI_GNOMEICQ,      25, vInd, vImg, vNames);
-		initClientIndDataItem("Agile Messenger",        CLI_AGILE,         10, vInd, vImg, vNames);
-		initClientIndDataItem("SPAM:)",                 CLI_SPAM,          -1, vInd, vImg, vNames);
-		initClientIndDataItem("CenterICQ",              CLI_CENTERICQ,     -1, vInd, vImg, vNames);
-		initClientIndDataItem("Libicq2000 from Jabber", CLI_LIBICQJABBER,  -1, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ2GO!",                CLI_ICQ2GO,        21, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ for Pocket PC",      CLI_ICQPPC,        -1, vInd, vImg, vNames);
-		initClientIndDataItem("StIcq",                  CLI_STICQ,         9,  vInd, vImg, vNames);
-		initClientIndDataItem("MChat",                  CLI_MCHAT,         22, vInd, vImg, vNames);
-		initClientIndDataItem("QIP Infium",             CLI_QIPINFIUM,     15, vInd, vImg, vNames);
-		initClientIndDataItem("ICQ 6",                  CLI_ICQ6,          16, vInd, vImg, vNames);
-		initClientIndDataItem("QIP Mobile (Symbian)",   CLI_QIPPDASYM,     13, vInd, vImg, vNames);
-		initClientIndDataItem("QIP PDA (Windows)",      CLI_QIPPDAWIN,     14, vInd, vImg, vNames);
-		initClientIndDataItem("IM+",                    CLI_IMPLUS,        30, vInd, vImg, vNames);
-		initClientIndDataItem("Smaper",                 CLI_SMAPER,        31, vInd, vImg, vNames);
-		initClientIndDataItem("D[i]Chat",               CLI_JIMM_DICHAT,   32, vInd, vImg, vNames);
-		initClientIndDataItem("qutIM",                  CLI_QUTIM,         33, vInd, vImg, vNames);
-		initClientIndDataItem("R&Q",                    CLI_RANDQ,         4,  vInd, vImg, vNames);
+		// Client names for the information card (no icon table).
+		initClientIndDataItem("Not detected",           CLI_NONE, vInd, vNames);
+		initClientIndDataItem("QIP",                    CLI_QIP, vInd, vNames);
+		initClientIndDataItem("Miranda",                CLI_MIRANDA, vInd, vNames);
+		initClientIndDataItem("LIcq",                   CLI_LICQ, vInd, vNames);
+		initClientIndDataItem("Trillian",               CLI_TRILLIAN, vInd, vNames);
+		initClientIndDataItem("SIM",                    CLI_SIM, vInd, vNames);
+		initClientIndDataItem("Kopete",                 CLI_KOPETE, vInd, vNames);
+		initClientIndDataItem("MICQ",                   CLI_MICQ, vInd, vNames);
+		initClientIndDataItem("&RQ",                    CLI_ANDRQ, vInd, vNames);
+		initClientIndDataItem("IM2",                    CLI_IM2, vInd, vNames);
+		initClientIndDataItem("ICQ for MAC",            CLI_MACICQ, vInd, vNames);
+		initClientIndDataItem("AIM",                    CLI_AIM, vInd, vNames);
+		initClientIndDataItem("UIM",                    CLI_UIM, vInd, vNames);
+		initClientIndDataItem("WebICQ",                 CLI_WEBICQ, vInd, vNames);
+		initClientIndDataItem("Gaim",                   CLI_GAIM, vInd, vNames);
+		initClientIndDataItem("Alicq",                  CLI_ALICQ, vInd, vNames);
+		initClientIndDataItem("StrICQ",                 CLI_STRICQ, vInd, vNames);
+		initClientIndDataItem("YSM",                    CLI_YSM, vInd, vNames);
+		initClientIndDataItem("vICQ",                   CLI_VICQ, vInd, vNames);
+		initClientIndDataItem("Libicq2000",             CLI_LIBICQ2000, vInd, vNames);
+		initClientIndDataItem("Jimm",                   CLI_JIMM, vInd, vNames);
+		initClientIndDataItem("SmartICQ",               CLI_SMARTICQ, vInd, vNames);
+		initClientIndDataItem("ICQ Lite v4",            CLI_ICQLITE4, vInd, vNames);
+		initClientIndDataItem("ICQ Lite v5",            CLI_ICQLITE5, vInd, vNames);
+		initClientIndDataItem("ICQ 98",                 CLI_ICQ98, vInd, vNames);
+		initClientIndDataItem("ICQ 99",                 CLI_ICQ99, vInd, vNames);
+		initClientIndDataItem("ICQ 2001b",              CLI_ICQ2001B, vInd, vNames);
+		initClientIndDataItem("ICQ 2002a/2003a",        CLI_ICQ2002A2003A, vInd, vNames);
+		initClientIndDataItem("ICQ 2000",               CLI_ICQ2000, vInd, vNames);
+		initClientIndDataItem("ICQ 2003b",              CLI_ICQ2003B, vInd, vNames);
+		initClientIndDataItem("ICQ Lite",               CLI_ICQLITE, vInd, vNames);
+		initClientIndDataItem("Gnome ICQ",              CLI_GNOMEICQ, vInd, vNames);
+		initClientIndDataItem("Agile Messenger",        CLI_AGILE, vInd, vNames);
+		initClientIndDataItem("SPAM:)",                 CLI_SPAM, vInd, vNames);
+		initClientIndDataItem("CenterICQ",              CLI_CENTERICQ, vInd, vNames);
+		initClientIndDataItem("Libicq2000 from Jabber", CLI_LIBICQJABBER, vInd, vNames);
+		initClientIndDataItem("ICQ2GO!",                CLI_ICQ2GO, vInd, vNames);
+		initClientIndDataItem("ICQ for Pocket PC",      CLI_ICQPPC, vInd, vNames);
+		initClientIndDataItem("StIcq",                  CLI_STICQ, vInd, vNames);
+		initClientIndDataItem("MChat",                  CLI_MCHAT, vInd, vNames);
+		initClientIndDataItem("QIP Infium",             CLI_QIPINFIUM, vInd, vNames);
+		initClientIndDataItem("ICQ 6",                  CLI_ICQ6, vInd, vNames);
+		initClientIndDataItem("QIP Mobile (Symbian)",   CLI_QIPPDASYM, vInd, vNames);
+		initClientIndDataItem("QIP PDA (Windows)",      CLI_QIPPDAWIN, vInd, vNames);
+		initClientIndDataItem("IM+",                    CLI_IMPLUS, vInd, vNames);
+		initClientIndDataItem("Smaper",                 CLI_SMAPER, vInd, vNames);
+		initClientIndDataItem("D[i]Chat",               CLI_JIMM_DICHAT, vInd, vNames);
+		initClientIndDataItem("qutIM",                  CLI_QUTIM, vInd, vNames);
+		initClientIndDataItem("R&Q",                    CLI_RANDQ, vInd, vNames);
 		
 		clientNames = new String[vNames.size()];
 		vNames.copyInto(clientNames);
@@ -1494,42 +1422,15 @@ public class Icq implements Runnable
 		clientIndexes = new int[vInd.size()];
 		for (int i = vInd.size()-1; i >= 0; i--) clientIndexes[i] = ((Integer)vInd.elementAt(i)).intValue();
 		
-		clientImageIndexes = new int[vImg.size()];
-		for (int i = vImg.size()-1; i >= 0; i--) clientImageIndexes[i] = ((Integer)vImg.elementAt(i)).intValue();
 	}
 	
-	private static void initClientIndDataItem(String name, int index, int imageIndex, Vector vIndexes, Vector vImg, Vector vNames)
+	private static void initClientIndDataItem(String name, int index, Vector vIndexes, Vector vNames)
 	{
 		vNames.addElement(name);
 		vIndexes.addElement(new Integer(index));
-		vImg.addElement(new Integer(imageIndex-1));
 	}
 	
-	public static int detectStandartXStatus(String data)
-	{
-		int idx = data.indexOf("icqmood");
-		if (idx < 0) return -1;
-		return Util.strToIntDef(data.substring(idx+7), -1);
-	}
 	
-	public static int detectXStatus(byte[] capabilities)
-	{
-		int counter;
-
-		if (capabilities == null)
-			return -1;
-		for (int i = 0; i < capabilities.length; i += 16)
-		{
-			for (int j = 0; j < XSTATUS_CONSTS.length; j += 16)
-			{
-				counter = 0;
-				for (int k = 0; k < 16; k++, counter++) 
-					if (capabilities[i+k] != XSTATUS_CONSTS[j+k]) break;
-				if (counter == 16) return j/16;
-			}
-		}
-		return -1;
-	}
 	
 	public static void detectUserClientAndParseCaps(ContactItem item, int dwFP1, int dwFP2, int dwFP3, byte[] capabilities, int wVersion, boolean statusChange)
 	{
@@ -2075,12 +1976,6 @@ public class Icq implements Runnable
 		return null;
 	}
 	
-	public static int getClientImageID(int cli)
-	{
-		for (int i = clientIndexes.length-1; i >= 0; i--) 
-			if (clientIndexes[i] == cli) return clientImageIndexes[i]; 
-		return -1; 
-	}
 
 	private static String detectClientVersion(byte[] buf1, int cli,
 			int tlvNum)

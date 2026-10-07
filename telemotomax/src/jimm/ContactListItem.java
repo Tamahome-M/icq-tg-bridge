@@ -31,8 +31,6 @@ public interface ContactListItem
 	public abstract boolean equals(Object obj);
 
 	public Image getLeftImage(boolean expanded);
-	public Image getSecondLeftImage();
-	public Image getRightImage();
 
 	public String getText();
 	

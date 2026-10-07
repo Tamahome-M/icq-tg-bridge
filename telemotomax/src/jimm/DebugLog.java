@@ -76,7 +76,6 @@ public class DebugLog
 
 	public void commandAction(Command c, Displayable d)
 	{
-		Jimm.aaUserActivity();
 		if (c == backCommand)
 		{
 			ContactList.activateList();

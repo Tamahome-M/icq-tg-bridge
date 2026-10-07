@@ -479,7 +479,6 @@ public class Emoticons implements VirtualListCommands, CommandListener
 
 	public void commandAction(Command c, Displayable d)
 	{
-		Jimm.aaUserActivity();
 		if (c == cmdOk) select();
 		else if (c == cmdCancel)
 		{

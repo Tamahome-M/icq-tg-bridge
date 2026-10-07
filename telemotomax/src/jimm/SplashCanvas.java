@@ -200,8 +200,6 @@ public class SplashCanvas extends Canvas implements CommandListener
 			t2 = null;
 		}
 		Jimm.display.setCurrent(_this);
-		
-		Jimm.aaUserActivity();
 	}
 
 	static public void addCmd(Command cmd)
@@ -315,6 +313,11 @@ public class SplashCanvas extends Canvas implements CommandListener
 //#sijapp cond.if target="MOTOROLA"#
 		Jimm.display.flashBacklight(1000*Options.getInt(Options.OPTION_LIGHT_TIMEOUT));
 //#sijapp cond.end #		
+		if (!isLocked && cancelByKey && isCancelKey(keyCode))
+		{
+			cancelLastTask();
+			return;
+		}
 		if (isLocked)
 		{
 			if (keyCode == Canvas.KEY_POUND)
@@ -328,6 +331,21 @@ public class SplashCanvas extends Canvas implements CommandListener
 				this.repaint();
 			}
 		}
+	}
+
+	private boolean isCancelKey(int keyCode)
+	{
+		try
+		{
+			String name = getKeyName(keyCode).toLowerCase();
+			if ("soft2".equals(name) || "soft 2".equals(name) || "soft_2".equals(name)
+					|| "softkey 4".equals(name) || "sk1(right)".equals(name)
+					|| name.startsWith("right soft")) return true;
+		}
+		catch (Exception ignore) {}
+		// Те же коды правой софт-клавиши, что в VirtualList; у Motorola -22.
+		return keyCode == -7 || keyCode == -22 || keyCode == 22 || keyCode == 106
+				|| keyCode == -203 || keyCode == 112 || keyCode == 57346;
 	}
 
 	private void tryToUnlock(int keyCode)
@@ -549,15 +567,29 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 	private static TimerTasks lastTimerTask;
 	private static Action lastAction;
+	private static boolean lastTaskCanCancel;
+	private static boolean cancelByKey;
 	
 	public static void resetLastTask()
 	{
+		lastTaskCanCancel = false;
+		cancelByKey = false;
 		if (lastTimerTask != null)
 		{
 			try { lastTimerTask.cancel(); } catch (Exception e) {}
 			lastTimerTask = null;
 			lastAction = null;
 		}
+	}
+
+	private static synchronized void cancelLastTask()
+	{
+		if (isLocked || !lastTaskCanCancel || lastAction == null || lastTimerTask == null
+				|| lastTimerTask.isCanceled() || lastAction.isCompleted() || lastAction.isError()) return;
+		Action action = lastAction;
+		// Сбрасываем до callback: повторное событие не отменит вход второй раз.
+		resetLastTask();
+		action.onEvent(Action.ON_CANCEL);
 	}
 
 	public static void addTimerTask(String captionLngStr, Action action,
@@ -574,16 +606,19 @@ public class SplashCanvas extends Canvas implements CommandListener
 		isLocked = false;
 
 		TimerTasks timerTask = new TimerTasks(action);
+		lastTaskCanCancel = canCancel;
+		cancelByKey = canCancel && "connecting".equals(captionLngStr);
 
 		SplashCanvas._this.removeCommand(SplashCanvas.cancelCommand);
-		if (canCancel)
+		SplashCanvas._this.setCommandListener(null);
+		if (canCancel && !cancelByKey)
 		{
 			SplashCanvas._this.addCommand(SplashCanvas.cancelCommand);
 			SplashCanvas._this.setCommandListener(_this);
 		}
 
 		//  #sijapp cond.if target="MIDP2" | target="MOTOROLA"#
-		SplashCanvas._this.setFullScreenMode(!canCancel);
+		SplashCanvas._this.setFullScreenMode(!canCancel || cancelByKey);
 		//#sijapp cond.end#
 
 		SplashCanvas.setMessage(ResourceBundle.getString(captionLngStr));
@@ -599,6 +634,8 @@ public class SplashCanvas extends Canvas implements CommandListener
 	
 	public static void addTimerTask(Action action)
 	{
+		lastTaskCanCancel = false;
+		cancelByKey = false;
 		TimerTasks timerTask = new TimerTasks(action);
 
 		VirtualList.setMiniProgressBar(true);
@@ -614,11 +651,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 	{
 		if (c == SplashCanvas.cancelCommand)
 		{
-			if (lastAction != null)
-			{
-				lastAction.onEvent(Action.ON_CANCEL);
-				resetLastTask();
-			}
+			cancelLastTask();
 		}
 	}
 }

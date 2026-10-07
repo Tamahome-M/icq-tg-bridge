@@ -38,10 +38,7 @@ public class MainMenu implements CommandListener, JimmScreen
 {
 	private static final int TAG_EXIT = 1;
 	
-	private static final int SELECT_STATUS = 1;
-	private static final int SELECT_XSTATUS = 2;
 	
-	private static int statusSelection = 0;
 
 	private static MainMenu _this;
 
@@ -54,7 +51,6 @@ public class MainMenu implements CommandListener, JimmScreen
 	private static final int MENU_TRAFFIC       = 6;
 	private static final int MENU_KEYLOCK       = 7;
 	private static final int MENU_STATUS        = 8;
-	private static final int MENU_XSTATUS       = 9;
 	private static final int MENU_CLIST_MENU    = 17;   // «Список»: управление и все чаты
 	private static final int MENU_ABOUT         = 10;
 	private static final int MENU_MINIMIZE      = 11;
@@ -74,8 +70,6 @@ public class MainMenu implements CommandListener, JimmScreen
 	/* Form for the adding users dialog */
 	static public Form textBoxForm;
 
-	/* Textbox for  Status messages */
-	static private TextBox statusMessage;
 
 	static
 	{
@@ -103,12 +97,6 @@ public class MainMenu implements CommandListener, JimmScreen
 		return (statInfo != null) ? statInfo.getImage() : null; 
 	}
 
-	static private Image getXStatusImage()
-	{
-		int cursStatus = Options.getInt(Options.OPTION_XSTATUS);
-		StatusInfo statInfo = JimmUI.findStatus(StatusInfo.TYPE_X_STATUS, (int)cursStatus);
-		return (statInfo != null) ? statInfo.getImage() : null; 
-	}
 
 	/* Builds the main menu (visual list) */
 	public static void build()
@@ -135,7 +123,7 @@ public class MainMenu implements CommandListener, JimmScreen
 		}
 		
 		JimmUI.addTextListItem(list, "set_status", getStatusImage(), MENU_STATUS, true, -1, Font.STYLE_PLAIN);
-		// Вместо X-статуса, которого с мостом всё равно нет, — «Список»:
+		// «Список»:
 		// управление контакт-листом и полный список чатов моста.
 		JimmUI.addTextListItem(list, "list_menu", menuIcons.elementAt(24), MENU_CLIST_MENU, true, -1, Font.STYLE_PLAIN);
 		
@@ -200,7 +188,6 @@ public class MainMenu implements CommandListener, JimmScreen
 	/* Activates the main menu */
 	static public void activateMenu()
 	{
-		Jimm.aaUserActivity();
 		MainMenu.build();
 		MainMenu.list.activate(Jimm.display);
 		JimmUI.setLastScreen(_this, true);
@@ -256,24 +243,22 @@ public class MainMenu implements CommandListener, JimmScreen
 
 	//#sijapp cond.end#	
 	
-	private static void initStatusList(String caption, int type, int afterStatus, int showMode)
+	private static void initStatusList()
 	{
-		statusList = new TextList(ResourceBundle.getString(caption));
+		statusList = new TextList(ResourceBundle.getString("set_status"));
 		statusList.setMode(VirtualList.CURSOR_MODE_DISABLED);
 		statusList.setCyclingCursor(true);
 		statusList.lock();
 		JimmUI.setColorScheme(statusList, false, -1, true);
-		JimmUI.fillStatusesInList(statusList, type, StatusInfo.FLAG_IN_MENU, showMode);
+		JimmUI.fillStatusesInList(statusList);
 		statusList.unlock();
-		statusSelection = afterStatus;
 	}
 	
 	/* Command listener */
 	public void commandAction(Command c, Displayable d)
 	{
-		Jimm.aaUserActivity();
 		
-		// Cancel status text selection 
+		// Cancel selection
 		if (c == JimmUI.cmdCancel)
 		{
 			JimmUI.backToLastScreen();
@@ -350,20 +335,8 @@ public class MainMenu implements CommandListener, JimmScreen
 				break;
 
 			case MENU_STATUS: /* Set status */
-			case MENU_XSTATUS: /* Set xstatus */
-				int stValue;
-				
-				if (selectedIndex == MENU_STATUS)
-				{
-					initStatusList("set_status", StatusInfo.TYPE_STATUS, SELECT_STATUS, JimmUI.SHOW_STATUSES_NAME);
-					stValue = (int)Options.getLong(Options.OPTION_ONLINE_STATUS);
-				}
-				else
-				{
-					initStatusList("set_xstatus", StatusInfo.TYPE_X_STATUS, SELECT_XSTATUS, JimmUI.SHOW_STATUSES_DESCR);
-					stValue = Options.getInt(Options.OPTION_XSTATUS);
-				}
-				
+				initStatusList();
+				int stValue = (int)Options.getLong(Options.OPTION_ONLINE_STATUS);
 				MainMenu.statusList.selectTextByIndex(stValue);
 				MainMenu.statusList.setCommandListener(_this);
 				MainMenu.statusList.addCommandEx(JimmUI.cmdBack, VirtualList.MENU_TYPE_LEFT_BAR);
@@ -426,15 +399,7 @@ public class MainMenu implements CommandListener, JimmScreen
 		{
 			userSelectStatus();
 		} 
-		else if ((c == JimmUI.cmdSelect) && (d == statusMessage))
-		{
-			int onlineStatus = statusList.getCurrTextIndex();
-			Options.setStatusString(StatusInfo.TYPE_STATUS, onlineStatus, statusMessage.getString());
-			Options.saveStatusStringsByType(StatusInfo.TYPE_STATUS);
-			setStatus();
-			JimmUI.backToLastScreen();
-			statusList = null;
-		}
+
 	}
 	
 	private static void setStatus()
@@ -446,7 +411,7 @@ public class MainMenu implements CommandListener, JimmScreen
 		{
 			try
 			{
-				Icq.setOnlineStatus(onlineStatus, Icq.XSTATUS_CURRENT, false);
+				Icq.setOnlineStatus(onlineStatus, false);
 			} catch (JimmException e)
 			{
 				JimmException.handleException(e);
@@ -457,53 +422,8 @@ public class MainMenu implements CommandListener, JimmScreen
 	
 	private void userSelectStatus()
 	{
-		switch (statusSelection)
-		{
-		case SELECT_STATUS:
-			int onlineStatus = statusList.getCurrTextIndex();
-			
-			StatusInfo info = JimmUI.findStatus(StatusInfo.TYPE_STATUS, onlineStatus);
-			
-			if (info != null && info.testFlag(StatusInfo.FLAG_HAVE_DESCR))
-			{
-				String statMessage = Options.getStatusString(StatusInfo.TYPE_STATUS, onlineStatus);
-				
-//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA" | target is "SIEMENS2" | target is "RIM"#
-				    statusMessage = new TextBox(info.getText(), statMessage, 255, TextField.ANY | TextField.INITIAL_CAPS_SENTENCE);
-//#sijapp cond.else#
-				    statusMessage = new TextBox(info.getText(), statMessage, 255, TextField.ANY);
-//#sijapp cond.end#
-
-			    statusMessage.addCommand(JimmUI.cmdCancel);
-				statusMessage.addCommand(JimmUI.cmdSelect);
-				statusMessage.setCommandListener(_this);
-				Jimm.display.setCurrent(statusMessage);
-				Jimm.setBkltOn(true);
-				return;
-			}
-			else setStatus();
-			break;
-	
-		case SELECT_XSTATUS:
-			int xStatus = statusList.getCurrTextIndex();
-			if (xStatus == -2) xStatus = -1;
-			Options.setInt(Options.OPTION_XSTATUS, xStatus);
-			if (Icq.isConnected())
-			{
-				try
-				{
-					Icq.sendUserUnfoPacket();
-					Icq.setOnlineStatus (-1, xStatus, false);
-				} catch (JimmException e)
-				{
-					JimmException.handleException(e);
-					if (e.isCritical()) return;
-				}
-			}
-			Options.safeSave();
-			break;
-		}
-		
+		setStatus();
 		JimmUI.backToLastScreen();
+		statusList = null;
 	}
 }

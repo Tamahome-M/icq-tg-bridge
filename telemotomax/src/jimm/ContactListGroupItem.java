@@ -195,15 +195,7 @@ public class ContactListGroupItem implements ContactListItem
 		name = stream.readUTF();
 	}
 	
-	public Image getRightImage()
-	{
-		return null;
-	}
 	
-	public Image getSecondLeftImage()
-	{
-		return null;
-	}
 	
 	public String getSortText()
 	{

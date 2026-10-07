@@ -27,7 +27,6 @@ import javax.microedition.lcdui.Image;
 public class StatusInfo
 {
 	public static final int TYPE_STATUS   = 1;
-	public static final int TYPE_X_STATUS = 2;
 	
 	public static final int FLAG_IN_MENU    = 1 << 0;
 	public static final int FLAG_HAVE_DESCR = 1 << 1;
