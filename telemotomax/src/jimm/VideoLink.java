@@ -42,6 +42,13 @@ public final class VideoLink
 		return start < 0 ? null : text.substring(start + PREFIX.length(), end(text) - 1);
 	}
 
+	/** The browser URL belongs in VideoMenu, ordinary caption links stay visible. */
+	public static String visibleText(String text)
+	{
+		int start = start(text);
+		return start < 0 ? text : text.substring(0, start) + LABEL + text.substring(end(text));
+	}
+
 	public static void open(String url)
 	{
 		try { Jimm.jimm.platformRequest(url); }

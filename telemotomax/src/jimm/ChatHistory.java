@@ -393,9 +393,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA" | target is "SIEMENS2"#
 		else if (c == JimmUI.cmdGotoURL)
 		{
-			MessData md = messAt(textList.getCurrTextIndex());
-			if (md != null && md.videoUrl != null) VideoLink.open(md.videoUrl);
-			else JimmUI.gotoURL(textList.getCurrText(0, false));
+			JimmUI.gotoURL(textList.getCurrText(0, false));
 		}
 		//#sijapp cond.end#
 		
@@ -720,7 +718,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 
 		boolean contains_url = false;
 		//#sijapp cond.if target is "MIDP2" | target is "SIEMENS2" | target is "MOTOROLA"#
-		if (Util.parseMessageForURL(message) != null)
+		if (Util.parseMessageForURL(VideoLink.visibleText(message)) != null)
 		{
 			contains_url = true;
 			if (texOffset == 1)

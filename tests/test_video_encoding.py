@@ -39,6 +39,11 @@ async def run(encoder: Path) -> None:
                                 "sine=frequency=440:sample_rate=44100", "-t", "2", "-c:v",
                                 "mpeg4", "-c:a", "aac", str(incoming)], check=True, timeout=30)
                 source = incoming.read_bytes()
+                reference = directory / "recipe.3gp"
+                subprocess.run([str(encoder), "-y", "-v", "error", "-i", str(incoming),
+                                "-c:v", "h263", "-vf", "scale=176:144,fps=15", "-b:v", "90k",
+                                "-c:a", "libopencore_amrnb", "-b:a", "12.2k", "-ar", "8000",
+                                "-ac", "1", "-f", "3gp", str(reference)], check=True, timeout=30)
                 attach = f"video:{number + 1}"
                 native = await bridge.fetch_video(uin, attach)
                 assert native, "native video conversion failed"
@@ -49,6 +54,7 @@ async def run(encoder: Path) -> None:
                 browser = bridge.videos.resolve(path + "/0.3gp")
                 assert browser, "browser video conversion failed"
                 for mode, data in (("native", native), ("browser", browser[0])):
+                    assert data == reference.read_bytes(), f"{mode}: bytes differ from the requested ffmpeg recipe"
                     output = directory / f"{size}-{mode}.3gp"
                     output.write_bytes(data)
                     result = subprocess.run([str(probe), "-v", "error", "-show_streams",

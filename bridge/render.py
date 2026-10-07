@@ -324,7 +324,7 @@ class Transcoder:
             # таким заголовком плеер телефона отвергал («MediaException:
             # convert»). До CIF (352×288) — Level 3.
             codec_args = ["-c:v", "mpeg4", "-profile:v", "0", "-level", "3", "-vtag", "mp4v"]
-        scale = f"{rotate}scale={width}:{height},fps={self.video_fps},setsar=1"
+        scale = f"{rotate}scale={width}:{height},fps={self.video_fps}"
         kbps = f"{self.video_kbps}k"
         # -ss перед -i: ffmpeg доматывает по ключевым кадрам, не разбирая
         # всё до нужной секунды, — на длинном ролике это разница в минуты.
@@ -335,8 +335,7 @@ class Transcoder:
                 + codec_args
                 + ["-b:v", kbps,
                    "-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1", "-b:a", "12.2k",
-                   # moov в начале: старый плеер не станет искать его в конце файла.
-                   "-movflags", "+faststart", "-f", "3gp", dst])
+                   "-f", "3gp", dst])
 
     def audio_args(self, src: str, dst: str) -> list[str]:
         return [self.ffmpeg, "-y", "-loglevel", "error", "-i", src,

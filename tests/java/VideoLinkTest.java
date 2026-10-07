@@ -19,6 +19,10 @@ public final class VideoLinkTest {
         check(VideoLink.start(message) == message.indexOf("[видео]("), "wrong label position");
         check(message.substring(VideoLink.end(message)).equals(" 2:05\nПодпись :)"),
             "duration or caption was lost");
+        check(VideoLink.visibleText(message).equals("[06.10 12:00] [видео] 2:05\nПодпись :)"),
+            "video page URL must not create a separate Open URL action");
+        check(VideoLink.visibleText(message + " https://example.com").endsWith("https://example.com"),
+            "ordinary caption links must remain available");
         for (String plain : new String[] {null, "обычное сообщение", "[видео 2:05]",
                 "[видео](javascript:alert)", "[видео](/v/token)", "[видео](http://host bad)",
                 "[видео](http://host\n/v/token)", "[видео](http://host"}) {
