@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
 import json
 import logging
@@ -18,7 +19,9 @@ from .render import Transcoder
 
 log = logging.getLogger("video")
 TOKEN = re.compile(r"[A-Za-z0-9_-]{16}\Z")
-ROUTE = re.compile(r"/v/([A-Za-z0-9_-]{16})(?:/(\d+)(?:-v(\d+))?(\.3gp)?)?(?:/(retry))?\Z")
+ROUTE = re.compile(r"/v/(?P<token>[A-Za-z0-9_-]{16})(?:/(?P<segment>\d+)"
+                   r"(?:-v(?P<version>\d+)(?:-(?P<settings>[a-f0-9]{16}))?)?"
+                   r"(?P<asset>\.3gp)?)?(?:/(?P<retry>retry))?\Z")
 VIDEO_TAG = re.compile(r"\[(?:видео|видеосообщение)(?: ([^]\n]+))?\]")
 MAX_PAGES = 500
 MAX_SEGMENT = 10000
@@ -49,6 +52,11 @@ class VideoSpec:
     height: int = 144
     rotate: bool = False
     encoding_version: int = ENCODING_VERSION
+
+    @property
+    def cache_tag(self) -> str:
+        raw = json.dumps(asdict(self), sort_keys=True).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()[:16]
 
     def coder(self, directory: str) -> Transcoder:
         return Transcoder(self.ffmpeg, self.seconds, timeout=self.timeout,
@@ -114,6 +122,30 @@ class VideoStore:
         temporary.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         temporary.replace(path)
 
+    def update_spec(self, spec: VideoSpec) -> None:
+        """Настройки телефона применяются и к уже присланным ссылкам."""
+        self.cleanup()
+        changed = 0
+        for page in self.pages.values():
+            if page.spec == spec:
+                continue
+            old_key = self._key(page.uin, page.attach, page.spec)
+            if self._keys.get(old_key) == page.token:
+                self._keys.pop(old_key)
+            for task in page.jobs.values():
+                task.cancel()
+            page.jobs.clear()
+            page.states.clear()
+            for asset in self.directory.glob(f"{page.token}.*.3gp"):
+                asset.unlink()
+            page.spec = spec
+            self._save(page)
+            self._keys[self._key(page.uin, page.attach, spec)] = page.token
+            changed += 1
+        if changed:
+            log.info("настройки видео с телефона применены к %d ссылкам: %d×%d, %d кбит/с",
+                     changed, spec.width, spec.height, spec.kbps)
+
     def register(self, uin: int, attach: str, title: str, spec: VideoSpec) -> str:
         if not re.fullmatch(r"video:\d+", attach):
             return ""
@@ -159,21 +191,23 @@ class VideoStore:
         if match is None:
             return None
         self.cleanup()
-        page = self.pages.get(match[1])
-        segment = int(match[2] or 0)
+        page = self.pages.get(match["token"])
+        segment = int(match["segment"] or 0)
         if page is None or segment > MAX_SEGMENT or (segment and page.spec.seconds <= 0):
             return None
-        if match[3] and (not match[4] or int(match[3]) != page.spec.encoding_version):
+        if match["version"] and (not match["asset"] or int(match["version"]) != page.spec.encoding_version):
+            return None
+        if match["settings"] and match["settings"] != page.spec.cache_tag:
             return None
         asset = self.directory / f"{page.token}.{segment}.3gp"
-        if match[4]:
+        if match["asset"]:
             if not asset.is_file():
                 return None
             return asset.read_bytes(), "video/3gpp", "вложение"
         state = "ready" if asset.is_file() else page.states.get(segment, "new")
         if page.duration is not None and segment * page.spec.seconds >= page.duration:
             state = "end"
-        if match[5] and state == "error":
+        if match["retry"] and state == "error":
             state = "new"
         if start and state == "new":
             page.states[segment] = "pending"
@@ -185,7 +219,10 @@ class VideoStore:
     async def _prepare(self, page: VideoPage, segment: int) -> None:
         try:
             async with self._gate:
-                coder = page.spec.coder(str(self.directory))
+                if page.jobs.get(segment) is not asyncio.current_task():
+                    return
+                spec = page.spec
+                coder = spec.coder(str(self.directory))
                 if not coder.available:
                     raise ValueError("ffmpeg недоступен")
                 source = self.directory / f"{page.token}.source"
@@ -193,14 +230,14 @@ class VideoStore:
                     raw = source.read_bytes()
                 else:
                     raw = await asyncio.wait_for(self.fetch(page.uin, page.attach),
-                                                 timeout=max(1, page.spec.timeout))
+                                                 timeout=max(1, spec.timeout))
                     if not raw or len(raw) > self.max_source_bytes:
                         raise ValueError("исходное видео не доступно или слишком велико")
                     source.write_bytes(raw)
                 if page.duration is None:
                     page.duration = await coder.probe_duration(raw)
                     self._save(page)
-                start = segment * page.spec.seconds
+                start = segment * spec.seconds
                 if page.duration is not None and start >= page.duration:
                     page.states[segment] = "end"
                     return
@@ -208,20 +245,24 @@ class VideoStore:
                     size = await coder.probe_size(raw)
                     coder.video_rotate = bool(size and size[0] > size[1])
                 data = await coder.convert(raw, "video", start=start)
+                if page.jobs.get(segment) is not asyncio.current_task():
+                    return
                 if not data:
                     raise ValueError("видео не перекодировалось")
                 (self.directory / f"{page.token}.{segment}.3gp").write_bytes(data)
                 page.states[segment] = "ready"
                 log.info("видео %s, часть %d готова: %d КБ", page.attach, segment + 1, len(data) // 1024)
         except asyncio.CancelledError:
-            if self.pages.get(page.token) is page:
+            if self.pages.get(page.token) is page and page.jobs.get(segment) is asyncio.current_task():
                 page.states[segment] = "new"
             raise
         except Exception as exc:
-            page.states[segment] = "error"
-            log.warning("не удалось подготовить %s: %s", page.attach, exc)
+            if page.jobs.get(segment) is asyncio.current_task():
+                page.states[segment] = "error"
+                log.warning("не удалось подготовить %s: %s", page.attach, exc)
         finally:
-            page.jobs.pop(segment, None)
+            if page.jobs.get(segment) is asyncio.current_task():
+                page.jobs.pop(segment, None)
 
     def _html(self, page: VideoPage, segment: int, state: str) -> bytes:
         path = f"/v/{page.token}/{segment}"
@@ -234,7 +275,7 @@ class VideoStore:
             size = (self.directory / f"{page.token}.{segment}.3gp").stat().st_size
             # Новая версия формата получает новый URL: браузер не должен
             # брать прежний 3GP из суточного HTTP-кеша после перекодировки.
-            rows.append(f'<p><a href="{path}-v{page.spec.encoding_version}.3gp">Смотреть видео</a> ({(size + 1023) // 1024} КБ)</p>')
+            rows.append(f'<p><a href="{path}-v{page.spec.encoding_version}-{page.spec.cache_tag}.3gp">Смотреть видео</a> ({(size + 1023) // 1024} КБ)</p>')
             if page.spec.seconds > 0 and (page.duration is None or (segment + 1) * page.spec.seconds < page.duration):
                 rows.append(f'<p><a href="/v/{page.token}/{segment + 1}">Дальше</a></p>')
         elif state == "end":

@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import xml.etree.ElementTree as ET
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,6 +24,10 @@ from bridge.webserver import PhotoServer
 from tests.fake_jimm import FakeJimm
 from tests.test_render import fake_ffmpeg
 from tests.test_threegp import FAKE_VIDEO
+
+
+def asset_url(path: str, spec: VideoSpec, segment: int = 0) -> str:
+    return f"{path}/{segment}-v{spec.encoding_version}-{spec.cache_tag}.3gp"
 
 
 def ffmpeg(directory: Path) -> str:
@@ -87,14 +92,14 @@ async def run_pages() -> None:
             release.set()
             await asyncio.gather(*list(page.jobs.values()))
             code, _, body = await request(port, protected)
-            asset_url = protected + f"/0-v{ENCODING_VERSION}.3gp"
-            assert code == 200 and f'href="{asset_url}"'.encode() in body
+            asset = asset_url(protected, spec)
+            assert code == 200 and f'href="{asset}"'.encode() in body
             assert f'href="{protected}/1"'.encode() in body
             assert "Обновить" not in body.decode()
             assert "&lt;&amp;&gt;" in body.decode()
-            code, head, body = await request(port, asset_url, headers="Range: bytes=1-3\r\n")
+            code, head, body = await request(port, asset, headers="Range: bytes=1-3\r\n")
             assert code == 206 and body == FAKE_VIDEO[1:4]
-            assert "video/3gpp" in head and f'filename="0-v{ENCODING_VERSION}.3gp"' in head
+            assert "video/3gpp" in head and f'filename="{asset.rsplit("/", 1)[1]}"' in head
             assert (await request(port, protected + "/0.3gp"))[2] == FAKE_VIDEO, "старый адрес файла остаётся доступен"
             assert (await request(port, protected + f"/0-v{ENCODING_VERSION - 1}.3gp"))[0] == 404
             await request(port, protected + "/2")
@@ -113,7 +118,7 @@ async def run_pages() -> None:
 
         # Метаданные и готовое видео доступны после перезапуска хранилища.
         restored = VideoStore(str(directory / "videos"), fetch)
-        assert f"/0-v{ENCODING_VERSION}.3gp".encode() in restored.resolve(path, start=False)[0]
+        assert asset_url(path, spec).encode() in restored.resolve(path, start=False)[0]
         assert restored.resolve(path + "/0.3gp")[0] == FAKE_VIDEO
         metadata = directory / "videos" / f"{page.token}.json"
         # И последние форматы с fiel/pasp (v3/v4), и старые записи без версии
@@ -133,7 +138,7 @@ async def run_pages() -> None:
             legacy.resolve(path)
             await asyncio.gather(*list(legacy.pages[page.token].jobs.values()))
             assert legacy.resolve(path + "/0.3gp")[0] == FAKE_VIDEO
-            assert f"/0-v{ENCODING_VERSION}.3gp".encode() in legacy.resolve(path)[0]
+            assert asset_url(path, spec).encode() in legacy.resolve(path)[0]
             assert legacy.resolve(path + "/0-v4.3gp") is None, "прежний адрес файла не должен отдавать кеш браузера"
             assert len(calls) == 1, "смена формата не должна повторно скачивать исходник"
             await legacy.stop()
@@ -165,7 +170,7 @@ async def run_retry_and_cancel() -> None:
         good = True
         store.resolve(path + "/0/retry")
         await asyncio.gather(*list(page.jobs.values()))
-        assert f"/0-v{ENCODING_VERSION}.3gp".encode() in store.resolve(path)[0]
+        assert asset_url(path, store.pages[page.token].spec).encode() in store.resolve(path)[0]
 
         # Остановка сервера должна завершить ffmpeg, а не оставить процесс.
         slow = directory / "ffmpeg-slow"
@@ -190,6 +195,110 @@ async def run_retry_and_cancel() -> None:
         assert not list((directory / "videos").glob("in-*"))
         assert not list((directory / "videos").glob("out-*"))
     print("  повтор и остановка: ок (ошибка, явный повтор, отмена ffmpeg)")
+
+
+async def run_media_settings() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        directory = Path(temp)
+        cfg = Config(tg_api_id=1, tg_api_hash="x", db=":memory:", render_enabled=False,
+                     oscar_host="127.0.0.1", oscar_port=0, oscar_uin="100500", oscar_password="test",
+                     photos_dir=str(directory / "photos"), render_dir=str(directory / "render"),
+                     render_ffmpeg=ffmpeg(directory), photos_public_url="http://host:8080")
+        bridge = Bridge(cfg)
+        uin = bridge.storage.uin_for_peer(555, kind="user", title="Чат", group_name="Личные")
+        fetches = []
+
+        async def video_bytes(*args):
+            fetches.append(args)
+            return b"original-video"
+
+        bridge.side_for = lambda _: SimpleNamespace(video_bytes=video_bytes)
+        await bridge.oscar.start()
+        port = bridge.oscar._server.sockets[0].getsockname()[1]
+        cfg.oscar_port = port
+        client = FakeJimm("127.0.0.1", port, "100500", "test")
+        client.tmm_version = (0, 82)
+        client.device = ("j2me", 176, 182, 781)
+        client.media = {"video_mode": 3, "video_width": 176, "video_height": 144, "video_kbps": 96}
+        try:
+            await client.connect()
+            await client.bos(await client.login_md5_jimm())
+            await client.drain_for(0.1)
+            url = bridge.video_link(uin, "video:42")
+            path = url.split("http://host:8080", 1)[1]
+            page = bridge.videos.pages[path.rsplit("/", 1)[1]]
+            bridge.videos.resolve(path)
+            await asyncio.gather(*list(page.jobs.values()))
+            previous_asset = asset_url(path, page.spec)
+            assert bridge.videos.resolve(previous_asset)[0] == FAKE_VIDEO
+            for width, height in ((128, 96), (176, 144)):
+                for kbps in (16, 24, 32, 48, 64, 96, 120):
+                    await client.client_info(*client.device, media={"video_mode": 3,
+                        "video_width": width, "video_height": height, "video_kbps": kbps})
+                    for _ in range(100):
+                        if page.spec.width == width and page.spec.height == height and page.spec.kbps == kbps:
+                            break
+                        await asyncio.sleep(0.005)
+                    assert (page.spec.width, page.spec.height, page.spec.kbps) == (width, height, kbps)
+                    assert bridge.video_link(uin, "video:42") == url, "уже присланная ссылка должна сохраниться"
+                    current_asset = asset_url(path, page.spec)
+                    assert current_asset != previous_asset, "смена параметров должна обходить HTTP-кеш"
+                    assert bridge.videos.resolve(previous_asset) is None, "старый файл не должен выдаваться с новыми настройками"
+                    bridge.videos.resolve(path)
+                    await asyncio.gather(*list(page.jobs.values()))
+                    assert bridge.videos.resolve(current_asset)[0] == FAKE_VIDEO
+                    args = Path(cfg.render_ffmpeg + ".args").read_text()
+                    assert f"scale={width}:{height},fps=15,setsar=0" in args, args
+                    assert f"-b:v {kbps}k" in args, args
+                    assert "-c:v h263" in args, args
+                    previous_asset = current_asset
+            assert len(fetches) == 1, "смена настроек не должна скачивать исходник снова"
+            # Сохранённые настройки ссылки работают после отключения телефона
+            # и перезапуска веб-хранилища, даже без текущей OSCAR-сессии.
+            restored = VideoStore(str(directory / "photos/videos"), bridge.fetch_browser_video)
+            assert (restored.pages[page.token].spec.width, restored.pages[page.token].spec.kbps) == (176, 120)
+            assert restored.resolve(previous_asset)[0] == FAKE_VIDEO
+        finally:
+            await client.close()
+            await bridge.oscar.stop()
+            await bridge.photo_server.stop()
+            bridge.storage.close()
+    print("  Медиа V3: 2 размера × 7 битрейтов, обновление прежних ссылок, новый HTTP-кеш, исходник сохранён")
+
+
+async def run_settings_during_prepare() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        directory = Path(temp)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def fetch(*_):
+            entered.set()
+            await release.wait()
+            return b"original-video"
+
+        store = VideoStore(str(directory / "videos"), fetch)
+        spec = VideoSpec(ffmpeg(directory), width=176, height=144, kbps=96)
+        path = store.register(1, "video:1", "Чат", spec)
+        page = store.pages[path.split("/")[-1]]
+        store.resolve(path)
+        await entered.wait()
+        old_job = page.jobs[0]
+        changed = VideoSpec(spec.ffmpeg, width=128, height=96, kbps=24)
+        store.update_spec(changed)
+        store.resolve(path)
+        new_job = page.jobs[0]
+        await asyncio.gather(old_job, return_exceptions=True)
+        assert old_job.cancelled()
+        assert page.jobs.get(0) is new_job, "старый finally не должен удалить новую задачу"
+        assert page.states[0] == "pending", "отмена старой задачи не должна сбросить новое состояние"
+        release.set()
+        await new_job
+        assert store.resolve(asset_url(path, changed))[0] == FAKE_VIDEO
+        args = Path(spec.ffmpeg + ".args").read_text()
+        assert "scale=128:96" in args and "-b:v 24k" in args
+        await store.stop()
+    print("  смена Медиа во время подготовки: прежняя задача отменена, новый результат сохранён")
 
 
 async def run_delivery() -> None:
@@ -289,6 +398,8 @@ async def run_delivery() -> None:
 async def main() -> None:
     await run_pages()
     await run_retry_and_cancel()
+    await run_media_settings()
+    await run_settings_during_prepare()
     await run_delivery()
     print("ВИДЕО ПО КЛИКУ ПРОВЕРЕНЫ")
 

@@ -221,15 +221,54 @@ public class Options
 	public static final int OPTION_MAX_ROSTER_LIMIT     = 94;    // чатов MAX в списке: 65535 — все, 0 — как в мосте
 	public static final int OPTION_EXPRESS_ROSTER_LIMIT = 127;   // чатов eXpress в списке: 65535 — все, 0 — как в мосте
 
+//#sijapp cond.if modules_CAMERA="true"#
+	static final String[] MEDIA_VIDEO_SIZES = { "176x144", "144x176", "240x180", "320x240", "240x320", "480x640", "640x480" };
+	static final int[] MEDIA_VIDEO_KBPS = { 32, 48, 64, 96, 128, 192, 256, 384 };
+//#sijapp cond.else#
+	static final String[] MEDIA_VIDEO_SIZES = { "128x96", "176x144" };
+	static final int[] MEDIA_VIDEO_KBPS = { 16, 24, 32, 48, 64, 96, 120 };
+//#sijapp cond.end#
+
 	/** «WxH» из настройки «Медиа» как {w, h}; пусто или негодно — null. */
 	public static int[] mediaSize(int key)
 	{
 		String s = Options.getString(key);
 		if (s == null) return null;
+		if (key == OPTION_MEDIA_VIDEO_SIZE)
+		{
+			boolean supported = false;
+			for (int i = 0; i < MEDIA_VIDEO_SIZES.length; i++)
+				if (MEDIA_VIDEO_SIZES[i].equals(s)) supported = true;
+			if (!supported)
+			{
+				// Старое значение RMS не должно обходить новый список размеров.
+				Options.setString(key, "");
+				return null;
+			}
+		}
 		int x = s.indexOf('x');
 		if (x <= 0) return null;
 		try { return new int[] { Integer.parseInt(s.substring(0, x)), Integer.parseInt(s.substring(x + 1)) }; }
 		catch (Exception e) { return null; }
+	}
+
+	public static int mediaVideoKbps()
+	{
+		int current = Options.getInt(OPTION_MEDIA_VIDEO_KBPS);
+//#sijapp cond.if modules_CAMERA="true"#
+//#sijapp cond.else#
+		if (current > 0)
+		{
+			int closest = MEDIA_VIDEO_KBPS[0];
+			for (int i = 1; i < MEDIA_VIDEO_KBPS.length; i++)
+				if (Math.abs(MEDIA_VIDEO_KBPS[i] - current) < Math.abs(closest - current))
+					closest = MEDIA_VIDEO_KBPS[i];
+			// Например, 128 из прежней V3-сборки становится 120.
+			Options.setInt(OPTION_MEDIA_VIDEO_KBPS, closest);
+			current = closest;
+		}
+//#sijapp cond.end#
+		return current;
 	}
 	// TeleMotoMax: раз выключили цветной текст сообщений у тех, кто обновился
 	// со старой сборки (в новых установках он и так выключен).
@@ -1096,10 +1135,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private TextField mediaMemKb;
 	// Значения списков «Медиа»; первый пункт каждого — «как в профиле моста».
 	private static final String[] MEDIA_PHOTO_SIZES = { "176x176", "176x220", "240x320", "320x240", "480x640", "640x480" };
-	private static final String[] MEDIA_VIDEO_SIZES = { "176x144", "144x176", "240x180", "320x240", "240x320", "480x640", "640x480" };
+	private static final String[] MEDIA_VIDEO_SIZES = Options.MEDIA_VIDEO_SIZES;
+	private static final int[] MEDIA_VIDEO_KBPS = Options.MEDIA_VIDEO_KBPS;
 	private static final int[] MEDIA_QUALITIES = { 40, 50, 60, 70, 80, 90, 95 };
 	private static final int[] MEDIA_PHOTO_KBS = { 20, 40, 60, 100, 150, 250 };
-	private static final int[] MEDIA_VIDEO_KBPS = { 32, 48, 64, 96, 128, 192, 256, 384 };
 	private static final int[] MEDIA_VIDEO_SECS = { 5, 10, 15, 20, 30, 60, 120, 180, 300 };
 	// Предел размера ролика: клип целиком лежит в куче телефона, и не одной
 	// копией — на V3 32 КБ кончались OutOfMemoryError.
@@ -2758,7 +2797,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		mediaPhotoQuality = mediaChoice("media_photo_quality", MEDIA_QUALITIES, Options.getInt(Options.OPTION_MEDIA_PHOTO_QUALITY), false);
 		mediaPhotoKb = mediaChoice("media_photo_kb", MEDIA_PHOTO_KBS, Options.getInt(Options.OPTION_MEDIA_PHOTO_KB), false);
 		mediaVideoSize = mediaChoice("media_video_size", MEDIA_VIDEO_SIZES, Options.getString(Options.OPTION_MEDIA_VIDEO_SIZE));
-		mediaVideoKbps = mediaChoice("media_video_kbps", MEDIA_VIDEO_KBPS, Options.getInt(Options.OPTION_MEDIA_VIDEO_KBPS), false);
+		mediaVideoKbps = mediaChoice("media_video_kbps", MEDIA_VIDEO_KBPS, Options.mediaVideoKbps(), false);
 		mediaVideoSeconds = mediaChoice("media_video_seconds", MEDIA_VIDEO_SECS, Options.getInt(Options.OPTION_MEDIA_VIDEO_SECONDS), false);
 		videoRotateChoice = new ChoiceGroup(ResourceBundle.getString("video_rotate"), Choice.EXCLUSIVE);
 		videoRotateChoice.append(ResourceBundle.getString("video_rotate_auto"), null);
