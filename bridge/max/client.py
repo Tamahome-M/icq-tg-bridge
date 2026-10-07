@@ -822,12 +822,17 @@ class MaxSide:
                 info["username"] = link
         return info
 
-    async def _fetch(self, chat_id: int, limit: int) -> list:
+    async def _fetch(self, chat_id: int, limit: int, *, interactive: bool) -> list:
         try:
-            messages = await self.client.fetch_history(chat_id, backward=limit)
+            # Открытая пользователем история — interactive. Иначе MAX
+            # расходует квоту фоновых запросов и отвергает следующую пачку.
+            messages = await self.client.fetch_history(chat_id, backward=limit, interactive=interactive)
         except Exception as exc:
             log.warning("MAX: история чата %s не получена: %s", chat_id, exc)
-            return []
+            # Ошибка должна дойти до вызывающего кода: пустой список
+            # означал бы, что чат действительно пуст, и телефон показывал
+            # «Сообщений нет» вместо ошибки загрузки.
+            raise
         messages = [m for m in messages or [] if _attr(m, "id", None) is not None]
         messages.sort(key=lambda m: -_seconds(_attr(m, "time", 0)))   # новые первыми
         return messages
@@ -849,7 +854,7 @@ class MaxSide:
         kind = self._kind(chat) if chat is not None else "chat"
         chat_name = await self._chat_title(chat, kind) if chat is not None else str(chat_id)
         items: list[HistoryItem] = []
-        for msg in await self._fetch(chat_id, min(count or cap, cap)):
+        for msg in await self._fetch(chat_id, min(count or cap, cap), interactive=True):
             when = dt.datetime.fromtimestamp(_seconds(_attr(msg, "time", 0)), dt.timezone.utc)
             if since is not None and when < since:
                 break
@@ -868,7 +873,7 @@ class MaxSide:
         chat = await self._chat(chat_id)
         private = chat is not None and self._kind(chat) == "user"
         out: list[MissedMessage] = []
-        for msg in await self._fetch(chat_id, cap):
+        for msg in await self._fetch(chat_id, cap, interactive=False):
             ts = _seconds(_attr(msg, "time", 0))
             if ts < since_ts:
                 break
@@ -894,7 +899,7 @@ class MaxSide:
         kind = self._kind(chat) if chat is not None else "chat"
         chat_name = await self._chat_title(chat, kind) if chat is not None else str(chat_id)
         out: list[dict] = []
-        for msg in await self._fetch(chat_id, min(count or cap, cap)):
+        for msg in await self._fetch(chat_id, min(count or cap, cap), interactive=True):
             when = dt.datetime.fromtimestamp(_seconds(_attr(msg, "time", 0)), dt.timezone.utc)
             if since is not None and when < since:
                 break
@@ -932,7 +937,7 @@ class MaxSide:
                           topic_id: int = 0) -> list[tuple[bytes, str]]:
         chat_id = from_peer(peer_id)
         out: list[tuple[bytes, str]] = []
-        for msg in await self._fetch(chat_id, 200):
+        for msg in await self._fetch(chat_id, 200, interactive=True):
             if len(out) >= count:
                 break
             if media_kind(msg) != "photo":

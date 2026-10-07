@@ -18,6 +18,7 @@ from typing import Awaitable, Callable
 
 from ..access import AccessControl
 from ..db import Contact, Storage
+from ..history import HistoryLoadError
 from .. import profiles
 from ..videos import link_text
 from . import blocks
@@ -222,8 +223,11 @@ class Session:
         log.debug("-> SNAC %s, %d байт", snac_name(family, subtype), len(data))
         return await self.send_flap(2, snac(family, subtype, data, flags, request_id))
 
-    async def send_error(self, family: int, code: int, request_id: int) -> None:
-        await self.send_snac(family, 0x0001, struct.pack(">H", code), request_id=request_id)
+    async def send_error(self, family: int, code: int, request_id: int, message: str = "") -> None:
+        data = struct.pack(">H", code)
+        if message:
+            data += tlv(C.TLV_TMM_ERROR_TEXT, message[:240].encode("utf-8"))
+        await self.send_snac(family, 0x0001, data, request_id=request_id)
 
     # --- цикл чтения ----------------------------------------------------
 
@@ -1576,9 +1580,13 @@ class Session:
             count = struct.unpack(">H", token[:2])[0] if len(token) >= 2 else 0
             offset = struct.unpack(">H", token[2:4])[0] if len(token) >= 4 else 0
             paged = len(token) >= 5 and token[4] == 1
-            got = await self.server.history_text(int(target), count, offset)
+            try:
+                got = await self.server.history_text(int(target), count, offset)
+            except HistoryLoadError as exc:
+                await self.send_error(C.SSBI, 0x0001, s.request_id, str(exc))
+                return
             if got is None:
-                await self.send_error(C.SSBI, 0x0001, s.request_id)
+                await self.send_error(C.SSBI, 0x0001, s.request_id, "История недоступна")
                 return
             rows, more = got
             rows = [(self.video_link_text(int(target), row[0], row[1]), *row[1:]) for row in rows]
@@ -1976,9 +1984,16 @@ class OscarServer:
             return None
         try:
             return await self.fetch_history(uin, count, offset)
-        except Exception:
+        except Exception as exc:
             log.exception("история для %s не собралась", self.name_of(uin))
-            return None
+            if getattr(exc, "error", None) == "too.many.requests":
+                message = "Слишком много запросов истории. Повторите позже."
+            elif isinstance(getattr(exc, "seconds", None), int) and exc.seconds > 0:
+                message = f"Слишком много запросов истории. Повторите через {exc.seconds} с."
+            else:
+                reason = getattr(exc, "localized_message", None) or getattr(exc, "title", None)
+                message = "Не получилось загрузить историю" + (f": {reason}" if reason else "")
+            raise HistoryLoadError(message) from exc
 
     async def video(self, token: bytes, rotate: str = "auto", segment: int = 0) -> bytes | None:
         """Ролик по токену вложения — перекодированный под телефон, или None.

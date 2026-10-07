@@ -255,12 +255,30 @@ public class ResourceBundle {
         offset = away.index(bytes([0x27, 0x11])) + 4 + 45
         away[offset:offset+2] = struct.pack("<H", 1000)
         (directory / "status.bin").write_bytes(message(bytes(away)))
+        # Use the real server error builder; the actual BART action and history
+        # viewer must deliver its UTF-8 reason instead of an empty history page.
+        import asyncio
+        from bridge.oscar.server import Session
+        async def history_error():
+            session = object.__new__(Session)
+            async def capture(family, subtype, data=b"", **kwargs):
+                (directory / "history-error.bin").write_bytes(data)
+            session.send_snac = capture
+            await session.send_error(0x10, 1, 77, "Слишком много запросов истории. Повторите позже.")
+        asyncio.run(history_error())
+        history_rows = [("[07.10 23:19] Сергей: первое", "", False, 0, 10001),
+                        ("[07.10 23:19] Сергей: второе", "", False, 0, 10002)]
+        (directory / "history-page.bin").write_bytes(b"\xff\x01" + blocks.history_records(
+            history_rows, 4096, lambda _: None, threads=True, quotes=True))
         subprocess.run([str(work / "jdk/bin/javac"), "-encoding", "UTF-8", "-cp", classpath,
-                        "-d", str(directory), *sources, str(root / "tests/java/ClientUiTest.java"), str(root / "tests/java/NativeQuoteTest.java")], check=True)
+                        "-d", str(directory), *sources, str(root / "tests/java/ClientUiTest.java"),
+                        str(root / "tests/java/NativeQuoteTest.java"), str(root / "tests/java/HistoryErrorTest.java")], check=True)
         subprocess.run([str(work / "jdk/bin/java"), "-cp", str(directory) + os.pathsep + classpath,
                         "ClientUiTest", str(directory)], check=True, timeout=30)
         subprocess.run([str(work / "jdk/bin/java"), "-cp", str(directory) + os.pathsep + classpath,
                         "NativeQuoteTest"], check=True, timeout=30)
+        subprocess.run([str(work / "jdk/bin/java"), "-cp", str(directory) + os.pathsep + classpath,
+                        "HistoryErrorTest", str(directory)], check=True, timeout=30)
 
 
 if __name__ == "__main__":

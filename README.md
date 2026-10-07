@@ -1112,6 +1112,7 @@ INFO    oscar    сессия 91.78.159.171:24529 закрыта: молчани
 .venv/bin/python tests/test_assistant.py       # контакт «Claude»
 .venv/bin/python tests/test_codex.py           # отдельный контакт «Codex»
 .venv/bin/python tests/test_max.py             # сторона MAX
+.venv/bin/python tests/test_max_history.py     # MAX: ручная история, квота фоновых запросов и ошибки
 .venv/bin/python tests/test_express.py         # сторона eXpress: вложения, упоминания, мьют
 .venv/bin/python tests/test_mentions.py        # упоминания Telegram/MAX: мьют, очередь, догрузка
 .venv/bin/python tests/test_cross_quote.py     # пересылка Telegram ↔ MAX с сетью и названием чата

@@ -1626,7 +1626,12 @@ class Bridge:
             return
 
         count = min(count, self.cfg.photos_per_request)
-        photos = await self.side_for(contact.peer_id).last_photos(contact.peer_id, count, contact.topic_id)
+        try:
+            photos = await self.side_for(contact.peer_id).last_photos(contact.peer_id, count, contact.topic_id)
+        except Exception:
+            log.exception("не удалось получить фотографии чата %r", contact.title)
+            await self.reply(contact, "Не получилось загрузить фотографии")
+            return
         if not photos:
             await self.reply(contact, "Фотографий в этом чате нет")
             return

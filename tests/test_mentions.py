@@ -96,7 +96,7 @@ class MaxClient:
     async def get_chat(self, chat): return NS(id=chat, type="CHAT", title="MAX группа")
     async def get_user(self, user): return NS(names=[NS(name="Автор")])
     def get_cached_user(self, user): return None
-    async def fetch_history(self, chat, backward): return self.messages[-backward:]
+    async def fetch_history(self, chat, backward, *, interactive=False): return self.messages[-backward:]
 
 
 class Phone:

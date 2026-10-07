@@ -78,6 +78,7 @@ SSBI_QUOTE = 0x0009         # destination + source UIN + native ID
 SSBI_QUOTE_ACK = 0x000A     # status byte + UTF-8 error; same request_id
 TLV_TMM_MESSAGE_REF = 0x9002
 TLV_TMM_ATTACH = 0x9001
+TLV_TMM_ERROR_TEXT = 0x9003      # UTF-8 пояснение ошибки истории, TeleMotoMax 0.86+
 ATTACH_PHOTO = 0x01
 ATTACH_VIDEO = 0x02          # превью видео: картинка, как фото, только кадр
 ATTACH_VOICE = 0x03          # голосовое: картинки нет, только «Прослушать»
