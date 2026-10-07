@@ -187,7 +187,7 @@ async def run_side() -> None:
     typing: list = []
     reads: list = []
 
-    async def on_message(peer, sender, text, ts, topic, attach="", message_id=0):
+    async def on_message(peer, sender, text, ts, topic, attach="", message_id=0, mention=False):
         got.append((peer, sender, text, ts, topic))
         return True
 

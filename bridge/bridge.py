@@ -1376,17 +1376,44 @@ class Bridge:
         source = self.storage.contact_by_uin(source_uin)
         if not target or not source or not self.quote_supported(source_uin) or not self.quote_supported(target_uin):
             return "Цитирование доступно в чатах Telegram и MAX."
-        if is_max_peer(target.peer_id) != is_max_peer(source.peer_id):
-            return "Цитирование доступно только внутри одной сети."
-        side = self.max if is_max_peer(source.peer_id) else self.telegram
-        network = "max" if is_max_peer(source.peer_id) else "telegram"
-        if side is None or not self.active.get(network, False):
+        source_network = "max" if is_max_peer(source.peer_id) else "telegram"
+        target_network = "max" if is_max_peer(target.peer_id) else "telegram"
+        source_side = self.max if source_network == "max" else self.telegram
+        target_side = self.max if target_network == "max" else self.telegram
+        if (source_side is None or target_side is None or
+                not self.active.get(source_network, False) or not self.active.get(target_network, False)):
             return "Сеть выключена. Включите её в настройках."
         try:
-            sent = await side.quote(target.peer_id, source.peer_id, message_id, target.topic_id)
+            if source_network == target_network:
+                sent = await source_side.quote(target.peer_id, source.peer_id, message_id, target.topic_id)
+            else:
+                text = await source_side.quote_text(source.peer_id, message_id, source.topic_id)
+                if not text:
+                    return "Исходное сообщение недоступно: оно удалено или пересылка запрещена."
+                network_name = "MAX" if source_network == "max" else "Telegram"
+                header = f"Цитировано из {network_name}, чат «{source.title}»:\n"
+                # Заголовок тоже занимает место. Режем по границам символов,
+                # считая UTF-16, чтобы эмодзи не превысили лимит сети.
+                remaining = text
+                sent = None
+                capacity = max(1, 4000 - len(header.encode("utf-16-le")) // 2)
+                while remaining:
+                    size = units = 0
+                    for char in remaining:
+                        width = 2 if ord(char) > 0xFFFF else 1
+                        if units + width > capacity and size:
+                            break
+                        units += width
+                        size += 1
+                    sent = await target_side.send(target.peer_id, header + remaining[:size],
+                                                  target.topic_id, plain=True)
+                    if not sent:
+                        break
+                    remaining = remaining[size:]
             if not sent:
                 return "Сообщение не удалось процитировать. Возможно, оно удалено или пересылка запрещена."
-            log.info("цитирование %s из %s в %s: %s", message_id, source.title, target.title, network)
+            log.info("цитирование %s из %s в %s: %s → %s", message_id, source.title, target.title,
+                     source_network, target_network)
             return ""
         except errors.FloodWaitError as exc:
             return f"Цитирование: Telegram просит подождать {exc.seconds} с."

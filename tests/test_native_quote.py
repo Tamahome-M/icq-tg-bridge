@@ -25,6 +25,7 @@ BIG_ID = 2**63 + 12345
 class Network:
     def __init__(self): self.calls = []
     async def quote(self, *args): self.calls.append(args); return 99
+    async def quote_text(self, *args): return None
 
 async def run():
     with tempfile.TemporaryDirectory() as work:
@@ -51,6 +52,7 @@ async def run():
         assert telegram.calls == [(-100333, -100111, 123, 77)]
         assert not await bridge.on_phone_quote(md, ms, BIG_ID)
         assert maximum.calls == [(to_peer(20),to_peer(10),BIG_ID,0)]
+        # Cross-network quote cannot send when the source message is unavailable.
         assert await bridge.on_phone_quote(md, src, 123) and len(maximum.calls)==1
         assert await bridge.on_phone_quote(dst, ex, 123) and len(telegram.calls)==1
         assert not bridge.quote_supported(ex)
