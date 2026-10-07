@@ -27,6 +27,9 @@ package jimm;
 public class MainThread {
  public static java.util.Vector messages=new java.util.Vector();
  public static void addMessageSerially(Object message){messages.addElement(message);}
+ public static String refUin; public static int refId; public static byte[] ref;
+ public static void setMessageRef(String uin,int id,byte[] value){refUin=uin;refId=id;ref=value;}
+ public static void nativeQuoteResult(jimm.NativeQuote action,String error){action.showResult(error);}
  public static void resetContactsOffline(){}
 }
 """
@@ -79,9 +82,23 @@ STUBS["javax/microedition/lcdui/Display.java"] = """
 package javax.microedition.lcdui;
 public class Display {
  private Displayable current;
+ public Displayable returnTo;
+ public void setCurrent(Alert a,Displayable d){current=a;returnTo=d;}
  public void setCurrent(Displayable d){current=d;} public Displayable getCurrent(){return current;}
  public boolean flashBacklight(int n){return true;} public int numAlphaLevels(){return 256;}
 }
+"""
+STUBS["javax/microedition/lcdui/Alert.java"] = """
+package javax.microedition.lcdui;
+public class Alert extends Displayable {
+ public static final int FOREVER=-2;public String text; public AlertType type;
+ public Alert(String title,String text,Image image,AlertType type){this.text=text;this.type=type;}
+ public void setTimeout(int n){}
+}
+"""
+STUBS["javax/microedition/lcdui/AlertType.java"] = """
+package javax.microedition.lcdui;
+public class AlertType {public static final AlertType INFO=new AlertType(),ERROR=new AlertType(),WARNING=new AlertType();}
 """
 STUBS["javax/microedition/lcdui/Font.java"] = """
 package javax.microedition.lcdui;
@@ -110,6 +127,7 @@ public interface Device {void setBackLightOnTime(boolean b,int n);}
 STUBS["DrawControls/VirtualList.java"] = BASE["DrawControls/VirtualList.java"].replace(
     "public class VirtualList extends Displayable {", "public class VirtualList extends Displayable {\n"
     " public static final int CURSOR_MODE_DISABLED=0;\n"
+    " public void setTopItem(int n){}\n"
     " public static void touch(){} public static void setMiniProgressBar(boolean b){}\n"
     " public static void setMpbPercent(int n){} public void setCyclingCursor(boolean b){}\n"
     " public void removeAllCommands(){commands.removeAllElements();}\n"
@@ -127,6 +145,7 @@ import javax.microedition.lcdui.*;
 public class JimmUI {
  public static final Command cmdBack=new Command("Back",2,1),cmdSelect=new Command("Select",4,1),
  cmdMenu=new Command("Menu",1,1),cmdCancel=new Command("Cancel",3,1),cmdList=new Command("List",1,1);
+ public static void addMessageText(TextList l,String s,int color,int index){l.labels.addElement(s);}
  public static int returned;
  public static void setColorScheme(VirtualList l,boolean a,int b,boolean c){}
  public static void backToLastScreen(){returned++;jimm.Jimm.display.setCurrent(null);}
@@ -229,16 +248,19 @@ public class ResourceBundle {
         def message(body, extra=b""):
             return cookie + struct.pack(">H", 2) + sender + tlv(5, body) + extra
         (directory / "plain.bin").write_bytes(message(blocks.channel2_message(cookie, "Привет"),
-                                                     tlv(0x9001, bytes([2]) + token)))
-        (directory / "url.bin").write_bytes(message(blocks.channel2_message(cookie, "[видео]", "http://bridge.example/v/token")))
+                                                     tlv(0x9001, bytes([2]) + token)+tlv(0x9002, (2**63+12345).to_bytes(8,"big"))))
+        (directory / "url.bin").write_bytes(message(blocks.channel2_message(cookie, "[видео]", "http://bridge.example/v/token"),tlv(0x9002,(44).to_bytes(8,"big"))))
+        (directory / "own.bin").write_bytes(cookie+bytes([7])+b"1000070"+(2**63+12345).to_bytes(8,"big"))
         away = bytearray(blocks.channel2_message(cookie, ""))
         offset = away.index(bytes([0x27, 0x11])) + 4 + 45
         away[offset:offset+2] = struct.pack("<H", 1000)
         (directory / "status.bin").write_bytes(message(bytes(away)))
         subprocess.run([str(work / "jdk/bin/javac"), "-encoding", "UTF-8", "-cp", classpath,
-                        "-d", str(directory), *sources, str(root / "tests/java/ClientUiTest.java")], check=True)
+                        "-d", str(directory), *sources, str(root / "tests/java/ClientUiTest.java"), str(root / "tests/java/NativeQuoteTest.java")], check=True)
         subprocess.run([str(work / "jdk/bin/java"), "-cp", str(directory) + os.pathsep + classpath,
                         "ClientUiTest", str(directory)], check=True, timeout=30)
+        subprocess.run([str(work / "jdk/bin/java"), "-cp", str(directory) + os.pathsep + classpath,
+                        "NativeQuoteTest"], check=True, timeout=30)
 
 
 if __name__ == "__main__":

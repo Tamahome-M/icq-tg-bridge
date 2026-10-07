@@ -104,7 +104,8 @@ class Bridge:
                                  self.send_video_note, self.on_phone_profile,
                                  self.fetch_file, self.send_document,
                                  self.chat_list, self.open_chat, self.group_paths,
-                                 video_link=self.video_link)
+                                 video_link=self.video_link, on_quote=self.on_phone_quote,
+                                 quote_supported=self.quote_supported)
         # Любую сеть можно выключить с телефона (настройки сетей в
         # TeleMotoMax): выбор запоминается в базе и действует и после
         # перезапуска, пока телефон не пришлёт другой.
@@ -527,7 +528,7 @@ class Bridge:
         там телефон должен молчать, и заглушённые в Telegram чаты — они
         придержаны как раз из-за мьюта, и снимать его возврат в сеть не должен.
         """
-        rows = self.storage.take_held()
+        rows = self.storage.take_held(with_source=True)
         if not rows:
             return
         if not policy.releases(self.mode):
@@ -537,14 +538,14 @@ class Bridge:
 
         cutoff = time.time() - self.cfg.busy_hold_minutes * 60
         delivered = 0
-        for uin, text, ts in rows:
+        for uin, text, ts, message_id, attach in rows:
             if ts < cutoff:
                 continue
             contact = self.storage.contact_by_uin(uin)
             if (self.mode != policy.ALL and contact is not None
                     and contact.muted):
                 continue
-            await self.oscar.deliver(uin, text, ts=ts)
+            await self.oscar.deliver(uin, text, ts=ts, source_message_id=message_id, attach=attach)
             delivered += 1
         log.info("после «занят» доставлено %d из %d придержанных (свежее %d минут)",
                  delivered, len(rows), self.cfg.busy_hold_minutes)
@@ -915,7 +916,7 @@ class Bridge:
             contact.peer_id, int(ident), self.cfg.render_source_max_mb * 1024 * 1024)
 
     async def fetch_history(self, uin: int, count: int,
-                            offset: int = 0) -> tuple[list[tuple[str, str, bool]], bool] | None:
+                            offset: int = 0) -> tuple[list[tuple[str, str, bool, int, int]], bool] | None:
         """История чата для TeleMotoMax — то же, что !last, но не в переписку,
         а на отдельный экран. Каждое сообщение — строка и вложение
         («photo:<номер>» или пусто), чтобы фото из истории тоже открывались.
@@ -941,7 +942,7 @@ class Bridge:
         start = max(0, end - count)
         more = start > 0
         items = items[start:end]
-        out: list[tuple[str, str, bool, int]] = []
+        out: list[tuple[str, str, bool, int, int]] = []
         for i in items:
             line = f"[{i.when.astimezone():%d.%m %H:%M}] {i.who}: {i.text}"
             if self.cfg.emoji_to_text:
@@ -949,7 +950,7 @@ class Bridge:
             has_picture = i.kind in ("photo", "video", "voice", "file") and i.msg_id
             thread_uin = await self._thread_uin(contact, i.thread) if i.thread else 0
             out.append((line, f"{i.kind}:{i.msg_id}" if has_picture else "", i.who == "Я",
-                        thread_uin))
+                        thread_uin, i.msg_id if self.quote_supported(uin) else 0))
         log.info("история «%s» для TeleMotoMax: %d сообщений%s, с фото %d%s",
                  contact.title, len(items),
                  f" (пропущено свежих {offset})" if offset else "",
@@ -1173,7 +1174,7 @@ class Bridge:
             level = logging.INFO if self.cfg.log_filtered else logging.DEBUG
             if policy.holds(self.mode):
                 self.storage.hold(uin, text, ts or int(time.time()),
-                                  self.cfg.offline_queue_per_chat)
+                                  self.cfg.offline_queue_per_chat, message_id, attach)
                 log.log(level, "из %s: %s — придержано до смены статуса (%s)", net, name, why)
             else:
                 log.log(level, "из %s: %s — не доставляю (%s)", net, name, why)
@@ -1365,6 +1366,33 @@ class Bridge:
             log.info("телефон %s в чате «%s»", "печатает" if active else "перестал печатать",
                      contact.title)
             await self.side_for(contact.peer_id).set_typing(contact.peer_id, active)
+
+    def quote_supported(self, uin: int) -> bool:
+        contact = self.storage.contact_by_uin(uin)
+        return bool(contact and contact.peer_id not in BOT_PEERS and not is_express_peer(contact.peer_id))
+
+    async def on_phone_quote(self, target_uin: int, source_uin: int, message_id: int) -> str:
+        target = self.storage.contact_by_uin(target_uin)
+        source = self.storage.contact_by_uin(source_uin)
+        if not target or not source or not self.quote_supported(source_uin) or not self.quote_supported(target_uin):
+            return "Цитирование доступно в чатах Telegram и MAX."
+        if is_max_peer(target.peer_id) != is_max_peer(source.peer_id):
+            return "Цитирование доступно только внутри одной сети."
+        side = self.max if is_max_peer(source.peer_id) else self.telegram
+        network = "max" if is_max_peer(source.peer_id) else "telegram"
+        if side is None or not self.active.get(network, False):
+            return "Сеть выключена. Включите её в настройках."
+        try:
+            sent = await side.quote(target.peer_id, source.peer_id, message_id, target.topic_id)
+            if not sent:
+                return "Сообщение не удалось процитировать. Возможно, оно удалено или пересылка запрещена."
+            log.info("цитирование %s из %s в %s: %s", message_id, source.title, target.title, network)
+            return ""
+        except errors.FloodWaitError as exc:
+            return f"Цитирование: Telegram просит подождать {exc.seconds} с."
+        except Exception:
+            log.exception("не удалось процитировать %s из %s в %s", message_id, source.title, target.title)
+            return "Сообщение не удалось процитировать. Возможно, оно удалено или пересылка запрещена."
 
     async def on_phone_message(self, uin: int, text: str) -> int | None:
         """Возвращает номер отправленного сообщения в Telegram либо None."""

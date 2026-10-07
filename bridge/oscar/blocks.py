@@ -57,25 +57,36 @@ def icon_reply(uin: int, icon_hash: bytes, image: bytes,
             + struct.pack(">H", len(image)) + image)
 
 
+def message_ref(message_id: int | str) -> bytes:
+    """An opaque unsigned 64-bit network ID; the phone never casts it to int."""
+    try:
+        value = int(message_id)
+    except (TypeError, ValueError):
+        return b""
+    return value.to_bytes(8, "big") if 0 < value < 2**64 else b""
+
+
 def history_records(rows: list[tuple], max_bytes: int, token_for,
-                    threads: bool = False) -> bytes:
+                    threads: bool = False, quotes: bool = False) -> bytes:
     """Записи истории для TeleMotoMax: длина текста (2 байта), UTF-8, флаг
     и, если бит 1 флага взведён, 16-байтный токен вложения; бит 2 —
     это видео (превью и ролик), бит 3 — голосовое, оба разом (0x07) —
     документ, бит 4 — сообщение наше (клиент красит его как исходящее),
     без них — фото. Бит 5 (0x10) — под сообщением есть обсуждение, и за
     токеном идёт его UIN (4 байта); клиент моложе 0.74 этот бит не
-    разберёт, ему threads=False. Не влезает — теряем самое старое (записи
+    разберёт, ему threads=False. Бит 0x20 добавляет 8-байтный ID исходного
+    сообщения для цитирования (клиент 0.85+, quotes=True). Не влезает — теряем самое старое (записи
     идут от старых к новым)."""
     encoded: list[bytes] = []
     for row in rows:
         text, attach = row[0], row[1]
         mine = bool(row[2]) if len(row) > 2 else False
         thread_uin = int(row[3]) if len(row) > 3 and threads else 0
+        ref = message_ref(row[4]) if quotes and len(row) > 4 else b""
         raw = text.encode("utf-8")[:4000]
         token = token_for(attach) if attach else None
         rec = struct.pack(">H", len(raw)) + raw
-        mark = (0x08 if mine else 0) | (0x10 if thread_uin else 0)
+        mark = (0x08 if mine else 0) | (0x10 if thread_uin else 0) | (0x20 if ref else 0)
         if token:
             flag = 0x01
             if attach.startswith("video:"):
@@ -89,6 +100,7 @@ def history_records(rows: list[tuple], max_bytes: int, token_for,
             rec += bytes([mark])
         if thread_uin:
             rec += struct.pack(">I", thread_uin)
+        rec += ref
         encoded.append(rec)
     while encoded and sum(len(r) for r in encoded) > max_bytes:
         encoded.pop(0)

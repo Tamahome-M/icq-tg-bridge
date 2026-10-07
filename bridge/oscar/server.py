@@ -22,7 +22,7 @@ from .. import profiles
 from ..videos import link_text
 from . import blocks
 from . import const as C
-from .proto import (Reader, Snac, flap, pstr8, pstr16, roast_password, snac,
+from .proto import (ProtocolError, Reader, Snac, flap, pstr8, pstr16, roast_password, snac,
                     tlv, tlv_u16, tlv_u32)
 
 log = logging.getLogger("oscar")
@@ -538,7 +538,7 @@ class Session:
         background = {
             (C.ICBM, C.ICBM_SEND), (C.ICBM, C.ICBM_CLIENT_EVENT),
             (C.SSI, C.SSI_ADD), (C.SSI, C.SSI_DELETE), (C.SSI, C.SSI_REMOVE_ME),
-            (C.ICQ, 0x0002), (C.SSBI, C.SSBI_ICQ_REQ),
+            (C.ICQ, 0x0002), (C.SSBI, C.SSBI_ICQ_REQ), (C.SSBI, C.SSBI_QUOTE),
         }
         handler = {
             (C.OSERVICE, C.CLI_VERSIONS): self.on_versions,
@@ -551,6 +551,7 @@ class Session:
             (C.BUDDY, C.BUDDY_RIGHTS_REQ): self.on_buddy_rights,
             (C.ICBM, C.ICBM_PARAM_REQ): self.on_icbm_params,
             (C.ICBM, C.ICBM_SEND): self.on_icbm_send,
+            (C.SSBI, C.SSBI_QUOTE): self.on_quote,
             (C.ICBM, C.ICBM_CLIENT_ACK): self.on_icbm_client_ack,
             (C.ICBM, C.ICBM_CLIENT_EVENT): self.on_icbm_typing,
             (C.OSERVICE, C.SERVICE_REQUEST): self.on_service_request,
@@ -1048,6 +1049,8 @@ class Session:
         for row_id, sender, text, ts, _url, attach in rows:
             if self.closed:
                 return
+            if self.quote_enabled(sender) and self.server.storage.pending_message_id(row_id):
+                continue  # normal ICBM delivery carries the reference after the offline batch
             if attach and self.extended:
                 # Офлайн-сообщение вложение не несёт — такое пусть уйдёт
                 # обычным потоком после пачки, со всеми расширениями.
@@ -1147,6 +1150,10 @@ class Session:
                  self.server.name_of(target), len(text), channel, cookie[:4].hex())
         log.debug("от телефона → %s: %s", self.server.name_of(target), text[:300])
         sent_id = await self.server.on_outgoing(int(target), text)
+        ref = blocks.message_ref(getattr(sent_id, "message_id", 0))
+        if ref and self.quote_enabled(int(target)):
+            await self.send_snac(C.ICBM, C.TMM_MESSAGE_REF,
+                                 cookie + pstr8(target.encode("ascii")) + ref)
         if not sent_id or not tlvs.has(0x0003):
             return
 
@@ -1158,6 +1165,52 @@ class Session:
             self.server.remember_sent(int(target), sent_id, cookie, channel)
         else:
             await self.send_ack(cookie, channel, int(target))
+
+    def quote_enabled(self, uin: int) -> bool:
+        owner = self.server.session if self.service_only else self
+        return (owner is not None and (owner.tmm_version or (0, 0)) >= (0, 85)
+                and self.server.on_quote is not None and self.server.quote_supported(uin))
+
+    async def on_quote(self, s: Snac) -> None:
+        if self.service_only or (self.tmm_version or (0, 0)) < (0, 85) or self.server.on_quote is None:
+            await self.send_error(C.SSBI, 1, s.request_id)
+            return
+        try:
+            reader = s.reader()
+            target, source = reader.pstr8().decode("ascii"), reader.pstr8().decode("ascii")
+            message_id = int.from_bytes(reader.read(8), "big")
+            if reader.left or not target.isdigit() or not source.isdigit() or not message_id:
+                raise ValueError("invalid quote request")
+        except (ProtocolError, ValueError, UnicodeError, IndexError):
+            await self.send_error(C.SSBI, 1, s.request_id)
+            return
+        # A repeated request after a delayed response must not forward twice.
+        key = (s.request_id, target, source, message_id)
+        results = getattr(self, "quote_results", None)
+        if results is None:
+            self.quote_results = results = {}
+        if key not in results:
+            future = asyncio.get_running_loop().create_future()
+            results[key] = future  # store before await, including simultaneous duplicate requests
+            try:
+                error = await self.server.on_quote(int(target), int(source), message_id)
+            except asyncio.CancelledError:
+                future.cancel()
+                raise
+            except Exception:
+                log.exception("не удалось процитировать %s в %s", source, target)
+                error = "Не удалось процитировать сообщение."
+            future.set_result(error)
+            if len(results) > 32:
+                for old_key in list(results):
+                    if old_key != key and results[old_key].done():
+                        del results[old_key]
+                        if len(results) <= 32:
+                            break
+        error = await asyncio.shield(results[key])
+        await self.send_snac(C.SSBI, C.SSBI_QUOTE_ACK,
+                             bytes([1 if error else 0]) + error.encode("utf-8")[:1000],
+                             request_id=s.request_id)
 
     async def send_ack(self, cookie: bytes, channel: int, uin: int) -> None:
         await self.send_snac(C.ICBM, C.ICBM_ACK,
@@ -1182,7 +1235,8 @@ class Session:
         return link_text(text, url) if url else text
 
     async def deliver(self, uin: int, text: str, wait_ack: bool = False,
-                      row_id: int | None = None, url: str = "", attach: str = "") -> bool:
+                      row_id: int | None = None, url: str = "", attach: str = "",
+                      message_id: int | str = 0) -> bool:
         """Отправляет текст телефону. True — кадры ушли в сокет.
 
         В режиме подтверждений сообщение уходит расширенным форматом (канал 2),
@@ -1203,6 +1257,8 @@ class Session:
         # Вложение — только расширенному клиенту: TLV после тела сообщения с
         # токеном, по которому он потом попросит снимок. Обычному Jimm
         # ничего не добавляем — он получит пометку [фото] в тексте, как и было.
+        ref = blocks.message_ref(message_id or (self.server.storage.pending_message_id(row_id) if row_id else 0)) if self.quote_enabled(uin) else b""
+        ref_tlv = tlv(C.TLV_TMM_MESSAGE_REF, ref) if ref else b""
         extra = b""
         if attach and self.extended:
             token = self.server.register_attachment(uin, attach)
@@ -1231,11 +1287,11 @@ class Session:
                 part_url = url if index == len(parts) - 1 else ""
                 body = (cookie + struct.pack(">H", 2) + sender
                         + tlv(0x0005, blocks.channel2_message(cookie, part, part_url))
-                        + tail)
+                        + tail + ref_tlv)
             else:
                 body = (cookie + struct.pack(">H", 1) + sender
                         + tlv(0x0002, blocks.message_fragments(part))
-                        + tlv(0x0006, b"") + tail)
+                        + tlv(0x0006, b"") + tail + ref_tlv)
 
             # Запись считаем доставленной по подтверждению последней части.
             if wait_ack and row_id is not None and index == len(parts) - 1:
@@ -1531,7 +1587,8 @@ class Session:
                                               int(target), attach),
                                           # 0.72 и 0.73 бит объявили, но проверку
                                           # записи под него не поправили — им нельзя.
-                                          threads=(self.tmm_version or (0, 0)) >= (0, 74))
+                                          threads=(self.tmm_version or (0, 0)) >= (0, 74),
+                                          quotes=self.quote_enabled(int(target)))
             if paged:
                 # Клиенту нужно знать, стоит ли предлагать «Ещё». Заголовок
                 # начинается с 0xFF: длина текста первой записи с такого
@@ -1723,7 +1780,7 @@ class OscarServer:
                  icon_hash: Callable[[int], bytes | None] | None = None,
                  fetch_attachment: Callable[[int, str, str], Awaitable[bytes | None]] | None = None,
                  fetch_history: Callable[..., Awaitable[
-                     tuple[list[tuple[str, str]], bool] | None]] | None = None,
+                     tuple[list[tuple], bool] | None]] | None = None,
                  fetch_video: Callable[[int, str, str], Awaitable[bytes | None]] | None = None,
                  on_photo: Callable[[int, bytes], Awaitable[bool]] | None = None,
                  fetch_voice: Callable[[int, str], Awaitable[bytes | None]] | None = None,
@@ -1735,10 +1792,14 @@ class OscarServer:
                  chat_list: Callable[[], Awaitable[list]] | None = None,
                  open_chat: Callable[[int], Awaitable[bool]] | None = None,
                  group_paths: Callable[[list], dict[int, str]] | None = None,
-                 video_link: Callable[[int, str], str] | None = None):
+                 video_link: Callable[[int, str], str] | None = None,
+                 on_quote: Callable[[int, int, int], Awaitable[str]] | None = None,
+                 quote_supported: Callable[[int], bool] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
+        self.on_quote = on_quote
+        self.quote_supported = quote_supported or (lambda uin: on_quote is not None)
         self.roster = roster
         self.status_of = status_of or (lambda uin: C.STATUS_ONLINE)
         self.chat_info = chat_info or self._no_info
@@ -1910,7 +1971,7 @@ class OscarServer:
         return token
 
     async def history_text(self, uin: int, count: int,
-                           offset: int = 0) -> tuple[list[tuple[str, str]], bool] | None:
+                           offset: int = 0) -> tuple[list[tuple], bool] | None:
         if self.fetch_history is None:
             return None
         try:
@@ -2073,7 +2134,7 @@ class OscarServer:
 
     async def deliver(self, uin: int, text: str, forced: bool = False,
                       url: str = "", ts: int = 0, attach: str = "", mention: bool = False,
-                      message_id: int | str = 0) -> bool:
+                      message_id: int | str = 0, source_message_id: int | str | None = None) -> bool:
         """Принимает сообщение к доставке.
 
         Пишем в очередь и будим отправителя. Ждать подтверждения прямо здесь
@@ -2084,7 +2145,7 @@ class OscarServer:
         текущего статуса и избранного.
         """
         if not self.storage.queue(uin, text, self.cfg.offline_queue_per_chat,
-                                  forced, url, ts, attach, mention, message_id):
+                                  forced, url, ts, attach, mention, message_id, source_message_id):
             return False
         self.wake_sender()
         return True
@@ -2263,9 +2324,10 @@ class OscarServer:
         for row_id, uin, text, ts, forced, url, attach, mention in self.storage.peek_pending():
             verdict = "send" if forced else self.verdict_for(uin, mention)
             if verdict != "send":
+                message_id = self.storage.pending_message_id(row_id)
                 self.storage.drop_pending(row_id)
                 if verdict == "hold":
-                    self.storage.hold(uin, text, ts, self.cfg.offline_queue_per_chat)
+                    self.storage.hold(uin, text, ts, self.cfg.offline_queue_per_chat, message_id, attach)
                 skipped += 1
                 continue
             keep.append((row_id, uin, text, ts, url, attach))

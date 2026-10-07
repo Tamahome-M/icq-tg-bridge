@@ -278,6 +278,7 @@ public class Icq implements Runnable
 	/* Disconnects from the ICQ network */
 	static public synchronized void disconnect(boolean force)
 	{
+		jimm.NativeQuote.disconnected();
 		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 		disconnectBart(force);
 		//#sijapp cond.end#

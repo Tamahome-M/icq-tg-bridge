@@ -56,6 +56,7 @@ class MessData
 	// UIN обсуждения, начатого под этим сообщением (из истории моста), или null
 	String thread;
 	String videoUrl;
+	byte[] messageRef;
 
 	public MessData(boolean incoming, long time, int textOffset,
 			boolean contains_url, int messId)
@@ -124,7 +125,6 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	// Журнал «Связь» — сообщением в чат; нужен и на V3, где камеры нет.
 	// TeleMotoMax: chat history from the bridge on its own screen
 	static final Command cmdServerHistory = new Command(ResourceBundle.getString("server_history"), Command.ITEM, 5);
-	private static final Command cmdReplWithQuota = new Command(ResourceBundle.getString("quote", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 3);
 	private static final Command cmdAddUrs = new Command(ResourceBundle.getString("add_user", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 5);
 	private static final Command cmdDenyAuth = new Command(ResourceBundle.getString("deny"), Command.CANCEL, 1);
 	
@@ -222,7 +222,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		if (contact.getBooleanValue(ContactItem.CONTACTITEM_IS_TEMP)) 
 			textList.addCommandEx(cmdAddUrs, VirtualList.MENU_TYPE_RIGHT);
 		
-		if (JimmUI.getClipBoardText() != null) textList.addCommandEx(cmdReplWithQuota, VirtualList.MENU_TYPE_RIGHT);
+		checkQuoteMenu();
 		
 		//#sijapp cond.if modules_HISTORY is "true" #
 		if (!Options.getBoolean(Options.OPTION_HISTORY)) textList.addCommandEx(cmdAddToHistory, VirtualList.MENU_TYPE_RIGHT);
@@ -370,13 +370,17 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		else if (c == cmdCopyText)
 		{
 			ChatHistory.copyText(contact.getStringValue(ContactItem.CONTACTITEM_UIN), ChatName);
-			textList.addCommandEx(cmdReplWithQuota, VirtualList.MENU_TYPE_RIGHT);
 		}
 		
 		/* Reply with quotation */
-		else if (c == cmdReplWithQuota)
+		else if (c == NativeQuote.cmdSelect)
 		{
-			JimmUI.writeMessage(contact, JimmUI.getClipBoardText());
+			MessData md = messAt(textList.getCurrTextIndex());
+			if (md != null) NativeQuote.select(contact.getStringValue(ContactItem.CONTACTITEM_UIN), md.messageRef);
+		}
+		else if (c == NativeQuote.cmdPaste)
+		{
+			NativeQuote.paste(contact.getStringValue(ContactItem.CONTACTITEM_UIN));
 		}
 		
 		/* Open URL in web brouser */
@@ -512,10 +516,17 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		catch (Exception e) { /* do nothing */ }		
 	}
 	
+	void checkQuoteMenu()
+	{
+		MessData md = messAt(textList.getCurrTextIndex());
+		NativeQuote.updateMenu(textList, md == null ? null : md.messageRef);
+	}
+
 	// TeleMotoMax: «Показать фото» появляется в меню, когда у сообщения
 	// под курсором есть вложение от моста.
 	void checkTextForPhoto()
 	{
+		checkQuoteMenu();
 		textList.removeCommandEx(cmdShowPhoto);
 		textList.removeCommandEx(cmdPlayVideo);
 		textList.removeCommandEx(cmdPlayVoice);
@@ -602,7 +613,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	// на сообщение; в оживлённых группах это и делало навигацию по списку
 	// вялой. Запись откладывается и верстается при открытии чата. Текущий
 	// чат (в том числе когда поверх него фото или плеер) верстается сразу.
-	private Vector deferred;
+	Vector deferred;
 
 	void addTextToForm(String from, String message, String url, long time,
 			boolean red, boolean offline, int messId, byte[] attach, int attachKind)
@@ -613,6 +624,12 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	void addTextToForm(String from, String message, String url, long time,
 			boolean red, boolean offline, int messId, byte[] attach, int attachKind, String thread)
 	{
+		addTextToForm(from, message, url, time, red, offline, messId, attach, attachKind, thread, null);
+	}
+
+	void addTextToForm(String from, String message, String url, long time,
+			boolean red, boolean offline, int messId, byte[] attach, int attachKind, String thread, byte[] messageRef)
+	{
 		if (ChatHistory.currentChat != this && !textList.isActive())
 		{
 			if (deferred == null) deferred = new Vector();
@@ -620,10 +637,10 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 			while (deferred.size() >= limit) deferred.removeElementAt(0);
 			deferred.addElement(new Object[] { from, message, url, new Long(time),
 					red ? Boolean.TRUE : Boolean.FALSE, offline ? Boolean.TRUE : Boolean.FALSE,
-					new Integer(messId), attach, new Integer(attachKind), thread });
+					new Integer(messId), attach, new Integer(attachKind), thread, messageRef });
 			return;
 		}
-		layout(from, message, url, time, red, offline, messId, attach, attachKind, thread);
+		layout(from, message, url, time, red, offline, messId, attach, attachKind, thread, messageRef);
 	}
 
 	// Верстает отложенное — при открытии чата.
@@ -638,7 +655,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 			layout((String) r[0], (String) r[1], (String) r[2], ((Long) r[3]).longValue(),
 					((Boolean) r[4]).booleanValue(), ((Boolean) r[5]).booleanValue(),
 					((Integer) r[6]).intValue(), (byte[]) r[7], ((Integer) r[8]).intValue(),
-					r.length > 9 ? (String) r[9] : null);
+					r.length > 9 ? (String) r[9] : null, r.length > 10 ? (byte[])r[10] : null);
 		}
 	}
 
@@ -649,7 +666,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	}
 
 	private void layout(String from, String message, String url, long time,
-			boolean red, boolean offline, int messId, byte[] attach, int attachKind, String thread)
+			boolean red, boolean offline, int messId, byte[] attach, int attachKind, String thread, byte[] messageRef)
 	{
 		int texOffset = 0;
 		boolean deliveryReqOn = Options.getBoolean(Options.OPTION_DELIV_MES_INFO); 
@@ -720,6 +737,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		md.attachKind = attachKind;
 		md.thread = thread;
 		md.videoUrl = VideoLink.url(message);
+		md.messageRef = messageRef;
 		getMessData().addElement(md);
 		messTotalCounter++;
 		lastMsgTime = (shortMsg) ? lastMsgTime : time;
@@ -735,6 +753,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		JimmUI.setColorScheme(textList, true, -1, false);
 		ChatHistory.currentChat = this;
 		flushDeferred();
+		checkQuoteMenu();
 		textList.activate(Jimm.display);
 		ChatHistory.updateCaption_Internal(this);
 		contact.resetUnreadMessages();
@@ -808,7 +827,7 @@ public class ChatHistory
 				addTextToForm(uin, contact
 						.getStringValue(ContactItem.CONTACTITEM_NAME),
 						plainMsg.getText(), "", plainMsg.getNewDate(), true,
-						offline, -1, plainMsg.getAttachToken(), plainMsg.getAttachKind());
+						offline, -1, plainMsg.getAttachToken(), plainMsg.getAttachKind(), plainMsg.getMessageRef());
 				
 				//#sijapp cond.if modules_HISTORY is "true" #
 				if (Options.getBoolean(Options.OPTION_HISTORY))
@@ -837,7 +856,7 @@ public class ChatHistory
 				addTextToForm(uin, contact
 						.getStringValue(ContactItem.CONTACTITEM_NAME),
 						urlMsg.getText(), urlMsg.getUrl(), urlMsg.getNewDate(),
-						false, offline, -1);
+						false, offline, -1, null, 0, urlMsg.getMessageRef());
 			} 
 			else if (message instanceof SystemNotice)
 			{
@@ -903,6 +922,38 @@ public class ChatHistory
 	}
 
 	// Add text to message form
+	static synchronized private void addTextToForm(String uin, String from,
+			String message, String url, long time, boolean red, boolean offline, int messId,
+			byte[] attach, int kind, byte[] ref)
+	{
+		ChatTextList chat = (ChatTextList)historyTable.get(uin);
+		chat.addTextToForm(from, message, url, time, red, offline, messId, attach, kind, null, ref);
+	}
+
+	public static synchronized void setMessageRef(String uin, int messageId, byte[] ref)
+	{
+		ChatTextList chat = (ChatTextList)historyTable.get(uin);
+		if (chat == null) return;
+		for (int i = 0; i < chat.getMessData().size(); i++)
+		{
+			MessData md = (MessData)chat.getMessData().elementAt(i);
+			if (!md.getIncoming() && md.getMessId() == messageId) md.messageRef = ref;
+		}
+		if (chat.deferred != null)
+			for (int i = 0; i < chat.deferred.size(); i++)
+			{
+				Object[] row = (Object[])chat.deferred.elementAt(i);
+				if (!((Boolean)row[4]).booleanValue() && ((Integer)row[6]).intValue() == messageId) row[10] = ref;
+			}
+		chat.checkQuoteMenu();
+	}
+
+	public static synchronized void refreshQuoteMenus()
+	{
+		Enumeration chats = historyTable.elements();
+		while (chats.hasMoreElements()) ((ChatTextList)chats.nextElement()).checkQuoteMenu();
+	}
+
 	static synchronized private void addTextToForm(String uin, String from,
 			String message, String url, long time, boolean red, boolean offline, int messId,
 			byte[] attach, int attachKind)
@@ -1060,10 +1111,15 @@ public class ChatHistory
 	static synchronized void addHistoryLine(String uin, String text, byte[] attach, int kind,
 			String thread)
 	{
+		addHistoryLine(uin, text, attach, kind, thread, null);
+	}
+	static synchronized void addHistoryLine(String uin, String text, byte[] attach, int kind,
+			String thread, byte[] ref)
+	{
 		ChatTextList chat = (ChatTextList) historyTable.get(uin);
 		if (chat == null) return;
 		chat.addTextToForm(chat.contact.getStringValue(ContactItem.CONTACTITEM_NAME),
-				text, "", Util.createCurrentDate(false), true, true, -1, attach, kind, thread);
+				text, "", Util.createCurrentDate(false), true, true, -1, attach, kind, thread, ref);
 		chat.checkTextForPhoto();
 	}
 

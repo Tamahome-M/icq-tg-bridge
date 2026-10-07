@@ -40,6 +40,14 @@ class HistoryItem:
     thread: int = 0        # topic_id обсуждения, начатого под этим сообщением; 0 — нет
 
 
+class SentMessage(int):
+    """Read/receipt marker compatible with int, plus the source network's ID."""
+    def __new__(cls, receipt: int, message_id: int):
+        result = super().__new__(cls, receipt)
+        result.message_id = message_id
+        return result
+
+
 class MissedMessage(NamedTuple):
     ts: int
     sender: str

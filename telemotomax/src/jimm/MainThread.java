@@ -52,6 +52,8 @@ public class MainThread implements Runnable
 	final static private int TYPE_ACTIVATE_CL         = 20;
 	final static private int TYPE_ACTIVATE_MM         = 21;
 	final static private int TYPE_RESET_LOGIN_TIMER   = 22;
+	final static private int TYPE_MESSAGE_REF = 25;
+	final static private int TYPE_NATIVE_QUOTE_RESULT = 26;
 
 //#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 	final static public int TYPE_UPDATE_BUDDYICON    = 24;
@@ -193,6 +195,12 @@ public class MainThread implements Runnable
 			break;
 			
 			
+		case TYPE_MESSAGE_REF:
+			ChatHistory.setMessageRef((String)data[0], getInt(data, 1), (byte[])data[2]);
+			break;
+		case TYPE_NATIVE_QUOTE_RESULT:
+			((NativeQuote)data[0]).showResult((String)data[1]);
+			break;
 		case TYPE_MESS_DELIVERED:
 			ChatHistory.messageIsDelivered((String)data[0], getInt(data, 1));
 			break;
@@ -322,6 +330,15 @@ public class MainThread implements Runnable
 	}
 	
 	
+	public static void setMessageRef(String uin, int messageId, byte[] ref)
+	{
+		addMainThreadTask(TYPE_MESSAGE_REF, new Object[] {uin, new Integer(messageId), ref});
+	}
+	public static void nativeQuoteResult(NativeQuote action, String error)
+	{
+		addMainThreadTask(TYPE_NATIVE_QUOTE_RESULT, new Object[] {action, error});
+	}
+
 	static public void messageIsDelevered(String uin, int messId)
 	{
 		addMainThreadTask(TYPE_MESS_DELIVERED, uin, new Integer(messId));

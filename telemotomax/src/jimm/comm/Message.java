@@ -66,6 +66,10 @@ public abstract class Message
 		attachKind = kind;
 	}
 
+	private byte[] messageRef;
+	public byte[] getMessageRef() { return messageRef; }
+	public void setMessageRef(byte[] value) { messageRef = value; }
+
 	protected boolean offline;
 
 	// Senders UIN (set for both incoming and outgoing messages)
