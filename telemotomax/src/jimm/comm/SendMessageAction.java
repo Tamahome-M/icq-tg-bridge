@@ -90,17 +90,8 @@ public class SendMessageAction extends Action
 			rcvr.hasCapability(Icq.CAPF_UTF8_INTERNAL);
 		
 
-		if ((this.plainMsg != null)
-			&& ((this.plainMsg.getMessageType() >= Message.MESSAGE_TYPE_AWAY) 
-			&& (this.plainMsg.getMessageType() <= Message.MESSAGE_TYPE_FFC)))
-		{
-			type = 2;
-		}
-		
 		if (Options.getBoolean(Options.OPTION_DELIV_MES_INFO)
 			&& rcvr.hasCapability(Icq.CAPF_AIM_SERVERRELAY)
-			&& (rcvr.getIntValue(ContactItem.CONTACTITEM_CLIENT) != Icq.CLI_STICQ)
-			&& (rcvr.getIntValue(ContactItem.CONTACTITEM_CLIENT) != Icq.CLI_TRILLIAN)
 			&& (rcvr.getIntValue(ContactItem.CONTACTITEM_STATUS) != ContactList.STATUS_OFFLINE))
 		{
 			type = 2;

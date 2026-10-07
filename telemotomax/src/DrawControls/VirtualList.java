@@ -244,8 +244,6 @@ public abstract class VirtualList
 	private   int     cursorMode       = CURSOR_MODE_ENABLED; // Cursor mode
 	private   String  caption;
 	private   int     fontHeight;
-	private   int     cursorAlpha      = 255;
-	private   int     menuAlpha        = 255;
 
 	protected Font    FONT_STYLE_BOLD;
 	protected Font    FONT_STYLE_PLAIN;
@@ -533,7 +531,7 @@ public abstract class VirtualList
 		return virtualCanvas.isShown() ? virtualCanvas.currentControl : null; 
 	}
 
-	public void setColors(int capTxt, int capbk, int bkgrnd, int cursor, int text, int crsFrame, int cursorAlpha, int menuAlpha)
+	public void setColors(int capTxt, int capbk, int bkgrnd, int cursor, int text, int crsFrame)
 	{
 		this.capBkCOlor = capbk;
 		this.capTxtColor = capTxt;
@@ -541,8 +539,6 @@ public abstract class VirtualList
 		this.cursorColor = cursor;
 		this.textColor = text;
 		this.cursorFrameColor = crsFrame;
-		this.cursorAlpha = cursorAlpha;
-		this.menuAlpha = menuAlpha;
 		if (isActive()) virtualCanvas.repaint();
 	}
 
@@ -1286,7 +1282,7 @@ public abstract class VirtualList
 		
 		g.setFont(capAndMenuFont);
 		int height = getCapHeight();
-		drawRect(g, capBkCOlor, transformColorLight(capBkCOlor, -64), 0, 0, width, height, 255);
+		drawRect(g, capBkCOlor, transformColorLight(capBkCOlor, -64), 0, 0, width, height);
 
 		g.setColor(transformColorLight(capBkCOlor, -128));
 		g.drawLine(0, height - 1, width, height - 1);
@@ -1442,13 +1438,7 @@ public abstract class VirtualList
 	}
 //#sijapp cond.end#	
 
-	private static int[] alphaBuffer = null;
-	private static int lastRectHeight;
-	private static int lastRectColor1;
-	private static int lastRectColor2;
-	private static int lastRectAlpha;
-	
-	static public void drawRect(Graphics gr, int color1, int color2, int x1, int y1, int x2, int y2, int alpha)
+	static public void drawRect(Graphics gr, int color1, int color2, int x1, int y1, int x2, int y2)
 	{
 		int r1 = ((color1 & 0xFF0000) >> 16);
 		int g1 = ((color1 & 0x00FF00) >> 8);
@@ -1456,79 +1446,23 @@ public abstract class VirtualList
 		int r2 = ((color2 & 0xFF0000) >> 16);
 		int g2 = ((color2 & 0x00FF00) >> 8);
 		int b2 = (color2 & 0x0000FF);
+
+		int count = (y2-y1)/3;
+		if (count < 0) count = -count;
+		if (count < 8) count = 8;
 		
-		if (alpha == 255)
+		y2++;
+		x2++;
+		int crd1 = 0;
+		int crd2 = 0;
+		for (int i = 0; i < count; i++)
 		{
-			int count = (y2-y1)/3;
-			if (count < 0) count = -count;
-			if (count < 8) count = 8;
-			
-			y2++;
-			x2++;
-			int crd1 = 0;
-			int crd2 = 0;
-			for (int i = 0; i < count; i++)
-			{
-				crd1 = i * (y2 - y1) / count + y1;
-				crd2 = (i + 1) * (y2 - y1) / count + y1;
-				if (crd1 == crd2) continue;
-				gr.setColor(i * (r2 - r1) / (count-1) + r1, i * (g2 - g1) / (count-1) + g1, i * (b2 - b1) / (count-1) + b1);
-				gr.fillRect(x1, crd1, x2-x1, crd2-crd1);
-			}
+			crd1 = i * (y2 - y1) / count + y1;
+			crd2 = (i + 1) * (y2 - y1) / count + y1;
+			if (crd1 == crd2) continue;
+			gr.setColor(i * (r2 - r1) / (count-1) + r1, i * (g2 - g1) / (count-1) + g1, i * (b2 - b1) / (count-1) + b1);
+			gr.fillRect(x1, crd1, x2-x1, crd2-crd1);
 		}
-//#sijapp cond.if target!="DEFAULT"#		
-		else
-		{
-			int alphaValue = alpha << 24;
-			int width = x2-x1;
-			int height = y2-y1;
-			if (width <= 0 || height <= 1) return; 
-			
-			int spaceRequired = 32*height;
-			if (alphaBuffer == null || alphaBuffer.length < spaceRequired)
-			{
-				alphaBuffer = null;
-				alphaBuffer = new int[spaceRequired];
-			}
-			
-			if (lastRectHeight != height || lastRectColor1 != color1 || lastRectColor2 != color2 || lastRectAlpha != alpha)
-			{
-				int idx = 0;
-				int crd1 = 0;
-				int crd2 = 0;
-				int r = 0;
-				int g = 0;
-				int b = 0;
-				
-				int color = 0;
-				for (int y = 0; y < height; y++)
-				{
-					crd1 = y * (y2 - y1) / height;
-					crd2 = (y + 1) * (y2 - y1) / height;
-					if (crd1 == crd2) continue;
-					
-					r = y * (r2 - r1) / (height-1) + r1;
-					g = y * (g2 - g1) / (height-1) + g1;
-					b = y * (b2 - b1) / (height-1) + b1;
-					
-					color = (r << 16) | (g << 8) | (b) | (alphaValue);
-					
-					for (int x = 0; x < 32; x++) alphaBuffer[idx++] = color;
-				}
-				lastRectHeight = height;
-				lastRectColor1 = color1;
-				lastRectColor2 = color2;
-				lastRectAlpha = alpha;
-			}
-			
-			int totalWidth = width;
-			for (int x = x1; x < x2; x += 32)
-			{
-				gr.drawRGB(alphaBuffer, 0, 32, x, y1, (totalWidth > 32) ? 32 : totalWidth, height, true);
-				totalWidth -= 32;
-			}
-		}
-//#sijapp cond.end#		
 	}
 	
 	/**
@@ -1653,7 +1587,7 @@ public abstract class VirtualList
 		{
 			grCursorY1--;
 			
-			drawRect(g, cursorColor, cursorColor, curX1, grCursorY1, curX2, grCursorY2, cursorAlpha);
+			drawRect(g, cursorColor, cursorColor, curX1, grCursorY1, curX2, grCursorY2);
 
 			g.setColor(cursorFrameColor);
 			boolean isCursorUpper = (topItem >= 1) ? isItemSelected(topItem - 1) : false;
@@ -2261,7 +2195,7 @@ public abstract class VirtualList
 			{
 				// TeleMotoMax: полосами fillRect, а не drawRGB — попиксельная
 				// копия массива на V3 стоила дороже всего остального кадра.
-				drawRect(g, transformColorLight(capBkCOlor, -32), transformColorLight(capBkCOlor, -102), 0, y1, width, y2, 255);
+				drawRect(g, transformColorLight(capBkCOlor, -32), transformColorLight(capBkCOlor, -102), 0, y1, width, y2);
 			}
 		}
 		
@@ -2285,7 +2219,7 @@ public abstract class VirtualList
 			if (uiState == UI_STATE_LEFT_MENU_VISIBLE)
 			{
 				menuItemsVisible = true;
-				drawRect(g, transformColorLight(capBkCOlor, -64), transformColorLight(capBkCOlor, -32), 0, y1, width/2, y2, 255);
+				drawRect(g, transformColorLight(capBkCOlor, -64), transformColorLight(capBkCOlor, -32), 0, y1, width/2, y2);
 			}
 			String text = leftMenu.getLabel();
 			g.setColor(capTxtColor);
@@ -2308,7 +2242,7 @@ public abstract class VirtualList
 			if (uiState == UI_STATE_RIGHT_MENU_VISIBLE)
 			{
 				menuItemsVisible = true;
-				drawRect(g, transformColorLight(capBkCOlor, -64), transformColorLight(capBkCOlor, -32), width/2, y1, width, y2, 255);
+				drawRect(g, transformColorLight(capBkCOlor, -64), transformColorLight(capBkCOlor, -32), width/2, y1, width, y2);
 			}
 			
 			g.setColor(capTxtColor);
@@ -2440,7 +2374,7 @@ public abstract class VirtualList
 		// Draw background
 		if (mode == DMS_DRAW)
 		{
-			drawRect(g, transformColorLight(bkgrndColor, 24), transformColorLight(bkgrndColor, -24), x, y, x+width, y+height, menuAlpha);
+			drawRect(g, transformColorLight(bkgrndColor, 24), transformColorLight(bkgrndColor, -24), x, y, x+width, y+height);
 		}
 		
 		// Draw up button

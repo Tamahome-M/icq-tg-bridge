@@ -531,7 +531,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 		{
 			int barColor1 = VirtualList.transformColorLight(barColor, 32);
 			int barColor2 = VirtualList.transformColorLight(barColor, -32);
-			VirtualList.drawRect(g, barColor1, barColor2, 0, height-barHeight, xDelimPos, height, 255);
+			VirtualList.drawRect(g, barColor1, barColor2, 0, height-barHeight, xDelimPos, height);
 			g.setColor(VirtualList.mergeColors(barColor, 0x404040, 50));
 			g.drawRect(0, height-barHeight, xDelimPos, barHeight-1);
 		}

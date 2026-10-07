@@ -42,14 +42,12 @@ public class ContactItem implements ContactListItem, JimmScreen
 	/* String */
 	public static final int CONTACTITEM_UIN           = 0; 
 	public static final int CONTACTITEM_NAME          = 1;
-	public static final int CONTACTITEM_CLIVERSION    = 2;	
 	
 	/* Integer */
 	public static final int CONTACTITEM_ID            = 64; 
 	public static final int CONTACTITEM_GROUP         = 65;
 	public static final int CONTACTITEM_IDLE          = 71;
 	public static final int CONTACTITEM_CAPABILITIES  = 75;
-	public static final int CONTACTITEM_CLIENT        = 76;
 	public static final int CONTACTITEM_STATUS        = 79;
 	public static final int CONTACTITEM_SIGNON        = 81;
 	public static final int CONTACTITEM_ONLINE        = 82;
@@ -96,7 +94,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 	private int regdate;
 
 	private String name;
-	private String clientVersion;
 	private String lowerText;
 	private byte[] ssData; // server-size raw data
 	//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
@@ -135,9 +132,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 			name = value;
 			lowerText = null;
 			return;
-		case CONTACTITEM_CLIVERSION:
-			clientVersion = value;
-			return;
 		}
 	}
 
@@ -149,8 +143,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 			return Integer.toString(uinLong);
 		case CONTACTITEM_NAME:
 			return name;
-		case CONTACTITEM_CLIVERSION:
-			return clientVersion;
 		}
 		return null;
 	}
@@ -450,8 +442,6 @@ public class ContactItem implements ContactListItem, JimmScreen
 		setIntValue_(ContactItem.CONTACTITEM_REG, -1);
 		online = -1;
 		setIntValue_(ContactItem.CONTACTITEM_IDLE, -1);
-		setIntValue_(ContactItem.CONTACTITEM_CLIENT, Icq.CLI_NONE);
-		setStringValue_(ContactItem.CONTACTITEM_CLIVERSION, "");
 	}
 	
 	public static void updateColorValues()

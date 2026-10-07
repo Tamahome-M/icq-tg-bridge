@@ -85,7 +85,6 @@ public class Options
 	public static final int OPTION_CAMERA_SIZE        = 31;   // TeleMotoMax: размер снимка «WxH», пусто — как решит телефон
 	public static final int OPTION_MEDIA_PHOTO_SIZE   = 32;   // TeleMotoMax, «Медиа»: фото от моста «WxH», пусто — как в профиле
 	public static final int OPTION_MEDIA_VIDEO_SIZE   = 33;
-	public static final int OPTION_LAST_ERROR         = 34;   // TeleMotoMax: последняя пойманная ошибка — переживает перезапуск, видна в «О программе»   // кадр ролика от моста «WxH»
 	public static final int OPTION_MESS_NOTIF_FILE    = 4;
 	public static final int OPTION_ONLINE_NOTIF_FILE  = 5;
 	public static final int OPTION_CURRENCY           = 6;
@@ -98,8 +97,6 @@ public class Options
 	static final int        OPTION_UIN2               = 14;
 	static final int        OPTION_UIN3               = 15;
 	public static final int OPTION_TYPING_FILE        = 16;
-	public static final int OPTION_HTTP_USER_AGENT    = 17;
-	public static final int OPTION_HTTP_WAP_PROFILE   = 18;
 	public static final int OPTION_ANTI_SPAM_QUESTION = 19;
 	public static final int OPTION_ANTI_SPAM_ANS      = 20;
 	public static final int OPTION_BG_IMAGE_URL       = 21;
@@ -129,7 +126,9 @@ public class Options
 	public static final int OPTION_EXT_CLKEY6         = 80; 
 	public static final int OPTION_EXT_CLKEYCALL      = 81; 
 	public static final int OPTION_EXT_CLKEYPOUND     = 82;
+//#sijapp cond.if modules_PROXY is "true"#
 	public static final int OPTION_CONN_TYPE          = 83;
+//#sijapp cond.end#
 	public static final int OPTION_VISIBILITY_ID      = 85;
 	public static final int OPTION_POPUP_WIN2         = 84; // This option is FREE
 	static final int        OPTION_CURR_ACCOUNT       = 86;
@@ -144,8 +143,6 @@ public class Options
 	public static final int OPTION_CAMERA_RES         = 99;
 	public static final int OPTION_CAPTION_OFFSET     = 100;
 	public static final int OPTION_BG_IMAGE           = 101;
-	public static final int OPTION_CURSOR_ALPHA       = 102;
-	public static final int OPTION_MENU_ALPHA         = 103;
 	public static final int OPTION_IMG_SCALE          = 104;
 	public static final int OPTION_BG_IMAGE_MODE      = 105;
 	
@@ -286,7 +283,6 @@ public class Options
 	public static final int HOTKEY_FULLSCR     = 11;
 	public static final int HOTKEY_SOUNDOFF	   = 12;
 	public static final int HOTKEY_USER_GROUPS = 13;
-	public static final int HOTKEY_REQ_SM      = 14;
 	public static final int HOTKEY_INC_LIGHT   = 15;
 	public static final int HOTKEY_DEC_LIGHT   = 16;
 	public static final int HOTKEY_LIGHT_ONOFF = 17;
@@ -301,9 +297,10 @@ public class Options
 	public static final int HOTKEY_SELECT      = 26;
 	
 	/* Constants for connection type */
+//#sijapp cond.if modules_PROXY is "true"#
 	public static final int CONN_TYPE_SOCKET = 0;
-	public static final int CONN_TYPE_HTTP   = 1;
 	public static final int CONN_TYPE_PROXY  = 2;
+//#sijapp cond.end#
 	
 	/* Constants for method getSchemeColor to retrieving color from color scheme */
 	public static final int CLRSCHHEME_BACK       = 1; // retrieving background color
@@ -417,7 +414,6 @@ public class Options
 		setString (Options.OPTION_CAMERA_SIZE, "");
 //#sijapp cond.end#
 		setString (Options.OPTION_MEDIA_PHOTO_SIZE, "");
-		setString (Options.OPTION_LAST_ERROR, "");
 		setString (Options.OPTION_MEDIA_VIDEO_SIZE, "");
 		
 		setString(Options.OPTION_SRV_PORT, "5190");
@@ -426,14 +422,14 @@ public class Options
 		setInt(Options.OPTION_RECONNECT_NUMBER, 10);
 		setString(Options.OPTION_CONN_ALIVE_INVTERV, "120");
 		setInt(Options.OPTION_CONN_PROP, 0);
+//#sijapp cond.if modules_PROXY is "true"#
 		setInt(Options.OPTION_CONN_TYPE, 0);
+//#sijapp cond.end#
 		//#sijapp cond.if target isnot "MOTOROLA"#
 		setBoolean(Options.OPTION_SHADOW_CON, false);
 		//#sijapp cond.end#
 		setBoolean(Options.OPTION_MD5_LOGIN, true);
 		setBoolean(Options.OPTION_AUTO_CONNECT, false);
-		setString(Options.OPTION_HTTP_USER_AGENT, "unknown");
-		setString(Options.OPTION_HTTP_WAP_PROFILE, "unknown");
 		setString(Options.OPTION_UI_LANGUAGE, ResourceBundle.langAvailable[0]);
 		setBoolean(Options.OPTION_DISPLAY_DATE, false);
 		setInt(Options.OPTION_CL_SORT_BY, 0);
@@ -612,8 +608,6 @@ public class Options
 //#sijapp cond.if target!="DEFAULT"#
 		setString(OPTION_BG_IMAGE_URL,  emptyString);
 		setInt   (OPTION_BG_IMAGE,      0);
-		setInt   (OPTION_CURSOR_ALPHA,  128);
-		setInt   (OPTION_MENU_ALPHA,    64);
 		setInt   (OPTION_BG_IMAGE_MODE, BG_IMAGE_PAVE);
 //#sijapp cond.end#
 		
@@ -665,9 +659,22 @@ public class Options
 							optionValue.length, true));
 				}
 			}
-			// Retired status/editor and icon preferences; never reuse these RMS IDs.
-			int[] retired = {7, 92, 96, 97, 158, 159, 161};
+			// Retired preferences; never reuse these RMS IDs.
+			int[] retired = {7, 17, 18, 34, 92, 96, 97, 102, 103, 158, 159, 161
+//#sijapp cond.if modules_PROXY isnot "true"#
+				, 83
+//#sijapp cond.end#
+			};
 			for (int i = 0; i < retired.length; i++) options.remove(key(retired[i]));
+//#sijapp cond.if modules_PROXY is "true"#
+			// Preserve SOCKS (2); retired HTTP (1) becomes a socket connection.
+			if (getInt(OPTION_CONN_TYPE) != CONN_TYPE_PROXY) setInt(OPTION_CONN_TYPE, CONN_TYPE_SOCKET);
+//#sijapp cond.end#
+			// Retired status-request hotkeys become unassigned, without shifting other actions.
+			for (int i = 77; i <= 112; i++)
+			{
+				if ((i <= 82 || i >= 106) && getInt(i) == 14) setInt(i, HOTKEY_NONE);
+			}
 			// Обновившимся со старой сборки один раз выключаем цветной текст
 			// сообщения: ник и время остаются цветными, а сам текст — обычным.
 			// В настройках, сохранённых прежней сборкой, этой пометки нет —
@@ -953,7 +960,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private static final int OPTIONS_MANAGE_CL   = 13;
 	private static final int OPTIONS_RESET_RMS   = 14;
 	private static final int OPTIONS_ANTISPAM    = 15;
-	private static final int OPTIONS_TRANSP      = 16;
 	private static final int OPTIONS_TEMPLATES   = 19;
 
 	// Constants for contact list menu
@@ -972,12 +978,12 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private TextField[] passwordTextField;
 	private TextField srvHostTextField;
 	private TextField srvPortTextField;
-	private TextField httpUserAgendTextField;
-	private TextField httpWAPProfileTextField;
 	private ChoiceGroup keepConnAliveChoiceGroup;
 	private TextField connAliveIntervTextField;
 	private ChoiceGroup connPropChoiceGroup;
+//#sijapp cond.if modules_PROXY is "true"#
 	private ChoiceGroup connTypeChoiceGroup;
+//#sijapp cond.end#
 	private ChoiceGroup autoConnectChoiceGroup;
 	private TextField reconnectNumberTextField;
 	private ChoiceGroup uiLanguageChoiceGroup;
@@ -1025,8 +1031,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 //#sijapp cond.end#
 
 //#sijapp cond.if target isnot "DEFAULT"#
-	private ChoiceGroup cursorAlpha;
-	private ChoiceGroup menuAlpha;
 	private ChoiceGroup messageNotificationModeChoiceGroup;
 	private ChoiceGroup onlineNotificationModeChoiceGroup;
 	private ChoiceGroup typingNotificationModeChoiceGroup;
@@ -1149,8 +1153,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			
 //#sijapp cond.if target!="DEFAULT"#			
 			JimmUI.addTextListItem(optionsMenu, "background_image", MainMenu.menuIcons.elementAt(34), OPTIONS_BG_IMAGE, true, -1, Font.STYLE_PLAIN);
-			if (Jimm.display.numAlphaLevels() > 2)
-				JimmUI.addTextListItem(optionsMenu, "transparency", MainMenu.menuIcons.elementAt(16), OPTIONS_TRANSP, true, -1, Font.STYLE_PLAIN);
 //#sijapp cond.end#			
 //#sijapp cond.if modules_CAMERA="true"#
 			if (System.getProperty("video.snapshot.encodings") != null)
@@ -1300,7 +1302,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		showHotkeyAction(Options.HOTKEY_NONE, "ext_hotkey_action_none", toArray);
 		showHotkeyAction(Options.HOTKEY_INFO, "info", toArray);
 		showHotkeyAction(Options.HOTKEY_NEWMSG, "send_message", toArray);
-		showHotkeyAction(Options.HOTKEY_REQ_SM, "status_message", toArray);
 //#sijapp cond.if modules_HISTORY is "true"#		
 		showHotkeyAction(Options.HOTKEY_HISTORY, "history", toArray);
 //#sijapp cond.end#		
@@ -1766,9 +1767,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			showBackgrImageOptions();
 			break;
 			
-		case OPTIONS_TRANSP:
-			showTransparencyOptions();
-			break;
 //#sijapp cond.end#			
 
 		case OPTIONS_SIGNALING:
@@ -1861,16 +1859,11 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				.getString(Options.OPTION_SRV_PORT), 5,
 				TextField.NUMERIC);
 
-		connTypeChoiceGroup = new ChoiceGroup(ResourceBundle
-				.getString("conn_type"), Choice.EXCLUSIVE);
-		addStr(connTypeChoiceGroup, "socket" + "|" + "http");
-		//#sijapp cond.if modules_PROXY is "true"#
-		addStr(connTypeChoiceGroup, "proxy");
-		connTypeChoiceGroup.setSelectedIndex(Options
-				.getInt(Options.OPTION_CONN_TYPE), true);
-		//#sijapp cond.else#
-		//#	                connTypeChoiceGroup.setSelectedIndex(Options.getInt(Options.OPTION_CONN_TYPE)%2,true);
-		//#sijapp cond.end#
+//#sijapp cond.if modules_PROXY is "true"#
+		connTypeChoiceGroup = new ChoiceGroup(ResourceBundle.getString("conn_type"), Choice.EXCLUSIVE);
+		addStr(connTypeChoiceGroup, "socket|proxy");
+		connTypeChoiceGroup.setSelectedIndex(Options.getInt(Options.OPTION_CONN_TYPE) == Options.CONN_TYPE_PROXY ? 1 : 0, true);
+//#sijapp cond.end#
 
 		keepConnAliveChoiceGroup = new ChoiceGroup(ResourceBundle
 				.getString("keep_conn_alive"), Choice.MULTIPLE);
@@ -1906,16 +1899,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		setChecked(autoConnectChoiceGroup, "yes",
 				Options.OPTION_AUTO_CONNECT);
 
-		httpUserAgendTextField = new TextField(ResourceBundle
-				.getString("http_user_agent"), Options
-				.getString(Options.OPTION_HTTP_USER_AGENT), 256,
-				TextField.ANY);
-
-		httpWAPProfileTextField = new TextField(ResourceBundle
-				.getString("http_wap_profile"), Options
-				.getString(Options.OPTION_HTTP_WAP_PROFILE), 256,
-				TextField.ANY);
-
 		reconnectNumberTextField = new TextField(ResourceBundle
 				.getString("reconnect_number"), String.valueOf(Options
 				.getInt(Options.OPTION_RECONNECT_NUMBER)), 2,
@@ -1923,13 +1906,13 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 		optionsForm.append(srvHostTextField);
 		optionsForm.append(srvPortTextField);
+//#sijapp cond.if modules_PROXY is "true"#
 		optionsForm.append(connTypeChoiceGroup);
+//#sijapp cond.end#
 		optionsForm.append(keepConnAliveChoiceGroup);
 		optionsForm.append(connAliveIntervTextField);
 		optionsForm.append(autoConnectChoiceGroup);
 		optionsForm.append(connPropChoiceGroup);
-		optionsForm.append(httpUserAgendTextField);
-		optionsForm.append(httpWAPProfileTextField);
 		optionsForm.append(reconnectNumberTextField);
 		
 	}
@@ -2066,17 +2049,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 //#sijapp cond.end#	
 
 //#sijapp cond.if target!="DEFAULT"#
-	private void showTransparencyOptions()
-	{
-		String[] transpText = Util.explode(ResourceBundle.getString("no") + "|25%|50%|75%" , '|');
-		cursorAlpha = new ChoiceGroup(ResourceBundle.getString("cursor"), Choice.POPUP, transpText, null);
-		cursorAlpha.setSelectedIndex(Options.getInt(Options.OPTION_CURSOR_ALPHA)/64, true);
-		menuAlpha = new ChoiceGroup(ResourceBundle.getString("menu"), Choice.POPUP, transpText, null);
-		menuAlpha.setSelectedIndex(Options.getInt(Options.OPTION_MENU_ALPHA)/64, true);
-		optionsForm.append(cursorAlpha);
-		optionsForm.append(menuAlpha);
-	}
-
 	private void showBackgrImageOptions()
 	{
 		backImgGroup = createSelector("background_image", "none"
@@ -2374,9 +2346,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			readBackgrImageOptions();
 			break;
 			
-		case OPTIONS_TRANSP:
-			readTransparencyOptions();
-			break;
 //#sijapp cond.end#			
 			
 
@@ -2637,12 +2606,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	}
 //#sijapp cond.end#
 
-	private void readTransparencyOptions()
-	{
-		Options.setInt(Options.OPTION_CURSOR_ALPHA, cursorAlpha.getSelectedIndex()*64);
-		Options.setInt(Options.OPTION_MENU_ALPHA, menuAlpha.getSelectedIndex()*64);
-	}
-
 	private void readBackgrImageOptions()
 	{
 		int oldBgImage = Options.getInt(Options.OPTION_BG_IMAGE);
@@ -2789,7 +2752,9 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	{
 		Options.setString(Options.OPTION_SRV_HOST, srvHostTextField.getString());
 		Options.setString(Options.OPTION_SRV_PORT, srvPortTextField.getString());
-		Options.setInt(Options.OPTION_CONN_TYPE, connTypeChoiceGroup.getSelectedIndex());
+//#sijapp cond.if modules_PROXY is "true"#
+		Options.setInt(Options.OPTION_CONN_TYPE, connTypeChoiceGroup.getSelectedIndex() == 1 ? Options.CONN_TYPE_PROXY : Options.CONN_TYPE_SOCKET);
+//#sijapp cond.end#
 		Options.setBoolean(Options.OPTION_KEEP_CONN_ALIVE,
 				keepConnAliveChoiceGroup.isSelected(0));
 		Options.setString(Options.OPTION_CONN_ALIVE_INVTERV,
@@ -2808,10 +2773,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		Options.setBoolean(Options.OPTION_SHADOW_CON,
 				connPropChoiceGroup.isSelected(3));
 		//#sijapp cond.end#
-		Options.setString(Options.OPTION_HTTP_USER_AGENT,
-				httpUserAgendTextField.getString());
-		Options.setString(Options.OPTION_HTTP_WAP_PROFILE,
-				httpWAPProfileTextField.getString());
 		Options.setInt(Options.OPTION_RECONNECT_NUMBER, Integer
 				.parseInt(reconnectNumberTextField.getString()));
 		

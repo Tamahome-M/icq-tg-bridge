@@ -50,13 +50,7 @@ public class Search
 
 	final public static int KEYWORD = 6;
 
-	final public static int GENDER = 7;
-
-	final public static int ONLY_ONLINE = 8;
-
-	final public static int AGE = 9;
-
-	final public static int LAST_INDEX = 10;
+	final public static int LAST_INDEX = 7;
 
 	/* Results */
 	private Vector results;
@@ -139,12 +133,6 @@ public class Search
 		private TextField citySearchTextBox;
 		private TextField keywordSearchTextBox;
 
-		private ChoiceGroup chgrAge;
-
-		/* Choice boxes for gender and online choice */
-		private ChoiceGroup gender;
-		private ChoiceGroup onlyOnline;
-
 		/* Selectet index in result screen */
 		int selectedIndex;
 
@@ -186,30 +174,13 @@ public class Search
 			this.keywordSearchTextBox = new TextField(ResourceBundle
 					.getString("keyword"), "", 32, TextField.ANY);
 
-			chgrAge = new ChoiceGroup(ResourceBundle.getString("age"),
-					Choice.EXCLUSIVE, Util.explode(
-							"-|18-22|23-29|30-39|40-49|50-59|>60", '|'), null);
-
-			/* Choice Groups */
-			this.gender = new ChoiceGroup(ResourceBundle.getString("gender"),
-					Choice.EXCLUSIVE);
-			this.gender.append(ResourceBundle.getString("female_male"), null);
-			this.gender.append(ResourceBundle.getString("female"), null);
-			this.gender.append(ResourceBundle.getString("male"), null);
-			this.onlyOnline = new ChoiceGroup("", Choice.MULTIPLE);
-			this.onlyOnline.append(ResourceBundle.getString("only_online"),
-					null);
-
-			this.searchForm.append(this.onlyOnline);
 			this.searchForm.append(this.uinSearchTextBox);
 			this.searchForm.append(this.nickSearchTextBox);
 			this.searchForm.append(this.firstnameSearchTextBox);
 			this.searchForm.append(this.lastnameSearchTextBox);
 			this.searchForm.append(this.citySearchTextBox);
-			this.searchForm.append(this.gender);
 			this.searchForm.append(this.emailSearchTextBox);
 			this.searchForm.append(this.keywordSearchTextBox);
-			this.searchForm.append(this.chgrAge);
 			this.searchForm.setCommandListener(this);
 
 			/* Result Screen */
@@ -379,13 +350,6 @@ public class Search
 				data[Search.EMAIL] = this.emailSearchTextBox.getString();
 				data[Search.CITY] = this.citySearchTextBox.getString();
 				data[Search.KEYWORD] = this.keywordSearchTextBox.getString();
-				data[Search.GENDER] = Integer.toString(this.gender
-						.getSelectedIndex());
-				data[Search.ONLY_ONLINE] = this.onlyOnline.isSelected(0) ? "1"
-						: "0";
-				data[Search.AGE] = Integer.toString(this.chgrAge
-						.getSelectedIndex());
-
 				SearchAction act = new SearchAction(Search.this, data,
 						SearchAction.CALLED_BY_SEARCHUSER);
 				try

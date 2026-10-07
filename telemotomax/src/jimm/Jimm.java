@@ -162,14 +162,11 @@ public class Jimm extends MIDlet
 		if (Jimm.jimm != null)
 		{
 			ConnLog.note("развёрнуто");
-			// Возврат из фона под защитой: на V3 приложение вылетало сразу
-			// после «Возобновить», а что именно упало — не видно. Теперь
-			// ошибка запоминается в настройках (переживёт перезапуск, видна в
-			// «О программе»), а вместо вылета — главное меню.
+			// При ошибке возврата из фона открываем главное меню.
 			try { showWorkScreen(); }
 			catch (Throwable t)
 			{
-				rememberError("возврат из фона", t);
+				ConnLog.note("возврат из фона: " + t.getClass().getName());
 				try { MainMenu.activateMenu(); } catch (Throwable ignore) {}
 			}
 			return;
@@ -346,24 +343,6 @@ public class Jimm extends MIDlet
 		JimmUI.startTaskForTimeString();
 		
 		// Start one minute task 
-	}
-
-	// Запомнить ошибку так, чтобы она пережила вылет: в журнал «Связь» и в
-	// настройки (RMS). «О программе» покажет её при следующем запуске.
-	static public void rememberError(String where, Throwable t)
-	{
-		String text = where + ": " + t.getClass().getName()
-				+ (t.getMessage() != null ? ": " + t.getMessage() : "");
-		ConnLog.note(text);
-		try
-		{
-			Options.setString(Options.OPTION_LAST_ERROR, text);
-			// Именно save(), а не safeSave(): тот на неудаче показывает
-			// «ошибка сохранения настроек», и поверх пойманной ошибки
-			// пользователь получал ещё и диалог ни о чём.
-			Options.save();
-		}
-		catch (Throwable ignore) {}
 	}
 
 	// Pause: система увела мидлет в фон (звонок, «Домой», свёртывание).

@@ -176,14 +176,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	public void commandAction(Command c, Displayable d)
 	{
 		
-		if (isControlActive(tlStatusMessage))
-		{
-			tlStatusMessage = null;
-			statusMessCI = null;
-			backToLastScreen();
-		}
-		
-		else if (isControlActive(loadErrorTextList))
+		if (isControlActive(loadErrorTextList))
 		{
 			MainMenu.activateMenu();
 		}
@@ -613,10 +606,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		// разбирался по фактам.
 		String connLog = ConnLog.text();
 		if (connLog.length() > 0) str.append("Связь:\n").append(connLog).append("\n\n");
-		// Последняя пойманная ошибка — из настроек, то есть и после вылета.
-		String lastError = Options.getString(Options.OPTION_LAST_ERROR);
-		if (lastError != null && lastError.length() > 0)
-			str.append("Последняя ошибка:\n").append(lastError).append("\n\n");
 		aboutTextList.addBigText(str.toString(), -1, Font.STYLE_PLAIN, -1);
 
 		aboutTextList.addCommandEx(cmdBack, VirtualList.MENU_TYPE_LEFT_BAR);
@@ -694,20 +683,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	{
 		if (vl == null) return;
 
-		int cursorAlpha, menuAlpha;
-		
-//#sijapp cond.if target="DEFAULT"#
-		cursorAlpha = 255;
-		menuAlpha = 255;
-//#sijapp cond.else#
-		if (Jimm.display.numAlphaLevels() > 2)
-		{
-			cursorAlpha = 255-Options.getInt(Options.OPTION_CURSOR_ALPHA);
-			menuAlpha = 255-Options.getInt(Options.OPTION_MENU_ALPHA);
-		}
-		else cursorAlpha = menuAlpha = 255; 
-//#sijapp cond.end#		
-
 		vl.setColors
 		(
 			Options.getSchemeColor(Options.CLRSCHHEME_CAP_TEXT, theme), 
@@ -715,9 +690,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			Options.getSchemeColor(Options.CLRSCHHEME_BACK, theme), 
 			Options.getSchemeColor(Options.CLRSCHHEME_CURS, theme), 
 			VirtualList.checkTextColor(Options.getSchemeColor(Options.CLRSCHHEME_TEXT, theme)),
-			Options.getSchemeColor(Options.CLRSCHHEME_CURS_FRAME, theme), 
-			cursorAlpha,
-			menuAlpha
+			Options.getSchemeColor(Options.CLRSCHHEME_CURS_FRAME, theme)
 		);
 		
 		if (vl instanceof TextList)
@@ -777,12 +750,10 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	final public static int UI_INETRESTS4_V  = 30;
 	final public static int UI_AUTH          = 31;
 	final public static int UI_STATUS        = 32;
-	final public static int UI_ICQ_CLIENT    = 33;
 	final public static int UI_SIGNON        = 34;
 	final public static int UI_ONLINETIME    = 35;
 	final public static int UI_IDLE_TIME     = 36;
 	final public static int UI_REG_DATE      = 37;
-	final public static int UI_ICQ_VERS      = 38;
 	final public static int UI_INT_IP        = 39;
 	final public static int UI_EXT_IP        = 40;
 	final public static int UI_PORT          = 41;
@@ -790,7 +761,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	final public static int UI_FIRST_NAME    = 43;
 	final public static int UI_LAST_NAME     = 44;
 	final public static int UI_ONLINE_STATUS = 45;
-	final public static int UI_CAPS          = 47;
 
 	//////
 	final public static int UI_LAST_ID = 48;
@@ -897,8 +867,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		addToTextList(UI_W_FAX, data, "fax", list, true);
 
 		uiSectName = "icq_client";
-		addToTextList(UI_ICQ_CLIENT, data, "icq_client", list, true);
-		addToTextList(UI_CAPS, data, "cli_caps", list, true);
 		
 		uiSectName = "dc_info";
 		addToTextList(UI_ONLINE_STATUS, data, "status", list, true);
@@ -906,7 +874,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		addToTextList(UI_SIGNON, data, "li_signon_time", list, true);
 		addToTextList(UI_ONLINETIME, data, "li_online_time", list, true);
 		addToTextList(UI_IDLE_TIME, data, "li_idle_time", list, true);
-		addToTextList(UI_ICQ_VERS, data, "ICQ version", list, true);
 		addToTextList(UI_INT_IP, data, "Int IP", list, true);
 		addToTextList(UI_EXT_IP, data, "Ext IP", list, true);
 		addToTextList(UI_PORT, data, "Port", list, true);
@@ -1231,19 +1198,19 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		Vector data = new Vector(); 
 		
 		/* Normal statuses */
-		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_ONLINE,     "status_online",     statusOnlineImg,     StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR|StatusInfo.FLAG_STD);
-		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_CHAT,       "status_chat",       statusChatImg,       StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR|StatusInfo.FLAG_STD);
-		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_AWAY,       "status_away",       statusAwayImg,       StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR|StatusInfo.FLAG_STD);
-		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_NA,         "status_na",         statusNaImg,         StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR|StatusInfo.FLAG_STD);
-		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_OCCUPIED,   "status_occupied",   statusOccupiedImg,   StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR|StatusInfo.FLAG_STD);
-		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_DND,        "status_dnd",        statusDndImg,        StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR|StatusInfo.FLAG_STD);
+		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_ONLINE,     "status_online",     statusOnlineImg,     StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD);
+		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_CHAT,       "status_chat",       statusChatImg,       StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD);
+		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_AWAY,       "status_away",       statusAwayImg,       StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD);
+		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_NA,         "status_na",         statusNaImg,         StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD);
+		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_OCCUPIED,   "status_occupied",   statusOccupiedImg,   StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD);
+		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_DND,        "status_dnd",        statusDndImg,        StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD);
 		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_INVISIBLE,  "status_invisible",  statusInvisibleImg,  StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD);
 		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_INVIS_ALL,  "status_invis_all",  statusInvisibleImg,  StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_STD);
-		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_EVIL,       "status_evil",       statusEvilImg,       StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_DEPRESSION, "status_depression", statusDepressionImg, StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_HOME,       "status_home",       statusHomeImg,       StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_WORK,       "status_work",       statusWorkImg,       StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
-		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_LUNCH,      "status_lunch",      statusLunchImg,      StatusInfo.FLAG_IN_MENU|StatusInfo.FLAG_HAVE_DESCR);
+		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_EVIL,       "status_evil",       statusEvilImg,       StatusInfo.FLAG_IN_MENU);
+		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_DEPRESSION, "status_depression", statusDepressionImg, StatusInfo.FLAG_IN_MENU);
+		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_HOME,       "status_home",       statusHomeImg,       StatusInfo.FLAG_IN_MENU);
+		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_WORK,       "status_work",       statusWorkImg,       StatusInfo.FLAG_IN_MENU);
+		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_LUNCH,      "status_lunch",      statusLunchImg,      StatusInfo.FLAG_IN_MENU);
 		addStatusInfo(data, StatusInfo.TYPE_STATUS, ContactList.STATUS_OFFLINE,    "status_offline",    statusOfflineImg,    0);
 		
 		
@@ -1588,7 +1555,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	/////////////////////////////////////////////////////////////
 	
 	private static final int USER_MENU_MESSAGE = 1;
-	private static final int USER_MENU_STATUS_MESSAGE = 3;
 	private static final int USER_MENU_REQU_AUTH = 4;
 	private static final int USER_MENU_FILE_TRANS = 5;
 	private static final int USER_MENU_CAM_TRANS = 6;
@@ -1667,11 +1633,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		
 		if (Icq.isConnected())
 		{
-			StatusInfo si = JimmUI.findStatus(StatusInfo.TYPE_STATUS, (int)status);
-			if (si != null && si.testFlag(StatusInfo.FLAG_HAVE_DESCR))
-				addTextListItem(tlContactMenu, "reqstatmsg", null, USER_MENU_STATUS_MESSAGE, true, -1, Font.STYLE_PLAIN);		
-			
-			
 			addTextListItem(tlContactMenu, "group_lists", null, -1, true, -2, Font.STYLE_BOLD);
 			addTextListItem(tlContactMenu, "remove", null, USER_MENU_USER_REMOVE, true, -1, Font.STYLE_PLAIN);
 			addTextListItem(tlContactMenu, "remove_me", null, USER_MENU_REMOVE_ME, true, -1, Font.STYLE_PLAIN);
@@ -1718,9 +1679,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			writeMessage(clciContactMenu, JimmUI.getClipBoardText());
 			break;
 			
-		case USER_MENU_STATUS_MESSAGE:
-			requestContactStatusMess(clciContactMenu);
-			break;
 
 			
 			case USER_MENU_USER_REMOVE:
@@ -2032,77 +1990,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	
 	///////////////////////////////////////////////////////////////////////////
 	
-	////////////////////////////////
-	//                            //
-	//    Status message stuff    //
-	//                            //
-	////////////////////////////////
-	
-	private static TextList tlStatusMessage;
-	private static ContactItem statusMessCI;
-	
-	/* Send a status message request message */
-	public static void requestContactStatusMess(ContactItem ci)
-	{
-		int status = ci.getIntValue(ContactItem.CONTACTITEM_STATUS);
-		
-		statusMessCI = ci;
-		tlStatusMessage = new TextList(ResourceBundle.getString("status_message"));
-		setColorScheme(tlStatusMessage, false, -1, true);
-		addTextListItem(tlStatusMessage, "wait", null, -1, true, 0x808080, Font.STYLE_PLAIN);
-		tlStatusMessage.addCommandEx(cmdBack, VirtualList.MENU_TYPE_LEFT_BAR);
-		tlStatusMessage.setCommandListener(_this);
-		tlStatusMessage.activate(Jimm.display);
-		
-		int msgType = Message.MESSAGE_TYPE_AWAY;
-		
-		switch (status)
-		{
-		case ContactList.STATUS_AWAY:       msgType = Message.MESSAGE_TYPE_AWAY; break;
-		case ContactList.STATUS_OCCUPIED:   msgType = Message.MESSAGE_TYPE_OCC; break;
-		case ContactList.STATUS_DND:        msgType = Message.MESSAGE_TYPE_DND; break;
-		case ContactList.STATUS_CHAT:       msgType = Message.MESSAGE_TYPE_FFC; break;
-		case ContactList.STATUS_NA:         msgType = Message.MESSAGE_TYPE_NA; break;
-		case ContactList.STATUS_EVIL:       msgType = Message.MESSAGE_TYPE_EVIL; break;
-		case ContactList.STATUS_DEPRESSION: msgType = Message.MESSAGE_TYPE_DEPRESSION; break;
-		case ContactList.STATUS_HOME:       msgType = Message.MESSAGE_TYPE_HOME; break;
-		case ContactList.STATUS_WORK:       msgType = Message.MESSAGE_TYPE_WORK; break;
-		case ContactList.STATUS_LUNCH:      msgType = Message.MESSAGE_TYPE_LUNCH; break;
-		}
-
-		PlainMessage awayReq = new PlainMessage(
-				Options.getString(Options.OPTION_UIN), statusMessCI, msgType, Util.createCurrentDate(false), "");
-
-		SendMessageAction act = new SendMessageAction(awayReq);
-		try
-		{
-			Icq.requestAction(act);
-
-		} catch (JimmException e)
-		{
-			JimmException.handleException(e);
-			if (e.isCritical())
-				return;
-		}
-	}
-	
-	static public void showStatusMessage(String message, String uin)
-	{
-		if (tlStatusMessage == null || statusMessCI == null) return;
-		if ( !statusMessCI.getStringValue(ContactItem.CONTACTITEM_UIN).equals(uin) ) return;
-		
-		tlStatusMessage.lock();
-		tlStatusMessage.clear();
-		
-		addTextListItem(tlStatusMessage, statusMessCI.getStringValue(ContactItem.CONTACTITEM_NAME), null, -1, false, -1, Font.STYLE_BOLD);
-		StatusInfo statInfo = JimmUI.findStatus(StatusInfo.TYPE_STATUS, statusMessCI.getIntValue(ContactItem.CONTACTITEM_STATUS));
-		String status = (statInfo != null) ? statInfo.getText() : new String();
-		addTextListItem(tlStatusMessage, status, null, -1, false, -1, Font.STYLE_PLAIN);
-		addTextListItem(tlStatusMessage, message, null, -1, false, -2, Font.STYLE_PLAIN);
-		
-		tlStatusMessage.unlock();
-	}
-
 	public void vlCursorMoved(VirtualList sender) {}
 
 	public void vlItemClicked(VirtualList sender) {}
@@ -2196,9 +2083,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			showClientInfo(cItem);
 			break;
 
-		case Options.HOTKEY_REQ_SM:
-			requestContactStatusMess(cItem);
-			break;
 		}
 		
 		// Actions for others

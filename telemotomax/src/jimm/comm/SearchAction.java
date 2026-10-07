@@ -64,12 +64,6 @@ public class SearchAction extends Action
 
 	public static final int TLV_TYPE_KEYWORD = 0x2602; // String (2 byte length + string)
 
-	public static final int TLV_TYPE_GENDER = 0x7C01; // UINT8 (1 byte: 1 - female, 2 - male)
-
-	public static final int TLV_TYPE_ONLYONLINE = 0x3002; // UINT8 (1 byte:  1 - search online, 0 - search all)
-
-	public static final int TLV_TYPE_AGE = 0x6801; // 
-
 	// Search action was called by
 	public static final int CALLED_BY_SEARCHUSER = 0;
 
@@ -90,11 +84,6 @@ public class SearchAction extends Action
 
 	// Last activity
 	private long lastActivity = System.currentTimeMillis();
-
-	// "-", "18-22", "23-29", "30-39", "40-49", "50-59", ">60"
-
-	private final int[] ages =
-	{ 0, 99, 18, 22, 23, 29, 30, 39, 40, 49, 50, 59, 60, 99 };
 
 	public SearchAction(Search cont, String[] search, int _calledBy)
 	{
@@ -150,30 +139,6 @@ public class SearchAction extends Action
 		if (search[Search.KEYWORD].length() != 0)
 			Util.writeAsciizTLV(TLV_TYPE_KEYWORD, buffer,
 					search[Search.KEYWORD]);
-
-		// Age (user enter age as "minAge-maxAge", "-maxAge", "minAge-" or "age")
-		int ageIndex = Util.strToIntDef(search[Search.AGE], 0);
-		if (ageIndex != 0)
-		{
-			Util.writeWord(buffer, 0x6801, true);
-			Util.writeWord(buffer, 4, false);
-			Util.writeWord(buffer, ages[2 * ageIndex], false);
-			Util.writeWord(buffer, ages[2 * ageIndex + 1], false);
-		}
-
-		// Gender
-		int gender = Util.strToIntDef(search[Search.GENDER], 0);
-		if (gender != 0)
-		{
-			Util.writeWord(buffer, TLV_TYPE_GENDER, true);
-			Util.writeWord(buffer, 1, false);
-			Util.writeByte(buffer, gender);
-		}
-
-		// Only online
-		Util.writeWord(buffer, TLV_TYPE_ONLYONLINE, true);
-		Util.writeWord(buffer, 1, false);
-		Util.writeByte(buffer, search[Search.ONLY_ONLINE].equals("1") ? 1 : 0);
 
 		ToIcqSrvPacket packet = new ToIcqSrvPacket(
 				SnacPacket.CLI_TOICQSRV_COMMAND, 0x0002, Options

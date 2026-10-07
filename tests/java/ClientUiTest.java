@@ -107,7 +107,7 @@ public final class ClientUiTest {
         field(formClass,"lastUILang").set(form,Options.getString(Options.OPTION_UI_LANGUAGE));
         method(formClass,"initOptionsList",Integer.TYPE).invoke(form,10000);
         TextList settings=(TextList)field(formClass,"optionsMenu").get(form);
-        for(String forbidden:new String[]{"status","xstatus","auto_away","myself"})
+        for(String forbidden:new String[]{"status","xstatus","auto_away","myself","transparency"})
             check(!settings.labels.contains(forbidden),"retired settings menu remains: "+forbidden);
         check(settings.labels.contains("options_interface") && settings.labels.contains("options_media"),"other settings disappeared");
         method(formClass,"showInterfaceOptions").invoke(form);
@@ -118,12 +118,91 @@ public final class ClientUiTest {
         check(Options.getBoolean(Options.OPTION_SHOW_DELETED_CONT),"last contact-list checkbox no longer saved");
         System.out.println("PASS: actual main status menu and OSCAR, login DC info; removed settings; interface checkbox save");
     }
+    static void bridgeFeatures() throws Exception {
+        Class formClass=Class.forName("jimm.OptionsForm");
+        Object form=((sun.misc.Unsafe)field(sun.misc.Unsafe.class,"theUnsafe").get(null)).allocateInstance(formClass);
+        Form network=new Form("network");field(formClass,"optionsForm").set(form,network);
+        method(formClass,"showNetworkOptions").invoke(form);
+        check(network.items.size()==7,"network form contains obsolete transport fields");
+        ((TextField)network.items.elementAt(0)).setString("bridge.example");
+        ((TextField)network.items.elementAt(1)).setString("5190");
+        ((ChoiceGroup)network.items.elementAt(2)).setSelectedIndex(0,true);
+        ((TextField)network.items.elementAt(3)).setString("120");
+        method(formClass,"readNetworkOptions").invoke(form);
+        check(Options.getString(Options.OPTION_SRV_HOST).equals("bridge.example"),"server field no longer saves");
+        check(Options.getString(Options.OPTION_SRV_PORT).equals("5190"),"port field no longer saves");
+        check(Options.getBoolean(Options.OPTION_KEEP_CONN_ALIVE) && Options.getString(Options.OPTION_CONN_ALIVE_INVTERV).equals("120"),"keepalive fields shifted");
+
+        ContactItem contact=new ContactItem();
+        byte[] caps=new byte[16*4+3]; // unknown client, relay, UTF-8, typing, truncated tail
+        Arrays.fill(caps,0,16,(byte)0x7f);
+        System.arraycopy(Icq.CAP_AIM_SERVERRELAY,0,caps,16,16);
+        System.arraycopy(Icq.CAP_UTF8,0,caps,32,16);
+        System.arraycopy(Icq.CAP_MTN,0,caps,48,16);
+        Icq.parseCapabilities(contact,caps);
+        check(contact.hasCapability(Icq.CAPF_AIM_SERVERRELAY) && contact.hasCapability(Icq.CAPF_UTF8_INTERNAL) && contact.hasCapability(Icq.CAPF_TYPING),"protocol abilities lost with client detection");
+        Icq.parseCapabilities(contact,null);
+        check(contact.getIntValue(ContactItem.CONTACTITEM_CAPABILITIES)==0,"capabilities were not reset");
+        Icq.parseCapabilities(contact,Icq.mergeCapabilities(Icq.CAP_MTN,new byte[]{0x13,0x49,0x13,0x4e,0x13}));
+        check(contact.hasCapability(Icq.CAPF_AIM_SERVERRELAY) && contact.hasCapability(Icq.CAPF_UTF8_INTERNAL) && contact.hasCapability(Icq.CAPF_TYPING),"mixed short/long capabilities failed");
+        Icq.parseCapabilities(contact,Icq.mergeCapabilities(null,new byte[]{0x13,0x4e}));
+        check(contact.hasCapability(Icq.CAPF_UTF8_INTERNAL),"short capabilities alone failed");
+
+        new Icq();Socket socket=new Socket();field(Icq.class,"c").set(null,socket);
+        method(Icq.class,"setConnected").invoke(null);field(Icq.class,"reqAction").set(null,new Vector());
+        Search search=new Search();Search.SearchForm query=search.getSearchForm();
+        Form searchForm=(Form)field(query.getClass(),"searchForm").get(query);
+        check(searchForm.items.size()==7,"search filters remain or query fields disappeared");
+        for(Object item:searchForm.items)check(item instanceof TextField,"search filter remains");
+        ((TextField)field(query.getClass(),"keywordSearchTextBox").get(query)).setString("Ceph");
+        query.commandAction((Command)field(query.getClass(),"searchCommand").get(query),searchForm);
+        SearchAction action=(SearchAction)((Vector)field(Icq.class,"reqAction").get(null)).lastElement();
+        method(SearchAction.class,"init").invoke(action);
+        ToIcqSrvPacket packet=(ToIcqSrvPacket)socket.packets.lastElement();
+        byte[] data=packet.getData();
+        check(Util.getWord(data,0)==0x5f05 && packet.getSubcommand()==0x07d0,"search framing changed");
+        check(Util.getWord(data,2)==SearchAction.TLV_TYPE_KEYWORD,"search query is not preserved");
+        int length=Util.getWord(data,4,false);
+        check(data.length==6+length && Util.byteArrayToString(data,8,length-3).equals("Ceph"),"search sends filters or loses query text");
+        SplashCanvas.resetLastTask();field(Icq.class,"reqAction").set(null,new Vector());
+        System.out.println("PASS: socket settings and keepalive; protocol capabilities; actual search form and query packet without filters");
+    }
+    static void incomingMessages(String dir) throws Exception {
+        Socket socket=new Socket();field(Icq.class,"c").set(null,socket);
+        jimm.MainThread.messages.removeAllElements();
+        jimm.comm.ActionListener listener=new jimm.comm.ActionListener();
+        Method forward=method(jimm.comm.ActionListener.class,"forward",Packet.class);
+        for(String name:new String[]{"plain","url","status"}){
+            socket.packets.removeAllElements();
+            byte[] body=java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(dir,name+".bin"));
+            forward.invoke(listener,new SnacPacket(4,7,0,new byte[0],body));
+            if(name.equals("status")){
+                check(socket.packets.isEmpty() && jimm.MainThread.messages.size()==2,"retired status request was answered or displayed");
+                continue;
+            }
+            Message message=(Message)jimm.MainThread.messages.lastElement();
+            check(message.getText().equals(name.equals("plain")?"Привет":"[видео]"),"incoming UTF-8 text lost");
+            if(name.equals("plain")){
+                check(message.getAttachKind()==2 && message.getAttachToken().length==16,"video attachment marker lost");
+            }else{
+                check(message instanceof UrlMessage && ((UrlMessage)message).getUrl().equals("http://bridge.example/v/token"),"browser URL lost");
+            }
+            check(socket.packets.size()==1,"incoming message no longer acknowledged exactly once");
+            SnacPacket ack=(SnacPacket)socket.packets.lastElement();byte[] data=ack.getData();
+            check(ack.getFamily()==4 && ack.getCommand()==0x0b,"wrong delivery ACK");
+            for(int i=0;i<8;i++)check(data[i]==i,"delivery cookie changed");
+        }
+        System.out.println("PASS: actual server channel-2 text, video token, browser URL and delivery ACK; status requests ignored");
+    }
     static void preferences() throws Exception {
         Field f=field(Options.class,"options");f.set(null,new Hashtable());
         method(Options.class,"setDefaults").invoke(null);
-        int[] retired={7,92,96,97,158,159,161};
+        int[] retired={7,17,18,34,83,92,96,97,102,103,158,159,161};
         Hashtable values=(Hashtable)f.get(null);
         for(int id:retired) values.put(new Integer(id),id<64?"old":id<128?new Integer(5):Boolean.TRUE);
+        values.put(new Integer(83),new Integer(1)); // old HTTP transport
+        Options.setInt(Options.OPTION_EXT_CLKEY1,14); // retired status request
+        Options.setInt(Options.OPTION_EXT_CLKEY2,Options.HOTKEY_UP);
         Options.setLong(Options.OPTION_ONLINE_STATUS,ContactList.STATUS_DND);
         Options.setString(field(Options.class,"OPTION_UIN1").getInt(null),"100500");
         Options.setString(Options.OPTION_MEDIA_VIDEO_SIZE,"176x144");
@@ -131,6 +210,8 @@ public final class ClientUiTest {
         Options.save();f.set(null,new Hashtable());method(Options.class,"setDefaults").invoke(null);Options.load();
         values=(Hashtable)f.get(null);
         for(int id:retired)check(!values.containsKey(new Integer(id)),"obsolete RMS option survived: "+id);
+        check(Options.getInt(Options.OPTION_EXT_CLKEY1)==Options.HOTKEY_NONE,"retired hotkey survived");
+        check(Options.getInt(Options.OPTION_EXT_CLKEY2)==Options.HOTKEY_UP,"other hotkey changed");
         check(Options.getLong(Options.OPTION_ONLINE_STATUS)==ContactList.STATUS_DND,"RMS manual status changed");
         check(Options.getString(Options.OPTION_UIN).equals("100500"),"RMS account lost");
         check(Options.getString(Options.OPTION_MEDIA_VIDEO_SIZE).equals("176x144") && Options.mediaVideoKbps()==48,"RMS media lost");
@@ -138,7 +219,7 @@ public final class ClientUiTest {
         System.out.println("PASS: old preferences drop retired IDs and retain account, manual status and video settings");
     }
     public static void main(String[] args) throws Exception {
-        try {preferences();cancelScreen();statusMenu();}
+        try {preferences();cancelScreen();statusMenu();bridgeFeatures();incomingMessages(args[0]);}
         finally {
             Jimm.getTimerRef().cancel();
             ((Timer)field(ContactList.class,"iconTimer").get(null)).cancel();

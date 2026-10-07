@@ -45,7 +45,6 @@
 "city"						"City"
 "clear"						"Clear"
 "clear_all"                 "Clear all"
-"cli_caps"					"Client capabilites"
 "close"						"Close"  
 "color_scheme"				"Color scheme"
 "conn_type"					"Connection type"
@@ -99,7 +98,6 @@
 "fax"						"Fax"
 "none"						"None"
 "female"					"F"
-"female_male"				"F/M"
 "filename"					"File Name"
 "filetransfer"				"File transfer"
 "find"						"Find"
@@ -128,10 +126,6 @@
 "home_page"					"Home page"
 "home_info"					"Home"
 "hours"						"h"
-"http"						"HTTP"
-"http_user_agent"			"User-Agent String for HTTP-Connection"
-"http_wap_profile"			"WAP-Profile String for HTTP-Connection"
-"icq_client"				"ICQ client"
 "images_scale"				"Scale images (slow start)"
 "info"						"Info"
 "init_ft"					"Initializing"
@@ -204,7 +198,6 @@
 "ok"						"OK"
 "onl_notification"			"Notice for upcoming contact"
 "onl_sound_file_name"		"Online Sound File"
-"only_online"				"Show only online contacts"
 "options_lng"				"Options"
 "options_account"			"Account"
 "bridge_networks"			"Bridge networks"
@@ -258,7 +251,6 @@
 "rename_group"				"Rename group"
 "reply"						"Reply"  
 "requauth"					"Request auth"
-"reqstatmsg"				"Request status message"
 "reset"						"Reset"  
 "results"					"Results"
 "save"						"Save"  
@@ -293,8 +285,6 @@
 "speed"						"Speed"
 "state"						"State"
 "status"					"Status"
-"status_message"			"Status message"
-"status_message_text"		"The user's been unavailable since %TIME%. You can leave a message."
 "status_away"				"Away"
 "status_chat"				"Free for Chat"
 "status_dnd"				"Do Not Disturb"
@@ -318,7 +308,6 @@
 "timeout_interv"			"Keepalive packet interval"
 "title"						"Title"
 "total_mem"					"Total memory"
-"transparency"				"Transparency"
 "typing_display_only"		"Display only"
 "typing_notify"				"Typing notifications"
 "uin"						"UIN"
@@ -587,8 +576,6 @@
 
   
 // HTTP Connection errors
-"error_220"					"Server did not accept HTTP request (#220.EXT)"
-"error_221"					"Connection via HTTP proxy closed unrequested (#221.EXT)"
 
 // Registration errors
 "error_230"					"Registration refused (#230.EXT)"
