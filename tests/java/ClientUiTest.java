@@ -118,6 +118,37 @@ public final class ClientUiTest {
         check(Options.getBoolean(Options.OPTION_SHOW_DELETED_CONT),"last contact-list checkbox no longer saved");
         System.out.println("PASS: actual main status menu and OSCAR, login DC info; removed settings; interface checkbox save");
     }
+    static void mediaOptions() throws Exception {
+        Class formClass=Class.forName("jimm.OptionsForm");
+        Object form=((sun.misc.Unsafe)field(sun.misc.Unsafe.class,"theUnsafe").get(null)).allocateInstance(formClass);
+        Form media=new Form("media");field(formClass,"optionsForm").set(form,media);
+        Options.setString(Options.OPTION_MEDIA_VIDEO_SIZE,"176x144");
+        Options.setInt(Options.OPTION_MEDIA_VIDEO_KBPS,48);
+        Options.setInt(Options.OPTION_VIDEO_ROTATE,1);
+        Options.setInt(Options.OPTION_PHOTO_ROTATE,2);
+        Options.setInt(Options.OPTION_MEDIA_MEM_KB,512);
+        method(formClass,"showMediaOptions").invoke(form);
+        int dropdowns=0;
+        for(Object item:media.items){
+            if(item instanceof ChoiceGroup){
+                check(((ChoiceGroup)item).getType()==Choice.POPUP,"media choice is not a dropdown: "+((ChoiceGroup)item).label);
+                dropdowns++;
+            }else check(item instanceof TextField,"unexpected media field");
+        }
+        check(dropdowns==11 && media.items.size()==12,"media choices or memory field lost");
+        ChoiceGroup size=(ChoiceGroup)field(formClass,"mediaVideoSize").get(form);
+        ChoiceGroup rate=(ChoiceGroup)field(formClass,"mediaVideoKbps").get(form);
+        check(size.getString(size.getSelectedIndex()).equals("176x144") && rate.getString(rate.getSelectedIndex()).equals("48"),"dropdown lost saved video selection");
+        check(((ChoiceGroup)field(formClass,"videoRotateChoice").get(form)).getSelectedIndex()==1
+            && ((ChoiceGroup)field(formClass,"photoRotateChoice").get(form)).getSelectedIndex()==2,"dropdown lost saved rotation");
+        for(int i=0;i<rate.size();i++)if(rate.getString(i).equals("64"))rate.setSelectedIndex(i,true);
+        ((TextField)field(formClass,"mediaMemKb").get(form)).setString("384");
+        method(formClass,"readMediaOptions").invoke(form);
+        check(Options.mediaVideoKbps()==64 && Options.getString(Options.OPTION_MEDIA_VIDEO_SIZE).equals("176x144"),"dropdown did not save video selection");
+        check(Options.getInt(Options.OPTION_VIDEO_ROTATE)==1 && Options.getInt(Options.OPTION_PHOTO_ROTATE)==2
+            && Options.getInt(Options.OPTION_MEDIA_MEM_KB)==384,"media rotation or numeric memory save changed");
+        System.out.println("PASS: all 11 media choices are dropdowns; saved video/rotation selections and numeric memory field");
+    }
     static void bridgeFeatures() throws Exception {
         Class formClass=Class.forName("jimm.OptionsForm");
         Object form=((sun.misc.Unsafe)field(sun.misc.Unsafe.class,"theUnsafe").get(null)).allocateInstance(formClass);
@@ -224,7 +255,7 @@ public final class ClientUiTest {
         System.out.println("PASS: old preferences drop retired IDs and retain account, manual status and video settings");
     }
     public static void main(String[] args) throws Exception {
-        try {preferences();cancelScreen();statusMenu();bridgeFeatures();incomingMessages(args[0]);}
+        try {preferences();cancelScreen();statusMenu();mediaOptions();bridgeFeatures();incomingMessages(args[0]);}
         finally {
             Jimm.getTimerRef().cancel();
             ((Timer)field(ContactList.class,"iconTimer").get(null)).cancel();

@@ -38,6 +38,7 @@ package jimm;
 public class Jimm extends javax.microedition.midlet.MIDlet {
  public static final Jimm jimm=new Jimm();
  public static final String NAME="TeleMotoMax",VERSION="test";
+ public static final String microeditionPlatform=System.getProperty("microedition.platform");
  public static final int cmdBack=2;
  public static String openedUrl;
  public static javax.microedition.lcdui.Display display=new javax.microedition.lcdui.Display();
@@ -64,6 +65,7 @@ public class Displayable {
  public void removeCommand(Command c){commands.removeElement(c);}
  public void setCommandListener(CommandListener l){listener=l;}
  public boolean isShown(){return jimm.Jimm.display.getCurrent()==this;}
+ public int getWidth(){return 176;} public int getHeight(){return 200;}
 }
 """
 STUBS["javax/microedition/lcdui/Canvas.java"] = """
@@ -191,8 +193,8 @@ public class Form extends Displayable {
 }
 """
 STUBS["javax/microedition/lcdui/ChoiceGroup.java"] = CHOICE.replace(
-    "private int selected;", "private int selected; private java.util.Hashtable flags=new java.util.Hashtable(); private int type;").replace(
-    "public ChoiceGroup(String label,int type) {}", "public ChoiceGroup(String label,int type) {this.type=type;this.label=label;}\n"
+    "private int selected;", "private int selected; private java.util.Hashtable flags=new java.util.Hashtable();").replace(
+    "public ChoiceGroup(String label,int type) {this.type=type;}", "public ChoiceGroup(String label,int type) {this.type=type;this.label=label;}\n"
     " public ChoiceGroup(String label,int type,String[] labels,Image[] images){this(label,type);for(int i=0;i<labels.length;i++)append(labels[i],null);}").replace(
     "return selected==i;", "return type==2 ? Boolean.TRUE.equals(flags.get(new Integer(i))) : selected==i;").replace(
     "if(value)selected=i;", "flags.put(new Integer(i),Boolean.valueOf(value));if(value)selected=i;")
