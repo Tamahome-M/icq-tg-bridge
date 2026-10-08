@@ -16,6 +16,8 @@ import struct
 CHANNEL = 0x7E
 MAGIC = b"TMME\x01"
 INFO = b"TeleMotoMax secure v1"
+PSK_PHRASE_PREFIX = b"TeleMotoMax PSK v1\x00"
+_KEY_TRIM = "".join(chr(i) for i in range(33))  # Java String.trim().
 MAX_RECORD = 1024
 TAG_SIZE = 16
 MAX_SEQUENCE = (1 << 63) - 1
@@ -25,10 +27,27 @@ class SecureError(ConnectionError):
     pass
 
 
+def trim_psk(value: str) -> str:
+    return value.strip(_KEY_TRIM)
+
+
 def parse_psk(value: str) -> bytes:
-    if not re.fullmatch(r"[0-9a-fA-F]{64}", value):
-        raise ValueError("oscar.psk: нужны 64 шестнадцатеричных знака (32 случайных байта)")
-    return bytes.fromhex(value)
+    """Keep legacy 64-hex keys; otherwise hash a UTF-8 code phrase.
+
+    This fast mapping does not strengthen short, guessable phrases. The
+    length limit counts UTF-16 units, matching the phone's TextField.
+    """
+    value = trim_psk(value)
+    try:
+        length = len(value.encode("utf-16-be")) // 2
+        encoded = value.encode("utf-8")
+    except UnicodeError:
+        raise ValueError("oscar.psk: неверные символы в ключе/кодовой фразе") from None
+    if not 1 <= length <= 64:
+        raise ValueError("oscar.psk: нужен ключ/кодовая фраза от 1 до 64 символов")
+    if re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        return bytes.fromhex(value)
+    return hashlib.sha256(PSK_PHRASE_PREFIX + encoded).digest()
 
 
 def mac(key: bytes, *parts: bytes) -> bytes:

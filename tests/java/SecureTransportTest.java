@@ -21,6 +21,16 @@ public final class SecureTransportTest {
         DataInputStream in=new DataInputStream(new FileInputStream(path));
         byte[] psk=bytes(in);int count=in.readInt();
         for(int i=0;i<count;i++){
+            String text=new String(bytes(in),"UTF-8");byte[] expected=bytes(in);
+            check(Arrays.equals(SecureTransport.parseKey(text),expected),"PSK phrase oracle mismatch");
+        }
+        for(int i=0;i<5;i++){
+            String invalid=i==0?null:i==1?"":i==2?" \t":i==3?"\ud800":new String(new char[65]).replace('\0','x');
+            try{SecureTransport.parseKey(invalid);throw new AssertionError("invalid key accepted");}
+            catch(SecureTransport.Failure expected){check(expected.code==180,"wrong key validation error");}
+        }
+        count=in.readInt();
+        for(int i=0;i<count;i++){
             byte[] data=bytes(in),sha=bytes(in),authKey=bytes(in),mac=bytes(in),nonce=bytes(in);int counter=in.readInt();byte[] encrypted=bytes(in);
             check(Arrays.equals(SecureCrypto.sha256(data),sha),"SHA-256 oracle mismatch");
             check(Arrays.equals(SecureCrypto.hmac(authKey,data,null,null),mac),"HMAC oracle mismatch");
@@ -42,21 +52,20 @@ public final class SecureTransportTest {
         byte[] first=SecureTransport.nextNonce(),second=SecureTransport.nextNonce();
         check(!Arrays.equals(SecureCrypto.slice(first,0,8),SecureCrypto.slice(second,0,8)),"RMS counter did not advance");
         check(SecureTransport.parseKey("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F").length==32,"uppercase PSK rejected");
-        try{SecureTransport.parseKey("short");throw new AssertionError("short PSK accepted");}catch(SecureTransport.Failure expected){}
         for(int code=180;code<=184;code++)check(!Icq.isNotCriticalConnectionError(code),"encryption error triggers automatic retries");
         check(Icq.isNotCriticalConnectionError(118),"temporary timeout lost reconnect");
-        in.close();System.out.println("PASS: real CLDC SHA-256/HMAC/ChaCha20/HKDF match independent Python crypto; records, MAC, bounds, RMS counter");
+        in.close();System.out.println("PASS: real CLDC phrase/legacy keys and SHA-256/HMAC/ChaCha20/HKDF match independent Python crypto; records, MAC, bounds, RMS counter");
     }
     static Packet waitPacket(SOCKETConnection socket) throws Exception {
         long until=System.currentTimeMillis()+5000;
         while(socket.available()==0 && System.currentTimeMillis()<until)Thread.sleep(5);
         check(socket.available()>0,"receiver did not deliver packet");return socket.getPacket();
     }
-    static void socket(String address) throws Exception {
+    static void socket(String address,String keyText) throws Exception {
         Field options=Options.class.getDeclaredField("options");options.setAccessible(true);options.set(null,new java.util.Hashtable());
         Method defaults=Options.class.getDeclaredMethod("setDefaults");defaults.setAccessible(true);defaults.invoke(null);
         Options.setBoolean(Options.OPTION_ENCRYPTION,true);
-        Options.setString(Options.OPTION_ENCRYPTION_PSK,"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+        Options.setString(Options.OPTION_ENCRYPTION_PSK,keyText);
         SOCKETConnection conn=new SOCKETConnection();
         try {
             for(int attempt=0;attempt<2;attempt++){
@@ -81,7 +90,7 @@ public final class SecureTransportTest {
         System.out.println("PASS: cancellation closes socket while waiting for encryption handshake");
     }
     public static void main(String[] args) throws Exception {
-        try{vectors(args[0]);if(args.length>1)socket(args[1]);if(args.length>2)cancel(args[2]);}
+        try{vectors(args[0]);if(args.length>1)socket(args[1],args[3]);if(args.length>2)cancel(args[2]);}
         finally{jimm.Jimm.getTimerRef().cancel();}
     }
 }

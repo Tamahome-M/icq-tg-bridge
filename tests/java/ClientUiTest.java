@@ -160,7 +160,7 @@ public final class ClientUiTest {
         ((ChoiceGroup)network.items.elementAt(2)).setSelectedIndex(0,true);
         ((TextField)network.items.elementAt(3)).setString("120");
         ((ChoiceGroup)field(formClass,"encryptionChoiceGroup").get(form)).setSelectedIndex(0,true);
-        String psk="000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+        String psk="moto 2026";
         ((TextField)field(formClass,"encryptionPskTextField").get(form)).setString(psk);
         method(formClass,"readNetworkOptions").invoke(form);
         check(Options.getBoolean(Options.OPTION_ENCRYPTION) && Options.getString(Options.OPTION_ENCRYPTION_PSK).equals(psk),"encryption switch/key not saved");

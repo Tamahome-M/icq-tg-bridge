@@ -184,7 +184,7 @@ class Config:
             oscar_port=int(oscar.get("port", cls.oscar_port)),
             oscar_uin=str(oscar.get("uin", cls.oscar_uin)),
             oscar_password=str(oscar.get("password", cls.oscar_password)),
-            oscar_psk=str(oscar.get("psk", "")).strip(),
+            oscar_psk=str(oscar.get("psk", "")),
             bos_host=oscar.get("bos_host", ""),
             bos_port=int(oscar.get("bos_port", 0)),
             ssi_encoding=oscar.get("ssi_encoding", cls.ssi_encoding),
@@ -325,8 +325,9 @@ class Config:
             text_to_emoji=bool(br.get("text_to_emoji", True)),
             offline_queue_per_chat=int(br.get("offline_queue_per_chat", cls.offline_queue_per_chat)),
         )
+        from .oscar.secure import parse_psk, trim_psk
+        cfg.oscar_psk = trim_psk(cfg.oscar_psk)
         if cfg.oscar_psk:
-            from .oscar.secure import parse_psk
             parse_psk(cfg.oscar_psk)
         if not cfg.oscar_uin.isdigit():
             raise ValueError("oscar.uin должен состоять из цифр — Jimm принимает только числовой UIN")

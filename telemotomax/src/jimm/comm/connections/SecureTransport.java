@@ -23,13 +23,27 @@ public final class SecureTransport {
         output=new RecordOutput(out,SecureCrypto.slice(keys,0,32),SecureCrypto.slice(keys,32,32));
     }
     public static byte[] parseKey(String text) throws Failure {
-        if(text==null || text.length()!=64)throw new Failure(180);
-        byte[] key=new byte[32];
-        for(int i=0;i<32;i++){
-            int hi=hex(text.charAt(i*2)),lo=hex(text.charAt(i*2+1));
-            if(hi<0 || lo<0)throw new Failure(180);key[i]=(byte)((hi<<4)|lo);
+        if(text==null)throw new Failure(180);
+        text=text.trim();
+        if(text.length()<1 || text.length()>64)throw new Failure(180);
+        if(text.length()==64){
+            byte[] key=new byte[32];boolean legacy=true;
+            for(int i=0;i<32;i++){
+                int hi=hex(text.charAt(i*2)),lo=hex(text.charAt(i*2+1));
+                if(hi<0 || lo<0){legacy=false;break;}key[i]=(byte)((hi<<4)|lo);
+            }
+            if(legacy)return key;
         }
-        return key;
+        // Reject malformed UTF-16 rather than silently replacing characters.
+        for(int i=0;i<text.length();i++){
+            char ch=text.charAt(i);
+            if(ch>=0xd800 && ch<=0xdbff){
+                if(++i>=text.length() || text.charAt(i)<0xdc00 || text.charAt(i)>0xdfff)throw new Failure(180);
+            }else if(ch>=0xdc00 && ch<=0xdfff)throw new Failure(180);
+        }
+        // Fast phrase mapping for the phone; it does not add password entropy.
+        try{return SecureCrypto.sha256(("TeleMotoMax PSK v1\u0000"+text).getBytes("UTF-8"));}
+        catch(java.io.UnsupportedEncodingException e){throw new Failure(180);}
     }
     private static int hex(char ch) {
         if(ch>='0' && ch<='9')return ch-'0';
