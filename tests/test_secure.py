@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from pathlib import Path
 import struct
 import sys
@@ -88,12 +90,26 @@ class CryptoTests(unittest.TestCase):
     def test_config(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/"config.toml"
-            for key in ("", PSK.hex().upper()):
-                path.write_text(f'[oscar]\nuin="100500"\npsk="{key}"\n[telegram]\napi_id=1\napi_hash="x"\n')
-                self.assertEqual(Config.load(str(path)).oscar_psk, key)
-            for key in ("01", "g"*64, "00 "*32):
-                path.write_text(f'[oscar]\nuin="100500"\npsk="{key}"\n[telegram]\napi_id=1\napi_hash="x"\n')
+            for key, normalized in (("", ""), ("  ", ""), (PSK.hex().upper(), PSK.hex().upper()),
+                                    ("01", "01"), ("g"*64, "g"*64), ("  мой ключ  ", "мой ключ"),
+                                    ("\u00a0key\u00a0", "\u00a0key\u00a0")):
+                path.write_text(f'[oscar]\nuin="100500"\npsk={json.dumps(key, ensure_ascii=False)}\n[telegram]\napi_id=1\napi_hash="x"\n')
+                self.assertEqual(Config.load(str(path)).oscar_psk, normalized)
+            for key in ("x"*65, "00 "*32, "😀"*33):
+                path.write_text(f'[oscar]\nuin="100500"\npsk={json.dumps(key, ensure_ascii=False)}\n[telegram]\napi_id=1\napi_hash="x"\n')
                 with self.assertRaises(ValueError): Config.load(str(path))
+
+    def test_phrase_mapping(self):
+        for text, trimmed in (("7", "7"), ("1234", "1234"), ("01", "01"),
+                              ("moto Key", "moto Key"), ("\x1f мой ключ \t", "мой ключ"),
+                              ("g"*64, "g"*64), ("\u00a0key\u00a0", "\u00a0key\u00a0"), ("😀"*32, "😀"*32)):
+            self.assertEqual(secure.parse_psk(text), hashlib.sha256(b"TeleMotoMax PSK v1\x00"+trimmed.encode("utf-8")).digest())
+        self.assertEqual(secure.parse_psk(PSK.hex()), PSK)
+        self.assertEqual(secure.parse_psk("  "+PSK.hex().upper()+"  "), PSK)
+        self.assertNotEqual(secure.parse_psk("moto key"), secure.parse_psk("moto Key"))
+        self.assertNotEqual(secure.parse_psk("moto key"), secure.parse_psk("moto  key"))
+        for invalid in ("", " \t", "x"*65, "😀"*33, "\ud800"):
+            with self.assertRaises(ValueError): secure.parse_psk(invalid)
 
 
 class WireTests(unittest.IsolatedAsyncioTestCase):
@@ -112,7 +128,7 @@ class WireTests(unittest.IsolatedAsyncioTestCase):
 
     async def login(self, dialer=None):
         client = FakeJimm("127.0.0.1", self.port, "100500", "s3cret")
-        client.tmm_version = (0, 88) if dialer else None
+        client.tmm_version = (0, 89) if dialer else None
         if dialer: client.open_transport = dialer
         self.clients.append(client)
         await client.connect(); await client.bos(await client.login_md5_jimm())
@@ -128,7 +144,18 @@ class WireTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("legacy hello" in text for _, text in client.received))
 
     async def test_encrypted_auth_bos_messages_history_attachment(self):
-        dialer = SecureDialer(); client = await self.login(dialer)
+        await self._encrypted_roundtrip()
+
+    async def test_encrypted_phrase_auth_bos_messages_history_attachment(self):
+        self.server.cfg.oscar_psk = "мой moto ключ"
+        await self._encrypted_roundtrip(secure.parse_psk(self.server.cfg.oscar_psk))
+
+    async def test_jimm_unchanged_with_phrase_configured(self):
+        self.server.cfg.oscar_psk = "1234"
+        await self.test_jimm_unchanged_with_psk_configured()
+
+    async def _encrypted_roundtrip(self, key=PSK):
+        dialer = SecureDialer(key); client = await self.login(dialer)
         self.assertTrue(self.server.session.encrypted)
         uin = self.storage.contact_by_peer(555).uin
         incoming, outgoing = "IN-PRIVATE-0123456789", "OUT-PRIVATE-9876543210"
@@ -151,13 +178,14 @@ class WireTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(more); self.assertEqual(rows[0][0], incoming)
         self.assertEqual(len(dialer.keys), 4)  # auth, BOS, photo BART, history BART
         self.assertEqual(len(set(dialer.keys)), 4)
-        for value in (incoming.encode(), outgoing.encode(), image[:256], PSK):
+        for value in (incoming.encode(), outgoing.encode(), image[:256], key, self.server.cfg.oscar_psk.encode()):
             self.assertNotIn(value, dialer.wire)
         await client.ping(); await client.drain_for(0.05)
         self.assertEqual(self.server.session.pings_seen, 1)
 
     async def test_disabled_bad_key_and_bad_finish(self):
-        for configured, key, expected in (("", PSK, 1), (PSK.hex(), bytes(32), 2)):
+        for configured, key, expected in (("", PSK, 1), (PSK.hex(), bytes(32), 2),
+                                          ("1234", secure.parse_psk("1235"), 2)):
             self.server.cfg.oscar_psk = configured
             reader, writer = await asyncio.open_connection("127.0.0.1", self.port)
             await recv_raw(reader)

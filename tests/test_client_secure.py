@@ -47,7 +47,16 @@ def fixture(path):
     def blob(out, data): out.write(struct.pack(">I", len(data))+data)
     sizes = [0, 1, 17, 55, 56, 63, 64, 65, 511, 1024]
     with path.open("wb") as out:
-        blob(out, key);out.write(struct.pack(">I", len(sizes)))
+        blob(out, key)
+        # Independent phrase oracle, not the backend parser's own output.
+        phrases = [(value, key) for value in (key.hex(), key.hex().upper())]
+        phrases += [(text, hashlib.sha256(b"TeleMotoMax PSK v1\x00"+trimmed.encode("utf-8")).digest())
+                    for text, trimmed in (("7", "7"), ("1234", "1234"), ("01", "01"),
+                                          ("moto Key", "moto Key"), ("\x1f мой ключ \t", "мой ключ"),
+                                          ("g"*64, "g"*64), ("\u00a0key\u00a0", "\u00a0key\u00a0"), ("😀"*32, "😀"*32))]
+        out.write(struct.pack(">I", len(phrases)))
+        for text, expected in phrases: blob(out, text.encode("utf-8"));blob(out, expected)
+        out.write(struct.pack(">I", len(sizes)))
         for size in sizes:
             data = bytes(i % 256 for i in range(size));auth = bytes(range(80))
             nonce = bytes(range(12));counter = 1
@@ -86,9 +95,11 @@ async def run(work, classes):
         stalled_server = await asyncio.start_server(stalled, "127.0.0.1", 0)
         stalled_port = stalled_server.sockets[0].getsockname()[1]
         try:
-            process = await asyncio.create_subprocess_exec(str(work/"jdk/bin/java"), "-cp", str(directory)+os.pathsep+classpath,
-                "SecureTransportTest", str(directory/"vectors.bin"), f"127.0.0.1:{port}", f"127.0.0.1:{stalled_port}")
-            assert await asyncio.wait_for(process.wait(), 30) == 0
+            for key_text in (bytes(range(32)).hex(), "1234", "мой moto ключ"):
+                server.cfg.oscar_psk = key_text
+                process = await asyncio.create_subprocess_exec(str(work/"jdk/bin/java"), "-cp", str(directory)+os.pathsep+classpath,
+                    "SecureTransportTest", str(directory/"vectors.bin"), f"127.0.0.1:{port}", f"127.0.0.1:{stalled_port}", key_text)
+                assert await asyncio.wait_for(process.wait(), 30) == 0
         finally:
             if process.returncode is None: process.kill();await process.wait()
             stalled_server.close();await stalled_server.wait_closed()
