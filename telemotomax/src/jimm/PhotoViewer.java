@@ -31,7 +31,7 @@ import jimm.util.ResourceBundle;
  * only while this screen is open: "Back" drops it and the memory with it —
  * a decoded 176x176 image is ~120 KB of the phone's heap, so one at a time.
  */
-public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, RequestBartAction.Listener
+public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, RequestBartAction.ErrorListener
 {
 	private static PhotoViewer current;
 
@@ -60,7 +60,7 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 		}
 		catch (JimmException e)
 		{
-			viewer.onBart(null);
+			viewer.onBartError(e.getMessage());
 		}
 	}
 
@@ -70,9 +70,7 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 		if (current != this) return;     // screen already left — drop it
 		if (data == null)
 		{
-			image = null;
-			status = ResourceBundle.getString("photo_failed");
-			repaint();
+			onBartError(null);
 			return;
 		}
 		// Decoding a big picture takes a while; onBart runs on the comm thread,
@@ -81,33 +79,95 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 		new Thread() {
 			public void run()
 			{
+				if (current != PhotoViewer.this) return;
+				// Release temporary handshake/packet buffers before the native
+				// JPEG decoder allocates its bitmap in the small phone heap.
+				System.gc();
+				ConnLog.note("фото: получено " + raw.length + " байт; свободно "
+						+ (Runtime.getRuntime().freeMemory() / 1024) + " КБ");
 				Image img = null;
-				// Throwable: на большой картинке это OutOfMemoryError, и
-				// экран оставался с «Загрузка...» навсегда.
+				String failure = null;
 				try { img = Image.createImage(raw, 0, raw.length); }
-				catch (Throwable ignore) {}
+				catch (OutOfMemoryError e)
+				{
+					System.gc();
+					failure = ResourceBundle.getString("photo_memory");
+					ConnLog.note("фото: не хватило памяти для JPEG");
+				}
+				catch (Throwable e)
+				{
+					failure = ResourceBundle.getString("photo_format");
+					ConnLog.note("фото: JPEG не открыт — " + e.getClass().getName());
+				}
+				if (img == null && failure == null) failure = ResourceBundle.getString("photo_format");
 				if (current != PhotoViewer.this) return;
 				image = img;
-				status = (img == null) ? ResourceBundle.getString("photo_failed") : null;
+				status = failure;
+				if (img != null) ConnLog.note("фото: JPEG открыт");
 				repaint();
 			}
 		}.start();
+	}
+
+	public void onBartError(String reason)
+	{
+		if (current != this) return;
+		image = null;
+		status = ResourceBundle.getString("photo_download_failed");
+		if (reason != null && reason.length() > 0) status += ": " + reason;
+		ConnLog.note("фото: " + status);
+		repaint();
 	}
 
 	protected void paint(Graphics g)
 	{
 		g.setColor(0x000000);
 		g.fillRect(0, 0, getWidth(), getHeight());
-		if (image != null)
+		Image picture = image;
+		if (picture != null)
 		{
-			g.drawImage(image, getWidth() / 2, getHeight() / 2, Graphics.HCENTER | Graphics.VCENTER);
+			g.drawImage(picture, getWidth() / 2, getHeight() / 2, Graphics.HCENTER | Graphics.VCENTER);
 		}
-		if (status != null)
+		String text = status;
+		if (text != null)
 		{
 			g.setColor(0xFFFFFF);
-			g.setFont(Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL));
-			g.drawString(status, getWidth() / 2, getHeight() / 2, Graphics.HCENTER | Graphics.BASELINE);
+			Font font = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
+			g.setFont(font);
+			int width = Math.max(1, getWidth() - 12), lines = 0;
+			for (int at = 0; at < text.length();)
+			{
+				at = nextLine(text, lineEnd(text, font, at, width));
+				lines++;
+			}
+			int y = Math.max(4, (getHeight() - lines * font.getHeight()) / 2);
+			for (int at = 0; at < text.length() && y + font.getHeight() <= getHeight();)
+			{
+				int end = lineEnd(text, font, at, width);
+				g.drawString(text.substring(at, end), getWidth() / 2, y, Graphics.HCENTER | Graphics.TOP);
+				at = nextLine(text, end);
+				y += font.getHeight();
+			}
 		}
+	}
+
+	private static int lineEnd(String text, Font font, int start, int width)
+	{
+		int end = start, space = -1;
+		while (end < text.length() && text.charAt(end) != '\n')
+		{
+			if (font.stringWidth(text.substring(start, end + 1)) > width) break;
+			if (text.charAt(end) == ' ') space = end;
+			end++;
+		}
+		if (end == start) return start + 1;
+		return end < text.length() && text.charAt(end) != '\n' && space > start ? space : end;
+	}
+
+	private static int nextLine(String text, int end)
+	{
+		while (end < text.length() && text.charAt(end) <= ' ') end++;
+		return end;
 	}
 
 	// Закрывают только «выбор» (или «5»), «0» и «Назад». Любая другая
