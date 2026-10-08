@@ -13,8 +13,9 @@ from tests.test_client_lifecycle import STUBS
 CHOICE = """
 package javax.microedition.lcdui;
 public class ChoiceGroup extends Item implements Choice {
- private java.util.Vector labels=new java.util.Vector(); private int selected;
- public ChoiceGroup(String label,int type) {}
+ private java.util.Vector labels=new java.util.Vector(); private int selected; private int type;
+ public ChoiceGroup(String label,int type) {this.type=type;}
+ public int getType(){return type;}
  public int size(){return labels.size();}
  public String getString(int i){return (String)labels.elementAt(i);}
  public Image getImage(int i){return null;}

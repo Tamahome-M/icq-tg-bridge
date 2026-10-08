@@ -2491,9 +2491,20 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	// выпадающими списками, первый пункт — «как в профиле моста» (0 /
 	// пусто — не шлётся). Значения уходят мосту в 01/F2 сразу при
 	// сохранении и при каждом входе.
+	private ChoiceGroup newMediaChoice(String label)
+	{
+		int choiceType;
+		//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA" | target is "SIEMENS2"#
+		choiceType = Choice.POPUP;
+		//#sijapp cond.else#
+		choiceType = Choice.EXCLUSIVE;
+		//#sijapp cond.end#
+		return new ChoiceGroup(ResourceBundle.getString(label), choiceType);
+	}
+
 	private ChoiceGroup mediaChoice(String label, String[] values, String current)
 	{
-		ChoiceGroup g = new ChoiceGroup(ResourceBundle.getString(label), Choice.EXCLUSIVE);
+		ChoiceGroup g = newMediaChoice(label);
 		g.append(ResourceBundle.getString("media_profile"), null);
 		int sel = 0;
 		for (int i = 0; i < values.length; i++)
@@ -2533,13 +2544,13 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		mediaVideoSize = mediaChoice("media_video_size", MEDIA_VIDEO_SIZES, Options.getString(Options.OPTION_MEDIA_VIDEO_SIZE));
 		mediaVideoKbps = mediaChoice("media_video_kbps", MEDIA_VIDEO_KBPS, Options.mediaVideoKbps(), false);
 		mediaVideoSeconds = mediaChoice("media_video_seconds", MEDIA_VIDEO_SECS, Options.getInt(Options.OPTION_MEDIA_VIDEO_SECONDS), false);
-		videoRotateChoice = new ChoiceGroup(ResourceBundle.getString("video_rotate"), Choice.EXCLUSIVE);
+		videoRotateChoice = newMediaChoice("video_rotate");
 		videoRotateChoice.append(ResourceBundle.getString("video_rotate_auto"), null);
 		videoRotateChoice.append(ResourceBundle.getString("video_rotate_always"), null);
 		videoRotateChoice.append(ResourceBundle.getString("video_rotate_never"), null);
 		try { videoRotateChoice.setSelectedIndex(Options.getInt(Options.OPTION_VIDEO_ROTATE), true); }
 		catch (Exception ignore) {}
-		photoRotateChoice = new ChoiceGroup(ResourceBundle.getString("photo_rotate"), Choice.EXCLUSIVE);
+		photoRotateChoice = newMediaChoice("photo_rotate");
 		photoRotateChoice.append(ResourceBundle.getString("video_rotate_auto"), null);
 		photoRotateChoice.append(ResourceBundle.getString("video_rotate_always"), null);
 		photoRotateChoice.append(ResourceBundle.getString("video_rotate_never"), null);
