@@ -17,6 +17,8 @@ package jimm;
 import java.util.Vector;
 
 import javax.microedition.lcdui.Command;
+import javax.microedition.lcdui.Alert;
+import javax.microedition.lcdui.AlertType;
 import javax.microedition.lcdui.CommandListener;
 import javax.microedition.lcdui.Displayable;
 import javax.microedition.lcdui.Font;
@@ -41,7 +43,7 @@ import jimm.util.ResourceBundle;
  * started under the message: "Discussion" opens its history on top.
  */
 public class HistoryViewer implements CommandListener, VirtualListCommands, JimmScreen,
-		RequestBartAction.Listener
+		RequestBartAction.ErrorListener
 {
 	private static HistoryViewer current;
 
@@ -235,13 +237,23 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	// thread that called us is not held up while the list is built.
 	public void onBart(final byte[] data)
 	{
+		receive(data, null);
+	}
+
+	public void onBartError(String message)
+	{
+		receive(null, message);
+	}
+
+	private void receive(final byte[] data, final String error)
+	{
 		if (current != this) return;
 		new Thread() {
 			public void run()
 			{
 				try
 				{
-					render(data);
+					render(data, error);
 				}
 				catch (Throwable t)
 				{
@@ -290,6 +302,11 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	}
 
 	private void render(byte[] data)
+	{
+		render(data, null);
+	}
+
+	private void render(byte[] data, String error)
 	{
 		if (current != this) return;
 		boolean first = shown == 0;
@@ -386,11 +403,12 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			refs.insertElementAt(newRefs.elementAt(i), 0);
 		}
 		shown += newTexts.size();
-		if (newTexts.size() == 0) exhausted = true;
+		if (!failed && newTexts.size() == 0) exhausted = true;
 		if (texts.size() == 0)
 		{
 			texts.addElement(ResourceBundle.getString(
 					failed ? "history_failed" : "history_empty")
+					+ (error != null ? ": " + error : "")
 					+ (bytes > 0 ? " (" + bytes + " " + ResourceBundle.getString("bytes") + ")"
 							: ""));
 			tokens.addElement(null);
@@ -412,6 +430,12 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		checkMore();
 		checkPhoto();
 		list.repaint();
+		if (failed && error != null)
+		{
+			Alert alert = new Alert(ResourceBundle.getString("history_failed"), error, null, AlertType.ERROR);
+			alert.setTimeout(Alert.FOREVER);
+			Jimm.display.setCurrent(alert, Jimm.display.getCurrent());
+		}
 	}
 
 	// Ложатся ли записи ровно до конца ответа, если начать с этого байта.

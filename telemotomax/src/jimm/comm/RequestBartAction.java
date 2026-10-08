@@ -44,6 +44,12 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 		void onBart(byte[] data);
 	}
 
+	/** History errors may include a readable UTF-8 reason from the bridge. */
+	public interface ErrorListener extends Listener
+	{
+		void onBartError(String message);
+	}
+
 	/** A listener that also wants to know how many parts have arrived. */
 	public interface ProgressListener extends Listener
 	{
@@ -347,8 +353,12 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 					else if ((snacPacket.getFamily() == SnacPacket.SRV_REPLYAVATAR_FAMILY)
 							&& (snacPacket.getCommand() == 0x0001))
 					{
-						// Error from the service: the bridge has nothing to give.
-						listener.onBart(null);
+						// Old bridges send only the error code. New ones add
+						// TLV 0x9003 with a reason; other listeners keep their contract.
+						notified = true;
+						if (listener instanceof ErrorListener)
+							((ErrorListener) listener).onBartError(errorText(snacPacket.getData()));
+						else listener.onBart(null);
 						this.state = STATE_ACTION_DONE;
 						consumed = true;
 					}
@@ -371,6 +381,23 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	public boolean isCompleted()
 	{
 		return (this.state == STATE_ACTION_DONE);
+	}
+
+	private static String errorText(byte[] data)
+	{
+		if (data == null) return null;
+		int marker = 2; // standard OSCAR error code
+		while (marker + 4 <= data.length)
+		{
+			int type = Util.getWord(data, marker);
+			int len = Util.getWord(data, marker + 2);
+			marker += 4;
+			if (marker + len > data.length) break;
+			if (type == 0x9003 && len > 0)
+				return Util.byteArrayToString(data, marker, len, true);
+			marker += len;
+		}
+		return null;
 	}
 
 	// Соединение со службой готово (из потока Icq.connectBart).
