@@ -85,6 +85,8 @@ public class Options
 	public static final int OPTION_CAMERA_SIZE        = 31;   // TeleMotoMax: размер снимка «WxH», пусто — как решит телефон
 	public static final int OPTION_MEDIA_PHOTO_SIZE   = 32;   // TeleMotoMax, «Медиа»: фото от моста «WxH», пусто — как в профиле
 	public static final int OPTION_MEDIA_VIDEO_SIZE   = 33;
+	public static final int OPTION_ENCRYPTION_PSK     = 35;
+	public static final int OPTION_ENCRYPTION         = 176;
 	public static final int OPTION_MESS_NOTIF_FILE    = 4;
 	public static final int OPTION_ONLINE_NOTIF_FILE  = 5;
 	public static final int OPTION_CURRENCY           = 6;
@@ -417,6 +419,8 @@ public class Options
 		setString (Options.OPTION_MEDIA_VIDEO_SIZE, "");
 		
 		setString(Options.OPTION_SRV_PORT, "5190");
+		setString(Options.OPTION_ENCRYPTION_PSK, "");
+		setBoolean(Options.OPTION_ENCRYPTION, false);
 		setBoolean(Options.OPTION_KEEP_CONN_ALIVE, true);
 		setBoolean(Options.OPTION_RECONNECT, true);
 		setInt(Options.OPTION_RECONNECT_NUMBER, 10);
@@ -978,6 +982,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private TextField[] passwordTextField;
 	private TextField srvHostTextField;
 	private TextField srvPortTextField;
+	private ChoiceGroup encryptionChoiceGroup;
+	private TextField encryptionPskTextField;
 	private ChoiceGroup keepConnAliveChoiceGroup;
 	private TextField connAliveIntervTextField;
 	private ChoiceGroup connPropChoiceGroup;
@@ -1914,6 +1920,12 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		optionsForm.append(autoConnectChoiceGroup);
 		optionsForm.append(connPropChoiceGroup);
 		optionsForm.append(reconnectNumberTextField);
+		encryptionChoiceGroup = new ChoiceGroup(ResourceBundle.getString("secure_connection"), Choice.MULTIPLE);
+		setChecked(encryptionChoiceGroup, "yes", Options.OPTION_ENCRYPTION);
+		encryptionPskTextField = new TextField(ResourceBundle.getString("secure_psk"),
+				Options.getString(Options.OPTION_ENCRYPTION_PSK), 64, TextField.ANY | TextField.PASSWORD);
+		optionsForm.append(encryptionChoiceGroup);
+		optionsForm.append(encryptionPskTextField);
 		
 	}
 
@@ -2786,6 +2798,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		//#sijapp cond.end#
 		Options.setInt(Options.OPTION_RECONNECT_NUMBER, Integer
 				.parseInt(reconnectNumberTextField.getString()));
+		Options.setBoolean(Options.OPTION_ENCRYPTION, encryptionChoiceGroup.isSelected(0));
+		Options.setString(Options.OPTION_ENCRYPTION_PSK, encryptionPskTextField.getString().trim());
 		
 	}
 

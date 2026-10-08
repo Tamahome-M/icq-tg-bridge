@@ -51,9 +51,10 @@ class FakeJimm:
         self.device: tuple[str, int, int, int] | None = None
         self.media: dict | None = None            # «Медиа» из настроек, пары в 01/F2
         self.bart_flags = 0x01           # флаги запроса к службе (TeleMotoMax: поворот ролика)
+        self.open_transport = asyncio.open_connection
 
     async def connect(self) -> None:
-        self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
+        self.reader, self.writer = await self.open_transport(self.host, self.port)
         await self.recv_flap()          # приветствие сервера
 
     async def send_flap(self, channel: int, payload: bytes) -> None:
@@ -278,7 +279,7 @@ class FakeJimm:
         request_offline=False оставляет этот шаг вызывающему.
         """
         self.writer.close()
-        self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
+        self.reader, self.writer = await self.open_transport(self.host, self.port)
         await self.recv_flap()
         await self.send_flap(1, struct.pack(">I", 1) + tlv(C.TLV_AUTH_COOKIE, cookie))
         await self.expect(C.OSERVICE, C.SRV_READY)
@@ -623,7 +624,7 @@ class FakeJimm:
         port = int(host.partition(":")[2] or 5190)
 
         main_reader, main_writer = self.reader, self.writer
-        self.reader, self.writer = await asyncio.open_connection(self.host, port)
+        self.reader, self.writer = await self.open_transport(self.host, port)
         try:
             await self.recv_flap()
             await self.send_flap(1, struct.pack(">I", 1) + tlv(C.TLV_AUTH_COOKIE, cookie))
