@@ -2955,7 +2955,13 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			}
 			else if (c == JimmUI.cmdBack)
 			{
-				if (currOptType == TYPE_TOP_OPTIONS) MainThread.backToLastScreenMT();
+				if (currOptType == TYPE_TOP_OPTIONS)
+				{
+					// Exit explicitly: isShown() may change before the queued
+					// return runs, which otherwise reopens this options screen.
+					JimmUI.removeScreen(this);
+					MainThread.backToLastScreenMT();
+				}
 				else initOptionsList(TYPE_TOP_OPTIONS);
 			}
 		}
@@ -2970,6 +2976,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			else
 			{
 				Options.optionsForm = null;
+				JimmUI.removeScreen(this);
 				MainThread.backToLastScreenMT();
 				return;
 			}
