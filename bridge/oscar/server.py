@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import hashlib
+import hmac
 import logging
 import os
 import struct
@@ -131,6 +132,8 @@ class Session:
         self.authorized = False
         self.ready = False
         self.closed = False
+        self.encrypted = False
+        self._plain_started = False
         raw_peer = writer.get_extra_info("peername")
         self.peer = f"{raw_peer[0]}:{raw_peer[1]}" if raw_peer else "?"
         self.signon_time = int(time.time())
@@ -256,6 +259,11 @@ class Session:
                 channel = header[1]
                 length = struct.unpack(">H", header[4:6])[0]
                 payload = await self.reader.readexactly(length) if length else b""
+                from . import secure
+                if channel == secure.CHANNEL:
+                    await self.negotiate_secure(payload)
+                    continue
+                self._plain_started = True
                 await self.handle_flap(channel, payload)
         except (asyncio.IncompleteReadError, ConnectionError, OSError) as exc:
             self.close_reason = self.close_reason or f"обрыв соединения ({type(exc).__name__})"
@@ -265,6 +273,44 @@ class Session:
         finally:
             auth_watch.cancel()
             await self.close()
+
+    async def negotiate_secure(self, request: bytes) -> None:
+        """The client requests TMME before sending any OSCAR credentials."""
+        from . import secure
+        failure = 3
+        try:
+            if self.encrypted or self._plain_started or self.authorized:
+                raise secure.SecureError("поздний запрос шифрования")
+            configured = getattr(self.server.cfg, "oscar_psk", "")
+            if not configured:
+                failure = 1
+                raise secure.SecureError("ключ шифрования на мосту не настроен")
+            psk = secure.parse_psk(configured)
+            failure = 2
+            response = secure.server_hello(psk, request)
+            if not await self.send_flap(secure.CHANNEL, response):
+                return
+            header = await asyncio.wait_for(self.reader.readexactly(6), AUTH_TIMEOUT)
+            if header[0] != 0x2A or header[1] != secure.CHANNEL or header[4:6] != b"\x00\x16":
+                raise secure.SecureError("неверное подтверждение шифрования")
+            finish = await asyncio.wait_for(self.reader.readexactly(22), AUTH_TIMEOUT)
+            expected = secure.client_finish(psk, request, response)
+            if not hmac.compare_digest(finish, expected):
+                raise secure.SecureError("неверный ключ подтверждения шифрования")
+            keys = secure.session_keys(psk, request, response)
+            self.reader, self.writer = secure.wrap(self.reader, self.writer, keys, server=True)
+            self.encrypted = True
+            log.info("шифрование от телефона %s: TMME/1, ChaCha20 + HMAC-SHA256", self.peer)
+            # The client's ordinary OSCAR receiver starts with this hello;
+            # the original cleartext hello was consumed by the handshake.
+            await self.send_flap(1, struct.pack(">I", 1))
+        except (secure.SecureError, asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
+            if failure == 2:
+                peer = self.writer.get_extra_info("peername")
+                self.server.access.note_failure(peer[0] if peer else "")
+            log.warning("шифрование %s не включено: %s", self.peer, type(exc).__name__)
+            await self.send_flap(secure.CHANNEL, secure.MAGIC + b"\xff" + bytes([failure]))
+            await self.close("запрос шифрования отклонён")
 
     async def close(self, reason: str = "") -> None:
         if self.closed:

@@ -179,6 +179,8 @@ public class SOCKSConnection extends Connection implements Runnable
 	public synchronized void connect(String hostAndPort)
 			throws JimmException
 	{
+		// Custom PROXY builds must never silently bypass requested encryption.
+		if (Options.getBoolean(Options.OPTION_ENCRYPTION)) throw new JimmException(183, 0, this.typeNetwork);
 		int mode = Options.getInt(Options.OPTION_PRX_TYPE);
 		is_connected = false;
 		is_socks4 = false;

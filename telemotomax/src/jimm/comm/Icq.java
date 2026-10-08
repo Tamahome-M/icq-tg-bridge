@@ -1021,6 +1021,8 @@ public class Icq implements Runnable
 		    case 111:	// Bad password
 		    case 112:	// Non-existant UIN
 		    case 117:	// Empty UIN and/or password
+		    case 180: case 181: case 182: case 183: case 184:
+		        // Bad PSK/configuration/integrity: show the error, keep encryption enabled.
 		    case 119:	// "You need to allow network connection"
 		    case 122:	// Specified server host and/or port is invalid
 		    case 127:	// peer connection: specified server host and/or port is invalid

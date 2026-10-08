@@ -65,6 +65,13 @@ public class SOCKETConnection extends Connection implements Runnable
 	private InputStream is;
 
 	private OutputStream os;
+	private static final class CryptoDeadline extends java.util.TimerTask
+	{
+		private final javax.microedition.io.Connection socket;
+		volatile boolean expired;
+		CryptoDeadline(javax.microedition.io.Connection value) { socket = value; }
+		public void run() { expired = true; try { socket.close(); } catch (Exception ignore) {} }
+	}
 
 	// ICQ sequence number counter
 	private int nextIcqSequence;
@@ -96,6 +103,24 @@ public class SOCKETConnection extends Connection implements Runnable
 			os = sc.openOutputStream();
 
 			setInputCloseFlag(false);
+			if (Options.getBoolean(Options.OPTION_ENCRYPTION))
+			{
+				CryptoDeadline deadline = new CryptoDeadline(sc);
+				jimm.Jimm.getTimerRef().schedule(deadline, 45000);
+				try
+				{
+					SecureTransport secure = SecureTransport.open(is, os, Options.getString(Options.OPTION_ENCRYPTION_PSK));
+					is = secure.input;
+					os = secure.output;
+				}
+				catch (IOException e)
+				{
+					if (deadline.expired) throw new JimmException(118, 0, this.typeNetwork);
+					throw e;
+				}
+				finally { deadline.cancel(); }
+			}
+			if (getInputCloseFlag()) throw new IOException();
 			rcvThread = new Thread(this);
 			rcvThread.start();
 			// Set starting point for seq numbers (not bigger then 0x8000)
@@ -110,6 +135,8 @@ public class SOCKETConnection extends Connection implements Runnable
 			throw (new JimmException(122, 0));
 		} catch (IOException e)
 		{
+			if (e instanceof SecureTransport.Failure)
+				throw new JimmException(((SecureTransport.Failure)e).code, 0, this.typeNetwork);
 			throw (new JimmException(120, 0));
 		} catch (SecurityException e)
 		{
@@ -309,7 +336,9 @@ public class SOCKETConnection extends Connection implements Runnable
 			if (!getInputCloseFlag() && Icq.isMyConnection(this) && (this.typeNetwork == JimmException.ICQ_MAIN))
 			{
 				jimm.ConnLog.note("ошибка чтения сокета");
-				JimmException f = new JimmException(120, 1, this.typeNetwork);
+				JimmException f = e instanceof SecureTransport.Failure
+						? new JimmException(((SecureTransport.Failure)e).code, 0, this.typeNetwork)
+						: new JimmException(120, 1, this.typeNetwork);
 				JimmException.handleException(f);
 			}
 			// Reset input close flag
