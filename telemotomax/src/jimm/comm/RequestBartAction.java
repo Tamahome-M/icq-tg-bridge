@@ -18,6 +18,7 @@ package jimm.comm;
 import java.util.Date;
 import jimm.DebugLog;
 import jimm.JimmException;
+import jimm.util.ResourceBundle;
 import jimm.comm.connections.SOCKETConnection;
 
 /**
@@ -99,6 +100,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	private boolean notified;         // слушателю уже сказали, чем кончилось
 	private boolean streaming;        // части уходят слушателю по одной
 	private int extraFlags;           // свои биты во флагах приметы (0x40 — ссылку на файл)
+	private String failureReason;
 
 	public void setFlags(int flags)
 	{
@@ -418,6 +420,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	public void onBartConnectFailed(JimmException e)
 	{
 		this.state = STATE_ERROR;
+		this.failureReason = e.getMessage();
 		Icq.disconnectBart(true);
 		int ext = (e.getErrCode() == 100) ? 52 : 51;
 		JimmException.handleException(new JimmException(e.getErrCode(), ext, true));
@@ -429,6 +432,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 				&& (this.lastActivity.getTime() + this.TIMEOUT < System.currentTimeMillis()))
 		{
 			this.state = STATE_ERROR;
+			this.failureReason = ResourceBundle.getString("media_timeout");
 		}
 		// Действие с ошибкой просто убирают из очереди, и экран, который ждёт
 		// ответа, остался бы с «Загрузка...» навсегда. Поэтому о неудаче
@@ -442,6 +446,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 			// здесь, иначе следующий запрос уйдёт в тот же мёртвый сокет.
 			Icq.disconnectBart(true);
 			if (streaming) ((PartSink) listener).onBartDone(false);
+			else if (listener instanceof ErrorListener) ((ErrorListener) listener).onBartError(failureReason);
 			else if (listener != null) listener.onBart(null);
 		}
 		return (this.state == STATE_ERROR);
@@ -466,7 +471,8 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 			{
 				notified = true;
 				if (streaming) ((PartSink) listener).onBartDone(false);
-				else listener.onBart(null);
+				else if (listener instanceof ErrorListener) ((ErrorListener) listener).onBartError(failureReason);
+				else if (listener != null) listener.onBart(null);
 			}
 			Icq.disconnectBart(true);
 			break;
