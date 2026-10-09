@@ -240,7 +240,7 @@ public final class ClientUiTest {
     static void preferences() throws Exception {
         Field f=field(Options.class,"options");f.set(null,new Hashtable());
         method(Options.class,"setDefaults").invoke(null);
-        int[] retired={5,7,17,18,34,68,69,83,92,96,97,102,103,158,159,161};
+        int[] retired={5,7,17,18,34,68,69,75,83,92,96,97,102,103,158,159,161};
         Hashtable values=(Hashtable)f.get(null);
         for(int id:retired) values.put(new Integer(id),id<64?"old":id<128?new Integer(5):Boolean.TRUE);
         values.put(new Integer(83),new Integer(1)); // old HTTP transport

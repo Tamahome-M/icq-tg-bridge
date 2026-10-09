@@ -34,8 +34,6 @@ import jimm.ContactItem;
 public class MainThread implements Runnable
 {
 	private static Vector mainThreadTasks = new Vector();
-	// Bridge build: how long the keys must stay untouched before a message vibrates.
-	private static final long VIBRA_IDLE_MS = 60 * 1000L;
 	private static MainThread _this;
 
 	final static private int TYPE_ADD_MSG             = 1;
@@ -136,19 +134,8 @@ public class MainThread implements Runnable
 //#sijapp cond.if target isnot "DEFAULT"#
 			if (isChecked && !ContactList.readingChat(((Message) data[0]).getSndrUin())
 					&& ContactList.lastAlertAllowed) {
-				int vibraKind = Options.getInt(Options.OPTION_VIBRATOR);
-				boolean locked = SplashCanvas.locked();
-				if (vibraKind == 2) {
-					vibraKind = locked ? 1 : 0;
-				} else if (vibraKind == 3) {
-					// Bridge build: vibrate only if the keys have not been
-					// touched for a while - the phone is closed or put aside,
-					// not in the hands with Jimm on screen.
-					vibraKind = (VirtualList.idleMillis() > VIBRA_IDLE_MS) ? 1 : 0;
-				}
-				if (vibraKind > 0) {
-					Jimm.display.vibrate(Options.vibrationMillis(locked));
-				}
+				int duration = Options.vibrationMillis(SplashCanvas.locked());
+				if (duration > 0) Jimm.display.vibrate(duration);
 			}
 //#sijapp cond.end#			
 			break;

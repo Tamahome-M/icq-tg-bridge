@@ -56,7 +56,7 @@ public final class NotificationProfilesTest {
         }
         Form screen=(Form)field(c,"optionsForm").get(form);
         int dropdowns=0;for(Object item:screen.items)if(item instanceof ChoiceGroup && ((ChoiceGroup)item).getType()==Choice.POPUP)dropdowns++;
-        check(dropdowns==6,"expected three sound dropdowns, vibration mode and two durations");
+        check(dropdowns==5,"expected three sound dropdowns and two independent vibration dropdowns");
         check(active.getSelectedIndex()==3,"active default selection wrong");
         check(locked.getString(locked.getSelectedIndex()).equals("legacy.wav"),"legacy file discarded by menu");
         for(int activeMode=0;activeMode<2;activeMode++){
