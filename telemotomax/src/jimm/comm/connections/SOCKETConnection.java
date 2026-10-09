@@ -67,10 +67,21 @@ public class SOCKETConnection extends Connection implements Runnable
 	private OutputStream os;
 	private static final class CryptoDeadline extends java.util.TimerTask
 	{
-		private final javax.microedition.io.Connection socket;
+		private volatile javax.microedition.io.Connection socket;
 		volatile boolean expired;
 		CryptoDeadline(javax.microedition.io.Connection value) { socket = value; }
-		public void run() { expired = true; try { socket.close(); } catch (Exception ignore) {} }
+		public void run()
+		{
+			javax.microedition.io.Connection pending = socket;
+			if (pending == null) return;
+			expired = true;
+			try { pending.close(); } catch (Exception ignore) {}
+		}
+		public boolean cancel()
+		{
+			socket = null;   // a cancelled TimerTask can remain queued until its deadline
+			return super.cancel();
+		}
 	}
 
 	// ICQ sequence number counter

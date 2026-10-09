@@ -31,7 +31,8 @@ import jimm.util.ResourceBundle;
  * only while this screen is open: "Back" drops it and the memory with it —
  * a decoded 176x176 image is ~120 KB of the phone's heap, so one at a time.
  */
-public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, RequestBartAction.ErrorListener
+public class PhotoViewer extends Canvas implements CommandListener, JimmScreen,
+		RequestBartAction.ErrorListener, RequestBartAction.RangeListener
 {
 	private static volatile PhotoViewer current;
 	private static final Object decodeLock = new Object();
@@ -69,6 +70,11 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 	// Called from the comm thread when the picture (or a failure) arrives.
 	public void onBart(byte[] data)
 	{
+		onBart(data, 0, data == null ? 0 : data.length);
+	}
+
+	public void onBart(byte[] data, final int offset, final int length)
+	{
 		if (current != this) return;     // screen already left — drop it
 		if (data == null)
 		{
@@ -92,8 +98,8 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 					ContactList.releaseAvatars();
 					//#sijapp cond.end#
 					System.gc();
-					int size = jpegSize(raw), width = size >>> 16, height = size & 0xFFFF;
-					ConnLog.note("фото: получено " + raw.length + " байт"
+					int size = jpegSize(raw, offset, length), width = size >>> 16, height = size & 0xFFFF;
+					ConnLog.note("фото: получено " + length + " байт"
 							+ (size == 0 ? "" : "; JPEG " + width + "x" + height)
 							+ "; свободно " + before + " -> "
 							+ (Runtime.getRuntime().freeMemory() / 1024) + " КБ");
@@ -104,7 +110,7 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 						if (current != PhotoViewer.this) return;
 						try
 						{
-							img = Image.createImage(raw, 0, raw.length);
+							img = Image.createImage(raw, offset, length);
 							break;
 						}
 						catch (OutOfMemoryError e)
@@ -136,27 +142,33 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 	// Read the SOF dimensions without allocating or decoding a bitmap.
 	private static int jpegSize(byte[] raw)
 	{
-		if (raw.length < 4 || (raw[0] & 255) != 255 || (raw[1] & 255) != 0xD8) return 0;
-		int at = 2;
-		while (at + 1 < raw.length)
+		return jpegSize(raw, 0, raw.length);
+	}
+
+	private static int jpegSize(byte[] raw, int offset, int length)
+	{
+		if (offset < 0 || length < 4 || offset > raw.length - length
+				|| (raw[offset] & 255) != 255 || (raw[offset + 1] & 255) != 0xD8) return 0;
+		int at = offset + 2, end = offset + length;
+		while (at + 1 < end)
 		{
 			if ((raw[at++] & 255) != 255) return 0;
-			while (at < raw.length && (raw[at] & 255) == 255) at++;
-			if (at >= raw.length) return 0;
+			while (at < end && (raw[at] & 255) == 255) at++;
+			if (at >= end) return 0;
 			int marker = raw[at++] & 255;
 			if (marker == 0xDA || marker == 0xD9) return 0;
 			if (marker == 1 || (marker >= 0xD0 && marker <= 0xD8)) continue;
-			if (at + 2 > raw.length) return 0;
-			int length = ((raw[at] & 255) << 8) | (raw[at + 1] & 255);
-			if (length < 2 || length > raw.length - at) return 0;
+			if (at + 2 > end) return 0;
+			int segment = ((raw[at] & 255) << 8) | (raw[at + 1] & 255);
+			if (segment < 2 || segment > end - at) return 0;
 			if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC)
 			{
-				if (length < 7) return 0;
+				if (segment < 7) return 0;
 				int height = ((raw[at + 3] & 255) << 8) | (raw[at + 4] & 255);
 				int width = ((raw[at + 5] & 255) << 8) | (raw[at + 6] & 255);
 				return width == 0 || height == 0 ? 0 : (width << 16) | height;
 			}
-			at += length;
+			at += segment;
 		}
 		return 0;
 	}
@@ -208,7 +220,7 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 		int end = start, space = -1;
 		while (end < text.length() && text.charAt(end) != '\n')
 		{
-			if (font.stringWidth(text.substring(start, end + 1)) > width) break;
+			if (font.substringWidth(text, start, end + 1 - start) > width) break;
 			if (text.charAt(end) == ' ') space = end;
 			end++;
 		}

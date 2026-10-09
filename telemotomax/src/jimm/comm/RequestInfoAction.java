@@ -35,14 +35,6 @@ import jimm.ContactList;
 
 public class RequestInfoAction extends Action
 {
-	public static final int INTERESTS_COUNT = 4;
-	public static final int[] indexes = {
-		JimmUI.UI_INETRESTS1_T, JimmUI.UI_INETRESTS1_V,
-		JimmUI.UI_INETRESTS2_T, JimmUI.UI_INETRESTS2_V,
-		JimmUI.UI_INETRESTS3_T, JimmUI.UI_INETRESTS3_V,
-		JimmUI.UI_INETRESTS4_T, JimmUI.UI_INETRESTS4_V,
-	};
-
 	// Receive timeout
 	private static final int TIMEOUT = 10 * 1000; // milliseconds
 
@@ -107,7 +99,7 @@ public class RequestInfoAction extends Action
 
 			// Get packet data
 			DataInputStream stream = Util.getDataInputStream(fromIcqSrvPacket
-					.getData(), 0);
+					.getDataRef(), 0);
 
 			// Watch out for SRV_METAGENERAL packet
 			try
@@ -181,18 +173,8 @@ public class RequestInfoAction extends Action
 
 				case 0x00F0: // user interests information
 				{
-					int counter = stream.readByte();
-					if (counter > 4) counter = 4;
-					
-					for (int i = 0; i < counter; i++)
-					{
-						int intValue = Util.getWord(stream, false);
-						String item = Util.readAsciiz(stream);
-						if (item.trim().length() == 0) continue;
-						strData[indexes[2*i]] = Integer.toString(intValue);
-						strData[indexes[2*i+1]] = item; 
-					}
-
+					// The bridge sends an empty compatibility part. Count it so
+					// the five-part profile still completes, without ICQ tables.
 					packetCounter++;
 					consumed = true;
 					break;

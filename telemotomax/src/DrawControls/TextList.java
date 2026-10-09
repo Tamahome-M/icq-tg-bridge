@@ -231,7 +231,7 @@ public class TextList extends VirtualList implements Runnable
 	private boolean alwaysShowCursor;
 	private boolean animated;
 	private static TimerTask aniTimerTask;
-	private static Timer aniTimer = new Timer();
+	private static Timer aniTimer;
 	private Vector lines = new Vector(); // Vector of lines. Each line contains cols. Col can be text or image
 	private Hashtable indexedColors = new Hashtable(); 
 	
@@ -611,17 +611,28 @@ public class TextList extends VirtualList implements Runnable
 		return getWidthInternal() - scrollerWidth - borderWidth*2;
 	}
 
-	private static String replace(String text, String from, String to)
+	private static String normalizeLines(String text)
 	{
-		int fromSize = from.length();
-		int pos;
-		for (;;)
+		if (text.indexOf('\r') < 0) return text;
+		StringBuffer normalized = new StringBuffer(text.length());
+		for (int i = 0; i < text.length(); i++)
 		{
-			pos = text.indexOf(from);
-			if (pos == -1) break;
-			text = text.substring(0, pos) + to + text.substring(pos + fromSize, text.length());
+			char ch = text.charAt(i);
+			if (ch == '\r')
+			{
+				int first = i;
+				while (i + 1 < text.length() && text.charAt(i + 1) == '\r') i++;
+				// Preserve the old repeated CRLF replacement for a CR run.
+				if (i + 1 < text.length() && text.charAt(i + 1) == '\n')
+				{
+					i++;
+					normalized.append('\n');
+				}
+				else for (int j = first; j <= i; j++) normalized.append('\n');
+			}
+			else normalized.append(ch);
 		}
-		return text;
+		return normalized.toString();
 	}
 
 	private void addBigTextInternal(String text, int color, int fontStyle, int textIndex, int trueWidth)
@@ -630,7 +641,6 @@ public class TextList extends VirtualList implements Runnable
 		int textLen, curPos, lastWordEnd, startPos, width, testStringWidth = 0;
 		char curChar;
 		boolean lineBreak, wordEnd, textEnd, divideLineToWords;
-		String testString = null;
 		
 		if (text == null)
 			return;
@@ -642,11 +652,7 @@ public class TextList extends VirtualList implements Runnable
 			if (indexedColor != null) color = (0xFF000000&color)|indexedColor.intValue(); 
 		}
 		
-		// Replace '\r\n' charasters with '\n'
-		text = replace(text, "\r\n", "\n");
-
-		// Replace '\r' charasters with '\n'
-		text = replace(text, "\r", "\n");
+		text = normalizeLines(text);
 
 		font = getQuickFont(fontStyle);
 
@@ -672,14 +678,13 @@ public class TextList extends VirtualList implements Runnable
 
 			if (lineBreak || textEnd || wordEnd)
 			{
-				testString = text.substring(startPos, curPos);
-				testStringWidth = font.stringWidth(testString);
+				testStringWidth = font.substringWidth(text, startPos, curPos - startPos);
 			}
 
 			// simply add line
 			if ((lineBreak || textEnd) && (testStringWidth <= width))
 			{
-				internAdd(testString, color, -1, fontStyle, textIndex, lineBreak, lineBreak ? '\n' : ' ');
+				internAdd(text.substring(startPos, curPos), color, -1, fontStyle, textIndex, lineBreak, lineBreak ? '\n' : ' ');
 				width = trueWidth;
 				curPos++;
 				startPos = curPos;
@@ -710,12 +715,15 @@ public class TextList extends VirtualList implements Runnable
 				// divide big word to several lines
 				if (lastWordEnd == -1)
 				{
-					for (; curPos >= 1; curPos--)
+					int low = startPos, high = curPos;
+					while (low < high)
 					{
-						testString = text.substring(startPos, curPos);
-						if (font.stringWidth(testString) <= width) break;
+						int middle = (low + high + 1) / 2;
+						if (font.substringWidth(text, startPos, middle - startPos) <= width) low = middle;
+						else high = middle - 1;
 					}
-					internAdd(testString, color, -1, fontStyle, textIndex, true, '\0');
+					curPos = Math.max(startPos + 1, low);
+					internAdd(text.substring(startPos, curPos), color, -1, fontStyle, textIndex, true, '\0');
 					width = trueWidth;
 					startPos = curPos;
 					lastWordEnd = -1;
@@ -855,6 +863,7 @@ public class TextList extends VirtualList implements Runnable
 	private void startAnimationTask()
 	{
 		if (aniTimerTask != null) aniTimerTask.cancel();
+		if (aniTimer == null) aniTimer = new Timer();
 		
 		aniTimerTask = new TimerTask() 
 		{

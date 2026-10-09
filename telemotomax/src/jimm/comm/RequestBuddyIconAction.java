@@ -30,6 +30,8 @@ import jimm.JimmException;
 import jimm.DebugLog;
 import jimm.JimmUI;
 import jimm.MainThread;
+import jimm.ContactList;
+import jimm.ConnLog;
 import jimm.comm.connections.SOCKETConnection;
 
 public class RequestBuddyIconAction extends Action implements Icq.BartConnectListener
@@ -171,7 +173,7 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 						&& (snacPacket.getCommand() == SnacPacket.SRV_REDIRECT_COMMAND))
 					{
 						// Get data
-						byte[] buf = snacPacket.getData();
+						byte[] buf = snacPacket.getDataRef();
 						int marker = 0;
 						for (int i = 0; i < 3; i++)
 						{
@@ -253,45 +255,38 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 				    {
 					    // Get data
 					    Icq.noteBartUse();
-					    byte[] buf = snacPacket.getData();
-					    // Ответ службы адресован примете: типу и хешу.
-					    // Раньше действие съедало любой 10/07 — в том
-					    // числе фото или голосовое для другого действия,
-					    // и то ждало «Загрузка...» до таймаута, а снимок
-					    // становился аватаркой контакта.
+					    byte[] buf = snacPacket.getDataRef();
+					    // Match the requested contact, type and hash before decoding.
+					    if (buf.length == 0) { this.active = false; return false; }
+					    int uinLength = Util.getByte(buf, 0);
+					    int marker = 1 + uinLength;
+					    if (marker + 43 > buf.length || Util.getWord(buf, marker) != 1
+					            || Util.getByte(buf, marker + 3) != 16
+					            || !Util.byteArrayEquals(buf, marker + 4, this.biHash, 0, 16))
 					    {
-					        int at = 1 + Util.getByte(buf, 0);
-					        if (Util.getWord(buf, at) != 0x0001
-					                || Util.getByte(buf, at + 3) != 16
-					                || !Util.byteArrayEquals(buf, at + 4, this.biHash, 0, 16))
-					        {
-					            this.active = false;
-					            return false;
-					        }
+					        this.active = false;
+					        return false;
 					    }
-	
-					    int marker = 0;
-					    int uinLength = Util.getByte(buf, marker);
-					    marker += 1;
-	
-					    String uin = Util.byteArrayToString(buf, marker, uinLength);
-	
-					    marker += uinLength;
+					    String uin = Util.byteArrayToString(buf, 1, uinLength);
+					    if (!uin.equals(this.uin)) { this.active = false; return false; }
 					    marker += 2 + 1 + 1 + 16 + 1 + 2 + 1 + 1 + 16;
-	
 					    int imgLength = Util.getWord(buf, marker);
 					    marker += 2;
-					    byte[] iconRaw = new byte[imgLength];
-					    System.arraycopy(buf, marker, iconRaw, 0, imgLength);
+					    if (imgLength > buf.length - marker) { this.active = false; return false; }
 					    Image av = null;
+					    // Release the previous bitmap and decode the packet range.
+					    ContactList.releaseAvatars();
+					    System.gc();
 					    try {
-							av = Image.createImage (iconRaw, 0, iconRaw.length);
+							av = Image.createImage(buf, marker, imgLength);
+					    } catch (OutOfMemoryError e) {
+					        System.gc();
+					        ConnLog.note("аватарка: не хватило памяти");
 					    } catch (Exception ignore) {/* Do nothing */}
 					    if (av != null) {
 							MainThread.updateBuddyIcon (uin, av, biHash);
 							av = null;
 					    }
-					    iconRaw = null;
 					    buf = null;
 	
 					    // Move to next state

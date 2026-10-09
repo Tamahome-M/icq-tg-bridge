@@ -67,12 +67,14 @@ public class MainThread implements Runnable
 	
 	private static void addMainThreadTask(int taskId, Object[] data)
 	{
-		int dataLen = (data != null) ? data.length : 0;
-		Object[] packed = new Object[dataLen+1];
-		packed[0] = new Integer(taskId);
-		if (dataLen != 0) System.arraycopy(data, 0, packed, 1, data.length);
-		synchronized (mainThreadTasks) { mainThreadTasks.addElement(packed); }
-		Jimm.display.callSerially(_this);
+		Object[] packed = new Object[] {new Integer(taskId), data};
+		boolean schedule;
+		synchronized (mainThreadTasks)
+		{
+			schedule = mainThreadTasks.isEmpty();
+			mainThreadTasks.addElement(packed);
+		}
+		if (schedule) Jimm.display.callSerially(_this);
 	}
 
 	
@@ -99,8 +101,7 @@ public class MainThread implements Runnable
 		{
 			Object[] task = tasksArray[i];
 			int mode = ((Integer)task[0]).intValue();
-			Object[] taskData = new Object[task.length-1];
-			System.arraycopy(task, 1, taskData, 0, taskData.length);
+			Object[] taskData = (Object[]) task[1];
 			try
 			{
 				execureTask(mode, taskData);

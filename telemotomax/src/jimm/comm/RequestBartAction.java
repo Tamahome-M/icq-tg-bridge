@@ -44,6 +44,11 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	{
 		void onBart(byte[] data);
 	}
+	/** A single-part response can be used directly without a payload copy. */
+	public interface RangeListener extends Listener
+	{
+		void onBart(byte[] data, int offset, int length);
+	}
 
 	/** History errors may include a readable UTF-8 reason from the bridge. */
 	public interface ErrorListener extends Listener
@@ -343,11 +348,16 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 						}
 						else
 						{
-							byte[] data = new byte[dataLength];
-							System.arraycopy(buf, marker, data, 0, dataLength);
-							buf = null;
 							notified = true;
-							listener.onBart(data);
+							if (listener instanceof RangeListener)
+								((RangeListener) listener).onBart(buf, marker, dataLength);
+							else
+							{
+								byte[] data = new byte[dataLength];
+								System.arraycopy(buf, marker, data, 0, dataLength);
+								listener.onBart(data);
+							}
+							buf = null;
 						}
 						this.state = STATE_ACTION_DONE;
 						consumed = true;

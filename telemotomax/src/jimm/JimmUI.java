@@ -797,17 +797,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		addToTextList(str, langStr, list, translate);
 	}
 	
-	static private void fillInterests(int type, int value, String[] data, TextList list)
-	{
-		String strType = data[type];
-		String strValue = data[value];
-		if (strType == null) return;
-		if (strValue == null) strValue = new String();
-		String interestName = (String)Icq.interests.get(strType);
-		if (interestName == null) return;
-		addToTextList(strValue, interestName, list, false);
-	}
-
 	static public void fillUserInfo(String[] data, TextList list)
 	{
 		uiSectName = "main_info";
@@ -843,11 +832,6 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			uiBigTextIndex++;
 		}
 		
-		uiSectName = "interests";
-		fillInterests(UI_INETRESTS1_T, UI_INETRESTS1_V, data, list);
-		fillInterests(UI_INETRESTS2_T, UI_INETRESTS2_V, data, list);
-		fillInterests(UI_INETRESTS3_T, UI_INETRESTS3_V, data, list);
-		fillInterests(UI_INETRESTS4_T, UI_INETRESTS4_V, data, list);
 
 		uiSectName = "home_info";
 		addToTextList(UI_CITY, data, "city", list, true);

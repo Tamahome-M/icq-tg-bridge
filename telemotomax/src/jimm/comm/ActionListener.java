@@ -72,7 +72,7 @@ public class ActionListener
 					// Watch out for SRV_OFFLINEMSG
 					case FromIcqSrvPacket.SRV_OFFLINEMSG_SUBCMD:
 						// Get raw data
-						byte[] buf = fromIcqSrvPacket.getData();
+						byte[] buf = fromIcqSrvPacket.getDataRef();
 
 						// Check length
 						if (buf.length > 13) {
@@ -155,7 +155,7 @@ public class ActionListener
 			// the uin and one byte: 0 sent, anything else failed.
 			if ((snacPacket.getFamily() == 0x0010) && (snacPacket.getCommand() == 0x0003))
 			{
-				byte[] p = snacPacket.getData();
+				byte[] p = snacPacket.getDataRef();
 				int len = Util.getByte(p, 0);
 				String uin = Util.byteArrayToString(p, 1, len);
 				boolean ok = (p.length > 1 + len) && (Util.getByte(p, 1 + len) == 0);
@@ -174,7 +174,7 @@ public class ActionListener
 					&& (snacPacket.getCommand() == 0x0014)
 					&& Options.getInt(Options.OPTION_TYPING_MODE) > 0)
 			{
-				byte[] p = snacPacket.getData();
+				byte[] p = snacPacket.getDataRef();
 				int uin_len = Util.getByte(p, 10);
 				String uin = Util.byteArrayToString(p, 11, uin_len);
 				int flag = Util.getWord(p, 11 + uin_len);
@@ -193,7 +193,7 @@ public class ActionListener
 			if ((snacPacket.getFamily() == 0x0015) && (snacPacket.getCommand() == 0x0001))
 			{
 				// Get data
-				byte[] buf = snacPacket.getData();
+				byte[] buf = snacPacket.getDataRef();
 
 				// Read the error code from the packet
 				int errCode = Util.getWord(buf, 0);
@@ -222,7 +222,7 @@ public class ActionListener
 				int regdate = -1;
 
 				// Get data
-				byte[] buf = snacPacket.getData();
+				byte[] buf = snacPacket.getDataRef();
 
 				// Get UIN of the contact changing status
 				int uinLen = Util.getByte(buf, 0);
@@ -315,7 +315,7 @@ public class ActionListener
 			{
 
 				// Get raw data
-				byte[] buf = snacPacket.getData();
+				byte[] buf = snacPacket.getDataRef();
 
 				// Get UIN of the contact that goes offline
 				int uinLen = Util.getByte(buf, 0);
@@ -329,7 +329,7 @@ public class ActionListener
 
 			if (snacPacket.getFamily() == 4 && snacPacket.getCommand() == 0x15)
 			{
-				byte[] data = snacPacket.getData();
+				byte[] data = snacPacket.getDataRef();
 				if (data.length >= 17)
 				{
 					int len = Util.getByte(data, 8);
@@ -346,7 +346,7 @@ public class ActionListener
 					&& (snacPacket.getCommand() == SnacPacket.CLI_ACKMSG_COMMAND))
 			{
 				// Get raw data
-				byte[] buf = snacPacket.getData();
+				byte[] buf = snacPacket.getDataRef();
 				
 				int msgId1 = (int)Util.getDWord(buf, 0);
 				int msgId2 = (int)Util.getDWord(buf, 4);
@@ -376,7 +376,7 @@ public class ActionListener
 			{
 
 				// Get raw data, initialize marker
-				byte[] buf = snacPacket.getData();
+				byte[] buf = snacPacket.getDataRef();
 				int marker = 0;
 
 				// Check length
@@ -941,7 +941,7 @@ public class ActionListener
 					&& (snacPacket.getCommand() == SnacPacket.SRV_ADDEDYOU_COMMAND))
 			{
 				// Get data
-				byte[] buf = snacPacket.getData();
+				byte[] buf = snacPacket.getDataRef();
 
 				// Get UIN of the contact changing status
 				int uinLen = Util.getByte(buf, 0);
@@ -962,7 +962,7 @@ public class ActionListener
 				int authMarker = 0;
 
 				// Get data
-				byte[] buf = snacPacket.getData();
+				byte[] buf = snacPacket.getDataRef();
 
 				// Get UIN of the contact changing status
 				int length = Util.getByte(buf, 0);
@@ -991,7 +991,7 @@ public class ActionListener
 
 				int authMarker = 0;
 				// Get data
-				byte[] buf = snacPacket.getData();
+				byte[] buf = snacPacket.getDataRef();
 
 				// Get UIN of the contact changing status
 				int length = Util.getByte(buf, 0);
@@ -1038,7 +1038,7 @@ public class ActionListener
 			else if ((snacPacket.getFamily() == SnacPacket.SRV_MSG_ACK_FAMILY)
 					&& (snacPacket.getCommand() == SnacPacket.SRV_MSG_ACK_COMMAND))
 			{
-				ByteArrayInputStream stream = new ByteArrayInputStream(snacPacket.getData());
+				ByteArrayInputStream stream = new ByteArrayInputStream(snacPacket.getDataRef());
 				int messId1 = Util.getDWord(stream, true);
 				int messId2 = Util.getDWord(stream, true);
 				Util.getWord(stream, true);
