@@ -96,6 +96,7 @@ public class Options
 	public static final int OPTION_MESS_UNLOCKED_VOL  = 194;
 	public static final int OPTION_VIBRA_UNLOCKED_MS = 195;
 	public static final int OPTION_VIBRA_LOCKED_MS = 196;
+	public static final int OPTION_AUTOLOCK_MINUTES = 197;
 	public static final int[] VIBRATION_DURATIONS = {0, 100, 200, 500, 1000, 1500, 2000};
 	public static final int OPTION_CURRENCY           = 6;
 	public static final int OPTION_PRX_SERV           = 8;
@@ -428,6 +429,7 @@ public class Options
 		setString(Options.OPTION_SRV_PORT, "5190");
 		setString(Options.OPTION_ENCRYPTION_PSK, "");
 		setString(OPTION_LOCK_PIN, emptyString);
+		setLong(OPTION_AUTOLOCK_MINUTES, 2);
 		setBoolean(Options.OPTION_ENCRYPTION, false);
 		setBoolean(Options.OPTION_KEEP_CONN_ALIVE, true);
 		setBoolean(Options.OPTION_RECONNECT, true);
@@ -817,6 +819,20 @@ public class Options
 		return true;
 	}
 
+	public static boolean validAutoLockMinutes(String value)
+	{
+		if (value == null || value.length() == 0 || value.length() > 3) return false;
+		for (int i = 0; i < value.length(); i++)
+			if (value.charAt(i) < '0' || value.charAt(i) > '9') return false;
+		return true;
+	}
+
+	public static int autoLockMinutes()
+	{
+		long value = getLong(OPTION_AUTOLOCK_MINUTES);
+		return value >= 0 && value <= 999 ? (int) value : 2;
+	}
+
 	public static int vibrationMillis(boolean locked)
 	{
 		long value = getLong(locked ? OPTION_VIBRA_LOCKED_MS : OPTION_VIBRA_UNLOCKED_MS);
@@ -1056,6 +1072,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private TextField reconnectNumberTextField;
 	private ChoiceGroup uiLanguageChoiceGroup;
 	private TextField lockPinTextField;
+	private TextField autoLockTextField;
 	private ChoiceGroup videoRotateChoice;     // TeleMotoMax, раздел «Медиа»
 	private ChoiceGroup photoRotateChoice;
 	private ChoiceGroup mediaPhotoSize, mediaPhotoQuality, mediaPhotoKb, mediaVideoKb;
@@ -2205,6 +2222,9 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				Options.getString(Options.OPTION_LOCK_PIN), Options.LOCK_PIN_MAX,
 				TextField.NUMERIC | TextField.PASSWORD);
 		optionsForm.append(lockPinTextField);
+		autoLockTextField = new TextField(ResourceBundle.getString("auto_lock_minutes"),
+				String.valueOf(Options.autoLockMinutes()), 3, TextField.NUMERIC);
+		optionsForm.append(autoLockTextField);
 		if (ResourceBundle.langAvailable.length > 1)
 		{
 			uiLanguageChoiceGroup = new ChoiceGroup(ResourceBundle
@@ -2732,6 +2752,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private void readInterfaceOptions()
 	{
 		Options.setString(Options.OPTION_LOCK_PIN, lockPinTextField.getString());
+		Options.setLong(Options.OPTION_AUTOLOCK_MINUTES, Integer.parseInt(autoLockTextField.getString()));
 		if (ResourceBundle.langAvailable.length > 1)
 			Options.setString(Options.OPTION_UI_LANGUAGE,
 					ResourceBundle.langAvailable[uiLanguageChoiceGroup.getSelectedIndex()]);
@@ -3080,6 +3101,14 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				Jimm.display.setCurrent(alert, optionsForm);
 				return;
 			}
+			if (currOptMode == OPTIONS_INTERFACE && !Options.validAutoLockMinutes(autoLockTextField.getString()))
+			{
+				Alert alert = new Alert(ResourceBundle.getString("error"),
+						ResourceBundle.getString("auto_lock_format"), null, AlertType.WARNING);
+				alert.setTimeout(Alert.FOREVER);
+				Jimm.display.setCurrent(alert, optionsForm);
+				return;
+			}
 			boolean skipNextScreen = readDataFromForm();
 
 			/* Save options */
@@ -3126,6 +3155,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private void clearForm()
 	{
 		lockPinTextField = null;
+		autoLockTextField = null;
 		optionsForm.removeCommand(cmdAddNewAccount);
 		optionsForm.removeCommand(cmdDeleteAccount);
 		//#sijapp cond.if target!="DEFAULT"#

@@ -14,11 +14,16 @@ public final class ClientLockTest {
     }
     static void settings() throws Exception {
         defaults();check(Options.getString(Options.OPTION_LOCK_PIN).equals(""),"PIN enabled by default");
+        check(Options.autoLockMinutes()==2,"auto lock does not default to two minutes");
+        for(String value:new String[]{"0","1","2","002","999"})check(Options.validAutoLockMinutes(value),"valid auto lock interval rejected");
+        for(String value:new String[]{"","-1","+1","1000","1.5","abc","１２３"})check(!Options.validAutoLockMinutes(value),"invalid auto lock interval accepted");
         for(String pin:new String[]{"","0012","12345678"})check(Options.validLockPin(pin),"valid PIN rejected");
         for(String pin:new String[]{"1","123","123456789","abcd","123-","１２３４"})check(!Options.validLockPin(pin),"invalid PIN accepted");
         // Simulate an old RMS without the new field; upgrade leaves PIN disabled.
         ((Hashtable)field(Options.class,"options").get(null)).remove(new Integer(Options.OPTION_LOCK_PIN));
+        ((Hashtable)field(Options.class,"options").get(null)).remove(new Integer(Options.OPTION_AUTOLOCK_MINUTES));
         Options.save();defaults();Options.load();check(Options.getString(Options.OPTION_LOCK_PIN).equals(""),"upgrade forces PIN");
+        check(Options.autoLockMinutes()==2,"old RMS does not receive default auto lock interval");
         field(ContactList.class,"cItems").set(null,new Vector());field(ContactList.class,"gItems").set(null,new Vector());
         Class c=Class.forName("jimm.OptionsForm");Constructor ctor=c.getDeclaredConstructor();ctor.setAccessible(true);Object owner=ctor.newInstance();
         field(c,"currOptMode").setInt(owner,field(c,"OPTIONS_INTERFACE").getInt(null));
@@ -40,7 +45,26 @@ public final class ClientLockTest {
         method(c,"showInterfaceOptions").invoke(owner);input=(TextField)field(c,"lockPinTextField").get(owner);
         input.setString("");method(c,"readInterfaceOptions").invoke(owner);Options.save();defaults();Options.load();
         check(Options.getString(Options.OPTION_LOCK_PIN).equals(""),"empty PIN did not disable protection");
+        TextField auto=(TextField)field(c,"autoLockTextField").get(owner);
+        check(form.items.contains(auto) && auto.getString().equals("2") && auto.getMaxSize()==3
+                && auto.getConstraints()==TextField.NUMERIC,"numeric auto lock field/default missing from Interface");
+        for(String value:new String[]{"1","3","999","0"}){
+            auto.setString(value);method(c,"readInterfaceOptions").invoke(owner);Options.save();defaults();Options.load();
+            check(Options.autoLockMinutes()==Integer.parseInt(value),"auto lock interval/off not retained in RMS");
+        }
+        auto.setString("999");Jimm.display.setCurrent(form);((CommandListener)owner).commandAction(JimmUI.cmdBack,form);
+        check(Options.autoLockMinutes()==0,"Back saved changed auto lock interval");
+        method(c,"showInterfaceOptions").invoke(owner);auto=(TextField)field(c,"autoLockTextField").get(owner);
+        for(String invalid:new String[]{"","-1","1000","abc"}){
+            Jimm.display.setCurrent(form);auto.setString(invalid);((CommandListener)owner).commandAction(JimmUI.cmdSave,form);
+            check(Jimm.display.getCurrent() instanceof Alert && Jimm.display.returnTo==form,"bad auto lock interval not reported on same form");
+            check(Options.autoLockMinutes()==0,"invalid auto lock interval partially saved preferences");
+        }
+        for(long bad:new long[]{-1,1000,Long.MAX_VALUE}){
+            Options.setLong(Options.OPTION_AUTOLOCK_MINUTES,bad);check(Options.autoLockMinutes()==2,"corrupt interval does not use safe default");
+        }
         System.out.println("PASS: optional masked numeric PIN in Interface; 4-8 digit validation, leading zeros, RMS upgrade/save, cancel and disable");
+        System.out.println("PASS: numeric auto lock field defaults/upgrades to two minutes; 0 disables; RMS persistence, Back, validation and corrupt-value fallback");
     }
     static final class Previous implements JimmScreen {
         int activated;public void activate(){activated++;JimmUI.setLastScreen(this,false);}public boolean isScreenActive(){return false;}
@@ -103,8 +127,58 @@ public final class ClientLockTest {
         check(!SplashCanvas.locked(),"PIN cannot unlock after reconnect/warning");
         System.out.println("PASS: reconnect, connection completion, warning alerts, real exception handler and queued/direct Back retain PIN lock");
     }
+    static final class IdleList extends DrawControls.TextList {
+        IdleList(){super("idle");}
+        protected void keyPressed(int key){}
+        protected void keyReleased(int key){}
+        protected void keyRepeated(int key){}
+    }
+    static final class ListScreen implements JimmScreen {
+        final IdleList list=new IdleList();
+        public void activate(){list.activate(Jimm.display);JimmUI.setLastScreen(this,false);}
+        public boolean isScreenActive(){return list.isActive();}
+    }
+    static Object canvas()throws Exception{return field(DrawControls.VirtualList.class,"virtualCanvas").get(null);}
+    static void idle(long milliseconds)throws Exception{field(canvas().getClass(),"lastKeyTime").setLong(null,System.currentTimeMillis()-milliseconds);}
+    static void tick(){MainThread.showTime();Display.flush();}
+    static void autoLock() throws Exception {
+        defaults();screen=new SplashCanvas("test");
+        Constructor ctor=MainThread.class.getDeclaredConstructor();ctor.setAccessible(true);ctor.newInstance();
+        DrawControls.VirtualList.setDisplay(Jimm.display);
+        ((Vector)field(JimmUI.class,"lastScreens").get(null)).clear();ListScreen owner=new ListScreen();owner.activate();
+        int scheduled=Jimm.Clock.scheduled;
+        idle(119000);tick();check(!SplashCanvas.locked(),"two-minute auto lock fired early");
+        idle(121000);DrawControls.VirtualList.setBottomText("network update");MainThread.showTime();
+        check(!SplashCanvas.locked(),"clock locks outside UI queue");Display.flush();
+        check(SplashCanvas.locked() && Jimm.display.getCurrent()==screen,"existing clock tick did not auto lock idle list");
+        tick();SplashCanvas.unlock(false);tick();
+        check(!SplashCanvas.locked() && owner.isScreenActive(),"unlock immediately relocks or loses previous screen");
+        Options.setLong(Options.OPTION_AUTOLOCK_MINUTES,0);idle(86400000);tick();check(!SplashCanvas.locked(),"disabled auto lock fires");
+        Options.setLong(Options.OPTION_AUTOLOCK_MINUTES,1);idle(61000);tick();check(SplashCanvas.locked(),"changed one-minute timeout ignored");SplashCanvas.unlock(false);
+        Options.setLong(Options.OPTION_AUTOLOCK_MINUTES,2);
+        for(Displayable exempt:new Displayable[]{new Form("settings"),new TextBox("message","draft",100,0),
+                new Alert("warning","test",null,AlertType.WARNING),new Canvas(),screen}){
+            Jimm.display.setCurrent(exempt);idle(300000);tick();
+            check(!SplashCanvas.locked() && Jimm.display.getCurrent()==exempt,"auto lock interrupts editor/form/media/login");
+            idle(300000);owner.activate();tick();check(!SplashCanvas.locked(),"return from exempt screen immediately auto locks");
+        }
+        idle(300000);method(canvas().getClass(),"keyPressed",Integer.TYPE).invoke(canvas(),1234);tick();
+        check(!SplashCanvas.locked(),"key press does not restart idle countdown");
+        idle(300000);((Runnable)canvas()).run();tick();check(!SplashCanvas.locked(),"held key repeat does not restart countdown");
+        idle(300000);method(canvas().getClass(),"keyReleased",Integer.TYPE).invoke(canvas(),1234);tick();
+        check(!SplashCanvas.locked(),"key release does not restart countdown");
+        Display.foreground=false;idle(121000);tick();
+        check(SplashCanvas.locked() && !Display.foreground,"hidden list skips auto lock or forces foreground");
+        Display.foreground=true;SplashCanvas.unlock(false);
+        Options.setString(Options.OPTION_LOCK_PIN,"0012");idle(121000);tick();
+        check(SplashCanvas.pinLocked(),"auto lock bypasses configured PIN");hold();digits("001");tick();
+        check(SplashCanvas.pinLocked() && field(SplashCanvas.class,"pinLength").getInt(null)==3,"clock tick resets active PIN entry");
+        digits("2");press(35);tick();check(!SplashCanvas.locked() && owner.isScreenActive(),"PIN unlock cannot return from auto lock");
+        check(Jimm.Clock.scheduled==scheduled,"auto lock schedules an extra background timer task");
+        System.out.println("PASS: existing queued clock locks after idle; live timeout/off, key press/hold/release, editors/forms/media/login exemptions, hidden list, PIN and return screen; no extra timer task");
+    }
     public static void main(String[] args) throws Exception {
-        try{settings();keys();reconnect();}
+        try{settings();keys();reconnect();autoLock();}
         finally{
             Jimm.getTimerRef().cancel();
             for(String name:new String[]{"t1","t2"}){Timer timer=(Timer)field(SplashCanvas.class,name).get(null);if(timer!=null)timer.cancel();}

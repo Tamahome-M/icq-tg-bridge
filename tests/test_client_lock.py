@@ -16,6 +16,17 @@ from tests.test_client_performance import make_stubs
 
 def run(work, classes):
     stubs = make_stubs()
+    stubs['jimm/Jimm.java'] = stubs['jimm/Jimm.java'].replace(
+        'public Clock(){super(true);}', 'public static int scheduled;public Clock(){super(true);}').replace(
+        'public void schedule(java.util.TimerTask task,long delay,long period){}',
+        'public void schedule(java.util.TimerTask task,long delay,long period){scheduled++;}')
+    stubs['javax/microedition/lcdui/Display.java'] = stubs['javax/microedition/lcdui/Display.java'].replace(
+        'private Displayable current;', 'public static boolean foreground=true;private Displayable current;')
+    stubs['javax/microedition/lcdui/Displayable.java'] = stubs['javax/microedition/lcdui/Displayable.java'].replace(
+        'jimm.Jimm.display.getCurrent()==this', 'jimm.Jimm.display.getCurrent()==this && Display.foreground')
+    stubs['javax/microedition/lcdui/TextBox.java'] = '''package javax.microedition.lcdui;
+public class TextBox extends Displayable {public TextBox(String title,String text,int max,int constraints){}}
+'''
     stubs['javax/microedition/lcdui/Form.java'] = stubs['javax/microedition/lcdui/Form.java'].replace(
         'public void setItemStateListener',
         'public void deleteAll(){items.clear();} public int size(){return items.size();}'

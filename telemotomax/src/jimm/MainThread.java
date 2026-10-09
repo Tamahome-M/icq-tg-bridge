@@ -183,6 +183,7 @@ public class MainThread implements Runnable
 			
 		case TYPE_SHOW_TIME:
 			VirtualList.setBottomText((String)data[0]);
+			JimmUI.checkAutoLock();
 			break;
 			
 		case TYPE_ADD_CONTACT:
