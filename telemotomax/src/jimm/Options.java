@@ -94,6 +94,9 @@ public class Options
 	// Numeric RMS slots are full; use unused long slots for the new profile.
 	public static final int OPTION_MESS_UNLOCKED_MODE = 193;
 	public static final int OPTION_MESS_UNLOCKED_VOL  = 194;
+	public static final int OPTION_VIBRA_UNLOCKED_MS = 195;
+	public static final int OPTION_VIBRA_LOCKED_MS = 196;
+	public static final int[] VIBRATION_DURATIONS = {200, 500, 1000, 1500, 2000};
 	public static final int OPTION_CURRENCY           = 6;
 	public static final int OPTION_PRX_SERV           = 8;
 	public static final int OPTION_PRX_PORT           = 9;
@@ -496,6 +499,8 @@ public class Options
 		setBoolean(Options.OPTION_INIT_CAPS, true);
 		//#sijapp cond.if target isnot "DEFAULT"#
 		setInt(Options.OPTION_VIBRATOR, 0);
+		setLong(OPTION_VIBRA_UNLOCKED_MS, 500);
+		setLong(OPTION_VIBRA_LOCKED_MS, 500);
 		//#sijapp cond.end#		
 		//#sijapp cond.if modules_TRAFFIC is "true" #
 		setInt(Options.OPTION_COST_PER_PACKET, 0);
@@ -787,6 +792,14 @@ public class Options
 		return true;
 	}
 
+	public static int vibrationMillis(boolean locked)
+	{
+		long value = getLong(locked ? OPTION_VIBRA_LOCKED_MS : OPTION_VIBRA_UNLOCKED_MS);
+		for (int i = 0; i < VIBRATION_DURATIONS.length; i++)
+			if (value == VIBRATION_DURATIONS[i]) return (int) value;
+		return 500;
+	}
+
 	static public synchronized int getInt(int key)
 	{
 		return (((Integer) options.get(key(key))).intValue());
@@ -1045,6 +1058,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup chrgChat;
 	private ChoiceGroup chrgMessFormat;
 	private ChoiceGroup vibratorChoiceGroup;
+	private ChoiceGroup unlockedVibrationDuration, lockedVibrationDuration;
 	private ChoiceGroup chsBringUp;
 	private ChoiceGroup chsFSMode;
 	private ChoiceGroup choiceCurAccount;
@@ -2292,8 +2306,13 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		typingNotificationSoundChoice = createSoundSelector("typing_notify",
 				Options.OPTION_TYPING_FILE, Options.getInt(Options.OPTION_TYPING_MODE), 3);
 
-		vibratorChoiceGroup = createSelector("vibration", "no" + "|"
-				+ "yes" + "|" + "when_locked" + "|" + "when_idle", Options.OPTION_VIBRATOR);
+		vibratorChoiceGroup = new ChoiceGroup(ResourceBundle.getString("vibration"), Choice.POPUP);
+		addStr(vibratorChoiceGroup, "no" + "|" + "yes" + "|" + "when_locked" + "|" + "when_idle");
+		int vibrationMode = Options.getInt(Options.OPTION_VIBRATOR);
+		if (vibrationMode >= 0 && vibrationMode < vibratorChoiceGroup.size())
+			vibratorChoiceGroup.setSelectedIndex(vibrationMode, true);
+		unlockedVibrationDuration = createVibrationDuration("vibra_unlocked", Options.OPTION_VIBRA_UNLOCKED_MS);
+		lockedVibrationDuration = createVibrationDuration("vibra_locked", Options.OPTION_VIBRA_LOCKED_MS);
 
 		//#sijapp cond.end#
 
@@ -2303,6 +2322,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		optionsForm.append(messageNotificationSoundChoice);
 		optionsForm.append(messageNotificationSoundVolume);
 		optionsForm.append(vibratorChoiceGroup);
+		optionsForm.append(unlockedVibrationDuration);
+		optionsForm.append(lockedVibrationDuration);
 		optionsForm.append(typingNotificationSoundChoice);
 		optionsForm.append(typingNotificationSoundVolume);
 		//#sijapp cond.end#
@@ -2349,6 +2370,22 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		if (modeOption < 192) Options.setInt(modeOption, mode);
 		else Options.setLong(modeOption, mode);
 		if (mode == soundMode) Options.setString(fileOption, choice.getString(selected));
+	}
+
+	private static ChoiceGroup createVibrationDuration(String caption, int option)
+	{
+		ChoiceGroup choice = new ChoiceGroup(ResourceBundle.getString(caption), Choice.POPUP);
+		choice.append("0.2", null);
+		choice.append("0.5", null);
+		choice.append("1", null);
+		choice.append("1.5", null);
+		choice.append("2", null);
+		long saved = Options.getLong(option);
+		int selected = 1;
+		for (int i = 0; i < Options.VIBRATION_DURATIONS.length; i++)
+			if (saved == Options.VIBRATION_DURATIONS[i]) selected = i;
+		choice.setSelectedIndex(selected, true);
+		return choice;
 	}
 	
 	private boolean readDataFromForm()
@@ -2502,6 +2539,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				Options.OPTION_MESS_NOTIF_MODE, 2);
 		Options.setInt(Options.OPTION_VIBRATOR, vibratorChoiceGroup
 				.getSelectedIndex());
+		Options.setLong(Options.OPTION_VIBRA_UNLOCKED_MS,
+				Options.VIBRATION_DURATIONS[unlockedVibrationDuration.getSelectedIndex()]);
+		Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,
+				Options.VIBRATION_DURATIONS[lockedVibrationDuration.getSelectedIndex()]);
 		readSoundSelector(unlockedNotificationSoundChoice, Options.OPTION_MESS_UNLOCKED_FILE,
 				Options.OPTION_MESS_UNLOCKED_MODE, 2);
 		readSoundSelector(typingNotificationSoundChoice, Options.OPTION_TYPING_FILE,
