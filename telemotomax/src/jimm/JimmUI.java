@@ -75,6 +75,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	
 	public static void backToLastScreen()
 	{
+		if (SplashCanvas.pinLocked()) { SplashCanvas.show(); return; }
 		synchronized (lastScreens)
 		{
 			if (lastScreens.size() == 0) MainMenu.activateMenu();

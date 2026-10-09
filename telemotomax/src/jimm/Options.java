@@ -89,6 +89,8 @@ public class Options
 	public static final int OPTION_ENCRYPTION         = 176;
 	public static final int OPTION_MESS_NOTIF_FILE    = 4;
 	public static final int OPTION_MESS_UNLOCKED_FILE = 36;
+	public static final int OPTION_LOCK_PIN = 37;
+	public static final int LOCK_PIN_MAX = 8;
 	// Numeric RMS slots are full; use unused long slots for the new profile.
 	public static final int OPTION_MESS_UNLOCKED_MODE = 193;
 	public static final int OPTION_MESS_UNLOCKED_VOL  = 194;
@@ -421,6 +423,7 @@ public class Options
 		
 		setString(Options.OPTION_SRV_PORT, "5190");
 		setString(Options.OPTION_ENCRYPTION_PSK, "");
+		setString(OPTION_LOCK_PIN, emptyString);
 		setBoolean(Options.OPTION_ENCRYPTION, false);
 		setBoolean(Options.OPTION_KEEP_CONN_ALIVE, true);
 		setBoolean(Options.OPTION_RECONNECT, true);
@@ -774,6 +777,16 @@ public class Options
 		return ((String) options.get(key(key)));
 	}
 
+	public static boolean validLockPin(String value)
+	{
+		if (value == null) return false;
+		if (value.length() == 0) return true;
+		if (value.length() < 4 || value.length() > LOCK_PIN_MAX) return false;
+		for (int i = 0; i < value.length(); i++)
+			if (value.charAt(i) < '0' || value.charAt(i) > '9') return false;
+		return true;
+	}
+
 	static public synchronized int getInt(int key)
 	{
 		return (((Integer) options.get(key(key))).intValue());
@@ -1004,6 +1017,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup autoConnectChoiceGroup;
 	private TextField reconnectNumberTextField;
 	private ChoiceGroup uiLanguageChoiceGroup;
+	private TextField lockPinTextField;
 	private ChoiceGroup videoRotateChoice;     // TeleMotoMax, раздел «Медиа»
 	private ChoiceGroup photoRotateChoice;
 	private ChoiceGroup mediaPhotoSize, mediaPhotoQuality, mediaPhotoKb, mediaVideoKb;
@@ -1048,9 +1062,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 //#sijapp cond.end#
 
 //#sijapp cond.if target isnot "DEFAULT"#
-	private ChoiceGroup messageNotificationModeChoiceGroup;
-	private ChoiceGroup unlockedNotificationModeChoiceGroup;
-	private ChoiceGroup typingNotificationModeChoiceGroup;
 	private ChoiceGroup messageNotificationSoundChoice;
 	private Gauge messageNotificationSoundVolume;
 	private ChoiceGroup unlockedNotificationSoundChoice;
@@ -2152,6 +2163,10 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private void showInterfaceOptions()
 	{
 		// Initialize elements (interface section)
+		lockPinTextField = new TextField(ResourceBundle.getString("lock_pin"),
+				Options.getString(Options.OPTION_LOCK_PIN), Options.LOCK_PIN_MAX,
+				TextField.NUMERIC | TextField.PASSWORD);
+		optionsForm.append(lockPinTextField);
 		if (ResourceBundle.langAvailable.length > 1)
 		{
 			uiLanguageChoiceGroup = new ChoiceGroup(ResourceBundle
@@ -2262,26 +2277,20 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		/* Initialize elements (Signaling section) */
 
 		//#sijapp cond.if target isnot "DEFAULT"#
-		unlockedNotificationModeChoiceGroup = createSoundSelector(
-				"message_notification", Options.OPTION_MESS_UNLOCKED_MODE);
-		unlockedNotificationSoundChoice = createSoundFileSelector(Options.OPTION_MESS_UNLOCKED_FILE);
+		unlockedNotificationSoundChoice = createSoundSelector("message_notification",
+				Options.OPTION_MESS_UNLOCKED_FILE, (int) Options.getLong(Options.OPTION_MESS_UNLOCKED_MODE), 2);
 		unlockedNotificationSoundVolume = new Gauge(ResourceBundle.getString("volume"),
 				true, 10, (int) Options.getLong(Options.OPTION_MESS_UNLOCKED_VOL) / 10);
-		messageNotificationModeChoiceGroup = createSoundSelector(
-				"message_notification_locked", Options.OPTION_MESS_NOTIF_MODE);
-		  
-		messageNotificationSoundChoice = createSoundFileSelector(Options.OPTION_MESS_NOTIF_FILE);
+		messageNotificationSoundChoice = createSoundSelector("message_notification_locked",
+				Options.OPTION_MESS_NOTIF_FILE, Options.getInt(Options.OPTION_MESS_NOTIF_MODE), 2);
 		messageNotificationSoundVolume = new Gauge(ResourceBundle
 				.getString("volume"), true, 10, Options
 				.getInt(Options.OPTION_MESS_NOTIF_VOL) / 10);
 		typingNotificationSoundVolume = new Gauge(ResourceBundle
 				.getString("volume"), true, 10, Options
 				.getInt(Options.OPTION_TYPING_VOL) / 10);
-		typingNotificationSoundChoice = createSoundFileSelector(Options.OPTION_TYPING_FILE);
-		typingNotificationModeChoiceGroup = createSelector(
-				"typing_notify", "no" + "|" + "typing_display_only"
-						+ "|" + "beep" + "|" + "sound",
-				Options.OPTION_TYPING_MODE);
+		typingNotificationSoundChoice = createSoundSelector("typing_notify",
+				Options.OPTION_TYPING_FILE, Options.getInt(Options.OPTION_TYPING_MODE), 3);
 
 		vibratorChoiceGroup = createSelector("vibration", "no" + "|"
 				+ "yes" + "|" + "when_locked" + "|" + "when_idle", Options.OPTION_VIBRATOR);
@@ -2289,16 +2298,13 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		//#sijapp cond.end#
 
 		//#sijapp cond.if target isnot "DEFAULT"#     
-		optionsForm.append(unlockedNotificationModeChoiceGroup);
-		optionsForm.append(unlockedNotificationSoundVolume);
 		optionsForm.append(unlockedNotificationSoundChoice);
-		optionsForm.append(messageNotificationModeChoiceGroup);
-		optionsForm.append(messageNotificationSoundVolume);
+		optionsForm.append(unlockedNotificationSoundVolume);
 		optionsForm.append(messageNotificationSoundChoice);
+		optionsForm.append(messageNotificationSoundVolume);
 		optionsForm.append(vibratorChoiceGroup);
-		optionsForm.append(typingNotificationModeChoiceGroup);
-		optionsForm.append(typingNotificationSoundVolume);
 		optionsForm.append(typingNotificationSoundChoice);
+		optionsForm.append(typingNotificationSoundVolume);
 		//#sijapp cond.end#
 		
 		//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA" | target is "SIEMENS2"#
@@ -2315,31 +2321,34 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		//#sijapp cond.end#
 	}
 
-	private static ChoiceGroup createSoundSelector(String caption, int option)
+	private static ChoiceGroup createSoundSelector(String caption, int fileOption, int mode, int soundMode)
 	{
 		ChoiceGroup choice = new ChoiceGroup(ResourceBundle.getString(caption), Choice.POPUP);
-		addStr(choice, "no" + "|" + "beep" + "|" + "sound");
-		int value = option < 192 ? Options.getInt(option) : (int) Options.getLong(option);
-		if (value >= 0 && value < choice.size()) choice.setSelectedIndex(value, true);
-		return choice;
-	}
-
-	private static ChoiceGroup createSoundFileSelector(int option)
-	{
-		ChoiceGroup choice = new ChoiceGroup(ResourceBundle.getString("msg_sound_file_name"), Choice.POPUP);
+		if (soundMode == 3) addStr(choice, "no" + "|" + "typing_display_only" + "|" + "beep");
+		else addStr(choice, "no" + "|" + "beep");
 		choice.append("message.mp3", null);
 		choice.append("msg_low.mp3", null);
 		choice.append("tg.mp3", null);
 		choice.append("typing.mp3", null);
-		String saved = Options.getString(option);
+		String saved = Options.getString(fileOption);
 		int selected = -1;
-		for (int i = 0; i < choice.size(); i++)
+		for (int i = soundMode; i < choice.size(); i++)
 			if (choice.getString(i).equals(saved)) selected = i;
 		// Preserve a saved legacy/custom file until another melody is chosen.
 		if (selected < 0 && saved != null && saved.length() != 0)
 			selected = choice.append(saved, null);
+		if (mode < soundMode) selected = mode;
 		choice.setSelectedIndex(selected < 0 ? 0 : selected, true);
 		return choice;
+	}
+
+	private static void readSoundSelector(ChoiceGroup choice, int fileOption, int modeOption, int soundMode)
+	{
+		int selected = choice.getSelectedIndex();
+		int mode = selected < soundMode ? selected : soundMode;
+		if (modeOption < 192) Options.setInt(modeOption, mode);
+		else Options.setLong(modeOption, mode);
+		if (mode == soundMode) Options.setString(fileOption, choice.getString(selected));
 	}
 	
 	private boolean readDataFromForm()
@@ -2489,25 +2498,19 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private void readSignalingOptions()
 	{
 		//#sijapp cond.if target isnot "DEFAULT"# ===>
-		Options.setInt(Options.OPTION_MESS_NOTIF_MODE,
-				messageNotificationModeChoiceGroup.getSelectedIndex());
+		readSoundSelector(messageNotificationSoundChoice, Options.OPTION_MESS_NOTIF_FILE,
+				Options.OPTION_MESS_NOTIF_MODE, 2);
 		Options.setInt(Options.OPTION_VIBRATOR, vibratorChoiceGroup
 				.getSelectedIndex());
-		Options.setLong(Options.OPTION_MESS_UNLOCKED_MODE,
-				unlockedNotificationModeChoiceGroup.getSelectedIndex());
-		Options.setInt(Options.OPTION_TYPING_MODE,
-				typingNotificationModeChoiceGroup.getSelectedIndex());
+		readSoundSelector(unlockedNotificationSoundChoice, Options.OPTION_MESS_UNLOCKED_FILE,
+				Options.OPTION_MESS_UNLOCKED_MODE, 2);
+		readSoundSelector(typingNotificationSoundChoice, Options.OPTION_TYPING_FILE,
+				Options.OPTION_TYPING_MODE, 3);
    
-		Options.setString(Options.OPTION_MESS_NOTIF_FILE,
-				messageNotificationSoundChoice.getString(messageNotificationSoundChoice.getSelectedIndex()));
 		Options.setInt(Options.OPTION_MESS_NOTIF_VOL,
 				messageNotificationSoundVolume.getValue() * 10);
-		Options.setString(Options.OPTION_MESS_UNLOCKED_FILE,
-				unlockedNotificationSoundChoice.getString(unlockedNotificationSoundChoice.getSelectedIndex()));
 		Options.setLong(Options.OPTION_MESS_UNLOCKED_VOL,
 				unlockedNotificationSoundVolume.getValue() * 10);
-		Options.setString(Options.OPTION_TYPING_FILE,
-				typingNotificationSoundChoice.getString(typingNotificationSoundChoice.getSelectedIndex()));
 		Options.setInt(Options.OPTION_TYPING_VOL,
 				typingNotificationSoundVolume.getValue() * 10);
 		//#sijapp cond.end# <===
@@ -2669,6 +2672,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 	private void readInterfaceOptions()
 	{
+		Options.setString(Options.OPTION_LOCK_PIN, lockPinTextField.getString());
 		if (ResourceBundle.langAvailable.length > 1)
 			Options.setString(Options.OPTION_UI_LANGUAGE,
 					ResourceBundle.langAvailable[uiLanguageChoiceGroup.getSelectedIndex()]);
@@ -3009,6 +3013,14 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		// Look for save command
 		else if ((c == JimmUI.cmdSave || c == JimmUI.cmdOk) && d == optionsForm)
 		{
+			if (currOptMode == OPTIONS_INTERFACE && !Options.validLockPin(lockPinTextField.getString()))
+			{
+				Alert alert = new Alert(ResourceBundle.getString("error"),
+						ResourceBundle.getString("pin_format"), null, AlertType.WARNING);
+				alert.setTimeout(Alert.FOREVER);
+				Jimm.display.setCurrent(alert, optionsForm);
+				return;
+			}
 			boolean skipNextScreen = readDataFromForm();
 
 			/* Save options */
@@ -3054,6 +3066,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 	private void clearForm()
 	{
+		lockPinTextField = null;
 		optionsForm.removeCommand(cmdAddNewAccount);
 		optionsForm.removeCommand(cmdDeleteAccount);
 		//#sijapp cond.if target!="DEFAULT"#

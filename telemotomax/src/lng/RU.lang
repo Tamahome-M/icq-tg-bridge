@@ -260,7 +260,6 @@
 "mess_format"				"Формат сообщения"
 "message_notification"	"Сообщения: обычный режим"
 "message_notification_locked"	"Сообщения: при блокировке"
-"msg_sound_file_name"		"Мелодия"
 "message"					"Сообщение"
 "mess_colored_text"			"Раскрашивать текст"
 "midp_info"					"MIDP инфо"
@@ -617,3 +616,10 @@
 "quote_done"	"Сообщение процитировано"
 "quote_failed"	"Не удалось процитировать сообщение"
 "quote_timeout"	"Нет ответа от моста. Проверьте чат перед повторной отправкой."
+
+"lock_pin"		"PIN блокировки (пусто — выкл.)"
+"pin_format"		"PIN: от 4 до 8 цифр. Пусто — без PIN."
+"pin_enter"		"Введите PIN"
+"pin_wrong"		"Неверный PIN"
+"pin_keys"		"#: OK   *: стереть"
+"pin_cancel"		"Назад: отмена"
