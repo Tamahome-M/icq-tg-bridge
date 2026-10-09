@@ -629,3 +629,6 @@
 "pin_wrong"		"Wrong PIN"
 "pin_keys"		"#: OK   *: erase"
 "pin_cancel"		"Back: cancel"
+
+"vibra_unlocked"		"Vibration: unlocked, s"
+"vibra_locked"		"Vibration: locked, s"

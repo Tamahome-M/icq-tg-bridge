@@ -623,3 +623,6 @@
 "pin_wrong"		"Неверный PIN"
 "pin_keys"		"#: OK   *: стереть"
 "pin_cancel"		"Назад: отмена"
+
+"vibra_unlocked"		"Вибрация: обычный режим, с"
+"vibra_locked"		"Вибрация: при блокировке, с"

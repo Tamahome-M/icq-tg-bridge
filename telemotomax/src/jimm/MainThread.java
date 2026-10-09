@@ -137,8 +137,9 @@ public class MainThread implements Runnable
 			if (isChecked && !ContactList.readingChat(((Message) data[0]).getSndrUin())
 					&& ContactList.lastAlertAllowed) {
 				int vibraKind = Options.getInt(Options.OPTION_VIBRATOR);
+				boolean locked = SplashCanvas.locked();
 				if (vibraKind == 2) {
-					vibraKind = SplashCanvas.locked() ? 1 : 0;
+					vibraKind = locked ? 1 : 0;
 				} else if (vibraKind == 3) {
 					// Bridge build: vibrate only if the keys have not been
 					// touched for a while - the phone is closed or put aside,
@@ -146,7 +147,7 @@ public class MainThread implements Runnable
 					vibraKind = (VirtualList.idleMillis() > VIBRA_IDLE_MS) ? 1 : 0;
 				}
 				if (vibraKind > 0) {
-					Jimm.display.vibrate(500);
+					Jimm.display.vibrate(Options.vibrationMillis(locked));
 				}
 			}
 //#sijapp cond.end#			
