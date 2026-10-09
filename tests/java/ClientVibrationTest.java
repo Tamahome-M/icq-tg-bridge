@@ -44,7 +44,17 @@ public final class ClientVibrationTest {
         for(int bad:new int[]{-1,4,Integer.MAX_VALUE}){
             defaults();legacyMode(bad);Options.save();reload();profiles(0,0,"invalid legacy condition enabled vibration");
         }
+        for(int[] old:new int[][]{{50,1500},{200,50},{50,50},{0,50},{50,0}}){
+            defaults();Options.setLong(Options.OPTION_VIBRA_UNLOCKED_MS,old[0]);Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,old[1]);
+            Options.save();reload();
+            int active=old[0]==50?100:old[0],locked=old[1]==50?100:old[1];
+            profiles(active,locked,"retired 50ms did not migrate independently to 100ms");
+            check(Options.getLong(Options.OPTION_VIBRA_UNLOCKED_MS)==active
+                    && Options.getLong(Options.OPTION_VIBRA_LOCKED_MS)==locked,"stored 50ms value was not replaced");
+            reload();profiles(active,locked,"50ms replacement not persisted on next startup");
+        }
         System.out.println("PASS: legacy off/always/locked/idle migrate once to independent profiles; old durations retained, absent/invalid durations use 500ms, retired RMS mode removed");
+        System.out.println("PASS: retired 50ms choices migrate independently to 100ms; disabled/other profile values and repeated startup preserved");
     }
     static void preferences()throws Exception {
         defaults();profiles(0,0,"fresh install does not default to disabled vibration");
@@ -52,16 +62,16 @@ public final class ClientVibrationTest {
         Class c=Class.forName("jimm.OptionsForm");Constructor ctor=c.getDeclaredConstructor();ctor.setAccessible(true);Object form=ctor.newInstance();
         method(c,"showSignalingOptions").invoke(form);
         ChoiceGroup active=(ChoiceGroup)field(c,"unlockedVibrationDuration").get(form),locked=(ChoiceGroup)field(c,"lockedVibrationDuration").get(form);
-        String[] labels={"Нет","0.05","0.1","0.2","0.5","1","1.5","2"};
+        String[] labels={"Нет","0.1","0.2","0.5","1","1.5","2"};
         for(ChoiceGroup group:new ChoiceGroup[]{active,locked}){
-            check(group.getType()==Choice.POPUP && group.size()==8 && group.getSelectedIndex()==0,"vibration dropdown/default wrong");
+            check(group.getType()==Choice.POPUP && group.size()==7 && group.getSelectedIndex()==0,"vibration dropdown/default wrong");
             for(int i=0;i<labels.length;i++)check(group.getString(i).equals(labels[i]),"duration label wrong");
         }
-        int[] durations={0,50,100,200,500,1000,1500,2000};
+        int[] durations={0,100,200,500,1000,1500,2000};
         for(int i=0;i<durations.length;i++){
-            active.setSelectedIndex(i,true);locked.setSelectedIndex(7-i,true);
+            active.setSelectedIndex(i,true);locked.setSelectedIndex(6-i,true);
             method(c,"readSignalingOptions").invoke(form);Options.save();reload();
-            profiles(durations[i],durations[7-i],"independent off/duration choices not saved in RMS");
+            profiles(durations[i],durations[6-i],"independent off/duration choices not saved in RMS");
             check(!values().containsKey(new Integer(75)),"saving new profiles recreates retired global mode");
         }
         for(long bad:new long[]{-1,1,700,Long.MAX_VALUE}){
@@ -71,7 +81,7 @@ public final class ClientVibrationTest {
         method(c,"showSignalingOptions").invoke(form);
         check(((ChoiceGroup)field(c,"unlockedVibrationDuration").get(form)).getSelectedIndex()==0
                 && ((ChoiceGroup)field(c,"lockedVibrationDuration").get(form)).getSelectedIndex()==0,"invalid saved duration is not shown as disabled");
-        System.out.println("PASS: two independent vibration dropdowns default to off; off and all seven durations including 50/100ms survive RMS; invalid new values stay disabled");
+        System.out.println("PASS: two independent vibration dropdowns default to off; off and all six durations from 100ms survive RMS; invalid new values stay disabled");
     }
     static final class Previous implements JimmScreen {
         public void activate(){JimmUI.setLastScreen(this,false);}public boolean isScreenActive(){return false;}
@@ -85,9 +95,9 @@ public final class ClientVibrationTest {
         defaults();new SplashCanvas("test");JimmUI.setLastScreen(new Previous(),false);
         Constructor ctor=MainThread.class.getDeclaredConstructor();ctor.setAccessible(true);ctor.newInstance();
         quiet();SplashCanvas.lock();quiet();SplashCanvas.unlock(false);
-        Options.setLong(Options.OPTION_VIBRA_UNLOCKED_MS,50);Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,2000);
-        expect(50);SplashCanvas.lock();expect(2000);SplashCanvas.unlock(false);
-        for(int duration:new int[]{50,100,200,500,1000,1500,2000}){
+        Options.setLong(Options.OPTION_VIBRA_UNLOCKED_MS,100);Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,2000);
+        expect(100);SplashCanvas.lock();expect(2000);SplashCanvas.unlock(false);
+        for(int duration:new int[]{100,200,500,1000,1500,2000}){
             Options.setLong(Options.OPTION_VIBRA_UNLOCKED_MS,duration);Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,duration);
             expect(duration);SplashCanvas.lock();expect(duration);SplashCanvas.unlock(false);
         }
@@ -99,7 +109,7 @@ public final class ClientVibrationTest {
         ContactList.lastAlertAllowed=false;quiet();ContactList.lastAlertAllowed=true;
         ContactList.accepted=false;quiet();ContactList.accepted=true;
         Options.setBoolean(Options.OPTION_SILENT_MODE,true);expect(100);
-        System.out.println("PASS: queued MainThread sends all seven durations in both lock states; off makes no motor call; profiles independent, reading/burst/message gates preserved");
+        System.out.println("PASS: queued MainThread sends all six durations in both lock states; off makes no motor call; profiles independent, reading/burst/message gates preserved");
     }
     public static void main(String[] args)throws Exception {
         try{migration();preferences();delivery();}
