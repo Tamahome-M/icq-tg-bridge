@@ -61,15 +61,14 @@ public final class HistoryErrorTest {
         TextList list=new TextList("history");HistoryViewer viewer=viewer(list);
         Jimm.display.setCurrent(list);
         method(HistoryViewer.class,"render",byte[].class).invoke(viewer,page);
-        Vector texts=(Vector)field(HistoryViewer.class,"texts").get(viewer);
         Vector refs=(Vector)field(HistoryViewer.class,"refs").get(viewer);
-        Object first=texts.firstElement(),ref=refs.firstElement();
+        Object first=list.labels.firstElement(),ref=refs.firstElement();
         field(HistoryViewer.class,"loading").setBoolean(viewer,true);
         error(action(viewer),body);awaitError(viewer);
         Alert alert=(Alert)Jimm.display.getCurrent();
         check(alert.type==AlertType.ERROR && reason.equals(alert.text),"wrong error dialog");
         check(Jimm.display.returnTo==list,"error returns to a different screen");
-        check(texts.size()==2 && texts.firstElement()==first && refs.firstElement()==ref,"already loaded history was lost");
+        check(list.labels.firstElement()==first && refs.size()==2 && refs.firstElement()==ref,"already loaded history was lost");
         check(field(HistoryViewer.class,"shown").getInt(viewer)==2,"error advanced the page offset");
         check(!field(HistoryViewer.class,"exhausted").getBoolean(viewer),"error marks history exhausted");
         check(list.commands.contains(field(HistoryViewer.class,"cmdMore").get(null)),"cannot retry older page");
@@ -80,8 +79,7 @@ public final class HistoryErrorTest {
         list=new TextList("first error");viewer=viewer(list);Jimm.display.setCurrent(list);
         field(HistoryViewer.class,"loading").setBoolean(viewer,true);
         error(action(viewer),body);awaitError(viewer);
-        texts=(Vector)field(HistoryViewer.class,"texts").get(viewer);
-        check(texts.size()==1 && texts.firstElement().toString().indexOf(reason)>=0,"first error shown as no messages");
+        check(list.labels.size()==1 && list.labels.firstElement().toString().indexOf(reason)>=0,"first error shown as no messages");
         check(field(HistoryViewer.class,"shown").getInt(viewer)==0,"failure counted as a message");
         System.out.println("PASS: server history error UTF-8, BART dispatch, legacy/truncated replies, visible reason, preserved history and retry");
     }

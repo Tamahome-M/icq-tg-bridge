@@ -138,6 +138,8 @@ STUBS["DrawControls/VirtualList.java"] = BASE["DrawControls/VirtualList.java"].r
     " public static void setCapOffset(int n){}\n")
 STUBS["DrawControls/TextList.java"] = BASE["DrawControls/TextList.java"].replace(
     "public TextList(String caption) {}", "public TextList(String caption) {}\n"
+    " public void prependFrom(TextList prefix,int count){for(int i=prefix.labels.size()-1;i>=0;i--)labels.insertElementAt(prefix.labels.elementAt(i),0);"
+    " for(int i=prefix.headers.size()-1;i>=0;i--)headers.insertElementAt(prefix.headers.elementAt(i),0);prefix.clear();}\n"
     " public void selectTextByIndex(int n){selected=n;}\n"
     " public int getCurrIndex(){return selected;}\n")
 STUBS["jimm/JimmUI.java"] = """
