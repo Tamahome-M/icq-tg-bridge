@@ -96,7 +96,7 @@ public class Options
 	public static final int OPTION_MESS_UNLOCKED_VOL  = 194;
 	public static final int OPTION_VIBRA_UNLOCKED_MS = 195;
 	public static final int OPTION_VIBRA_LOCKED_MS = 196;
-	public static final int[] VIBRATION_DURATIONS = {200, 500, 1000, 1500, 2000};
+	public static final int[] VIBRATION_DURATIONS = {0, 50, 100, 200, 500, 1000, 1500, 2000};
 	public static final int OPTION_CURRENCY           = 6;
 	public static final int OPTION_PRX_SERV           = 8;
 	public static final int OPTION_PRX_PORT           = 9;
@@ -126,7 +126,8 @@ public class Options
 	public static final int OPTION_COST_PACKET_LENGTH = 72;
 	public static final int OPTION_COLOR_SCHEME       = 73;
 	public static final int OPTION_LIGHT_TIMEOUT      = 74;
-	public static final int OPTION_VIBRATOR           = 75;
+	// Migration only: the retired global mode must never be reused.
+	private static final int LEGACY_VIBRATOR          = 75;
 	public static final int OPTION_PRX_TYPE           = 76;
 	public static final int OPTION_EXT_CLKEY0         = 77; 
 	public static final int OPTION_EXT_CLKEYSTAR      = 78;
@@ -498,9 +499,8 @@ public class Options
 				.equals("RU") || ResourceBundle.langAvailable[0].equals("BE") );
 		setBoolean(Options.OPTION_INIT_CAPS, true);
 		//#sijapp cond.if target isnot "DEFAULT"#
-		setInt(Options.OPTION_VIBRATOR, 0);
-		setLong(OPTION_VIBRA_UNLOCKED_MS, 500);
-		setLong(OPTION_VIBRA_LOCKED_MS, 500);
+		setLong(OPTION_VIBRA_UNLOCKED_MS, 0);
+		setLong(OPTION_VIBRA_LOCKED_MS, 0);
 		//#sijapp cond.end#		
 		//#sijapp cond.if modules_TRAFFIC is "true" #
 		setInt(Options.OPTION_COST_PER_PACKET, 0);
@@ -672,8 +672,23 @@ public class Options
 							optionValue.length, true));
 				}
 			}
+			// Fold the former condition into the two independent profiles once.
+			Integer legacyVibration = (Integer) options.get(key(LEGACY_VIBRATOR));
+			boolean saveNeeded = !unlockedSeen || legacyVibration != null;
+			if (legacyVibration != null)
+			{
+				int mode = legacyVibration.intValue();
+				int unlocked = vibrationMillis(false);
+				int locked = vibrationMillis(true);
+				// Older releases used 500 ms when durations were absent/invalid.
+				if (unlocked == 0) unlocked = 500;
+				if (locked == 0) locked = 500;
+				setLong(OPTION_VIBRA_UNLOCKED_MS, mode == 1 ? unlocked : 0);
+				// The retired idle mode becomes vibration while locked.
+				setLong(OPTION_VIBRA_LOCKED_MS, mode >= 1 && mode <= 3 ? locked : 0);
+			}
 			// Retired preferences; never reuse these RMS IDs.
-			int[] retired = {5, 7, 17, 18, 34, 68, 69, 92, 96, 97, 102, 103, 158, 159, 161
+			int[] retired = {5, 7, 17, 18, 34, 68, 69, LEGACY_VIBRATOR, 92, 96, 97, 102, 103, 158, 159, 161
 //#sijapp cond.if modules_PROXY isnot "true"#
 				, 83
 //#sijapp cond.end#
@@ -681,7 +696,6 @@ public class Options
 			for (int i = 0; i < retired.length; i++) options.remove(key(retired[i]));
 			// Keep the former mode/volume for both profiles on first upgrade,
 			// including disabled sound. The unlocked file starts with the quiet MP3.
-			boolean saveNeeded = !unlockedSeen;
 			if (!unlockedSeen)
 			{
 				setLong(OPTION_MESS_UNLOCKED_MODE, getInt(OPTION_MESS_NOTIF_MODE));
@@ -797,7 +811,7 @@ public class Options
 		long value = getLong(locked ? OPTION_VIBRA_LOCKED_MS : OPTION_VIBRA_UNLOCKED_MS);
 		for (int i = 0; i < VIBRATION_DURATIONS.length; i++)
 			if (value == VIBRATION_DURATIONS[i]) return (int) value;
-		return 500;
+		return 0;
 	}
 
 	static public synchronized int getInt(int key)
@@ -1057,7 +1071,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup clSortByChoiceGroup;
 	private ChoiceGroup chrgChat;
 	private ChoiceGroup chrgMessFormat;
-	private ChoiceGroup vibratorChoiceGroup;
 	private ChoiceGroup unlockedVibrationDuration, lockedVibrationDuration;
 	private ChoiceGroup chsBringUp;
 	private ChoiceGroup chsFSMode;
@@ -2306,11 +2319,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		typingNotificationSoundChoice = createSoundSelector("typing_notify",
 				Options.OPTION_TYPING_FILE, Options.getInt(Options.OPTION_TYPING_MODE), 3);
 
-		vibratorChoiceGroup = new ChoiceGroup(ResourceBundle.getString("vibration"), Choice.POPUP);
-		addStr(vibratorChoiceGroup, "no" + "|" + "yes" + "|" + "when_locked" + "|" + "when_idle");
-		int vibrationMode = Options.getInt(Options.OPTION_VIBRATOR);
-		if (vibrationMode >= 0 && vibrationMode < vibratorChoiceGroup.size())
-			vibratorChoiceGroup.setSelectedIndex(vibrationMode, true);
 		unlockedVibrationDuration = createVibrationDuration("vibra_unlocked", Options.OPTION_VIBRA_UNLOCKED_MS);
 		lockedVibrationDuration = createVibrationDuration("vibra_locked", Options.OPTION_VIBRA_LOCKED_MS);
 
@@ -2319,10 +2327,9 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		//#sijapp cond.if target isnot "DEFAULT"#     
 		optionsForm.append(unlockedNotificationSoundChoice);
 		optionsForm.append(unlockedNotificationSoundVolume);
+		optionsForm.append(unlockedVibrationDuration);
 		optionsForm.append(messageNotificationSoundChoice);
 		optionsForm.append(messageNotificationSoundVolume);
-		optionsForm.append(vibratorChoiceGroup);
-		optionsForm.append(unlockedVibrationDuration);
 		optionsForm.append(lockedVibrationDuration);
 		optionsForm.append(typingNotificationSoundChoice);
 		optionsForm.append(typingNotificationSoundVolume);
@@ -2375,13 +2382,16 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private static ChoiceGroup createVibrationDuration(String caption, int option)
 	{
 		ChoiceGroup choice = new ChoiceGroup(ResourceBundle.getString(caption), Choice.POPUP);
+		choice.append(ResourceBundle.getString("no"), null);
+		choice.append("0.05", null);
+		choice.append("0.1", null);
 		choice.append("0.2", null);
 		choice.append("0.5", null);
 		choice.append("1", null);
 		choice.append("1.5", null);
 		choice.append("2", null);
 		long saved = Options.getLong(option);
-		int selected = 1;
+		int selected = 0;
 		for (int i = 0; i < Options.VIBRATION_DURATIONS.length; i++)
 			if (saved == Options.VIBRATION_DURATIONS[i]) selected = i;
 		choice.setSelectedIndex(selected, true);
@@ -2537,8 +2547,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		//#sijapp cond.if target isnot "DEFAULT"# ===>
 		readSoundSelector(messageNotificationSoundChoice, Options.OPTION_MESS_NOTIF_FILE,
 				Options.OPTION_MESS_NOTIF_MODE, 2);
-		Options.setInt(Options.OPTION_VIBRATOR, vibratorChoiceGroup
-				.getSelectedIndex());
 		Options.setLong(Options.OPTION_VIBRA_UNLOCKED_MS,
 				Options.VIBRATION_DURATIONS[unlockedVibrationDuration.getSelectedIndex()]);
 		Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,
