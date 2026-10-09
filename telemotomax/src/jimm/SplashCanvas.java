@@ -115,7 +115,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 	// True if keylock has been enabled
 	static private boolean isLocked;
-	// Allocate the small input buffer only while the PIN prompt is open.
+	// The PIN prompt is always ready; allocate input only for the first digit.
 	static private char[] pinInput;
 	static private int pinLength;
 	static private boolean pinWrong;
@@ -338,6 +338,20 @@ public class SplashCanvas extends Canvas implements CommandListener
 		{
 			if (pinLength < pinInput.length) pinInput[pinLength++] = (char) keyCode;
 			pinWrong = false;
+			String pin = Options.getString(Options.OPTION_LOCK_PIN);
+			if (pin != null && pinLength == pin.length())
+			{
+				boolean matches = true;
+				for (int i = 0; matches && i < pinLength; i++)
+					if (pinInput[i] != pin.charAt(i)) matches = false;
+				if (matches) finishUnlock();
+				else
+				{
+					for (int i = 0; i < pinLength; i++) pinInput[i] = 0;
+					pinLength = 0;
+					pinWrong = true;
+				}
+			}
 		}
 		else if (keyCode == Canvas.KEY_STAR)
 		{
@@ -345,20 +359,6 @@ public class SplashCanvas extends Canvas implements CommandListener
 			pinWrong = false;
 		}
 		else if (isCancelKey(keyCode)) clearPinInput();
-		else if (keyCode == Canvas.KEY_POUND)
-		{
-			String pin = Options.getString(Options.OPTION_LOCK_PIN);
-			boolean matches = pin != null && pinLength == pin.length();
-			for (int i = 0; matches && i < pinLength; i++)
-				if (pinInput[i] != pin.charAt(i)) matches = false;
-			if (matches) finishUnlock();
-			else
-			{
-				for (int i = 0; i < pinLength; i++) pinInput[i] = 0;
-				pinLength = 0;
-				pinWrong = true;
-			}
-		}
 		repaint();
 	}
 
@@ -397,7 +397,16 @@ public class SplashCanvas extends Canvas implements CommandListener
 		}
 		if (isLocked)
 		{
-			if (pinInput != null) { pinKeyPressed(keyCode); return; }
+			if (pinLocked())
+			{
+				if (pinInput == null)
+				{
+					if (keyCode < '0' || keyCode > '9') return;
+					beginPinInput();
+				}
+				pinKeyPressed(keyCode);
+				return;
+			}
 			if (keyCode == Canvas.KEY_POUND)
 			{
 				poundPressTime = System.currentTimeMillis();
@@ -428,7 +437,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 	private void tryToUnlock(int keyCode)
 	{
-		if (!isLocked || pinInput != null)
+		if (!isLocked || pinLocked())
 			return;
 		if (keyCode != Canvas.KEY_POUND)
 		{
@@ -439,8 +448,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 		if ((poundPressTime != 0)
 				&& ((System.currentTimeMillis() - poundPressTime) > 900))
 		{
-			if (pinLocked()) beginPinInput();
-			else unlock(true);
+			unlock(true);
 			poundPressTime = 0;
 		}
 	}
@@ -572,7 +580,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 			g.drawString(Util.getCurrentDayString(), width / 2, y, Graphics.TOP|Graphics.HCENTER);
 		}
 		// Display the keylock message if someone hit the wrong key
-		if (showKeylock && pinInput == null)
+		if (showKeylock && !pinLocked())
 		{
 
 			// Init the dimensions
@@ -599,7 +607,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 		}
 
-		if (isLocked && pinInput != null)
+		if (pinLocked())
 		{
 			int boxWidth = width - 16;
 			int boxHeight = fontHeight * 4 + 16;

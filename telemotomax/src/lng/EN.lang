@@ -628,8 +628,8 @@
 "pin_format"		"Use 4 to 8 digits, or leave empty to disable PIN."
 "pin_enter"		"Enter PIN"
 "pin_wrong"		"Wrong PIN"
-"pin_keys"		"#: OK   *: erase"
-"pin_cancel"		"Back: cancel"
+"pin_keys"		"*: erase digit"
+"pin_cancel"		"Back: clear"
 
 "vibra_unlocked"		"Vibration: unlocked, s"
 "vibra_locked"		"Vibration: locked, s"

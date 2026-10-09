@@ -622,8 +622,8 @@
 "pin_format"		"PIN: от 4 до 8 цифр. Пусто — без PIN."
 "pin_enter"		"Введите PIN"
 "pin_wrong"		"Неверный PIN"
-"pin_keys"		"#: OK   *: стереть"
-"pin_cancel"		"Назад: отмена"
+"pin_keys"		"*: стереть цифру"
+"pin_cancel"		"Назад: очистить"
 
 "vibra_unlocked"		"Вибрация: обычный режим, с"
 "vibra_locked"		"Вибрация: при блокировке, с"
