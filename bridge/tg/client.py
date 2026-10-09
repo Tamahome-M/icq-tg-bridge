@@ -7,6 +7,7 @@ import datetime as dt
 import io
 import time
 import logging
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -14,6 +15,7 @@ from telethon import TelegramClient, events, functions, types, utils
 
 from ..history import HistoryItem, MissedMessage, SentMessage
 from ..mentions import mentions_all, utf16_text
+from ..quotes import QuoteContent, QuoteMedia, QuoteError, check_size, filename
 
 log = logging.getLogger("telegram")
 
@@ -882,7 +884,7 @@ class TelegramSide:
                 blocked.append((entity.offset, entity.length))
         return mentions_all(text, blocked)
 
-    async def quote_text(self, peer_id: int, message_id: int, topic_id: int = 0) -> str | None:
+    async def _quote_source(self, peer_id: int, message_id: int, topic_id: int = 0):
         message = await self.client.get_messages(peer_id, ids=message_id)
         if not isinstance(message, types.Message) or message.id != message_id:
             return None
@@ -893,7 +895,50 @@ class TelegramSide:
             return None
         if topic_id and (topic_of(message) or GENERAL_TOPIC) != topic_id:
             return None
-        return describe_message(message) or None
+        return message
+
+    async def quote_text(self, peer_id: int, message_id: int, topic_id: int = 0) -> str | None:
+        message = await self._quote_source(peer_id, message_id, topic_id)
+        return describe_message(message) if message else None
+
+    async def quote_content(self, peer_id: int, message_id: int, topic_id: int = 0) -> QuoteContent | None:
+        message = await self._quote_source(peer_id, message_id, topic_id)
+        if message is None:
+            return None
+        kind = media_kind(message)
+        if not kind and getattr(message, "document", None):
+            kind = "file"  # Keep stickers as their original file, too.
+        if not kind:
+            return QuoteContent(describe_message(message))
+        file = getattr(message, "file", None)
+        name = filename(getattr(file, "name", "") or "",
+                        {"photo": "photo.jpg", "video": "video.mp4", "voice": "voice.ogg",
+                         "audio": "audio.mp3"}.get(kind, "file" + (getattr(file, "ext", "") or ".bin")))
+        size = getattr(file, "size", 0) or 0
+
+        async def save(path: str, maximum: int) -> None:
+            check_size(size, maximum)
+            def progress(done, total):
+                check_size(max(done, total), maximum)
+            result = await message.download_media(file=path, progress_callback=progress)
+            if not result or not Path(path).is_file() or not Path(path).stat().st_size:
+                raise QuoteError("Не удалось скачать вложение цитаты. Ничего не отправлено.")
+            check_size(Path(path).stat().st_size, maximum)
+        return QuoteContent(message.message or "", [QuoteMedia(kind, name, size, save)])
+
+    async def send_quote_media(self, peer_id: int, path: str, kind: str, name: str,
+                               caption: str, topic_id: int = 0) -> int | None:
+        self._sending[peer_id] = self._sending.get(peer_id, 0) + 1
+        try:
+            message = await self.client.send_file(peer_id, file=path, caption=caption, parse_mode=None,
+                reply_to=reply_target(topic_id), voice_note=kind == "voice",
+                force_document=kind in ("file", "audio"))
+        finally:
+            self._sending[peer_id] -= 1
+        message_id = getattr(message, "id", None)
+        if message_id:
+            self._own_ids[(peer_id, message_id)] = time.time()
+        return message_id
 
     async def send(self, peer_id: int, text: str, topic_id: int = 0, *, plain: bool = False) -> int | None:
         """Отправляет сообщение и возвращает его номер в Telegram.

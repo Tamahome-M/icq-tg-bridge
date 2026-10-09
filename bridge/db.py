@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -105,6 +106,13 @@ class Storage:
             CREATE TABLE IF NOT EXISTS meta (
                 k TEXT PRIMARY KEY,
                 v TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS quote_sources (
+                uin INTEGER NOT NULL,
+                ref INTEGER NOT NULL,
+                message_id TEXT NOT NULL,
+                PRIMARY KEY (uin, ref),
+                UNIQUE (uin, message_id)
             );
             """
         )
@@ -352,6 +360,42 @@ class Storage:
             raise
         finally:
             self.conn.execute("RELEASE incoming_message")
+
+    def quote_reference(self, uin: int, message_id: int | str) -> int:
+        """Keep UUIDs reversible across restarts without changing the phone's 8 bytes."""
+        try:
+            value = int(message_id)
+            return value if 0 < value < 2**64 else 0
+        except (TypeError, ValueError):
+            pass
+        try:
+            source = str(uuid.UUID(str(message_id)))
+        except (ValueError, AttributeError):
+            return 0
+        row = self.conn.execute("SELECT ref FROM quote_sources WHERE uin=? AND message_id=?",
+                                (uin, source)).fetchone()
+        if row:
+            return row["ref"]
+        # Never recycle an expired reference: an old phone selection must
+        # fail rather than silently point at a newer message with the same
+        # leading UUID bits. The sequence also survives a bridge restart.
+        value = int(self.get_meta("quote_ref_sequence", "0")) + 1
+        while self.conn.execute("SELECT 1 FROM quote_sources WHERE uin=? AND ref=?", (uin, value)).fetchone():
+            value += 1
+        if value >= 2**63:
+            return 0
+        self.set_meta("quote_ref_sequence", str(value))
+        self.conn.execute("INSERT INTO quote_sources (uin, ref, message_id) VALUES (?, ?, ?)",
+                          (uin, value, source))
+        self.conn.execute("DELETE FROM quote_sources WHERE uin=? AND rowid NOT IN "
+                          "(SELECT rowid FROM quote_sources WHERE uin=? ORDER BY rowid DESC LIMIT ?)",
+                          (uin, uin, PROCESSED_PER_CHAT))
+        return value
+
+    def quote_source(self, uin: int, reference: int) -> str | None:
+        row = self.conn.execute("SELECT message_id FROM quote_sources WHERE uin=? AND ref=?",
+                                (uin, reference)).fetchone()
+        return row["message_id"] if row else None
 
     def message_processed(self, uin: int, message_id: int | str) -> bool:
         return bool(message_id) and self.conn.execute(

@@ -43,11 +43,12 @@ class HistoryItem:
     msg_id: int = 0        # номер сообщения в сети — по нему достаётся вложение
     kind: str = ""         # photo, video, voice, audio — или пусто
     thread: int = 0        # topic_id обсуждения, начатого под этим сообщением; 0 — нет
+    source_id: str = ""    # полный UUID eXpress; msg_id остаётся номером вложения
 
 
 class SentMessage(int):
     """Read/receipt marker compatible with int, plus the source network's ID."""
-    def __new__(cls, receipt: int, message_id: int):
+    def __new__(cls, receipt: int, message_id: int | str):
         result = super().__new__(cls, receipt)
         result.message_id = message_id
         return result

@@ -28,6 +28,7 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import async_playwright
 
 from .browser import is_logged_in, open_app, open_context, prepare
+from ..quotes import check_size
 
 log = logging.getLogger("express")
 
@@ -51,6 +52,20 @@ MENU_READ = "Отметить как прочитанное"
 MENU_MUTE = "Выключить уведомления"
 MENU_UNMUTE = "Включить уведомления"
 MODAL_DISMISS = "Больше не показывать"
+
+# Same action as the native forwarding dialog. Use the full objects from
+# the store: the slim message omits attachment handles and policy metadata.
+JS_FORWARD = """([sourceId, messageId, targetId]) => {
+  const store = window.__store, state = store.getState();
+  const message = state.messages.find(m => m.syncId === messageId && m.groupChatId === sourceId);
+  const sourceChat = state.chats.find(c => c.groupChatId === sourceId);
+  const target = state.chats.find(c => c.groupChatId === targetId);
+  if (!message || message.deletedAt || !sourceChat || !target) return false;
+  store.dispatch({type: 'FORWARD_MESSAGES', payload: {messages: [message], sourceChat,
+    forwardDestinations: [{id: targetId, chatId: targetId, name: target.name,
+      type: target.chatType, connType: target.connType}]}});
+  return true;
+}"""
 
 # Находит redux-хранилище приложения через корень React и кладёт в window.
 JS_STORE = """() => {
@@ -84,7 +99,7 @@ JS_BLOBS = """(() => {
   URL.createObjectURL = function (b) {
     const url = create.call(URL, b);
     if (b instanceof Blob && b.size) {
-      window.__exBlobs.push({seq: ++window.__exBlobSeq, blob: b, size: b.size, type: b.type});
+      window.__exBlobs.push({seq: ++window.__exBlobSeq, url, blob: b, size: b.size, type: b.type});
       if (window.__exBlobs.length > 30) window.__exBlobs.shift();
     }
     return url;
@@ -97,6 +112,26 @@ JS_BLOB_BYTES = """async (seq) => {
   let text = '';
   for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
   return btoa(text);
+}"""
+
+JS_MESSAGE_BLOB = """async ([size, after, id]) => {
+  const m = window.__store.getState().messages.find(m => m.syncId === id);
+  const p = m && m.payload && m.payload.payload;
+  const url = p && p.fileBlob;
+  if (typeof url !== 'string' || !url.startsWith('blob:')) return 0;
+  let b = window.__exBlobs.find(b => b.url === url);
+  if (!b) {
+    // The native client may still hold the URL after our small cache evicts
+    // it. Read that exact local Blob; never substitute an equal-sized file.
+    try {
+      const blob = await (await fetch(url)).blob();
+      if (blob.size !== size) return 0;
+      b = {seq: ++window.__exBlobSeq, url, blob, size: blob.size, type: blob.type};
+      window.__exBlobs.push(b);
+      if (window.__exBlobs.length > 30) window.__exBlobs.shift();
+    } catch (_) { return 0; }
+  }
+  return b.size === size && b.seq > after ? b.seq : 0;
 }"""
 
 # Общие помощники страницы: событие без тяжёлых и секретных полей, имя по huid.
@@ -673,6 +708,57 @@ class ExpressClient:
             pass
         await page.wait_for_timeout(500)
 
+    async def _source_node(self, message: Message):
+        await self._open(message.chat_id)
+        node = self._page.locator(f'[id="{message.id}"]')
+        idle = 0
+        count = len(await self._loaded(message.chat_id))
+        while not await node.count() and idle < 3 and count < 200:
+            await self._scroll_to_top()
+            more = len(await self._loaded(message.chat_id))
+            idle = idle + 1 if more <= count else 0
+            count = more
+        return node if await node.count() else None
+
+    async def _can_forward_open(self, message: Message) -> bool:
+        if message.deleted:
+            return False
+        node = await self._source_node(message)
+        if node is None:
+            return False
+        await node.scroll_into_view_if_needed()
+        await node.click(button="right")
+        item = self._page.locator(
+            ".react-contextmenu--visible .react-contextmenu-item:not(.react-contextmenu-item--disabled)"
+        ).filter(has=self._page.get_by_text("Переслать", exact=True))
+        try:
+            return bool(await item.count()) and await item.first.is_visible()
+        finally:
+            await self._page.keyboard.press("Escape")
+
+    async def can_forward(self, message: Message) -> bool:
+        async with self._lock:
+            try:
+                return await self._can_forward_open(message)
+            finally:
+                await self._close()
+
+    async def forward(self, message: Message, chat_id: str) -> Message | None:
+        self._stop_typing()
+        async with self._lock:
+            try:
+                await self._open(chat_id)
+                await self._writable()
+                before = {m.id for m in await self._loaded(chat_id)}
+                if not await self._can_forward_open(message):
+                    return None
+                if not await self._page.evaluate(JS_FORWARD, [message.chat_id, message.id, chat_id]):
+                    return None
+                await self._open(chat_id)
+                return await self._sent(chat_id, before, UPLOAD_TIMEOUT, forwarded=True)
+            finally:
+                await self._close()
+
     async def _menu(self, chat_id: str, label: str) -> bool:
         """Выбрать пункт в меню чата (правая кнопка по строке списка).
         False — строки чата нет на экране или такого пункта в меню нет."""
@@ -724,55 +810,66 @@ class ExpressClient:
 
     # --- вложения ---
 
-    async def _blob(self, size: int, after: int, timeout: float) -> bytes | None:
+    async def _blob(self, size: int, after: int, timeout: float, message_id: str) -> bytes | None:
         """Дождаться расшифрованного файла нужного размера и забрать его."""
         page = self._page
-        find = "([size, after]) => { const b = window.__exBlobs.find(b => b.size === size && b.seq > after); return b ? b.seq : 0; }"
+        # Equal file sizes do not identify an attachment. Bind the Blob to
+        # this message's native file URL, keeping previews and other chats out.
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
-            seq = await page.evaluate(find, [size, after])
+            seq = await page.evaluate(JS_MESSAGE_BLOB, [size, after, message_id])
             if seq:
                 return base64.b64decode(await page.evaluate(JS_BLOB_BYTES, seq))
             await page.wait_for_timeout(300)
         return None
 
-    async def download(self, message: Message) -> bytes | None:
+    async def download(self, message: Message, *, max_bytes: int = 0) -> bytes | None:
         """Содержимое вложения. Файл скачивает и расшифровывает сама
         страница — мы нажимаем на сообщение так же, как нажал бы человек."""
         attachment = message.attachment
         if not attachment:
             return None
+        if max_bytes:
+            check_size(attachment.size, max_bytes)
         if attachment.url:
             origin = await self._page.evaluate("() => 'https://' + window.__store.getState().user.rtsHost")
             response = await self._ctx.request.get(origin + attachment.url)
-            return await response.body() if response.ok else None
+            if not response.ok:
+                return None
+            if max_bytes:
+                check_size(int(response.headers.get("content-length", 0)), max_bytes)
+            data = await response.body()
+            if max_bytes:
+                check_size(len(data), max_bytes)
+            return data
         async with self._lock:
             try:
-                await self._open(message.chat_id)
                 page = self._page
-                node = page.locator(f'[id="{message.id}"]')
-                if not await node.count():
+                node = await self._source_node(message)
+                if node is None:
                     return None
                 await node.scroll_into_view_if_needed()
                 # Уже расшифрованное (например, недавно проигранное) берём как есть.
-                data = await self._blob(attachment.size, 0, 0.5)
+                data = await self._blob(attachment.size, 0, 0.5, message.id)
                 if data is not None:
                     return data
                 if attachment.kind == "voice":
                     button = node.locator(".chat-message-voice__button")
                     await button.click()
-                    data = await self._blob(attachment.size, 0, DOWNLOAD_TIMEOUT)
+                    data = await self._blob(attachment.size, 0, DOWNLOAD_TIMEOUT, message.id)
                     await button.click()        # остановить воспроизведение
-                elif attachment.kind == "image":
+                elif attachment.kind in ("image", "video", "video_message"):
                     await node.locator(".chat-message__img-wrp").click()
-                    data = await self._blob(attachment.size, 0, DOWNLOAD_TIMEOUT)
+                    data = await self._blob(attachment.size, 0, DOWNLOAD_TIMEOUT, message.id)
                     await page.keyboard.press("Escape")
                 elif await node.locator(".chat-message-file").count():
                     # Документ: страница расшифровывает его и предлагает сохранить.
                     await node.locator(".chat-message-file").click()
-                    data = await self._blob(attachment.size, 0, DOWNLOAD_TIMEOUT)
+                    data = await self._blob(attachment.size, 0, DOWNLOAD_TIMEOUT, message.id)
                 else:
                     log.warning("вложение типа %s скачивать не умею", attachment.kind)
+                if data is not None and max_bytes:
+                    check_size(len(data), max_bytes)
                 return data
             finally:
                 await self._close()
@@ -843,13 +940,15 @@ class ExpressClient:
             if line:
                 await page.keyboard.insert_text(line)
 
-    async def _sent(self, chat_id: str, before: set[str], timeout: float) -> Message | None:
+    async def _sent(self, chat_id: str, before: set[str], timeout: float,
+                    *, forwarded: bool = False) -> Message | None:
         """Дождаться своего нового сообщения в открытом чате."""
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
             await self._page.wait_for_timeout(300)
             for message in reversed(await self._loaded(chat_id)):
-                if message.id not in before and message.outgoing:
+                if (message.id not in before and message.outgoing and
+                        (not forwarded or (message.raw.get("payload") or {}).get("forward"))):
                     return message
         return None
 
