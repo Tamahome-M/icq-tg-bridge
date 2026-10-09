@@ -1,0 +1,14 @@
+Telegram Desktop notification sound
+Copyright (c) The Telegram Desktop Authors.
+Licensed under GNU GPL version 3 or later; see COPYING.
+
+Source (unmodified): msg_incoming.mp3 in this directory
+https://github.com/telegramdesktop/tdesktop/blob/fd24aff6b15915310e3d38ddacf8e4e3d4fb30bc/Telegram/Resources/sounds/msg_incoming.mp3
+
+Modified for TeleMotoMax on 2026-10-09: converted to mono MP3,
+22050 Hz, 32 kbit/s, without ID3 or Xing headers.
+Output: res/MOTOROLA/sounds/tg.mp3 and res/MIDP2/sounds/tg.mp3.
+Command (run from telemotomax/):
+ffmpeg -i third_party/telegram-sound/msg_incoming.mp3 -map 0:a:0 \
+  -ar 22050 -ac 1 -c:a libmp3lame -b:a 32k -map_metadata -1 \
+  -write_xing 0 -id3v2_version 0 res/MOTOROLA/sounds/tg.mp3

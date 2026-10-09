@@ -89,7 +89,6 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 
 	/* Sound notification typs */
 	public static final int SOUND_TYPE_MESSAGE = 1;
-	public static final int SOUND_TYPE_ONLINE = 2;
 	public static final int SOUND_TYPE_TYPING = 3;
 
 	
@@ -1095,12 +1094,6 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		cItem.setIntValue(ContactItem.CONTACTITEM_IDLE, idle);
 		cItem.setIntValue(ContactItem.CONTACTITEM_REG, regdate);
 
-		// Play sound notice if selected
-//#sijapp cond.if target isnot "DEFAULT"#		
-		if (trueStatus == STATUS_ONLINE && statusChanged)
-			playSoundNotification(SOUND_TYPE_ONLINE);
-//#sijapp cond.end#		
-
 		// Update visual list
 		if (statusChanged)
 			contactChanged(cItem, false, (wasOnline && !nowOnline)
@@ -1110,7 +1103,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		if (tree.isActive())
 		{
 			String text = null;
-			if (oldStatus != trueStatus)
+			if (oldStatus != trueStatus && trueStatus != STATUS_ONLINE)
 			{
 				StatusInfo statInfo = JimmUI.findStatus(StatusInfo.TYPE_STATUS, trueStatus);
 				text = (statInfo != null) ? statInfo.getText() : null;
@@ -1652,74 +1645,34 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		{
 			if (Options.getBoolean(Options.OPTION_SILENT_MODE)) return;
 
-			int not_mode = 0;
-
-			switch (notType)
+			int mode, volume, tone;
+			String file;
+			if (notType == SOUND_TYPE_MESSAGE)
 			{
-			case SOUND_TYPE_MESSAGE:
-				not_mode = Options.getInt(Options.OPTION_MESS_NOTIF_MODE);
-				break;
-
-			case SOUND_TYPE_ONLINE:
-				if ((System.currentTimeMillis()-lastLoginTime) < 3000)
-					return;
-				not_mode = Options.getInt(Options.OPTION_ONLINE_NOTIF_MODE);
-				break;
-
-			case SOUND_TYPE_TYPING:
-				not_mode = Options.getInt(Options.OPTION_TYPING_MODE) - 1;
-				break;
+				// Take one lock-state snapshot so mode, file and volume agree.
+				boolean locked = SplashCanvas.locked();
+				mode = locked ? Options.getInt(Options.OPTION_MESS_NOTIF_MODE)
+						: (int) Options.getLong(Options.OPTION_MESS_UNLOCKED_MODE);
+				volume = locked ? Options.getInt(Options.OPTION_MESS_NOTIF_VOL)
+						: (int) Options.getLong(Options.OPTION_MESS_UNLOCKED_VOL);
+				file = mode == 2 ? Options.getString(locked ? Options.OPTION_MESS_NOTIF_FILE
+						: Options.OPTION_MESS_UNLOCKED_FILE) : null;
+				tone = ToneControl.C4;
 			}
-
-			switch (not_mode)
+			else if (notType == SOUND_TYPE_TYPING)
 			{
-			case 1:
-				try
-				{
-					switch (notType)
-					{
-					case SOUND_TYPE_MESSAGE:
-						Manager.playTone(ToneControl.C4, 500, Options.getInt(Options.OPTION_MESS_NOTIF_VOL));
-						break;
-					case SOUND_TYPE_ONLINE:
-					case SOUND_TYPE_TYPING:
-						Manager.playTone(ToneControl.C4 + 7, 500, Options.getInt(Options.OPTION_ONLINE_NOTIF_VOL));
-					}
-
-				} catch (Exception e)
-				{
-					//Do nothing
-				}
-				break;
-
-			case 2:
-				if (notType == SOUND_TYPE_MESSAGE)
-				{
-					playSound
-					(
-						Options.getString(Options.OPTION_MESS_NOTIF_FILE),
-						Options.getInt(Options.OPTION_MESS_NOTIF_VOL)
-					);
-				} 
-				else if (notType == SOUND_TYPE_ONLINE)
-				{
-					playSound
-					(
-						Options.getString(Options.OPTION_ONLINE_NOTIF_FILE), 
-						Options.getInt(Options.OPTION_ONLINE_NOTIF_VOL)
-					);
-				}
-				else
-				{
-					playSound
-					(
-						Options.getString(Options.OPTION_TYPING_FILE),
-						Options.getInt(Options.OPTION_TYPING_VOL)
-					);
-				}
-
-				break;
+				mode = Options.getInt(Options.OPTION_TYPING_MODE) - 1;
+				volume = Options.getInt(Options.OPTION_TYPING_VOL);
+				file = mode == 2 ? Options.getString(Options.OPTION_TYPING_FILE) : null;
+				tone = ToneControl.C4 + 7;
 			}
+			else return;
+			if (mode == 1)
+			{
+				try { Manager.playTone(tone, 500, volume); }
+				catch (Exception ignore) {}
+			}
+			else if (mode == 2) playSound(file, volume);
 		}
 	}
 
