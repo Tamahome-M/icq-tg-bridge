@@ -40,8 +40,7 @@ import DrawControls.device.Device;
 
 class VirtualCanvas extends Canvas implements Runnable
 {
-	// Bridge build: when the user last touched the keys of any Jimm screen.
-	// Used to vibrate only when the phone has been left alone for a while.
+	// Last activity, shared by chat notification gates and automatic keylock.
 	public static long lastKeyTime = System.currentTimeMillis();
 
 	VirtualList currentControl;
@@ -105,6 +104,7 @@ class VirtualCanvas extends Canvas implements Runnable
 	{
 		repeatPending = false;
 		if (timerTask == null) return;
+		lastKeyTime = System.currentTimeMillis();
 		currentControl.keyRepeated(lastKeyKode);
 	}
 
@@ -128,6 +128,7 @@ class VirtualCanvas extends Canvas implements Runnable
 
 	protected void keyReleased(int keyCode)
 	{
+		lastKeyTime = System.currentTimeMillis();
 		if (currentControl != null) currentControl.keyReleased(keyCode);
 		cancelKeyRepeatTask();
 	}
@@ -531,6 +532,11 @@ public abstract class VirtualList
 		return virtualCanvas.isShown() ? virtualCanvas.currentControl : null; 
 	}
 
+	public static boolean isListScreen(Displayable screen)
+	{
+		return screen == virtualCanvas;
+	}
+
 	public void setColors(int capTxt, int capbk, int bkgrnd, int cursor, int text, int crsFrame)
 	{
 		this.capBkCOlor = capbk;
@@ -611,6 +617,8 @@ public abstract class VirtualList
 	private void doActivate(Display display, Alert alert)
 	{
 		if (isActive()) return;
+		// Returning from an editor, player or keylock starts a fresh idle period.
+		if (!isListScreen(display.getCurrent())) touch();
 		
 		if (virtualCanvas.currentControl != null)
 		{

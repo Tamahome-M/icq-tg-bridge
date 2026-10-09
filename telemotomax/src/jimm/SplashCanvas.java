@@ -281,6 +281,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 		poundPressTime = 0;
 		showKeylock = false;
 		isLocked = false;
+		VirtualList.touch();
 		availableMessages = 0;
 		//#sijapp cond.if target is "RIM"#
 		//#        LED.setState(LED.STATE_OFF);

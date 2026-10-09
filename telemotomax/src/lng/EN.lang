@@ -621,6 +621,8 @@
 "quote_timeout"	"No reply from bridge. Check the chat before sending again."
 
 "lock_pin"		"Lock PIN (empty: disabled)"
+"auto_lock_minutes"	"Auto lock, min (0: disabled)"
+"auto_lock_format"	"Auto lock: 0–999 minutes. 0 disables it."
 "pin_format"		"Use 4 to 8 digits, or leave empty to disable PIN."
 "pin_enter"		"Enter PIN"
 "pin_wrong"		"Wrong PIN"
