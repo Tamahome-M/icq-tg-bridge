@@ -29,9 +29,11 @@ public class PhotoLoadingTest {
  static void failures(byte[] jpeg)throws Exception{
   for(int mode=1;mode<=2;mode++){
    javax.microedition.lcdui.Image.mode=mode;
+   javax.microedition.lcdui.Image.calls=0;
    PhotoViewer viewer=viewer();viewer.onBart(jpeg);decoded(viewer);
    check(f(PhotoViewer.class,"image").get(viewer)==null,"failed decoder kept a bitmap");
    check((mode==1?"photo_memory":"photo_format").equals(f(PhotoViewer.class,"status").get(viewer)),"decoder failure reason was hidden");
+   check(javax.microedition.lcdui.Image.calls==(mode==1?2:1),"decoder failure retried too often or not at all");
   }
   javax.microedition.lcdui.Image.mode=0;
   PhotoViewer viewer=viewer();viewer.onBart(null);
@@ -64,6 +66,96 @@ public class PhotoLoadingTest {
   check("loading".equals(f(PhotoViewer.class,"status").get(current)),"closed viewer changed the current screen");
   System.out.println("PASS: photo decoder OOM/format errors, server UTF-8 reason, timeout once, readable V3-width error, connection log and closed-viewer guard");
  }
+ static boolean hasImage(DrawControls.TextList card)throws Exception{
+  Vector lines=(Vector)f(DrawControls.TextList.class,"lines").get(card);
+  for(int i=0;i<lines.size();i++){
+   Object line=lines.elementAt(i);Vector items=(Vector)f(line.getClass(),"items").get(line);
+   for(int j=0;j<items.size();j++){
+    Object item=items.elementAt(j);if(f(item.getClass(),"image").get(item)!=null)return true;
+   }
+  }
+  return false;
+ }
+ static ContactItem contact(String uin)throws Exception{
+  ContactItem item=new ContactItem(1,1,uin,"contact",false,true);
+  ((Vector)f(ContactList.class,"cItems").get(null)).addElement(item);
+  return item;
+ }
+ static DrawControls.TextList card(ContactItem item)throws Exception{
+  DrawControls.TextList card=JimmUI.getInfoTextList("card",false);
+  f(JimmUI.class,"uiBigTextIndex").setInt(null,0);
+  String[] data=new String[JimmUI.UI_LAST_ID];data[JimmUI.UI_UIN]=item.getStringValue(ContactItem.CONTACTITEM_UIN);
+  data[JimmUI.UI_NAME]="kept contact text";JimmUI.showUserInfo(data);return card;
+ }
+ static void memory(byte[] jpeg)throws Exception{
+  f(ContactList.class,"cItems").set(null,new Vector());
+  final ContactItem item=contact("1000001");
+  final byte[] hash=new byte[16];hash[0]=1;
+  item.setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH,hash);
+  ContactList.update("1000001",new javax.microedition.lcdui.Image(),hash);
+  final DrawControls.TextList card=card(item);
+  check(hasImage(card),"test contact card did not retain its avatar");
+  final String text=card.getTextByIndex(0,false,0);
+  check(text.indexOf("kept contact text")>=0,"test contact text missing");
+  javax.microedition.lcdui.Image.beforeDecode=new Runnable(){public void run(){
+   try{
+    check(item.getImage(ContactItem.CONTACTITEM_BUDDYICON)==null,"avatar retained during photo decode");
+    check(!hasImage(card),"contact card retained the decoded avatar during photo decode");
+    check(item.iconReady(),"evicted avatar cannot be requested again");
+   }catch(Exception e){throw new AssertionError(e);}
+  }};
+  PhotoViewer viewer=viewer();viewer.onBart(jpeg);decoded(viewer);
+  check(f(PhotoViewer.class,"image").get(viewer)!=null,"photo failed after avatar eviction");
+  check(text.equals(card.getTextByIndex(0,false,0)),"avatar eviction removed contact text");
+  javax.microedition.lcdui.Image.beforeDecode=null;
+  check(ConnLog.text().indexOf("JPEG 176x132")>=0,"photo dimensions absent from diagnostics");
+  // Expiry of the avatar cache must also remove the card's independent reference.
+  ContactList.update("1000001",new javax.microedition.lcdui.Image(),hash);
+  DrawControls.TextList expired=card(item);
+  Method drop=ContactList.class.getDeclaredMethod("dropIcons",Integer.TYPE);drop.setAccessible(true);drop.invoke(null,0);
+  check(!hasImage(expired) && item.getImage(ContactItem.CONTACTITEM_BUDDYICON)==null,"expired avatar retained in cache/card");
+  check(text.equals(expired.getTextByIndex(0,false,0)),"expiry removed contact text");
+  // Replacing the cached owner must not retain the old bitmap in its card.
+  ContactList.update("1000001",new javax.microedition.lcdui.Image(),hash);
+  DrawControls.TextList replaced=card(item);contact("1000002");
+  ContactList.update("1000002",new javax.microedition.lcdui.Image(),hash);
+  check(!hasImage(replaced),"evicted avatar retained in the old card");
+  ContactList.class.getDeclaredMethod("releaseAvatars").invoke(null);
+  javax.microedition.lcdui.Image.mode=3;javax.microedition.lcdui.Image.calls=0;
+  viewer=viewer();viewer.onBart(jpeg);decoded(viewer);
+  check(f(PhotoViewer.class,"image").get(viewer)!=null && f(PhotoViewer.class,"status").get(viewer)==null,"transient OOM did not recover");
+  check(javax.microedition.lcdui.Image.calls==2,"transient OOM did not retry exactly once");
+  System.out.println("PASS: avatar/card bitmap eviction before decoding, expiry/owner eviction, contact text retained, avatars re-requestable and transient OOM recovery");
+ }
+ static void dimensions(byte[] jpeg)throws Exception{
+  Method size=PhotoViewer.class.getDeclaredMethod("jpegSize",byte[].class);size.setAccessible(true);
+  check(((Integer)size.invoke(null,(Object)jpeg)).intValue()==(176<<16|132),"wrong JPEG dimensions");
+  byte[][] bad={new byte[0],new byte[]{(byte)255,(byte)216},new byte[]{(byte)255,(byte)216,(byte)255},
+   new byte[]{(byte)255,(byte)216,(byte)255,(byte)192,0,7,8,0},
+   new byte[]{(byte)255,(byte)216,(byte)255,(byte)254,0,1},
+   new byte[]{(byte)255,(byte)216,(byte)255,(byte)218}};
+  for(int i=0;i<bad.length;i++)check(((Integer)size.invoke(null,(Object)bad[i])).intValue()==0,"invalid JPEG header read past bounds");
+  // Marker fill byte and a standalone marker before a complete SOF segment.
+  byte[] filled={(byte)255,(byte)216,(byte)255,1,(byte)255,(byte)255,(byte)192,0,7,8,0,(byte)132,0,(byte)176};
+  check(((Integer)size.invoke(null,(Object)filled)).intValue()==(176<<16|132),"JPEG marker fill/standalone header not handled");
+  System.out.println("PASS: JPEG dimensions parsed without bitmap allocation; truncated/invalid headers bounded");
+ }
+ static void serial(byte[] jpeg)throws Exception{
+  javax.microedition.lcdui.Image.calls=0;javax.microedition.lcdui.Image.maxActive=0;
+  javax.microedition.lcdui.Image.entered=new java.util.concurrent.CountDownLatch(1);
+  javax.microedition.lcdui.Image.proceed=new java.util.concurrent.CountDownLatch(1);
+  PhotoViewer old=viewer();old.onBart(jpeg);
+  check(javax.microedition.lcdui.Image.entered.await(2,java.util.concurrent.TimeUnit.SECONDS),"first decoder did not start");
+  PhotoViewer current=viewer();current.onBart(jpeg);
+  Thread.sleep(100);
+  check(javax.microedition.lcdui.Image.calls==1,"two photo decoders allocated bitmaps simultaneously");
+  javax.microedition.lcdui.Image.proceed.countDown();decoded(current);
+  check(f(PhotoViewer.class,"image").get(old)==null,"closed viewer retained its late bitmap");
+  check(f(PhotoViewer.class,"image").get(current)!=null,"new viewer failed after prior decoder finished");
+  check(javax.microedition.lcdui.Image.maxActive==1,"more than one native photo decoder active");
+  javax.microedition.lcdui.Image.entered=null;javax.microedition.lcdui.Image.proceed=null;
+  System.out.println("PASS: rapid photo switching serializes native decoders and drops late bitmap");
+ }
  public static void main(String[] args)throws Exception{
   SOCKETConnection conn=new SOCKETConnection(JimmException.ICQ_BART);
   try{
@@ -88,7 +180,13 @@ public class PhotoLoadingTest {
     check(f(PhotoViewer.class,"image").get(viewer)!=null && f(PhotoViewer.class,"status").get(viewer)==null,"PhotoViewer failed JPEG decoding");
    }
    System.out.println("PASS: actual BART socket, RequestBartAction, JPEG bytes and PhotoViewer, secure="+args[4]+", bytes="+expected.length);
-   failures(expected);
-  }finally{conn.forceDisconnect();Jimm.getTimerRef().cancel();}
+   memory(expected);dimensions(expected);serial(expected);failures(expected);
+  }finally{
+   conn.forceDisconnect();Jimm.getTimerRef().cancel();((Timer)f(ContactList.class,"iconTimer").get(null)).cancel();
+   ((Timer)f(ContactList.class,"soundTimer").get(null)).cancel();
+   ((Timer)f(DrawControls.TextList.class,"aniTimer").get(null)).cancel();
+   Object canvas=f(DrawControls.VirtualList.class,"virtualCanvas").get(null);
+   ((Timer)f(canvas.getClass(),"repeatTimer").get(canvas)).cancel();
+  }
  }
 }

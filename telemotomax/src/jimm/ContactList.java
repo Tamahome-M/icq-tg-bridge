@@ -1163,6 +1163,15 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	private static final Timer iconTimer = new Timer();
 	private static TimerTask iconDropTask;
 
+	// Photos need the decoded bitmap space more than this disposable cache.
+	static public synchronized void releaseAvatars()
+	{
+		if (iconDropTask != null) iconDropTask.cancel();
+		iconDropTask = null;
+		dropIcons(0);
+		JimmUI.releaseUserInfoAvatar(null);
+	}
+
 	// Drops avatars until at most `keep` remain in memory (oldest first).
 	static private synchronized void dropIcons(int keep)
 	{
@@ -1170,6 +1179,8 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		{
 			String old = (String) iconOwners.elementAt(0);
 			iconOwners.removeElementAt(0);
+			// The card's TextList holds a separate reference to this bitmap.
+			JimmUI.releaseUserInfoAvatar(old);
 			ContactItem victim = getItembyUIN(old);
 			if (victim == null) continue;
 			victim.setImage(ContactItem.CONTACTITEM_BUDDYICON, null);

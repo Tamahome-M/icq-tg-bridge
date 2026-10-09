@@ -884,8 +884,16 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	///////////////////////////////////////////////////////////////////////////
 
 	static private TextList infoTextList = null;
+	private static final int USER_AVATAR_BLOCK = -2;
 
 	//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
+	static void releaseUserInfoAvatar(String uin)
+	{
+		if (infoTextList != null && (uin == null || (lastUserInfoContact != null
+				&& uin.equals(lastUserInfoContact.getStringValue(ContactItem.CONTACTITEM_UIN)))))
+			infoTextList.removeTextByIndex(USER_AVATAR_BLOCK);
+	}
+
 	static public void updateActiveUserInfo(String uin)
 	{
 		if ((infoTextList != null) && (lastUserInfoContact != null)
@@ -898,7 +906,8 @@ public class JimmUI implements CommandListener, VirtualListCommands
 				Image image = cItem.getImage(ContactItem.CONTACTITEM_BUDDYICON);
 				if (image != null)
 				{
-					infoTextList.insertImage(image, null, -1, 0).doCRLF(-1);
+					releaseUserInfoAvatar(uin);
+					infoTextList.insertImage(image, null, USER_AVATAR_BLOCK, 0).doCRLF(-1);
 					infoTextList.repaint();
 				}
 				image = null;
@@ -1010,7 +1019,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			ContactItem cItem = ContactList.getItembyUIN(data[JimmUI.UI_UIN]);
 			lastUserInfoContact = cItem;
 			Image image = cItem.getImage(ContactItem.CONTACTITEM_BUDDYICON);
-			if (image != null) infoTextList.insertImage(image, null, -1, 0).doCRLF(-1);
+			if (image != null) infoTextList.insertImage(image, null, USER_AVATAR_BLOCK, 0).doCRLF(-1);
 			image = null;
 		} catch (Exception ignore) {/*Do nothing*/}
 		//  #sijapp cond.end#
