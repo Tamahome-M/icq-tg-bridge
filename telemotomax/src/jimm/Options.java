@@ -96,7 +96,7 @@ public class Options
 	public static final int OPTION_MESS_UNLOCKED_VOL  = 194;
 	public static final int OPTION_VIBRA_UNLOCKED_MS = 195;
 	public static final int OPTION_VIBRA_LOCKED_MS = 196;
-	public static final int[] VIBRATION_DURATIONS = {0, 50, 100, 200, 500, 1000, 1500, 2000};
+	public static final int[] VIBRATION_DURATIONS = {0, 100, 200, 500, 1000, 1500, 2000};
 	public static final int OPTION_CURRENCY           = 6;
 	public static final int OPTION_PRX_SERV           = 8;
 	public static final int OPTION_PRX_PORT           = 9;
@@ -675,6 +675,17 @@ public class Options
 			// Fold the former condition into the two independent profiles once.
 			Integer legacyVibration = (Integer) options.get(key(LEGACY_VIBRATOR));
 			boolean saveNeeded = !unlockedSeen || legacyVibration != null;
+			// 50 ms does not work on V3; use the shortest working duration.
+			if (getLong(OPTION_VIBRA_UNLOCKED_MS) == 50)
+			{
+				setLong(OPTION_VIBRA_UNLOCKED_MS, 100);
+				saveNeeded = true;
+			}
+			if (getLong(OPTION_VIBRA_LOCKED_MS) == 50)
+			{
+				setLong(OPTION_VIBRA_LOCKED_MS, 100);
+				saveNeeded = true;
+			}
 			if (legacyVibration != null)
 			{
 				int mode = legacyVibration.intValue();
@@ -2383,7 +2394,6 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	{
 		ChoiceGroup choice = new ChoiceGroup(ResourceBundle.getString(caption), Choice.POPUP);
 		choice.append(ResourceBundle.getString("no"), null);
-		choice.append("0.05", null);
 		choice.append("0.1", null);
 		choice.append("0.2", null);
 		choice.append("0.5", null);
