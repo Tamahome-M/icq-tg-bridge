@@ -72,7 +72,7 @@ public final class SecureTransportTest {
                 conn.connect(address);check(waitPacket(conn) instanceof ConnectPacket,"protected OSCAR hello lost");
                 // Packet.parse intentionally ignores channel 5; the receiver
                 // still queues the frame and the main loop observes activity.
-                for(int i=0;i<3;i++){conn.sendPacket(new PingPacket());check(waitPacket(conn)==null,"keepalive parsing changed");}
+                for(int i=0;i<3;i++){conn.sendPacket(new Packet(Packet.CHANNEL_PING,new byte[0]));check(waitPacket(conn)==null,"keepalive parsing changed");}
                 conn.forceDisconnect();if(attempt==0)Thread.sleep(1000); // same socket object, like auth -> BOS
             }
         }finally{conn.forceDisconnect();}
@@ -89,8 +89,22 @@ public final class SecureTransportTest {
         check(!worker.isAlive() && failed[0],"cancel did not stop pending handshake");
         System.out.println("PASS: cancellation closes socket while waiting for encryption handshake");
     }
+    static final class DeadlineSocket implements javax.microedition.io.Connection {
+        boolean closed;public void close(){closed=true;}
+    }
+    static void deadline() throws Exception {
+        Class type=Class.forName("jimm.comm.connections.SOCKETConnection$CryptoDeadline");
+        Constructor constructor=type.getDeclaredConstructor(javax.microedition.io.Connection.class);constructor.setAccessible(true);
+        DeadlineSocket raw=new DeadlineSocket();java.util.TimerTask task=(java.util.TimerTask)constructor.newInstance(raw);
+        task.cancel();Field socket=type.getDeclaredField("socket");socket.setAccessible(true);
+        check(socket.get(task)==null,"cancelled crypto deadline retains the raw socket");
+        task.run();check(!raw.closed,"cancelled crypto deadline closed the established connection");
+        raw=new DeadlineSocket();task=(java.util.TimerTask)constructor.newInstance(raw);task.run();
+        check(raw.closed,"active crypto deadline failed to close the stalled socket");
+        System.out.println("PASS: cancelled encryption deadline releases its socket; active timeout still closes it");
+    }
     public static void main(String[] args) throws Exception {
-        try{vectors(args[0]);if(args.length>1)socket(args[1],args[3]);if(args.length>2)cancel(args[2]);}
+        try{vectors(args[0]);deadline();if(args.length>1)socket(args[1],args[3]);if(args.length>2)cancel(args[2]);}
         finally{jimm.Jimm.getTimerRef().cancel();}
     }
 }

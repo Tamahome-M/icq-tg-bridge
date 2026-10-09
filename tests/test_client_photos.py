@@ -16,6 +16,9 @@ async def run(work,classes):
  cp=os.pathsep.join(str(p) for p in [classes,*sorted((work/'wtk/lib').glob('*.jar'))])
  with tempfile.TemporaryDirectory(prefix='tmm-photo-probe-') as temp:
   directory=Path(temp);stubs=dict(STUBS);stubs['javax/microedition/io/Connector.java']=CONNECTOR
+  stubs['jimm/MainThread.java']=stubs['jimm/MainThread.java'].replace('public class MainThread {',
+   'public class MainThread {public static javax.microedition.lcdui.Image updatedIcon;'
+   ' public static void updateBuddyIcon(String uin,javax.microedition.lcdui.Image image,byte[] hash){updatedIcon=image;}')
   # Exercise real cache, contact card and text storage, including the card's
   # independent bitmap reference; UI-only stubs would hide this leak.
   for name in ['jimm/JimmUI.java','DrawControls/TextList.java','DrawControls/VirtualList.java','DrawControls/VirtualListCommands.java']:
@@ -49,9 +52,11 @@ async def run(work,classes):
   public class Image {
    public static int mode, calls, active, maxActive;
    public static Runnable beforeDecode;
+   public static byte[] lastSource;public static int lastOffset,lastLength;
    public static java.util.concurrent.CountDownLatch entered, proceed;
    public static Image createImage(String s)throws java.io.IOException {throw new java.io.IOException();}
    public static Image createImage(byte[] b,int off,int length){
+    lastSource=b;lastOffset=off;lastLength=length;
     synchronized(Image.class){calls++;active++;if(active>maxActive)maxActive=active;}
     try {
     if(beforeDecode!=null)beforeDecode.run();
@@ -93,7 +98,7 @@ async def run(work,classes):
   await server.start();port=server._server.sockets[0].getsockname()[1];server.cfg.oscar_port=port
   try:
    for secure in (False,True):
-    client=FakeJimm('127.0.0.1',port,'100500','s3cret');client.tmm_version=(0,92)
+    client=FakeJimm('127.0.0.1',port,'100500','s3cret');client.tmm_version=(0,93)
     if secure:
      from bridge.oscar.secure import parse_psk
      client.open_transport=SecureDialer(parse_psk('1234'))

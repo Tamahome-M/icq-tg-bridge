@@ -29,9 +29,6 @@ import DrawControls.TextList;
 import DrawControls.VirtualList;
 import jimm.Jimm;
 
-//#sijapp cond.if modules_DEBUGLOG != "true" #
-import jimm.comm.Util;
-//#sijapp cond.end#
 
 public class DebugLog
 //#sijapp cond.if modules_DEBUGLOG is "true" #
@@ -101,8 +98,6 @@ public class DebugLog
 			list.doCRLF(counter);
 			counter++;
 		}
-		//#sijapp cond.else#
-		System.out.println("(" + Util.getTimeString() + "): " + text);
 		//#sijapp cond.end#
 	}
 }

@@ -32,17 +32,19 @@ public class ResourceBundle {
 	public static String[] langAvailable;
 
 	static {
+		InputStream istream = null;
 		try {
-			InputStream istream = new Object().getClass().getResourceAsStream(
+			istream = ResourceBundle.class.getResourceAsStream(
 					"/langlist.lng");
 			DataInputStream dos = new DataInputStream(istream);
 			int size = dos.readShort();
 			langAvailable = new String[size];
 			for (int i = 0; i < size; i++)
 				langAvailable[i] = dos.readUTF();
-			istream.close();
 		} catch (Exception e) {
+			langAvailable = new String[] {"RU"};
 		}
+		finally { if (istream != null) try { istream.close(); } catch (Exception ignore) {} }
 	}
 
 	// Current language
@@ -50,16 +52,16 @@ public class ResourceBundle {
 
 	// Get user interface language/localization for current session
 	public static String getCurrUiLanguage() {
-		return (new String(ResourceBundle.currUiLanguage));
+		return ResourceBundle.currUiLanguage;
 	}
 
 	// Set user interface language/localization for current session
-	public static void setCurrUiLanguage(String currUiLanguage) {
+	public static synchronized void setCurrUiLanguage(String currUiLanguage) {
 		if (ResourceBundle.currUiLanguage.equals(currUiLanguage))
 			return;
 		for (int i = 0; i < ResourceBundle.langAvailable.length; i++) {
 			if (ResourceBundle.langAvailable[i].equals(currUiLanguage)) {
-				ResourceBundle.currUiLanguage = new String(currUiLanguage);
+				ResourceBundle.currUiLanguage = currUiLanguage;
 				loadLang();
 				return;
 			}
@@ -67,27 +69,70 @@ public class ResourceBundle {
 	}
 
 	static private void loadLang() {
-		InputStream istream;
+		InputStream istream = null;
+		String[] compact = new String[0];
+		Hashtable named = null;
 
 		try {
-			resources = new Hashtable();
-			istream = resources.getClass().getResourceAsStream(
+			istream = ResourceBundle.class.getResourceAsStream(
 					"/" + ResourceBundle.currUiLanguage + ".lng");
 			DataInputStream dos = new DataInputStream(istream);
-			int size = dos.readShort();
+			int size = dos.readUnsignedShort();
+			compact = new String[size];
 			for (int j = 0; j < size; j++)
-				resources.put(dos.readUTF(), dos.readUTF());
-			istream.close();
+			{
+				String key = dos.readUTF(), value = dos.readUTF();
+				int index = compactIndex(key);
+				if (index >= 0)
+				{
+					if (index >= compact.length)
+					{
+						String[] grown = new String[index + 64];
+						System.arraycopy(compact, 0, grown, 0, compact.length);
+						compact = grown;
+					}
+					compact[index] = value;
+				}
+				else
+				{
+					if (named == null) named = new Hashtable();
+					named.put(key, value);
+				}
+			}
 		} catch (Exception e) {
 		}
+		finally { if (istream != null) try { istream.close(); } catch (Exception ignore) {} }
+		compactResources = compact;
+		resources = named;
+	}
+
+	// LangsTask encodes numeric IDs with this alphabet, least significant
+	// digit first. Named error/lang keys and longer keys retain Hashtable lookup.
+	private static int compactIndex(String key)
+	{
+		if (key == null || key.length() < 1 || key.length() > 2) return -1;
+		int index = 0, factor = 1;
+		for (int i = 0; i < key.length(); i++)
+		{
+			char ch = key.charAt(i);
+			int digit = ch == '_' ? 0 : ch >= '0' && ch <= '9' ? ch - '0' + 1
+					: ch >= 'a' && ch <= 'z' ? ch - 'a' + 11
+					: ch >= 'A' && ch <= 'Z' ? ch - 'A' + 37 : -1;
+			if (digit < 0 || (i > 0 && digit == 0)) return -1;
+			index += digit * factor;
+			factor *= 63;
+		}
+		return index;
 	}
 
 	// Get string from active language pack
 	public static synchronized String getString(String key) {
-		if (resources == null)
+		if (compactResources == null)
 			loadLang();
 		if (key == null) return null; 
-		String value = (String) resources.get(key);
+		int index = compactIndex(key);
+		String value = index >= 0 ? (index < compactResources.length ? compactResources[index] : null)
+				: resources == null ? null : (String) resources.get(key);
 		if (value != null) {
 			return (value);
 		} else {
@@ -97,6 +142,7 @@ public class ResourceBundle {
 
 	// Resource hashtable
 	static private Hashtable resources = null;
+	static private String[] compactResources;
 
 	final static public int FLAG_ELLIPSIS = 1 << 0;
 
@@ -112,7 +158,12 @@ public class ResourceBundle {
 	public static synchronized String remove(String key)
 	{
 		String result = getString(key);
-		resources.remove(key);
+		int index = compactIndex(key);
+		if (index >= 0)
+		{
+			if (index < compactResources.length) compactResources[index] = null;
+		}
+		else if (resources != null && key != null) resources.remove(key);
 		return result;
 	}
 

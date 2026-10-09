@@ -1414,22 +1414,4 @@ public class Icq implements Runnable
 	}
 	
 	
-	public static final Hashtable interests;
-	
-	static
-	{
-		interests = new Hashtable();
-		
-		String str = 
-			ResourceBundle.remove("interests1")+
-			ResourceBundle.remove("interests2")+
-			ResourceBundle.remove("interests3")+
-			ResourceBundle.remove("interests4")+
-			ResourceBundle.remove("interests5");
-		
-		String[] pairs = Util.explode(str, '|');
-		
-		if ((pairs.length%2) == 0)
-			for (int i = 0; i < pairs.length; i += 2) interests.put(pairs[i], pairs[i+1]);
-	}
 }

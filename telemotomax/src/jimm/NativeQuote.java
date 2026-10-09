@@ -90,7 +90,7 @@ public final class NativeQuote extends Action
             return true;
         }
         if (reply.getCommand() != 0x0a) return false;
-        byte[] data = reply.getData();
+        byte[] data = reply.getDataRef();
         if (data.length == 0) finish(ResourceBundle.getString("quote_failed"));
         else finish(data[0] == 0 ? null : (data.length > 1 ? Util.byteArrayToString(data, 1, data.length - 1, true) : ResourceBundle.getString("quote_failed")));
         return true;

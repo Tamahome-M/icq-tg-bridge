@@ -94,7 +94,7 @@ public final class SecureCrypto {
             0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
             0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2};
         private final int[] h={0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
-        private final int[] w=new int[64];
+        private final int[] w=new int[16];
         private final byte[] buffer=new byte[64];
         private long count;private int used;
         private static int right(int v,int n){return (v>>>n)|(v<<(32-n));}
@@ -107,13 +107,15 @@ public final class SecureCrypto {
         }
         private void compress() {
             for(int i=0;i<16;i++){int p=i*4;w[i]=((buffer[p]&255)<<24)|((buffer[p+1]&255)<<16)|((buffer[p+2]&255)<<8)|(buffer[p+3]&255);}
-            for(int i=16;i<64;i++){
-                int x=w[i-15],y=w[i-2];
-                w[i]=w[i-16]+(right(x,7)^right(x,18)^(x>>>3))+w[i-7]+(right(y,17)^right(y,19)^(y>>>10));
-            }
             int a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],v=h[7];
             for(int i=0;i<64;i++){
-                int t1=v+(right(e,6)^right(e,11)^right(e,25))+((e&f)^(~e&g))+K[i]+w[i];
+                // Only the previous 16 schedule words are needed. Reuse their
+                // slots instead of allocating another 192 bytes per digest.
+                if(i>=16){
+                    int x=w[(i-15)&15],y=w[(i-2)&15];
+                    w[i&15]+=(right(x,7)^right(x,18)^(x>>>3))+w[(i-7)&15]+(right(y,17)^right(y,19)^(y>>>10));
+                }
+                int t1=v+(right(e,6)^right(e,11)^right(e,25))+((e&f)^(~e&g))+K[i]+w[i&15];
                 int t2=(right(a,2)^right(a,13)^right(a,22))+((a&b)^(a&c)^(b&c));
                 v=g;g=f;f=e;e=d+t1;d=c;c=b;b=a;a=t1+t2;
             }

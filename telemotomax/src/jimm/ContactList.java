@@ -1155,12 +1155,13 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		iconDropTask = new TimerTask() {
 			public void run() { dropIcons(0); }
 		};
+		if (iconTimer == null) iconTimer = new Timer();
 		iconTimer.schedule(iconDropTask, ICON_TTL_MS);
 	}
 	private static final int MAX_ICONS = 1;
 	private static final long ICON_TTL_MS = 30 * 1000L;
 	private static final Vector iconOwners = new Vector();
-	private static final Timer iconTimer = new Timer();
+	private static Timer iconTimer;
 	private static TimerTask iconDropTask;
 
 	// Photos need the decoded bitmap space more than this disposable cache.
@@ -1466,12 +1467,13 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	// TeleMotoMax: плеер уведомления закрывается по концу звука; если телефон
 	// конец не сообщил, закроем сами через несколько секунд — иначе плеер
 	// висит, playerFree не сбрасывается, и звуков больше нет до перезапуска.
-	private static final Timer soundTimer = new Timer();
+	private static Timer soundTimer;
 	private static TimerTask soundWatch;
 
 	private static void watchPlayer(final Player p)
 	{
 		if (soundWatch != null) soundWatch.cancel();
+		if (soundTimer == null) soundTimer = new Timer();
 		soundWatch = new TimerTask() {
 			public void run()
 			{

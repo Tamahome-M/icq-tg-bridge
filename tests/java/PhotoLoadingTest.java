@@ -156,6 +156,34 @@ public class PhotoLoadingTest {
   javax.microedition.lcdui.Image.entered=null;javax.microedition.lcdui.Image.proceed=null;
   System.out.println("PASS: rapid photo switching serializes native decoders and drops late bitmap");
  }
+ static void avatar(SnacPacket photo)throws Exception{
+  byte[] body=(byte[])photo.getDataRef().clone();int marker=1+(body[0]&255);
+  byte[] hash=Arrays.copyOfRange(body,marker+4,marker+20);
+  RequestBuddyIconAction action=new RequestBuddyIconAction("1000001",hash);
+  f(RequestBuddyIconAction.class,"state").setInt(action,RequestBuddyIconAction.STATE_CLI_REQBUDDYICON_SENT);
+  Method forward=RequestBuddyIconAction.class.getDeclaredMethod("forward",Packet.class);forward.setAccessible(true);
+  check(!((Boolean)forward.invoke(action,photo)).booleanValue(),"avatar action consumed a photo response");
+  body[marker]=0;body[marker+1]=1;
+  byte[] wrong=(byte[])body.clone();wrong[marker+4]^=1;
+  check(!((Boolean)forward.invoke(action,new SnacPacket(0x10,7,6,new byte[0],wrong))).booleanValue(),"avatar action consumed a mismatched hash");
+  wrong=(byte[])body.clone();wrong[1+((body[0]&255)-1)]='2';
+  check(!((Boolean)forward.invoke(action,new SnacPacket(0x10,7,6,new byte[0],wrong))).booleanValue(),"avatar action consumed another contact's reply");
+  byte[][] incomplete={new byte[0],new byte[]{7},Arrays.copyOf(body,marker+20),Arrays.copyOf(body,body.length-1)};
+  for(int i=0;i<incomplete.length;i++)
+   check(!((Boolean)forward.invoke(action,new SnacPacket(0x10,7,6,new byte[0],incomplete[i]))).booleanValue(),"avatar accepted a truncated reply");
+  SnacPacket reply=new SnacPacket(0x10,7,6,new byte[0],body);
+  MainThread.updatedIcon=null;
+  check(((Boolean)forward.invoke(action,reply)).booleanValue() && action.isCompleted(),"matching avatar did not complete");
+  check(MainThread.updatedIcon!=null,"avatar was not decoded");
+  check(javax.microedition.lcdui.Image.lastSource==body && javax.microedition.lcdui.Image.lastOffset>0,"avatar copied the packet/JPEG");
+  javax.microedition.lcdui.Image.mode=1;MainThread.updatedIcon=null;
+  action=new RequestBuddyIconAction("1000001",hash);
+  f(RequestBuddyIconAction.class,"state").setInt(action,RequestBuddyIconAction.STATE_CLI_REQBUDDYICON_SENT);
+  forward.invoke(action,reply);
+  check(action.isCompleted() && MainThread.updatedIcon==null,"avatar OOM escaped or killed the action");
+  javax.microedition.lcdui.Image.mode=0;
+  System.out.println("PASS: avatar uses the original JPEG range, ignores photo/hash/contact mismatches and truncated replies, and survives decoder OOM");
+ }
  public static void main(String[] args)throws Exception{
   SOCKETConnection conn=new SOCKETConnection(JimmException.ICQ_BART);
   try{
@@ -180,11 +208,21 @@ public class PhotoLoadingTest {
     check(f(PhotoViewer.class,"image").get(viewer)!=null && f(PhotoViewer.class,"status").get(viewer)==null,"PhotoViewer failed JPEG decoding");
    }
    System.out.println("PASS: actual BART socket, RequestBartAction, JPEG bytes and PhotoViewer, secure="+args[4]+", bytes="+expected.length);
-   memory(expected);dimensions(expected);serial(expected);failures(expected);
+   f(PhotoViewer.class,"status").set(viewer,"loading");
+   RequestBartAction ranged=new RequestBartAction("1000001",RequestBartAction.BART_PHOTO,hex(args[2]),viewer);
+   init.invoke(ranged);SnacPacket response=(SnacPacket)next(conn);forward.invoke(ranged,response);decoded(viewer);
+   check(javax.microedition.lcdui.Image.lastSource==response.getDataRef(),"photo made a separate JPEG payload copy");
+   check(javax.microedition.lcdui.Image.lastOffset>0,"photo did not pass the JPEG offset to the decoder");
+   check(Arrays.equals(expected,Arrays.copyOfRange(javax.microedition.lcdui.Image.lastSource,
+    javax.microedition.lcdui.Image.lastOffset,javax.microedition.lcdui.Image.lastOffset+javax.microedition.lcdui.Image.lastLength)),"ranged photo JPEG bytes changed");
+   check(f(PhotoViewer.class,"image").get(viewer)!=null,"ranged photo failed decoding");
+   System.out.println("PASS: photo decoder uses the original SNAC body and JPEG range without a payload copy");
+   memory(expected);avatar(response);dimensions(expected);serial(expected);failures(expected);
   }finally{
-   conn.forceDisconnect();Jimm.getTimerRef().cancel();((Timer)f(ContactList.class,"iconTimer").get(null)).cancel();
-   ((Timer)f(ContactList.class,"soundTimer").get(null)).cancel();
-   ((Timer)f(DrawControls.TextList.class,"aniTimer").get(null)).cancel();
+   conn.forceDisconnect();Jimm.getTimerRef().cancel();
+   Timer timer=(Timer)f(ContactList.class,"iconTimer").get(null);if(timer!=null)timer.cancel();
+   timer=(Timer)f(ContactList.class,"soundTimer").get(null);if(timer!=null)timer.cancel();
+   timer=(Timer)f(DrawControls.TextList.class,"aniTimer").get(null);if(timer!=null)timer.cancel();
    Object canvas=f(DrawControls.VirtualList.class,"virtualCanvas").get(null);
    ((Timer)f(canvas.getClass(),"repeatTimer").get(canvas)).cancel();
   }

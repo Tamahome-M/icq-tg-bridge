@@ -66,8 +66,8 @@ public final class NativeQuoteTest {
     public static void main(String[]args)throws Exception{
         try{run();}finally{
             Jimm.getTimerRef().cancel();
-            ((Timer)field(ContactList.class,"iconTimer").get(null)).cancel();
-            ((Timer)field(ContactList.class,"soundTimer").get(null)).cancel();
+            Timer iconTimer=(Timer)field(ContactList.class,"iconTimer").get(null);if(iconTimer!=null)iconTimer.cancel();
+            Timer soundTimer=(Timer)field(ContactList.class,"soundTimer").get(null);if(soundTimer!=null)soundTimer.cancel();
         }
     }
 }

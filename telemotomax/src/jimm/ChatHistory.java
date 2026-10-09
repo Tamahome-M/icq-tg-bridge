@@ -764,7 +764,6 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	
 	public boolean isScreenActive()
 	{
-		System.out.println(textList.isActive());
 		return textList.isActive();
 	}
 	
