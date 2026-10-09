@@ -541,13 +541,17 @@ class ExpressSide:
 
     # --- история --------------------------------------------------------
 
-    async def _fetch(self, peer_id: int, limit: int, topic_id: int = 0) -> list:
+    async def _fetch(self, peer_id: int, limit: int, topic_id: int = 0,
+                     *, strict: bool = False) -> list:
         """Сообщения чата или обсуждения, новые первыми. Открытие чата
         веб-клиент считает прочтением — так же, как если бы вы открыли его сами."""
         try:
             messages = await self.client.history(await self._chat_id(peer_id, topic_id), limit)
         except Exception as exc:
-            log.warning("eXpress: история чата %s не получена: %s", peer_id, exc)
+            log.warning("eXpress: история чата %s не получена: %s", peer_id, exc,
+                        exc_info=True)
+            if strict:
+                raise
             return []
         messages = [m for m in messages
                     if (m.event == "message_new" or m.call == "missed") and not m.deleted]
@@ -570,7 +574,7 @@ class ExpressSide:
         private = not topic_id and chat is not None and self._kind(chat) == "user"
         chat_name = self._title(chat) if chat is not None else str(peer_id)
         items: list[HistoryItem] = []
-        for message in await self._fetch(peer_id, min(count or cap, cap), topic_id):
+        for message in await self._fetch(peer_id, min(count or cap, cap), topic_id, strict=True):
             when = dt.datetime.fromtimestamp(message.ts, dt.timezone.utc)
             if since is not None and when < since:
                 break
@@ -614,7 +618,7 @@ class ExpressSide:
         private = not topic_id and chat is not None and self._kind(chat) == "user"
         chat_name = self._title(chat) if chat is not None else str(peer_id)
         out: list[dict] = []
-        for message in await self._fetch(peer_id, min(count or cap, cap), topic_id):
+        for message in await self._fetch(peer_id, min(count or cap, cap), topic_id, strict=True):
             when = dt.datetime.fromtimestamp(message.ts, dt.timezone.utc)
             if since is not None and when < since:
                 break
@@ -690,7 +694,7 @@ class ExpressSide:
     async def last_photos(self, peer_id: int, count: int,
                           topic_id: int = 0) -> list[tuple[bytes, str]]:
         out: list[tuple[bytes, str]] = []
-        for message in await self._fetch(peer_id, FIND_DEPTH, topic_id):
+        for message in await self._fetch(peer_id, FIND_DEPTH, topic_id, strict=True):
             if len(out) >= count:
                 break
             if media_kind(message) != "photo":
