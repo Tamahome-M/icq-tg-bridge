@@ -33,11 +33,12 @@ import jimm.util.ResourceBundle;
  */
 public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, RequestBartAction.ErrorListener
 {
-	private static PhotoViewer current;
+	private static volatile PhotoViewer current;
+	private static final Object decodeLock = new Object();
 
 	private final JimmScreen back;
-	private Image image;
-	private String status;
+	private volatile Image image;
+	private volatile String status;
 
 	private PhotoViewer(JimmScreen back)
 	{
@@ -52,6 +53,7 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 	{
 		PhotoViewer viewer = new PhotoViewer(back);
 		viewer.status = ResourceBundle.getString("photo_loading");
+		if (current != null) current.image = null;
 		current = viewer;
 		Jimm.display.setCurrent(viewer);
 		try
@@ -73,40 +75,90 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen, 
 			onBartError(null);
 			return;
 		}
+		image = null;
 		// Decoding a big picture takes a while; onBart runs on the comm thread,
 		// so decode on a thread of its own or the connection would stall.
 		final byte[] raw = data;
 		new Thread() {
 			public void run()
 			{
-				if (current != PhotoViewer.this) return;
-				// Release temporary handshake/packet buffers before the native
-				// JPEG decoder allocates its bitmap in the small phone heap.
-				System.gc();
-				ConnLog.note("фото: получено " + raw.length + " байт; свободно "
-						+ (Runtime.getRuntime().freeMemory() / 1024) + " КБ");
-				Image img = null;
-				String failure = null;
-				try { img = Image.createImage(raw, 0, raw.length); }
-				catch (OutOfMemoryError e)
+				// A closed viewer may still be inside the native decoder. Do not
+				// allocate a second bitmap until that worker has left it.
+				synchronized (decodeLock)
 				{
+					if (current != PhotoViewer.this) return;
+					long before = Runtime.getRuntime().freeMemory() / 1024;
+					//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
+					ContactList.releaseAvatars();
+					//#sijapp cond.end#
 					System.gc();
-					failure = ResourceBundle.getString("photo_memory");
-					ConnLog.note("фото: не хватило памяти для JPEG");
+					int size = jpegSize(raw), width = size >>> 16, height = size & 0xFFFF;
+					ConnLog.note("фото: получено " + raw.length + " байт"
+							+ (size == 0 ? "" : "; JPEG " + width + "x" + height)
+							+ "; свободно " + before + " -> "
+							+ (Runtime.getRuntime().freeMemory() / 1024) + " КБ");
+					Image img = null;
+					String failure = null;
+					for (int attempt = 0; attempt < 2; attempt++)
+					{
+						if (current != PhotoViewer.this) return;
+						try
+						{
+							img = Image.createImage(raw, 0, raw.length);
+							break;
+						}
+						catch (OutOfMemoryError e)
+						{
+							System.gc();
+							ConnLog.note("фото: память JPEG, попытка " + (attempt + 1)
+									+ "; свободно " + (Runtime.getRuntime().freeMemory() / 1024)
+									+ " КБ" + (e.getMessage() == null ? "" : "; " + e.getMessage()));
+							if (attempt == 1) failure = ResourceBundle.getString("photo_memory");
+						}
+						catch (Throwable e)
+						{
+							failure = ResourceBundle.getString("photo_format");
+							ConnLog.note("фото: JPEG не открыт — " + e.getClass().getName());
+							break;
+						}
+					}
+					if (img == null && failure == null) failure = ResourceBundle.getString("photo_format");
+					if (current != PhotoViewer.this) return;
+					image = img;
+					status = failure;
+					if (img != null) ConnLog.note("фото: JPEG открыт");
+					repaint();
 				}
-				catch (Throwable e)
-				{
-					failure = ResourceBundle.getString("photo_format");
-					ConnLog.note("фото: JPEG не открыт — " + e.getClass().getName());
-				}
-				if (img == null && failure == null) failure = ResourceBundle.getString("photo_format");
-				if (current != PhotoViewer.this) return;
-				image = img;
-				status = failure;
-				if (img != null) ConnLog.note("фото: JPEG открыт");
-				repaint();
 			}
 		}.start();
+	}
+
+	// Read the SOF dimensions without allocating or decoding a bitmap.
+	private static int jpegSize(byte[] raw)
+	{
+		if (raw.length < 4 || (raw[0] & 255) != 255 || (raw[1] & 255) != 0xD8) return 0;
+		int at = 2;
+		while (at + 1 < raw.length)
+		{
+			if ((raw[at++] & 255) != 255) return 0;
+			while (at < raw.length && (raw[at] & 255) == 255) at++;
+			if (at >= raw.length) return 0;
+			int marker = raw[at++] & 255;
+			if (marker == 0xDA || marker == 0xD9) return 0;
+			if (marker == 1 || (marker >= 0xD0 && marker <= 0xD8)) continue;
+			if (at + 2 > raw.length) return 0;
+			int length = ((raw[at] & 255) << 8) | (raw[at + 1] & 255);
+			if (length < 2 || length > raw.length - at) return 0;
+			if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC)
+			{
+				if (length < 7) return 0;
+				int height = ((raw[at + 3] & 255) << 8) | (raw[at + 4] & 255);
+				int width = ((raw[at + 5] & 255) << 8) | (raw[at + 6] & 255);
+				return width == 0 || height == 0 ? 0 : (width << 16) | height;
+			}
+			at += length;
+		}
+		return 0;
 	}
 
 	public void onBartError(String reason)

@@ -16,6 +16,16 @@ async def run(work,classes):
  cp=os.pathsep.join(str(p) for p in [classes,*sorted((work/'wtk/lib').glob('*.jar'))])
  with tempfile.TemporaryDirectory(prefix='tmm-photo-probe-') as temp:
   directory=Path(temp);stubs=dict(STUBS);stubs['javax/microedition/io/Connector.java']=CONNECTOR
+  # Exercise real cache, contact card and text storage, including the card's
+  # independent bitmap reference; UI-only stubs would hide this leak.
+  for name in ['jimm/JimmUI.java','DrawControls/TextList.java','DrawControls/VirtualList.java','DrawControls/VirtualListCommands.java']:
+   stubs.pop(name)
+  stubs['javax/microedition/lcdui/Font.java']=stubs['javax/microedition/lcdui/Font.java'].replace(
+   'public int getHeight()', 'public int charWidth(char c){return 6;} public int substringWidth(String s,int off,int len){return len*6;} public int getHeight()')
+  stubs['DrawControls/device/Device.java']=stubs['DrawControls/device/Device.java'].replace(
+   'void setBackLightOnTime', 'boolean featureSupported(int n); void setBackLightOnTime')
+  stubs['jimm/Jimm.java']=stubs['jimm/Jimm.java'].replace(
+   'public void setBackLightOnTime', 'public boolean featureSupported(int n){return false;} public void setBackLightOnTime')
   # The release compresses language keys; resolve them like the UI harness so
   # assertions can distinguish decode, memory and transport error labels.
   alphabet="_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -37,15 +47,25 @@ async def run(work,classes):
   }'''.replace('MAPPINGS',''.join(mappings))
   stubs['javax/microedition/lcdui/Image.java']='''package javax.microedition.lcdui;
   public class Image {
-   public static int mode;
+   public static int mode, calls, active, maxActive;
+   public static Runnable beforeDecode;
+   public static java.util.concurrent.CountDownLatch entered, proceed;
    public static Image createImage(String s)throws java.io.IOException {throw new java.io.IOException();}
    public static Image createImage(byte[] b,int off,int length){
+    synchronized(Image.class){calls++;active++;if(active>maxActive)maxActive=active;}
+    try {
+    if(beforeDecode!=null)beforeDecode.run();
+    if(entered!=null){entered.countDown();try{proceed.await();}catch(InterruptedException e){throw new IllegalStateException();}}
+    if(mode==3){mode=0;throw new OutOfMemoryError("transient decoder pressure");}
     if(mode==1)throw new OutOfMemoryError("simulated native decoder heap pressure");
     if(mode==2)throw new IllegalArgumentException("simulated unsupported JPEG");
     try{
     java.awt.image.BufferedImage v=javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(b,off,length));
     if(v==null || v.getWidth()!=176 || v.getHeight()!=132)throw new IllegalArgumentException();return new Image();
-   }catch(java.io.IOException e){throw new IllegalArgumentException();}}
+   }catch(java.io.IOException e){throw new IllegalArgumentException();}
+    }finally{synchronized(Image.class){active--;}}
+   }
+   public int getWidth(){return 176;}public int getHeight(){return 132;}
   }'''
   stubs['javax/microedition/lcdui/Graphics.java']='''package javax.microedition.lcdui;
   public class Graphics {
@@ -73,7 +93,7 @@ async def run(work,classes):
   await server.start();port=server._server.sockets[0].getsockname()[1];server.cfg.oscar_port=port
   try:
    for secure in (False,True):
-    client=FakeJimm('127.0.0.1',port,'100500','s3cret');client.tmm_version=(0,91)
+    client=FakeJimm('127.0.0.1',port,'100500','s3cret');client.tmm_version=(0,92)
     if secure:
      from bridge.oscar.secure import parse_psk
      client.open_transport=SecureDialer(parse_psk('1234'))
@@ -81,7 +101,10 @@ async def run(work,classes):
      await client.connect();await client.bos(await client.login_md5_jimm());await client.drain_for(.05)
      cookie=server.new_cookie('bart')
      process=await asyncio.create_subprocess_exec(str(work/'jdk/bin/java'),'-cp',str(directory)+os.pathsep+cp,'PhotoLoadingTest',f'127.0.0.1:{port}',cookie.hex(),token.hex(),str(directory/'photo.jpg'),'true' if secure else 'false')
-     assert await asyncio.wait_for(process.wait(),20)==0
+     try:assert await asyncio.wait_for(process.wait(),20)==0
+     finally:
+      if process.returncode is None:
+       process.kill();await process.wait()
     finally:await client.close();await asyncio.sleep(.05)
   finally:await server.stop();await asyncio.sleep(.03);storage.close()
 
