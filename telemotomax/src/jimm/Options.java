@@ -88,7 +88,10 @@ public class Options
 	public static final int OPTION_ENCRYPTION_PSK     = 35;
 	public static final int OPTION_ENCRYPTION         = 176;
 	public static final int OPTION_MESS_NOTIF_FILE    = 4;
-	public static final int OPTION_ONLINE_NOTIF_FILE  = 5;
+	public static final int OPTION_MESS_UNLOCKED_FILE = 36;
+	// Numeric RMS slots are full; use unused long slots for the new profile.
+	public static final int OPTION_MESS_UNLOCKED_MODE = 193;
+	public static final int OPTION_MESS_UNLOCKED_VOL  = 194;
 	public static final int OPTION_CURRENCY           = 6;
 	public static final int OPTION_PRX_SERV           = 8;
 	public static final int OPTION_PRX_PORT           = 9;
@@ -113,8 +116,6 @@ public class Options
 	public static final int OPTION_CL_SORT_BY         = 65;
 	public static final int OPTION_MESS_NOTIF_MODE    = 66;
 	public static final int OPTION_MESS_NOTIF_VOL     = 67;
-	public static final int OPTION_ONLINE_NOTIF_MODE  = 68;
-	public static final int OPTION_ONLINE_NOTIF_VOL   = 69;
 	public static final int OPTION_COST_PER_PACKET    = 70;
 	public static final int OPTION_COST_PER_DAY       = 71;
 	public static final int OPTION_COST_PACKET_LENGTH = 72;
@@ -443,24 +444,21 @@ public class Options
 		setInt(Options.OPTION_MESS_NOTIF_MODE, 2);
 		setString(Options.OPTION_MESS_NOTIF_FILE, "message.wav");
 		setInt(Options.OPTION_MESS_NOTIF_VOL, 50);
-		setInt(Options.OPTION_ONLINE_NOTIF_MODE, 2);
-		setString(Options.OPTION_ONLINE_NOTIF_FILE, "online.wav");
-		setInt(Options.OPTION_ONLINE_NOTIF_VOL, 50);
 		setInt(Options.OPTION_TYPING_VOL, 50);
 		setString(Options.OPTION_TYPING_FILE, "typing.wav");
 		//#sijapp cond.elseif target is "MOTOROLA"#
 		setInt    (Options.OPTION_MESS_NOTIF_MODE,    2);
 		setString (Options.OPTION_MESS_NOTIF_FILE,    "message.mp3");
 		setInt    (Options.OPTION_MESS_NOTIF_VOL,     50);
-		setInt    (Options.OPTION_ONLINE_NOTIF_MODE,  2);
-		setString (Options.OPTION_ONLINE_NOTIF_FILE,  "online.mp3");
-		setInt    (Options.OPTION_ONLINE_NOTIF_VOL,   50);
 		setInt	  (Options.OPTION_TYPING_VOL,	 	  50);
 		setString (Options.OPTION_TYPING_FILE,		  "typing.mp3");
 		setBoolean(Options.OPTION_LIGHT_MANUAL,       true);
 		//#sijapp cond.end#
 		
 //#sijapp cond.if target!="DEFAULT"#
+		setString(OPTION_MESS_UNLOCKED_FILE, "msg_low.mp3");
+		setLong(OPTION_MESS_UNLOCKED_MODE, 2);
+		setLong(OPTION_MESS_UNLOCKED_VOL, 50);
 		setInt(Options.OPTION_TYPING_MODE, 2);
 //#sijapp cond.end#		
 
@@ -587,8 +585,8 @@ public class Options
 //#sijapp cond.end#
 
 //#sijapp cond.if target isnot "DEFAULT"#
-		selectSoundType("online.", OPTION_ONLINE_NOTIF_FILE);
 		selectSoundType("message.", OPTION_MESS_NOTIF_FILE);
+		selectSoundType("msg_low.", OPTION_MESS_UNLOCKED_FILE);
 		selectSoundType("typing.", OPTION_TYPING_FILE);
 //#sijapp cond.end#		
 		
@@ -643,9 +641,12 @@ public class Options
 		{
 			int optionKey;
 			byte[] optionValue;
+			boolean unlockedSeen = false;
 			while (dis.available() > 0)
 			{
 				optionKey = dis.readUnsignedByte();
+				if (optionKey == OPTION_MESS_UNLOCKED_FILE || optionKey == OPTION_MESS_UNLOCKED_MODE
+						|| optionKey == OPTION_MESS_UNLOCKED_VOL) unlockedSeen = true;
 				if (optionKey < 64) /* 0-63 = String */
 					setString(optionKey, dis.readUTF());
 				else if (optionKey < 128) /* 64-127 = int */
@@ -664,12 +665,21 @@ public class Options
 				}
 			}
 			// Retired preferences; never reuse these RMS IDs.
-			int[] retired = {7, 17, 18, 34, 92, 96, 97, 102, 103, 158, 159, 161
+			int[] retired = {5, 7, 17, 18, 34, 68, 69, 92, 96, 97, 102, 103, 158, 159, 161
 //#sijapp cond.if modules_PROXY isnot "true"#
 				, 83
 //#sijapp cond.end#
 			};
 			for (int i = 0; i < retired.length; i++) options.remove(key(retired[i]));
+			// Keep the former mode/volume for both profiles on first upgrade,
+			// including disabled sound. The unlocked file starts with the quiet MP3.
+			boolean saveNeeded = !unlockedSeen;
+			if (!unlockedSeen)
+			{
+				setLong(OPTION_MESS_UNLOCKED_MODE, getInt(OPTION_MESS_NOTIF_MODE));
+				setLong(OPTION_MESS_UNLOCKED_VOL, getInt(OPTION_MESS_NOTIF_VOL));
+				setString(OPTION_MESS_UNLOCKED_FILE, "msg_low.mp3");
+			}
 //#sijapp cond.if modules_PROXY is "true"#
 			// Preserve SOCKS (2); retired HTTP (1) becomes a socket connection.
 			if (getInt(OPTION_CONN_TYPE) != CONN_TYPE_PROXY) setInt(OPTION_CONN_TYPE, CONN_TYPE_SOCKET);
@@ -688,8 +698,9 @@ public class Options
 			{
 				setBoolean(OPTION_MESS_COLORED_TEXT, false);
 				setBoolean(OPTION_PLAIN_TEXT_DONE, true);
-				safeSave();
+				saveNeeded = true;
 			}
+			if (saveNeeded) safeSave();
 		}
 	}
 
@@ -1038,13 +1049,13 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 //#sijapp cond.if target isnot "DEFAULT"#
 	private ChoiceGroup messageNotificationModeChoiceGroup;
-	private ChoiceGroup onlineNotificationModeChoiceGroup;
+	private ChoiceGroup unlockedNotificationModeChoiceGroup;
 	private ChoiceGroup typingNotificationModeChoiceGroup;
-	private TextField messageNotificationSoundfileTextField;
+	private ChoiceGroup messageNotificationSoundChoice;
 	private Gauge messageNotificationSoundVolume;
-	private TextField onlineNotificationSoundfileTextField;
-	private TextField typingNotificationSoundfileTextField;
-	private Gauge onlineNotificationSoundVolume;
+	private ChoiceGroup unlockedNotificationSoundChoice;
+	private ChoiceGroup typingNotificationSoundChoice;
+	private Gauge unlockedNotificationSoundVolume;
 	private Gauge typingNotificationSoundVolume;
 	private ChoiceGroup backImgGroup;
 	private ChoiceGroup backImgModeGroup;
@@ -2251,36 +2262,22 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		/* Initialize elements (Signaling section) */
 
 		//#sijapp cond.if target isnot "DEFAULT"#
-		onlineNotificationModeChoiceGroup = createSelector(
-				"onl_notification", "no" + "|" + "beep" + "|" + "sound"
-				, Options.OPTION_ONLINE_NOTIF_MODE);
-
-		onlineNotificationSoundfileTextField = new TextField(
-				ResourceBundle.getString("onl_sound_file_name"),
-				Options.getString(Options.OPTION_ONLINE_NOTIF_FILE),
-				32, TextField.ANY);
-
-		messageNotificationModeChoiceGroup = createSelector(
-				"message_notification", "no" + "|" + "beep" + "|" + "sound"
-				, Options.OPTION_MESS_NOTIF_MODE);
+		unlockedNotificationModeChoiceGroup = createSoundSelector(
+				"message_notification", Options.OPTION_MESS_UNLOCKED_MODE);
+		unlockedNotificationSoundChoice = createSoundFileSelector(Options.OPTION_MESS_UNLOCKED_FILE);
+		unlockedNotificationSoundVolume = new Gauge(ResourceBundle.getString("volume"),
+				true, 10, (int) Options.getLong(Options.OPTION_MESS_UNLOCKED_VOL) / 10);
+		messageNotificationModeChoiceGroup = createSoundSelector(
+				"message_notification_locked", Options.OPTION_MESS_NOTIF_MODE);
 		  
-		messageNotificationSoundfileTextField = new TextField(
-				ResourceBundle.getString("msg_sound_file_name"),
-				Options.getString(Options.OPTION_MESS_NOTIF_FILE), 32,
-				TextField.ANY);
+		messageNotificationSoundChoice = createSoundFileSelector(Options.OPTION_MESS_NOTIF_FILE);
 		messageNotificationSoundVolume = new Gauge(ResourceBundle
 				.getString("volume"), true, 10, Options
 				.getInt(Options.OPTION_MESS_NOTIF_VOL) / 10);
-		onlineNotificationSoundVolume = new Gauge(ResourceBundle
-				.getString("volume"), true, 10, Options
-				.getInt(Options.OPTION_ONLINE_NOTIF_VOL) / 10);
 		typingNotificationSoundVolume = new Gauge(ResourceBundle
 				.getString("volume"), true, 10, Options
 				.getInt(Options.OPTION_TYPING_VOL) / 10);
-		typingNotificationSoundfileTextField = new TextField(
-				ResourceBundle.getString("msg_sound_file_name"),
-				Options.getString(Options.OPTION_TYPING_FILE), 32,
-				TextField.ANY);
+		typingNotificationSoundChoice = createSoundFileSelector(Options.OPTION_TYPING_FILE);
 		typingNotificationModeChoiceGroup = createSelector(
 				"typing_notify", "no" + "|" + "typing_display_only"
 						+ "|" + "beep" + "|" + "sound",
@@ -2292,16 +2289,16 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		//#sijapp cond.end#
 
 		//#sijapp cond.if target isnot "DEFAULT"#     
+		optionsForm.append(unlockedNotificationModeChoiceGroup);
+		optionsForm.append(unlockedNotificationSoundVolume);
+		optionsForm.append(unlockedNotificationSoundChoice);
 		optionsForm.append(messageNotificationModeChoiceGroup);
 		optionsForm.append(messageNotificationSoundVolume);
-		optionsForm.append(messageNotificationSoundfileTextField);
+		optionsForm.append(messageNotificationSoundChoice);
 		optionsForm.append(vibratorChoiceGroup);
-		optionsForm.append(onlineNotificationModeChoiceGroup);
-		optionsForm.append(onlineNotificationSoundVolume);
-		optionsForm.append(onlineNotificationSoundfileTextField);
 		optionsForm.append(typingNotificationModeChoiceGroup);
 		optionsForm.append(typingNotificationSoundVolume);
-		optionsForm.append(typingNotificationSoundfileTextField);
+		optionsForm.append(typingNotificationSoundChoice);
 		//#sijapp cond.end#
 		
 		//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA" | target is "SIEMENS2"#
@@ -2316,6 +2313,33 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				Options.OPTION_CREEPING_LINE);
 		optionsForm.append(chsBringUp);
 		//#sijapp cond.end#
+	}
+
+	private static ChoiceGroup createSoundSelector(String caption, int option)
+	{
+		ChoiceGroup choice = new ChoiceGroup(ResourceBundle.getString(caption), Choice.POPUP);
+		addStr(choice, "no" + "|" + "beep" + "|" + "sound");
+		int value = option < 192 ? Options.getInt(option) : (int) Options.getLong(option);
+		if (value >= 0 && value < choice.size()) choice.setSelectedIndex(value, true);
+		return choice;
+	}
+
+	private static ChoiceGroup createSoundFileSelector(int option)
+	{
+		ChoiceGroup choice = new ChoiceGroup(ResourceBundle.getString("msg_sound_file_name"), Choice.POPUP);
+		choice.append("message.mp3", null);
+		choice.append("msg_low.mp3", null);
+		choice.append("tg.mp3", null);
+		choice.append("typing.mp3", null);
+		String saved = Options.getString(option);
+		int selected = -1;
+		for (int i = 0; i < choice.size(); i++)
+			if (choice.getString(i).equals(saved)) selected = i;
+		// Preserve a saved legacy/custom file until another melody is chosen.
+		if (selected < 0 && saved != null && saved.length() != 0)
+			selected = choice.append(saved, null);
+		choice.setSelectedIndex(selected < 0 ? 0 : selected, true);
+		return choice;
 	}
 	
 	private boolean readDataFromForm()
@@ -2469,21 +2493,21 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				messageNotificationModeChoiceGroup.getSelectedIndex());
 		Options.setInt(Options.OPTION_VIBRATOR, vibratorChoiceGroup
 				.getSelectedIndex());
-		Options.setInt(Options.OPTION_ONLINE_NOTIF_MODE,
-				onlineNotificationModeChoiceGroup.getSelectedIndex());
+		Options.setLong(Options.OPTION_MESS_UNLOCKED_MODE,
+				unlockedNotificationModeChoiceGroup.getSelectedIndex());
 		Options.setInt(Options.OPTION_TYPING_MODE,
 				typingNotificationModeChoiceGroup.getSelectedIndex());
    
 		Options.setString(Options.OPTION_MESS_NOTIF_FILE,
-				messageNotificationSoundfileTextField.getString());
+				messageNotificationSoundChoice.getString(messageNotificationSoundChoice.getSelectedIndex()));
 		Options.setInt(Options.OPTION_MESS_NOTIF_VOL,
 				messageNotificationSoundVolume.getValue() * 10);
-		Options.setString(Options.OPTION_ONLINE_NOTIF_FILE,
-				onlineNotificationSoundfileTextField.getString());
-		Options.setInt(Options.OPTION_ONLINE_NOTIF_VOL,
-				onlineNotificationSoundVolume.getValue() * 10);
+		Options.setString(Options.OPTION_MESS_UNLOCKED_FILE,
+				unlockedNotificationSoundChoice.getString(unlockedNotificationSoundChoice.getSelectedIndex()));
+		Options.setLong(Options.OPTION_MESS_UNLOCKED_VOL,
+				unlockedNotificationSoundVolume.getValue() * 10);
 		Options.setString(Options.OPTION_TYPING_FILE,
-				typingNotificationSoundfileTextField.getString());
+				typingNotificationSoundChoice.getString(typingNotificationSoundChoice.getSelectedIndex()));
 		Options.setInt(Options.OPTION_TYPING_VOL,
 				typingNotificationSoundVolume.getValue() * 10);
 		//#sijapp cond.end# <===
