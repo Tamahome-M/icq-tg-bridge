@@ -115,6 +115,14 @@ public class MainThread implements Runnable
 	
 	private static void execureTask(int type, Object[] data)
 	{
+		// Connection completion, warnings and queued Back events must keep
+		// the locked screen until its PIN is entered.
+		if ((type == TYPE_BACK_TO_LAST_SCR || type == TYPE_ACTIVATE_CL || type == TYPE_ACTIVATE_MM)
+				&& SplashCanvas.pinLocked())
+		{
+			SplashCanvas.showLockedAlert(type == TYPE_BACK_TO_LAST_SCR ? null : (Alert) data[0]);
+			return;
+		}
 		switch (type)
 		{
 //#sijapp cond.if target isnot "DEFAULT"#

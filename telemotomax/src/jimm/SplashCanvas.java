@@ -115,6 +115,10 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 	// True if keylock has been enabled
 	static private boolean isLocked;
+	// Allocate the small input buffer only while the PIN prompt is open.
+	static private char[] pinInput;
+	static private int pinLength;
+	static private boolean pinWrong;
 
 	// isError occured while connection
 	static private boolean errFlag;
@@ -238,6 +242,9 @@ public class SplashCanvas extends Canvas implements CommandListener
 		SplashCanvas._this.removeCommand(SplashCanvas.cancelCommand);
 		if (isLocked) return;
 
+		clearPinInput();
+		poundPressTime = 0;
+		showKeylock = false;
 		isLocked = true;
 		Jimm.setBkltOn(false);
 		setProgress(0);
@@ -263,9 +270,16 @@ public class SplashCanvas extends Canvas implements CommandListener
 	// Disable keylock
 	static public synchronized void unlock(boolean showContactList)
 	{
-		if (!isLocked)
+		if (!isLocked || pinLocked())
 			return;
+		finishUnlock();
+	}
 
+	private static void finishUnlock()
+	{
+		clearPinInput();
+		poundPressTime = 0;
+		showKeylock = false;
 		isLocked = false;
 		availableMessages = 0;
 		//#sijapp cond.if target is "RIM"#
@@ -286,8 +300,70 @@ public class SplashCanvas extends Canvas implements CommandListener
 		return (isLocked);
 	}
 
+	public static boolean pinLocked()
+	{
+		String pin = Options.getString(Options.OPTION_LOCK_PIN);
+		return isLocked && pin != null && pin.length() != 0;
+	}
+
+	public static void showLockedAlert(Alert alert)
+	{
+		if (alert == null) show();
+		else Jimm.display.setCurrent(alert, _this);
+	}
+
+	private static void clearPinInput()
+	{
+		if (pinInput != null)
+			for (int i = 0; i < pinInput.length; i++) pinInput[i] = 0;
+		pinInput = null;
+		pinLength = 0;
+		pinWrong = false;
+	}
+
+	private void beginPinInput()
+	{
+		clearPinInput();
+		pinInput = new char[Options.LOCK_PIN_MAX];
+		poundPressTime = 0;
+		showKeylock = false;
+		if (t1 != null) { t1.cancel(); t1 = null; }
+		repaint();
+	}
+
+	private void pinKeyPressed(int keyCode)
+	{
+		if (keyCode >= '0' && keyCode <= '9')
+		{
+			if (pinLength < pinInput.length) pinInput[pinLength++] = (char) keyCode;
+			pinWrong = false;
+		}
+		else if (keyCode == Canvas.KEY_STAR)
+		{
+			if (pinLength > 0) pinInput[--pinLength] = 0;
+			pinWrong = false;
+		}
+		else if (isCancelKey(keyCode)) clearPinInput();
+		else if (keyCode == Canvas.KEY_POUND)
+		{
+			String pin = Options.getString(Options.OPTION_LOCK_PIN);
+			boolean matches = pin != null && pinLength == pin.length();
+			for (int i = 0; matches && i < pinLength; i++)
+				if (pinInput[i] != pin.charAt(i)) matches = false;
+			if (matches) finishUnlock();
+			else
+			{
+				for (int i = 0; i < pinLength; i++) pinInput[i] = 0;
+				pinLength = 0;
+				pinWrong = true;
+			}
+		}
+		repaint();
+	}
+
 	protected void hideNotify()
 	{
+		clearPinInput();
 		imgSplash = null;
 //		resetLastTask();
 	}
@@ -320,6 +396,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 		}
 		if (isLocked)
 		{
+			if (pinInput != null) { pinKeyPressed(keyCode); return; }
 			if (keyCode == Canvas.KEY_POUND)
 			{
 				poundPressTime = System.currentTimeMillis();
@@ -350,7 +427,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 	private void tryToUnlock(int keyCode)
 	{
-		if (!isLocked)
+		if (!isLocked || pinInput != null)
 			return;
 		if (keyCode != Canvas.KEY_POUND)
 		{
@@ -361,7 +438,8 @@ public class SplashCanvas extends Canvas implements CommandListener
 		if ((poundPressTime != 0)
 				&& ((System.currentTimeMillis() - poundPressTime) > 900))
 		{
-			unlock(true);
+			if (pinLocked()) beginPinInput();
+			else unlock(true);
 			poundPressTime = 0;
 		}
 	}
@@ -493,7 +571,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 			g.drawString(Util.getCurrentDayString(), width / 2, y, Graphics.TOP|Graphics.HCENTER);
 		}
 		// Display the keylock message if someone hit the wrong key
-		if (showKeylock)
+		if (showKeylock && pinInput == null)
 		{
 
 			// Init the dimensions
@@ -520,6 +598,25 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 		}
 
+		if (isLocked && pinInput != null)
+		{
+			int boxWidth = width - 16;
+			int boxHeight = fontHeight * 4 + 16;
+			int top = (height - boxHeight) / 2;
+			g.setFont(SplashCanvas.font);
+			g.setColor(bgColor);
+			g.fillRect(8, top, boxWidth, boxHeight);
+			g.setColor(textColor);
+			g.drawRect(8, top, boxWidth, boxHeight);
+			g.drawString(ResourceBundle.getString(pinWrong ? "pin_wrong" : "pin_enter"),
+					width / 2, top + 4, Graphics.HCENTER | Graphics.TOP);
+			g.drawString("********".substring(0, pinLength), width / 2,
+					top + fontHeight + 6, Graphics.HCENTER | Graphics.TOP);
+			g.drawString(ResourceBundle.getString("pin_keys"), width / 2,
+					top + fontHeight * 2 + 8, Graphics.HCENTER | Graphics.TOP);
+			g.drawString(ResourceBundle.getString("pin_cancel"), width / 2,
+					top + fontHeight * 3 + 8, Graphics.HCENTER | Graphics.TOP);
+		}
 		
 		// Draws bottom bar
 		g.setFont(SplashCanvas.font);
@@ -603,7 +700,12 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 		resetLastTask();
 
-		isLocked = false;
+		// Reconnecting while PIN-locked must not bypass authentication.
+		if (!pinLocked())
+		{
+			isLocked = false;
+			clearPinInput();
+		}
 
 		TimerTasks timerTask = new TimerTasks(action);
 		lastTaskCanCancel = canCancel;
@@ -611,14 +713,14 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 		SplashCanvas._this.removeCommand(SplashCanvas.cancelCommand);
 		SplashCanvas._this.setCommandListener(null);
-		if (canCancel && !cancelByKey)
+		if (canCancel && !cancelByKey && !isLocked)
 		{
 			SplashCanvas._this.addCommand(SplashCanvas.cancelCommand);
 			SplashCanvas._this.setCommandListener(_this);
 		}
 
 		//  #sijapp cond.if target="MIDP2" | target="MOTOROLA"#
-		SplashCanvas._this.setFullScreenMode(!canCancel || cancelByKey);
+		SplashCanvas._this.setFullScreenMode(isLocked || !canCancel || cancelByKey);
 		//#sijapp cond.end#
 
 		SplashCanvas.setMessage(ResourceBundle.getString(captionLngStr));

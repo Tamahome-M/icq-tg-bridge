@@ -176,7 +176,6 @@
 "mess_format"				"Message format"
 "message_notification"	"Messages: unlocked"
 "message_notification_locked"	"Messages: locked"
-"msg_sound_file_name"		"Melody"
 "message"					"Message"
 "midp_info"					"MIDP info"
 "minimize"					"Minimize"
@@ -623,3 +622,10 @@
 "quote_done"	"Message quoted"
 "quote_failed"	"Could not quote the message"
 "quote_timeout"	"No reply from bridge. Check the chat before sending again."
+
+"lock_pin"		"Lock PIN (empty: disabled)"
+"pin_format"		"Use 4 to 8 digits, or leave empty to disable PIN."
+"pin_enter"		"Enter PIN"
+"pin_wrong"		"Wrong PIN"
+"pin_keys"		"#: OK   *: erase"
+"pin_cancel"		"Back: cancel"

@@ -49,22 +49,32 @@ public final class NotificationProfilesTest {
         Object form=ctor.newInstance();method(c,"showSignalingOptions").invoke(form);
         ChoiceGroup active=choice(form,"unlockedNotificationSoundChoice"),locked=choice(form,"messageNotificationSoundChoice"),typing=choice(form,"typingNotificationSoundChoice");
         for(ChoiceGroup group:new ChoiceGroup[]{active,locked,typing}){
-            check(group.getType()==Choice.POPUP,"melody control is not dropdown");
+            check(group.getType()==Choice.POPUP,"sound control is not dropdown");
+            int offset=group==typing?3:2;
             String[] names={"message.mp3","msg_low.mp3","tg.mp3","typing.mp3"};
-            for(int i=0;i<names.length;i++)check(group.getString(i).equals(names[i]),"packaged melody missing from dropdown");
+            for(int i=0;i<names.length;i++)check(group.getString(i+offset).equals(names[i]),"packaged melody missing from dropdown");
         }
-        check(active.getSelectedIndex()==1,"active default dropdown selection wrong");
+        Form screen=(Form)field(c,"optionsForm").get(form);
+        int dropdowns=0;for(Object item:screen.items)if(item instanceof ChoiceGroup && ((ChoiceGroup)item).getType()==Choice.POPUP)dropdowns++;
+        check(dropdowns==3,"mode and melody are still separate dropdowns");
+        check(active.getSelectedIndex()==3,"active default selection wrong");
         check(locked.getString(locked.getSelectedIndex()).equals("legacy.wav"),"legacy file discarded by menu");
-        ChoiceGroup activeMode=choice(form,"unlockedNotificationModeChoiceGroup"),lockedMode=choice(form,"messageNotificationModeChoiceGroup");
-        check(activeMode.getType()==Choice.POPUP && lockedMode.getType()==Choice.POPUP,"mode controls not dropdowns");
-        active.setSelectedIndex(2,true);locked.setSelectedIndex(0,true);typing.setSelectedIndex(3,true);
-        activeMode.setSelectedIndex(2,true);lockedMode.setSelectedIndex(1,true);
+        for(int activeMode=0;activeMode<2;activeMode++){
+            active.setSelectedIndex(activeMode,true);locked.setSelectedIndex(4,true);typing.setSelectedIndex(1,true);
+            method(c,"readSignalingOptions").invoke(form);Options.save();reload();
+            check(Options.getLong(Options.OPTION_MESS_UNLOCKED_MODE)==activeMode,"silent/beep selection not saved");
+            check(Options.getString(Options.OPTION_MESS_UNLOCKED_FILE).equals("msg_low.mp3"),"silent/beep selection overwrites saved melody");
+            check(Options.getInt(Options.OPTION_MESS_NOTIF_MODE)==2 && Options.getString(Options.OPTION_MESS_NOTIF_FILE).equals("tg.mp3"),"melody selection does not enable sound");
+            check(Options.getInt(Options.OPTION_TYPING_MODE)==1,"typing display-only lost");
+        }
+        active.setSelectedIndex(4,true);locked.setSelectedIndex(1,true);typing.setSelectedIndex(6,true);
         ((Gauge)field(c,"unlockedNotificationSoundVolume").get(form)).setValue(2);
         ((Gauge)field(c,"messageNotificationSoundVolume").get(form)).setValue(8);
         method(c,"readSignalingOptions").invoke(form);Options.save();reload();
         check(Options.getString(Options.OPTION_MESS_UNLOCKED_FILE).equals("tg.mp3") && Options.getLong(Options.OPTION_MESS_UNLOCKED_VOL)==20 && Options.getLong(Options.OPTION_MESS_UNLOCKED_MODE)==2,"active form values not saved");
-        check(Options.getString(Options.OPTION_MESS_NOTIF_FILE).equals("message.mp3") && Options.getInt(Options.OPTION_MESS_NOTIF_VOL)==80 && Options.getInt(Options.OPTION_MESS_NOTIF_MODE)==1,"locked form values not saved");
-        System.out.println("PASS: all sound filenames use dropdowns, preserve legacy choices and save separate volumes/modes");
+        check(Options.getString(Options.OPTION_MESS_NOTIF_FILE).equals("tg.mp3") && Options.getInt(Options.OPTION_MESS_NOTIF_VOL)==80 && Options.getInt(Options.OPTION_MESS_NOTIF_MODE)==1,"locked form values not saved");
+        check(Options.getInt(Options.OPTION_TYPING_MODE)==3 && Options.getString(Options.OPTION_TYPING_FILE).equals("typing.mp3"),"typing sound selection not saved");
+        System.out.println("PASS: one combined sound dropdown per profile; silence/beep/melody and typing display-only persist; separate volumes and legacy files preserved");
     }
     static Manager.Sound last(){return (Manager.Sound)Manager.started.lastElement();}
     static void sound(String dir,String name,int volume) throws Exception {
