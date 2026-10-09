@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import tempfile
 import time
+from pathlib import Path
 
 from telethon import errors
 
@@ -17,6 +19,7 @@ from .access import AccessControl
 from . import photos
 from .photos import PhotoStore
 from . import profiles
+from .quotes import QuoteError, check_size, filename, text_parts, utf16_size
 from .render import Item, RenderStore, Transcoder
 from .videos import VideoSpec, VideoStore
 from .webserver import PhotoServer
@@ -105,7 +108,8 @@ class Bridge:
                                  self.fetch_file, self.send_document,
                                  self.chat_list, self.open_chat, self.group_paths,
                                  video_link=self.video_link, on_quote=self.on_phone_quote,
-                                 quote_supported=self.quote_supported)
+                                 quote_supported=self.quote_supported,
+                                 quote_reference=self.storage.quote_reference)
         # Любую сеть можно выключить с телефона (настройки сетей в
         # TeleMotoMax): выбор запоминается в базе и действует и после
         # перезапуска, пока телефон не пришлёт другой.
@@ -950,7 +954,8 @@ class Bridge:
             has_picture = i.kind in ("photo", "video", "voice", "file") and i.msg_id
             thread_uin = await self._thread_uin(contact, i.thread) if i.thread else 0
             out.append((line, f"{i.kind}:{i.msg_id}" if has_picture else "", i.who == "Я",
-                        thread_uin, i.msg_id if self.quote_supported(uin) else 0))
+                        thread_uin, self.storage.quote_reference(uin, i.source_id or i.msg_id)
+                        if self.quote_supported(uin) else 0))
         log.info("история «%s» для TeleMotoMax: %d сообщений%s, с фото %d%s",
                  contact.title, len(items),
                  f" (пропущено свежих {offset})" if offset else "",
@@ -1369,47 +1374,71 @@ class Bridge:
 
     def quote_supported(self, uin: int) -> bool:
         contact = self.storage.contact_by_uin(uin)
-        return bool(contact and contact.peer_id not in BOT_PEERS and not is_express_peer(contact.peer_id))
+        return bool(contact and contact.peer_id not in BOT_PEERS)
 
     async def on_phone_quote(self, target_uin: int, source_uin: int, message_id: int) -> str:
         target = self.storage.contact_by_uin(target_uin)
         source = self.storage.contact_by_uin(source_uin)
         if not target or not source or not self.quote_supported(source_uin) or not self.quote_supported(target_uin):
-            return "Цитирование доступно в чатах Telegram и MAX."
-        source_network = "max" if is_max_peer(source.peer_id) else "telegram"
-        target_network = "max" if is_max_peer(target.peer_id) else "telegram"
-        source_side = self.max if source_network == "max" else self.telegram
-        target_side = self.max if target_network == "max" else self.telegram
+            return "Цитирование недоступно в этом чате."
+        def network(peer):
+            return "express" if is_express_peer(peer) else "max" if is_max_peer(peer) else "telegram"
+        source_network, target_network = network(source.peer_id), network(target.peer_id)
+        source_side = getattr(self, source_network)
+        target_side = getattr(self, target_network)
         if (source_side is None or target_side is None or
                 not self.active.get(source_network, False) or not self.active.get(target_network, False)):
             return "Сеть выключена. Включите её в настройках."
         try:
+            if source_network == "express":
+                message_id = self.storage.quote_source(source_uin, message_id)
+                if not message_id:
+                    return "Ссылка на сообщение устарела. Обновите историю исходного чата."
             if source_network == target_network:
-                sent = await source_side.quote(target.peer_id, source.peer_id, message_id, target.topic_id)
+                if source_network == "express":
+                    sent = await source_side.quote(target.peer_id, source.peer_id, message_id,
+                                                   target.topic_id, source.topic_id)
+                else:
+                    sent = await source_side.quote(target.peer_id, source.peer_id, message_id, target.topic_id)
             else:
-                text = await source_side.quote_text(source.peer_id, message_id, source.topic_id)
-                if not text:
+                content = await source_side.quote_content(source.peer_id, message_id, source.topic_id)
+                if content is None or not (content.text or content.media):
                     return "Исходное сообщение недоступно: оно удалено или пересылка запрещена."
-                network_name = "MAX" if source_network == "max" else "Telegram"
+                network_name = NET_TITLES[source_network]
                 header = f"Цитировано из {network_name}, чат «{source.title}»:\n"
-                # Заголовок тоже занимает место. Режем по границам символов,
-                # считая UTF-16, чтобы эмодзи не превысили лимит сети.
-                remaining = text
                 sent = None
-                capacity = max(1, 4000 - len(header.encode("utf-16-le")) // 2)
-                while remaining:
-                    size = units = 0
-                    for char in remaining:
-                        width = 2 if ord(char) > 0xFFFF else 1
-                        if units + width > capacity and size:
-                            break
-                        units += width
-                        size += 1
-                    sent = await target_side.send(target.peer_id, header + remaining[:size],
-                                                  target.topic_id, plain=True)
-                    if not sent:
-                        break
-                    remaining = remaining[size:]
+                # Всё скачиваем до первой отправки: ошибка одного вложения
+                # не должна превращать цитату в текст с потерянными файлами.
+                with tempfile.TemporaryDirectory(prefix="bridge-quote-") as folder:
+                    remaining = self.cfg.render_source_max_mb * 1024 * 1024
+                    if content.media:
+                        check_size(sum(m.size for m in content.media), remaining)
+                    files = []
+                    for index, media in enumerate(content.media):
+                        directory = Path(folder) / str(index)
+                        directory.mkdir()
+                        name = filename(media.name)
+                        path = str(directory / name)
+                        await media.save(path, remaining)
+                        size = Path(path).stat().st_size
+                        if not size:
+                            raise QuoteError("Вложение цитаты пустое. Ничего не отправлено.")
+                        check_size(size, remaining)
+                        remaining -= size
+                        files.append((media, path, name))
+                    in_caption = bool(files) and utf16_size(header + content.text) <= 1024
+                    caption = header + content.text if in_caption else header
+                    for index, (media, path, name) in enumerate(files):
+                        sent = await target_side.send_quote_media(
+                            target.peer_id, path, media.kind, name,
+                            caption if index == 0 else header, target.topic_id)
+                        if not sent:
+                            raise QuoteError("Не удалось отправить вложение цитаты.")
+                    if content.text and not in_caption:
+                        for part in text_parts(content.text, header):
+                            sent = await target_side.send(target.peer_id, part, target.topic_id, plain=True)
+                            if not sent:
+                                raise QuoteError("Не удалось отправить текст цитаты.")
             if not sent:
                 return "Сообщение не удалось процитировать. Возможно, оно удалено или пересылка запрещена."
             log.info("цитирование %s из %s в %s: %s → %s", message_id, source.title, target.title,
@@ -1417,6 +1446,8 @@ class Bridge:
             return ""
         except errors.FloodWaitError as exc:
             return f"Цитирование: Telegram просит подождать {exc.seconds} с."
+        except QuoteError as exc:
+            return str(exc)
         except Exception:
             log.exception("не удалось процитировать %s из %s в %s", message_id, source.title, target.title)
             return "Сообщение не удалось процитировать. Возможно, оно удалено или пересылка запрещена."

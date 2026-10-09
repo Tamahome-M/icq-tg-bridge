@@ -133,6 +133,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	//#sijapp cond.end#
 	
 	private final static Command cmdClearText = new Command(ResourceBundle.getString("clear"), Command.ITEM, 5);
+	private final static Command cmdPasteText = new Command(ResourceBundle.getString("paste_text"), Command.ITEM, 2);
 
 	static private CommandListener listener;
 	static private Hashtable commands = new Hashtable();
@@ -336,6 +337,21 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			else if (c == cmdClearText)
 			{
 				messageTextbox.setString(new String());
+			}
+			else if (c == cmdPasteText)
+			{
+				String text = getClipBoardText();
+				if (text != null && text.length() > 0)
+				{
+					if (text.length() <= messageTextbox.getMaxSize() - messageTextbox.size())
+						messageTextbox.insert(text, messageTextbox.getCaretPosition());
+					else
+					{
+						Alert alert = new Alert(ResourceBundle.getString("paste_text"),
+							ResourceBundle.getString("paste_too_long"), null, AlertType.INFO);
+						Jimm.display.setCurrent(alert, messageTextbox);
+					}
+				}
 			}
 		}
 		
@@ -1384,6 +1400,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	{
 		messageTextbox.removeCommand(cmdSend);
 		messageTextbox.removeCommand(cmdCancel);
+		messageTextbox.removeCommand(cmdPasteText);
 	}
 	
 	/* Write message */
@@ -1419,6 +1436,8 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		messageTextbox.addCommand(cmdSend);
 		messageTextbox.addCommand(cmdCancel);
 		messageTextbox.addCommand(cmdClearText);
+		if (clipBoardText != null && clipBoardText.length() > 0)
+			messageTextbox.addCommand(cmdPasteText);
 
 		//#sijapp cond.if modules_SMILES_STD="true" | modules_SMILES_ANI="true" #
 		messageTextbox.addCommand(cmdInsertEmo);

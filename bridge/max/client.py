@@ -26,6 +26,7 @@ from typing import Awaitable, Callable
 
 from ..history import HistoryItem, MissedMessage, SentMessage
 from ..mentions import mentions_all
+from ..quotes import QuoteContent, QuoteMedia, QuoteError, filename, check_size, save_bytes
 from ..tg.client import Dialog, RECENTLY_SECONDS
 
 log = logging.getLogger("max")
@@ -699,12 +700,18 @@ class MaxSide:
                     blocked.append((offset, length))
         return mentions_all(_attr(message, "text", ""), blocked)
 
-    async def quote_text(self, peer_id: int, message_id: int, topic_id: int = 0) -> str | None:
+    async def _quote_source(self, peer_id: int, message_id: int):
         chat_id = from_peer(peer_id)
         message = await self.client.get_message(chat_id, message_id)
         if str(_attr(message, "id", "")) != str(message_id):
             return None
         if _attr(message, "chat_id", chat_id) != chat_id:
+            return None
+        return message
+
+    async def quote_text(self, peer_id: int, message_id: int, topic_id: int = 0) -> str | None:
+        message = await self._quote_source(peer_id, message_id)
+        if message is None:
             return None
         text = describe_message(message)
         link = _attr(message, "link", None)
@@ -712,7 +719,53 @@ class MaxSide:
             text = describe_message(_attr(link, "message", None))
         return text or None
 
-    async def send(self, peer_id: int, text: str, topic_id: int = 0, *, plain: bool = False) -> int | None:
+    async def quote_content(self, peer_id: int, message_id: int, topic_id: int = 0) -> QuoteContent | None:
+        message = await self._quote_source(peer_id, message_id)
+        if message is None:
+            return None
+        content = message
+        link = _attr(message, "link", None)
+        if not _attr(content, "attaches", []) and _enum_value(_attr(link, "type", "")).upper() == "FORWARD":
+            content = _attr(link, "message", None) or message
+        media = []
+        chat_id = from_peer(peer_id)
+        for attach in _attr(content, "attaches", []) or []:
+            kind = {"PHOTO": "photo", "VIDEO": "video", "AUDIO": "voice", "FILE": "file"}.get(
+                _enum_value(_attr(attach, "type", "")).upper())
+            if not kind:
+                continue
+            size = int(_attr(attach, "size", 0) or 0)
+            name = filename(_attr(attach, "name", "") or "",
+                            {"photo": "photo.jpg", "video": "video.mp4", "voice": "voice.ogg", "file": "file.bin"}[kind])
+            async def save(path, maximum, a=attach, k=kind, size=size):
+                check_size(size, maximum)
+                async def fetch():
+                    if k == "video":
+                        info = await self.client.get_video_by_id(chat_id, int(message.id),
+                            int(_attr(a, "video_id", 0) or 0))
+                        url = _attr(info, "url", "") or ""
+                    elif k == "file":
+                        url = _attr(a, "url", "") or ""
+                        if not url:
+                            info = await self.client.get_file_by_id(chat_id, message_id,
+                                int(_attr(a, "file_id", 0) or 0))
+                            url = _attr(info, "url", "") or ""
+                    else:
+                        url = _attr(a, "base_url" if k == "photo" else "url", "") or ""
+                    return await self._download(url, maximum)
+                await save_bytes(fetch, path, maximum)
+            media.append(QuoteMedia(kind, name, size, save))
+        text = (_attr(content, "text", "") or "") if media else describe_message(content)
+        return QuoteContent(text, media)
+
+    async def send_quote_media(self, peer_id: int, path: str, kind: str, name: str,
+                               caption: str, topic_id: int = 0) -> int | None:
+        from pymax import Photo, Video, Voice, File
+        attach = {"photo": Photo, "video": Video, "voice": Voice}.get(kind, File)(path=path, name=name)
+        return await self.send(peer_id, caption, topic_id, plain=True, attachments=[attach])
+
+    async def send(self, peer_id: int, text: str, topic_id: int = 0, *, plain: bool = False,
+                   attachments=None) -> int | None:
         """Отправляет сообщение; возвращает его время в счёте MAX — по нему
         же потом приходит отметка прочтения."""
         chat_id = from_peer(peer_id)
@@ -724,12 +777,13 @@ class MaxSide:
             from pymax.protocol import Opcode
             from pymax.types.domain import Message
             app = self.client._app
+            attaches = await app.api.messages._upload_attachments(attachments) if attachments else []
             payload = SendMessagePayload(chat_id=chat_id, notify=True,
                 message=SendMessagePayloadMessage(text=text, cid=app.api.messages._next_cid(),
-                                                  elements=[], attaches=[]))
+                                                  elements=[], attaches=attaches))
             message = require_payload_model(await app.invoke(Opcode.MSG_SEND, payload.to_payload()), Message)
         else:
-            message = await self.client.send_message(chat_id, text)
+            message = await self.client.send_message(chat_id, text, **({"attachments": attachments} if attachments else {}))
         message_id = int(_attr(message, "id", 0) or 0)
         if message_id:
             self._own_ids[(chat_id, message_id)] = time.time()
@@ -1101,7 +1155,7 @@ class MaxSide:
             return None
         return await self._download(_attr(request, "url", "") or "")
 
-    async def _download(self, url: str) -> bytes | None:
+    async def _download(self, url: str, max_bytes: int = 0) -> bytes | None:
         """Скачивает вложение по ссылке из MAX."""
         if not url:
             return None
@@ -1113,7 +1167,16 @@ class MaxSide:
                 if resp.status != 200:
                     log.info("MAX: вложение не отдано (%s)", resp.status)
                     return None
-                return await resp.read()
+                if not max_bytes:
+                    return await resp.read()
+                check_size(resp.content_length or 0, max_bytes)
+                data = bytearray()
+                async for chunk in resp.content.iter_chunked(65536):
+                    check_size(len(data) + len(chunk), max_bytes)
+                    data.extend(chunk)
+                return bytes(data)
+        except QuoteError:
+            raise
         except Exception as exc:
             log.warning("MAX: не удалось скачать вложение: %s", exc)
             return None

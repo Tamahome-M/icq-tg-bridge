@@ -1200,7 +1200,7 @@ class Session:
                  self.server.name_of(target), len(text), channel, cookie[:4].hex())
         log.debug("от телефона → %s: %s", self.server.name_of(target), text[:300])
         sent_id = await self.server.on_outgoing(int(target), text)
-        ref = blocks.message_ref(getattr(sent_id, "message_id", 0))
+        ref = self.server.message_ref(int(target), getattr(sent_id, "message_id", 0))
         if ref and self.quote_enabled(int(target)):
             await self.send_snac(C.ICBM, C.TMM_MESSAGE_REF,
                                  cookie + pstr8(target.encode("ascii")) + ref)
@@ -1307,7 +1307,7 @@ class Session:
         # Вложение — только расширенному клиенту: TLV после тела сообщения с
         # токеном, по которому он потом попросит снимок. Обычному Jimm
         # ничего не добавляем — он получит пометку [фото] в тексте, как и было.
-        ref = blocks.message_ref(message_id or (self.server.storage.pending_message_id(row_id) if row_id else 0)) if self.quote_enabled(uin) else b""
+        ref = self.server.message_ref(uin, message_id or (self.server.storage.pending_message_id(row_id) if row_id else 0)) if self.quote_enabled(uin) else b""
         ref_tlv = tlv(C.TLV_TMM_MESSAGE_REF, ref) if ref else b""
         extra = b""
         if attach and self.extended:
@@ -1848,12 +1848,14 @@ class OscarServer:
                  group_paths: Callable[[list], dict[int, str]] | None = None,
                  video_link: Callable[[int, str], str] | None = None,
                  on_quote: Callable[[int, int, int], Awaitable[str]] | None = None,
-                 quote_supported: Callable[[int], bool] | None = None):
+                 quote_supported: Callable[[int], bool] | None = None,
+                 quote_reference: Callable[[int, int | str], int] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
         self.on_quote = on_quote
         self.quote_supported = quote_supported or (lambda uin: on_quote is not None)
+        self.quote_reference = quote_reference
         self.roster = roster
         self.status_of = status_of or (lambda uin: C.STATUS_ONLINE)
         self.chat_info = chat_info or self._no_info
@@ -2023,6 +2025,9 @@ class OscarServer:
         token = os.urandom(16)
         self.attachments[token] = (uin, attach, now)
         return token
+
+    def message_ref(self, uin: int, source_id: int | str) -> bytes:
+        return blocks.message_ref(self.quote_reference(uin, source_id) if self.quote_reference else source_id)
 
     async def history_text(self, uin: int, count: int,
                            offset: int = 0) -> tuple[list[tuple], bool] | None:

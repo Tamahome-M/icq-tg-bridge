@@ -52,6 +52,8 @@
 "connect"					"Connect"
 "connecting"				"Connecting"
 "copy_text"					"Copy text"
+"paste_text" "Paste"
+"paste_too_long" "The text does not fit. Make room in the message."
 "copy_all_text"				"Copy all"
 "contact_list"				"Chats"
 "cp1251"					"Use Win1251 coding"

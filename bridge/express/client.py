@@ -31,7 +31,8 @@ import uuid
 import zlib
 from typing import Awaitable, Callable
 
-from ..history import HistoryItem, MissedMessage
+from ..history import HistoryItem, MissedMessage, SentMessage
+from ..quotes import QuoteContent, QuoteMedia, filename, check_size, save_bytes
 from ..tg.client import Dialog, RECENTLY_SECONDS
 
 log = logging.getLogger("express")
@@ -89,7 +90,7 @@ def media_kind(message) -> str:
         return "photo"
     if attachment.kind == "voice":
         return "voice"
-    if attachment.kind == "video" or attachment.mime.startswith("video/"):
+    if attachment.kind in ("video", "video_message") or attachment.mime.startswith("video/"):
         return "video"
     return "file"
 
@@ -418,7 +419,7 @@ class ExpressSide:
         if len(self._own_ids) > 500:
             self._own_ids.pop()
         self._remember(message)
-        return message.sent_mark or int(time.time() * 1000)
+        return SentMessage(message.sent_mark or int(time.time() * 1000), message.id)
 
     async def _sent(self, chat_id: str, sending) -> int | None:
         self._sending[chat_id] = self._sending.get(chat_id, 0) + 1
@@ -430,7 +431,7 @@ class ExpressSide:
             raise RuntimeError("сообщение не появилось в чате eXpress")
         return self._own(message)
 
-    async def send(self, peer_id: int, text: str, topic_id: int = 0) -> int | None:
+    async def send(self, peer_id: int, text: str, topic_id: int = 0, *, plain: bool = False) -> int | None:
         chat_id = await self._chat_id(peer_id, topic_id)
         return await self._sent(chat_id, self.client.send(chat_id, text))
 
@@ -465,6 +466,43 @@ class ExpressSide:
     async def send_photo(self, peer_id: int, data: bytes, caption: str = "",
                          topic_id: int = 0) -> int | None:
         return await self._send_bytes(peer_id, data, "camera.jpg", caption, topic_id=topic_id)
+
+    async def _quote_source(self, peer_id: int, source_id: str, topic_id: int = 0):
+        chat_id = await self._chat_id(peer_id, topic_id)
+        message = self._messages.get(message_number(source_id))
+        if message is None or message.id != source_id or message.chat_id != chat_id:
+            message = next((m for m in await self._fetch(peer_id, FIND_DEPTH, topic_id)
+                            if m.id == source_id and m.chat_id == chat_id), None)
+        return message if message and not message.deleted and message.event == "message_new" else None
+
+    async def quote(self, peer_id: int, source_peer: int, source_id: str,
+                    topic_id: int = 0, source_topic: int = 0) -> int | None:
+        message = await self._quote_source(source_peer, source_id, source_topic)
+        if message is None:
+            return None
+        chat_id = await self._chat_id(peer_id, topic_id)
+        return await self._sent(chat_id, self.client.forward(message, chat_id))
+
+    async def quote_content(self, peer_id: int, source_id: str,
+                            topic_id: int = 0) -> QuoteContent | None:
+        message = await self._quote_source(peer_id, source_id, topic_id)
+        if message is None or not await self.client.can_forward(message):
+            return None
+        kind = media_kind(message)
+        if not kind:
+            return QuoteContent(describe_message(message))
+        attach = message.attachment
+        name = filename(attach.name or {"photo": "photo.jpg", "video": "video.mp4",
+                                        "voice": "voice.ogg"}.get(kind, "file.bin"))
+        async def save(path, maximum):
+            check_size(attach.size, maximum)
+            await save_bytes(lambda: self.client.download(message, max_bytes=maximum), path, maximum)
+        return QuoteContent(message.text, [QuoteMedia(kind, name, attach.size, save)])
+
+    async def send_quote_media(self, peer_id: int, path: str, kind: str, name: str,
+                               caption: str, topic_id: int = 0) -> int | None:
+        return await self.send_document(peer_id, path, name, topic_id, caption,
+                                        as_document=kind not in ("photo", "video"))
 
     async def send_voice(self, peer_id: int, data: bytes, seconds: int = 0,
                          voice: bool = True, topic_id: int = 0) -> int | None:
@@ -542,7 +580,8 @@ class ExpressSide:
             who, _ = self._who(message, private, chat_name)
             items.append(HistoryItem(when, who, text, message_number(message.id),
                                      media_kind(message),
-                                     thread_topic(message.id) if message.thread_started else 0))
+                                     thread_topic(message.id) if message.thread_started else 0,
+                                     source_id=message.id))
         items.reverse()
         return items
 
