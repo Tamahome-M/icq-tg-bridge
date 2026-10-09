@@ -721,6 +721,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		int cut = path.lastIndexOf('/');
 		TreeNode parent = (cut < 0) ? null : parentNodeFor(path.substring(0, cut), byPath);
 		ContactListGroupItem syn = new ContactListGroupItem(-(synItems.size() + 1), path);
+		syn.setParent(parent == null ? null : (ContactListGroupItem) parent.getData());
 		syn.setLabel(cut < 0 ? path : path.substring(cut + 1));
 		synItems.addElement(syn);
 		node = tree.addNode(parent, syn);
@@ -761,6 +762,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 					if (countSlashes(path) != depth) continue;
 					int cut = path.lastIndexOf('/');
 					TreeNode parent = (cut < 0) ? null : parentNodeFor(path.substring(0, cut), byPath);
+					item.setParent(parent == null ? null : (ContactListGroupItem) parent.getData());
 					item.setLabel(cut < 0 ? path : path.substring(cut + 1));
 					TreeNode node = tree.addNode(parent, item);
 					gNodes.put(new Integer(item.getId()), node);

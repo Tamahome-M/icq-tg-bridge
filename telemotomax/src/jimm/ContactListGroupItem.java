@@ -49,6 +49,15 @@ public class ContactListGroupItem implements ContactListItem
 	// name остаётся полным — по нему группа узнаётся.
 	private String label;
 
+	// Parent in the displayed hierarchy; reuse group objects without a map
+	// or searching the whole contact tree on each presence update.
+	private ContactListGroupItem parent;
+
+	public void setParent(ContactListGroupItem parent)
+	{
+		this.parent = parent;
+	}
+
 	// Constructor for an existing group item
 	public ContactListGroupItem(int id, String name)
 	{
@@ -101,6 +110,7 @@ public class ContactListGroupItem implements ContactListItem
 	{
 		onlineCount += onlineInc;
 		totalCount += totalInc;
+		if (parent != null) parent.updateCounters(onlineInc, totalInc);
 	}
 
 	// TeleMotoMax: строка собирается заново только когда изменились
