@@ -518,8 +518,12 @@ class ExpressClient:
                 origin = f"{origin} из «{source}»" if origin else f"«{source}»"
             text = f"[переслано от {origin}] {text}" if origin else f"[переслано] {text}"
         reply = payload.get("reply") or {}
-        quoted = " ".join((reply.get("quote") or (reply.get("payload") or {}).get("body")
-                           or "").split())
+        # Native eXpress uses quote=true as a flag; the original text lives
+        # in reply.payload.body. Retain compatibility with textual quotes.
+        quote = reply.get("quote")
+        if not isinstance(quote, str) or not quote:
+            quote = (reply.get("payload") or {}).get("body")
+        quoted = " ".join(quote.split()) if isinstance(quote, str) else ""
         if quoted:
             if len(quoted) > QUOTE_CHARS:
                 quoted = quoted[:QUOTE_CHARS].rstrip() + "…"

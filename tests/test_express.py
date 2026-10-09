@@ -183,6 +183,20 @@ def run_pure() -> None:
     answer = fake.message(raw_event(12, GROUP, BOSS, "да", reply={
         "senderHuid": ME, "senderName": "Вася", "quote": None, "payload": {"body": "идём  обедать?"}}))
     assert answer.text == "[в ответ мне: идём обедать?] да", answer.text
+    # Native quote is a bool flag, not the quotation body. Older textual
+    # representations remain supported, and nontext bodies do not become
+    # "True" or crash an entire history page.
+    for flag in (True, False, None, "", 1, {}, []):
+        answer = fake.message(raw_event(12, GROUP, BOSS, "да", reply={
+            "senderHuid": ME, "quote": flag, "payload": {"body": "идём\n обедать?"}}))
+        assert answer.text == "[в ответ мне: идём обедать?] да", (flag, answer.text)
+    answer = fake.message(raw_event(12, GROUP, BOSS, "да", reply={
+        "senderHuid": ME, "quote": "выбранный\n фрагмент", "payload": {"body": "весь текст"}}))
+    assert answer.text == "[в ответ мне: выбранный фрагмент] да"
+    for body in (None, True, False, 1, {}, []):
+        answer = fake.message(raw_event(12, GROUP, BOSS, "да", reply={
+            "quote": True, "payload": {"body": body}}))
+        assert answer.text == "да", answer.text
     long_quote = fake.message(raw_event(13, GROUP, ME, "ок", reply={
         "senderHuid": BOSS, "senderName": "Шеф", "payload": {"body": "я" * 100}}))
     assert long_quote.text == "[в ответ Шеф: " + "я" * 60 + "…] ок"
