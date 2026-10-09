@@ -12,7 +12,7 @@ sys.path.insert(0, str(root))
 from tests.test_client_ui import STUBS
 
 
-def run(work, classes, baseline):
+def make_stubs():
     stubs = dict(STUBS)
     for name in ['jimm/JimmUI.java', 'jimm/MainThread.java', 'jimm/util/ResourceBundle.java',
                  'DrawControls/TextList.java', 'DrawControls/VirtualList.java',
@@ -37,6 +37,11 @@ public class Font {
  public int stringWidth(String s){strings++;return substringWidth(s,0,s.length());}
  public int substringWidth(String s,int offset,int length){int width=0;measured+=length;for(int i=0;i<length;i++)width+=charWidth(s.charAt(offset+i));return width;}
 }'''
+    return stubs
+
+
+def run(work, classes, baseline):
+    stubs = make_stubs()
     cp = os.pathsep.join(str(p) for p in [classes, *sorted((work/'wtk/lib').glob('*.jar'))])
     with tempfile.TemporaryDirectory(prefix='tmm-performance-') as temp:
         directory = Path(temp)

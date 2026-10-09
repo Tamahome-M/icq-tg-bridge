@@ -33,10 +33,10 @@ public final class HistoryVideoMenuTest {
         ctor.setAccessible(true);
         HistoryViewer viewer=(HistoryViewer)ctor.newInstance(new Object[]{new Back(),"123","Чат"});
         TextList history=new TextList("Чат");
-        set(viewer,"list",history);set(viewer,"texts",vector(text));set(viewer,"tokens",vector(token));
-        set(viewer,"kinds",vector(new Integer(2)));set(viewer,"threads",vector(null));
-        Method fill=HistoryViewer.class.getDeclaredMethod("fill",new Class[0]);fill.setAccessible(true);
-        fill.invoke(viewer,new Object[0]);
+        set(viewer,"list",history);set(viewer,"videoUrls",vector(url));set(viewer,"tokens",vector(token));
+        set(viewer,"kinds",new byte[]{2});set(viewer,"threads",vector(null));
+        Method append=HistoryViewer.class.getDeclaredMethod("appendLine",new Class[]{TextList.class,String.class,int.class,int.class});append.setAccessible(true);
+        append.invoke(null,new Object[]{history,text,new Integer(2),new Integer(0)});
         check(history.headers.isEmpty(),"labelled video URL was misclassified as a history header");
         check(JimmUI.bodies.contains(text),"history must send the video label to the shared message renderer");
         Method more=HistoryViewer.class.getDeclaredMethod("checkMore",new Class[0]);more.setAccessible(true);
@@ -65,8 +65,8 @@ public final class HistoryVideoMenuTest {
         menu.choose(0); // stale callback after Back
         check(MediaPlayer.playedToken==null && Jimm.openedUrl==null,"Back must cancel even if a stale callback arrives");
         check(history.commands.contains(moreCommand.get(null)),"video selector must not change More");
-        set(viewer,"texts",vector("[07.10 13:08] Автор: обычное сообщение"));
-        JimmUI.bodies.removeAllElements();fill.invoke(viewer,new Object[0]);
+        set(viewer,"videoUrls",vector(null));history.clear();
+        JimmUI.bodies.removeAllElements();append.invoke(null,new Object[]{history,"[07.10 13:08] Автор: обычное сообщение",new Integer(1),new Integer(0)});
         check(history.headers.contains("[07.10 13:08] Автор:"),"ordinary history headers must keep their formatting");
         System.out.println("PASS: server history hides video URLs, shows both choices and waits for explicit selection");
     }

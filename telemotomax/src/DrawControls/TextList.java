@@ -307,6 +307,39 @@ public class TextList extends VirtualList implements Runnable
 		invalidate();
 	}
 
+	/** Move a newly formatted page before existing lines without reformatting
+	 * their text. Existing message indices shift by the page's record count.
+	 * The source is emptied; both lists must use the same font and colours. */
+	public void prependFrom(TextList prefix, int textIndexOffset)
+	{
+		if (prefix == this) return;
+		int addedLines = prefix.getSize();
+		if (addedLines == 0) return;
+		Vector previous = lines, combined = prefix.lines;
+		// doCRLF leaves an empty insertion line after the page's last record.
+		combined.setSize(addedLines);
+		combined.ensureCapacity(addedLines + previous.size());
+		for (int i = 0; i < previous.size(); i++)
+		{
+			TextLine line = (TextLine) previous.elementAt(i);
+			if (line.bigTextIndex >= 0) line.bigTextIndex += textIndexOffset;
+			combined.addElement(line);
+		}
+		lines = combined;
+		previous.removeAllElements();
+		prefix.lines = previous;
+		animated |= prefix.animated;
+		prefix.animated = false;
+		currItem += addedLines;
+		resetAnimationTask();
+		invalidate();
+	}
+
+	protected void afterUnlock()
+	{
+		if (animated && isActive() && aniTimerTask == null) startAnimationTask();
+	}
+
 	//! Add new text item to list
 	public void add(String text, //!< Text of new item
 		int color, //!< Color of new item
