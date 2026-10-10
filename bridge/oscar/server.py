@@ -31,6 +31,7 @@ log = logging.getLogger("oscar")
 
 MAX_SNAC_PAYLOAD = 3800          # с запасом под скромные буферы телефона
 BUDDY_BURST = 20                 # по столько уведомлений об онлайне за раз
+BUDDY_BATCH_BYTES = 4096         # bounded plaintext frame for small J2ME heaps
 SENDER_IDLE_POLL = 10            # как часто отправитель просыпается сам, секунды
 AUTH_TIMEOUT = 60               # общий срок входа, включая неполные кадры и пинги
 SERVICE_IDLE_TIMEOUT = 180       # столько молчит соединение за аватарками — и хватит
@@ -1145,14 +1146,13 @@ class Session:
     async def announce_buddies(self) -> None:
         """Сообщает клиенту, кто из контактов в сети и с каким статусом.
 
-        Следом каждому контакту уходит «закончил набор» (04/14, флаг 0).
-        На экране от него ничего нет, но Jimm по любому уведомлению о наборе
-        помечает контакт умеющим их принимать (ContactList.BeginTyping) — а
-        свои «печатает» он шлёт только таким. Способности из TLV 0x0D
-        сборка «light» не разбирает вовсе (разбор лежит под
-        modules_FILES), так что без этого телефон молчал бы, пока
-        собеседник не напечатает первым.
+        Для классического Jimm typing_prime добавляет «закончил набор»,
+        чтобы клиент узнал о поддержке уведомлений. TeleMotoMax 1.7
+        читает способности из TLV, поэтому эти лишние пакеты ему не нужны.
         """
+        if (self.tmm_version or (0, 0)) >= (1, 7):
+            await self._announce_buddy_batches()
+            return
         sent = 0
         for contact in self.server.roster():
             if self.closed:
@@ -1164,6 +1164,36 @@ class Session:
             sent += 1
             if sent % BUDDY_BURST == 0:
                 await asyncio.sleep(0.2)
+
+    async def _announce_buddy_batches(self) -> None:
+        # Older TeleMotoMax parses only the first user-info record; opt in
+        # by advertised version. Classic Jimm retains individual packets.
+        parts, size = [], 0
+
+        async def flush() -> bool:
+            if not parts:
+                return True
+            if not await self.send_snac(C.BUDDY, C.BUDDY_ARRIVED, b"".join(parts)):
+                return False
+            parts.clear()
+            return True
+
+        for contact in self.server.roster():
+            if self.closed:
+                return
+            status = self.server.status_of(contact.uin)
+            record = blocks.user_info(str(contact.uin),
+                                      status=C.STATUS_WIRE_OFFLINE if status == C.STATUS_OFFLINE else status,
+                                      signon_time=self.signon_time,
+                                      icon_hash=self.server.icon_hash(contact.uin))
+            if parts and (len(parts) >= BUDDY_BURST or size + len(record) > BUDDY_BATCH_BYTES):
+                if not await flush():
+                    return
+                size = 0
+                await asyncio.sleep(0.2)
+            parts.append(record)
+            size += len(record)
+        await flush()
 
     async def notify_status(self, uin: int, status: int) -> None:
         icon_hash = self.server.icon_hash(uin)

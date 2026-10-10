@@ -52,6 +52,8 @@ public class MainThread implements Runnable
 	final static private int TYPE_RESET_LOGIN_TIMER   = 22;
 	final static private int TYPE_MESSAGE_REF = 25;
 	final static private int TYPE_NATIVE_QUOTE_RESULT = 26;
+	final static private int TYPE_PRESENCE_ONLINE = 27;
+	final static private int TYPE_PRESENCE_OFFLINE = 28;
 
 //#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 	final static public int TYPE_UPDATE_BUDDYICON    = 24;
@@ -119,7 +121,7 @@ public class MainThread implements Runnable
 		}
 	}
 	
-	private static void execureTask(int type, Object[] data)
+	private static void execureTask(int type, Object[] data) throws JimmException
 	{
 		// Connection completion, warnings and queued Back events must keep
 		// the locked screen until its PIN is entered.
@@ -131,6 +133,10 @@ public class MainThread implements Runnable
 		}
 		switch (type)
 		{
+		case TYPE_PRESENCE_ONLINE:
+		case TYPE_PRESENCE_OFFLINE:
+			jimm.comm.PresenceUpdate.apply((byte[])data[0], type == TYPE_PRESENCE_ONLINE);
+			break;
 //#sijapp cond.if target isnot "DEFAULT"#
 		case TYPE_USER_IS_TYPING:
 			ContactList.BeginTyping((String) data[0], getBoolean(data, 1));
@@ -294,6 +300,13 @@ public class MainThread implements Runnable
 		//#sijapp cond.end#
 
 		addMainThreadTask(TYPE_UPDATE_CONTACT_LIST, arguments);
+	}
+
+	static public void updatePresence(byte[] packet, boolean online)
+	{
+		// Retain the immutable SNAC body, rather than copying its TLVs and
+		// allocating thirteen arguments/eight boxed integers for each buddy.
+		addMainThreadTask(online ? TYPE_PRESENCE_ONLINE : TYPE_PRESENCE_OFFLINE, packet);
 	}
 
 	//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#

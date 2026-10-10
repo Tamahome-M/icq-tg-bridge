@@ -1193,14 +1193,26 @@ public class Icq implements Runnable
 
 	public static void parseCapabilities(ContactItem item, byte[] capabilities)
 	{
+		parseCapabilities(item, capabilities, 0, capabilities == null ? 0 : capabilities.length, 0, 0);
+	}
+
+	public static void parseCapabilities(ContactItem item, byte[] data,
+			int oldOffset, int oldLength, int shortOffset, int shortLength)
+	{
 		int caps = CAPF_NO_INTERNAL;
-		if (capabilities != null)
+		if (data != null)
 		{
-			for (int offset = 0; offset + 16 <= capabilities.length; offset += 16)
+			for (int offset = oldOffset; offset + 16 <= oldOffset + oldLength; offset += 16)
 			{
-				if (Util.byteArrayEquals(capabilities, offset, CAP_AIM_SERVERRELAY, 0, 16)) caps |= CAPF_AIM_SERVERRELAY;
-				else if (Util.byteArrayEquals(capabilities, offset, CAP_UTF8, 0, 16)) caps |= CAPF_UTF8_INTERNAL;
-				else if (Util.byteArrayEquals(capabilities, offset, CAP_MTN, 0, 16)) caps |= CAPF_TYPING;
+				if (Util.byteArrayEquals(data, offset, CAP_AIM_SERVERRELAY, 0, 16)) caps |= CAPF_AIM_SERVERRELAY;
+				else if (Util.byteArrayEquals(data, offset, CAP_UTF8, 0, 16)) caps |= CAPF_UTF8_INTERNAL;
+				else if (Util.byteArrayEquals(data, offset, CAP_MTN, 0, 16)) caps |= CAPF_TYPING;
+			}
+			for (int offset = shortOffset; offset + 2 <= shortOffset + shortLength; offset += 2)
+			{
+				int code = Util.getWord(data, offset);
+				if (code == 0x1349) caps |= CAPF_AIM_SERVERRELAY;
+				else if (code == 0x134E) caps |= CAPF_UTF8_INTERNAL;
 			}
 		}
 		item.setIntValue(ContactItem.CONTACTITEM_CAPABILITIES, caps);

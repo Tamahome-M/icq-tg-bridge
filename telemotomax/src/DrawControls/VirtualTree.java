@@ -98,7 +98,7 @@ public class VirtualTree extends VirtualList
 	// private void checkToRebuildTree()
 	private void checkToRebuildTree()
 	{
-		if (isChanged || (drawItems == null))
+		if (drawItems == null || (isChanged && !getLocked()))
 		{
 			rebuildTreeIntItems();
 		}
@@ -126,7 +126,7 @@ public class VirtualTree extends VirtualList
 	//! Returns current selected node
 	public TreeNode getCurrentItem()
 	{
-		if ((getCurrIndex() < 0) || (getCurrIndex() >= drawItems.size())) return null;
+		if (drawItems == null || (getCurrIndex() < 0) || (getCurrIndex() >= drawItems.size())) return null;
 		return getDrawItem(getCurrIndex());
 	}
 
