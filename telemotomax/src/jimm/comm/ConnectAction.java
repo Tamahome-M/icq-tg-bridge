@@ -325,7 +325,7 @@ public class ConnectAction extends Action
 		    if (packet instanceof SnacPacket) {
 			    SnacPacket snacPacket = (SnacPacket)packet;
 			    if ((snacPacket.getFamily() == 0x0017) && (snacPacket.getCommand() == 0x0007)) {
-				    byte[] rbuf = snacPacket.getData();
+				    byte[] rbuf = snacPacket.getDataRef();
 				    int len = Util.getWord(rbuf, 0);
 				    byte[] authkey = new byte[len];
 				    System.arraycopy(rbuf, 2, authkey, 0, len);
@@ -358,7 +358,7 @@ public class ConnectAction extends Action
 			    } else {
 				    int errcode = -1;
 				    if ((snacPacket.getFamily() == 0x0017) && (snacPacket.getCommand() == 0x0003)) {
-					    byte[] buf = snacPacket.getData();
+					    byte[] buf = snacPacket.getDataRef();
 					    int marker = 0;
 					    while (marker < buf.length) {
 						    byte[] tlvData = Util.getTlv(buf, marker);
@@ -390,7 +390,7 @@ public class ConnectAction extends Action
 					if (packet instanceof SnacPacket) {
 						SnacPacket snacPacket = (SnacPacket)packet;
 						if ((snacPacket.getFamily() == 0x0017) && (snacPacket.getCommand() == 0x0003)) {
-							byte[] buf = snacPacket.getData();
+							byte[] buf = snacPacket.getDataRef();
 							int marker = 0;
 							while (marker < buf.length) {
 								byte[] tlvData = Util.getTlv(buf, marker);
@@ -632,7 +632,7 @@ public class ConnectAction extends Action
 						Vector items = new Vector();
 
 						// Get data
-						byte[] buf = snacPacket.getData();
+						byte[] buf = snacPacket.getDataRef();
 						int marker = 0;
 
 						// Check length
@@ -688,23 +688,20 @@ public class ConnectAction extends Action
 								((type == 0x0019) || (type == 0x001B)))
 							)
 							{
-								ByteArrayOutputStream serverData = new ByteArrayOutputStream();
+								ByteArrayOutputStream serverData = null;
 								
 								// Get nick
-								String nick = new String(name);
-								//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-								byte[] biHash = new byte[16];
-								//#sijapp cond.end#
+								String nick = name;
 								
 								boolean noAuth = false;
 								while (len > 0)
 								{
-									byte[] tlvData = Util.getTlv(buf, marker);
-									if (tlvData == null) { throw (new JimmException(115, 4)); }
+									int tlvLength = Util.getTlvLength(buf, marker, marker + len);
+									if (tlvLength < 0) { throw (new JimmException(115, 4)); }
 									int tlvType = Util.getWord(buf, marker);
 									if (tlvType == 0x0131)
 									{
-										nick = Util.byteArrayToString(tlvData, true);
+										nick = Util.byteArrayToString(buf, marker + 4, tlvLength, true);
 									}
 									else if (tlvType == 0x0066)
 									{
@@ -714,14 +711,13 @@ public class ConnectAction extends Action
 									/* Server-side additional data */
 									else if ((tlvType == 0x006D) || (tlvType == 0x015c) || (tlvType == 0x015d))
 									{
-										Util.writeWord(serverData, tlvType, true);
-										Util.writeWord(serverData, tlvData.length, true);
-										Util.writeByteArray(serverData, tlvData);
+										if (serverData == null) serverData = new ByteArrayOutputStream();
+										serverData.write(buf, marker, 4 + tlvLength);
 									}
 									
 									len -= 4;
-									len -= tlvData.length;
-									marker += 4 + tlvData.length;
+									len -= tlvLength;
+									marker += 4 + tlvLength;
 								}
 								if (len != 0) { throw (new JimmException(115, 5)); }
 
@@ -730,10 +726,7 @@ public class ConnectAction extends Action
 								{
 									ContactItem item = new ContactItem(id, group, name, nick, noAuth, true);
 									if (group == 0) item.setBooleanValue(ContactItem.CONTACTITEM_IS_TEMP|ContactItem.CONTACTITEM_IS_PHANTOM, true); 
-									item.setBytesArray(ContactItem.CONTACTITEM_SS_DATA, (serverData.size() != 0) ? serverData.toByteArray() : null);
-									//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-									item.setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH, (biHash.length != 0) ? biHash : null);
-									//#sijapp cond.end#
+									item.setBytesArray(ContactItem.CONTACTITEM_SS_DATA, serverData == null ? null : serverData.toByteArray());
 									items.addElement(item);
 								}
 								catch (NumberFormatException ne)
