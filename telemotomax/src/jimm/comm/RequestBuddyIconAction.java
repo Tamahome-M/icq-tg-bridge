@@ -61,6 +61,7 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
     private String uin;
 
     private byte[] biHash;
+    private final int requestId = Util.getCounter();
 
     // Client cookie
     private byte[] clicookie;
@@ -132,7 +133,7 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 		Util.putByte(buf, 5+uinLength, 0x10);
 	
 		System.arraycopy(biHash, 0, buf, 6+uinLength, 16);
-		SnacPacket request = new SnacPacket(0x0010, 0x0006, 0x0006, new byte[0], buf);
+		SnacPacket request = new SnacPacket(0x0010, 0x0006, requestId, new byte[0], buf);
 		try
 		{
 			Icq.bartC.sendPacket(request);
@@ -297,6 +298,11 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 				    else if ((snacPacket.getFamily() == SnacPacket.SRV_REPLYAVATAR_FAMILY)
 						    && (snacPacket.getCommand() == 0x0001))
 				    {
+                        if (snacPacket.getReference() != requestId && snacPacket.getReference() != 0)
+                        {
+                            this.active = false;
+                            return false;
+                        }
 					    // Ошибка службы: аватарки нет. Иначе действие
 					    // висело бы в очереди минуту и перехватывало
 					    // чужие ответы.

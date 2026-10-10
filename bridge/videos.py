@@ -186,7 +186,7 @@ class VideoStore:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    def resolve(self, path: str, start: bool = True) -> tuple[bytes, str, str] | None:
+    def resolve(self, path: str, start: bool = True, as_path: bool = False) -> tuple[bytes | Path, str, str] | None:
         match = ROUTE.fullmatch(path)
         if match is None:
             return None
@@ -203,7 +203,7 @@ class VideoStore:
         if match["asset"]:
             if not asset.is_file():
                 return None
-            return asset.read_bytes(), "video/3gpp", "вложение"
+            return (asset if as_path else asset.read_bytes()), "video/3gpp", "вложение"
         state = "ready" if asset.is_file() else page.states.get(segment, "new")
         if page.duration is not None and segment * page.spec.seconds >= page.duration:
             state = "end"

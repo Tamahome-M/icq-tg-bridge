@@ -34,7 +34,6 @@ import jimm.DebugLog;
 
 public abstract class Connection implements Runnable
 {
-	private Object inputCloseFlagSynch = new Object();
 	
 	// Disconnect flags
 	private volatile boolean inputCloseFlag;
@@ -46,7 +45,46 @@ public abstract class Connection implements Runnable
 	protected volatile Thread rcvThread;
 
 	// Received packets
-	protected Vector rcvdPackets;
+	protected Vector rcvdPackets = new Vector(2);
+	private int queuedBytes;
+	private static final int QUEUE_BYTES = 16 * 1024;
+
+	// Pause before allocating the next frame. One large legacy ICQ frame is
+	// allowed by itself; ordinary bridge frames stay within 16 KiB/two items.
+	protected final boolean waitForPacketSpace(int length) throws InterruptedException
+	{
+		synchronized (rcvdPackets)
+		{
+			while (!getInputCloseFlag() && (rcvdPackets.size() >= 2
+					|| (!rcvdPackets.isEmpty() && queuedBytes + length > QUEUE_BYTES)))
+				rcvdPackets.wait();
+			return !getInputCloseFlag();
+		}
+	}
+	private static int packetBytes(Object packet)
+	{
+		return packet instanceof jimm.comm.SnacPacket
+				? ((jimm.comm.SnacPacket)packet).getWireLength()
+				: ((byte[])packet).length;
+	}
+	protected final void queuePacket(Object packet)
+	{
+		synchronized (rcvdPackets)
+		{
+			if (getInputCloseFlag()) return;
+			rcvdPackets.addElement(packet);
+			queuedBytes += packetBytes(packet);
+		}
+	}
+	protected final void clearPackets()
+	{
+		synchronized (rcvdPackets)
+		{
+			rcvdPackets.removeAllElements();
+			queuedBytes = 0;
+			rcvdPackets.notifyAll();
+		}
+	}
 
 	// FLAP sequence number
 	protected int flapSEQ;
@@ -71,18 +109,19 @@ public abstract class Connection implements Runnable
 
 	void setInputCloseFlag(boolean value)
 	{
-		synchronized (inputCloseFlagSynch) { inputCloseFlag = value; }
+		inputCloseFlag = value;
 	}
 	
 	boolean getInputCloseFlag()
 	{
-		synchronized (inputCloseFlagSynch) { return inputCloseFlag; }
+		return inputCloseFlag;
 	}
 
 	// Sets the reconnect flag and closes the connection
 	final public void notifyToDisconnect()
 	{
 		setInputCloseFlag(true);
+		clearPackets();
 	}
 	
 	public abstract void forceDisconnect();
@@ -117,6 +156,8 @@ public abstract class Connection implements Runnable
 			}
 			packet = this.rcvdPackets.elementAt(0);
 			this.rcvdPackets.removeElementAt(0);
+			queuedBytes -= packetBytes(packet);
+			rcvdPackets.notifyAll();
 		}
 		// Сокет кладёт SNAC уже разобранным (тело читалось сразу в свой
 		// массив); сырой кадр — от других соединений и для семейства 0x15.
@@ -145,7 +186,7 @@ public abstract class Connection implements Runnable
 	
 	/* 23 jan 2009: ICQ patch from Persei */
 	
-	int sequences[] = {
+	private static final int sequences[] = {
 		5695, 23595, 23620, 23049, 0x2886, 0x2493, 23620, 23049, 2853, 17372, 1255, 
 		1796, 1657, 13606, 1930, 23918, 31234, 30120, 0x1BEA, 0x5342, 0x30CC, 
 		0x2294, 0x5697, 0x25FA, 0x3303, 0x078A, 0x0FC5, 0x25D6, 
@@ -156,8 +197,7 @@ public abstract class Connection implements Runnable
 	protected int getSeqValue()
 	{
 		Random rand = new Random(System.currentTimeMillis());
-		int intRand = rand.nextInt();
-		if (intRand < 0) intRand = -intRand;
+		int intRand = rand.nextInt() & 0x7fffffff;
 		int res = sequences[intRand % sequences.length]-1;
 		//#sijapp cond.if modules_DEBUGLOG is "true"#
 		DebugLog.addText ("Flap sequence = " + res);

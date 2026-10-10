@@ -79,6 +79,7 @@ public class ClientPerformanceTest {
   int calls=Display.queued.size();System.out.println("METRIC 200 UI tasks scheduled callbacks="+calls);
   if(!baseline)check(calls==1,"UI task burst schedules duplicate callbacks");
   Display.flush();check(back.shown.size()==100,"batched UI events were lost");
+  if(!baseline)check(((Vector)f(MainThread.class,"mainThreadTasks").get(null)).capacity()<=64,"static UI queue retained burst capacity");
   for(int i=0;i<100;i++)check(("event "+i).equals(back.shown.elementAt(i)),"UI task order changed");
   MainThread.addMainThreadTask(showTime,"next batch");check(Display.queued.size()==1,"queue lost wakeup after previous batch");Display.flush();
   check("next batch".equals(f(VirtualList.class,"bottomText").get(null)),"new UI batch not delivered");
@@ -101,11 +102,36 @@ public class ClientPerformanceTest {
   if(!baseline)System.out.println("PASS: animation/avatar/sound watchdog timers are lazy");
  }
  static void cancel(Class type,String name)throws Exception{Timer timer=(Timer)f(type,name).get(null);if(timer!=null)timer.cancel();}
+ static Vector oldWrap(String text,int width,Font font){
+  Vector out=new Vector();int start=0;
+  while(start<text.length()){
+   int nl=text.indexOf('\n',start),end=nl<0?text.length():nl;String para=text.substring(start,end);start=end+1;
+   while(para.length()>0){int fit=para.length();while(fit>1 && font.stringWidth(para.substring(0,fit))>width)fit--;
+    if(fit<para.length()){int space=para.lastIndexOf(' ',fit);if(space>0)fit=space;}
+    out.addElement(para.substring(0,fit));para=para.substring(fit).trim();
+   }
+  }return out;
+ }
+ static void wrapped()throws Exception{
+  Font font=Font.getDefaultFont();char[] chars=new char[900];Arrays.fill(chars,'W');String word=new String(chars);
+  String[] cases={"", "one two three", "  one  two   three  ", "Привет, мир!", "a\n\nb\r\nc",word,"i W Ж", "\t a b \t"};
+  for(String value:cases)for(int width:new int[]{1,10,96,164}){
+   Vector expected=oldWrap(value,width,font);Graphics.wrapped=new Vector();
+   JimmUI.drawWrapped(new Graphics(),value,0,0,width,font);
+   check(expected.equals(Graphics.wrapped),"status/path wrapping changed");
+  }
+  Font.measured=0;Font.strings=0;Graphics.wrapped=new Vector();
+  JimmUI.drawWrapped(new Graphics(),word,0,0,164,font);
+  System.out.println("METRIC wrapped status: measured characters="+Font.measured+", stringWidth calls="+Font.strings);
+  if(!baseline)check(Font.measured<100000 && Font.strings==0,"paint still measures shrinking substring copies");
+  Graphics.wrapped=null;
+  System.out.println("PASS: status/file-path wrapping matches old layout, including whitespace and narrow screens, without quadratic prefix copies");
+ }
  public static void main(String[] args)throws Exception {
   baseline="baseline".equals(args[1]);
   try{
    f(Options.class,"options").set(null,new Hashtable());Method defaults=Options.class.getDeclaredMethod("setDefaults");defaults.setAccessible(true);defaults.invoke(null);
-   language(args[0]);layouts();tasks();timers();
+   language(args[0]);layouts();tasks();timers();wrapped();
   }finally{
    Jimm.getTimerRef().cancel();cancel(TextList.class,"aniTimer");cancel(ContactList.class,"iconTimer");cancel(ContactList.class,"soundTimer");
    Object canvas=f(VirtualList.class,"virtualCanvas").get(null);((Timer)f(canvas.getClass(),"repeatTimer").get(canvas)).cancel();

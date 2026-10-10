@@ -464,7 +464,7 @@ public class SOCKSConnection extends Connection implements Runnable
 
 	public void forceDisconnect()
 	{
-		setInputCloseFlag(true);
+		notifyToDisconnect();
 		closeStreams();
 	}
 
@@ -535,7 +535,7 @@ public class SOCKSConnection extends Connection implements Runnable
 		// Reset packet buffer
 		synchronized (this)
 		{
-			rcvdPackets = new Vector();
+			clearPackets();
 		}
 
 		// Try
@@ -664,10 +664,7 @@ public class SOCKSConnection extends Connection implements Runnable
 //#sijapp cond.end#
 
 				// Lock object and add rcvd packet to vector
-				synchronized (rcvdPackets)
-				{
-					rcvdPackets.addElement(rcvdPacket);
-				}
+				queuePacket(rcvdPacket);
 
 				// Notify main loop
 				synchronized (Icq.getWaitObj())

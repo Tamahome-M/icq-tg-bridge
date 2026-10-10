@@ -23,7 +23,7 @@ public final class HistoryErrorTest {
     }
     static void error(RequestBartAction action,byte[] body)throws Exception {
         check(((Boolean)method(RequestBartAction.class,"forward",Packet.class).invoke(action,
-              new SnacPacket(0x10,1,77,new byte[0],body))).booleanValue(),"history error ignored");
+              new SnacPacket(0x10,1,field(RequestBartAction.class,"requestId").getInt(action),new byte[0],body))).booleanValue(),"history error ignored");
         check(action.isCompleted(),"history error left the request pending");
         check(field(RequestBartAction.class,"notified").getBoolean(action),"listener can be notified twice");
     }

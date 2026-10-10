@@ -95,12 +95,25 @@ JS_BLOBS = """(() => {
   if (window.__exBlobs) return;
   window.__exBlobs = [];
   window.__exBlobSeq = 0;
+  window.__exKeepBlob = function (entry) {
+    window.__exBlobs.push(entry);
+    let bytes = window.__exBlobs.reduce((n, b) => n + b.size, 0);
+    // A single large file may be in use; do not retain thirty such files.
+    while (window.__exBlobs.length > 1 &&
+           (window.__exBlobs.length > 30 || bytes > 32 * 1024 * 1024)) {
+      bytes -= window.__exBlobs.shift().size;
+    }
+  };
   const create = URL.createObjectURL;
+  const revoke = URL.revokeObjectURL;
+  URL.revokeObjectURL = function (url) {
+    window.__exBlobs = window.__exBlobs.filter(b => b.url !== url);
+    return revoke.call(URL, url);
+  };
   URL.createObjectURL = function (b) {
     const url = create.call(URL, b);
     if (b instanceof Blob && b.size) {
-      window.__exBlobs.push({seq: ++window.__exBlobSeq, url, blob: b, size: b.size, type: b.type});
-      if (window.__exBlobs.length > 30) window.__exBlobs.shift();
+      window.__exKeepBlob({seq: ++window.__exBlobSeq, url, blob: b, size: b.size, type: b.type});
     }
     return url;
   };
@@ -127,8 +140,8 @@ JS_MESSAGE_BLOB = """async ([size, after, id]) => {
       const blob = await (await fetch(url)).blob();
       if (blob.size !== size) return 0;
       b = {seq: ++window.__exBlobSeq, url, blob, size: blob.size, type: blob.type};
-      window.__exBlobs.push(b);
-      if (window.__exBlobs.length > 30) window.__exBlobs.shift();
+      if (window.__exKeepBlob) window.__exKeepBlob(b);
+      else window.__exBlobs.push(b);
     } catch (_) { return 0; }
   }
   return b.size === size && b.seq > after ? b.seq : 0;

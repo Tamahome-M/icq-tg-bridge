@@ -146,7 +146,7 @@ async def run():
     assert not req.drop_author and not req.drop_media_captions
     class MAX:
         async def forward_message(self,**kw): self.request=kw;return NS(id=321)
-    maximum=MaxSide.__new__(MaxSide);maximum.client=MAX()
+    maximum=MaxSide(Config(),None,client=MAX())
     assert await maximum.quote(to_peer(20),to_peer(10),BIG_ID)==321
     assert maximum.client.request==dict(chat_id=20,message_id=BIG_ID,source_chat_id=10)
     print("PASS: native Telegram/MAX APIs, topic routing, source IDs, queue/restart/held delivery, OSCAR refs, duplicate requests, legacy clients and unsupported networks")

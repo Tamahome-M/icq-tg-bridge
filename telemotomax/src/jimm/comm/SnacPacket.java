@@ -390,6 +390,11 @@ public class SnacPacket extends Packet
 		return this.data;
 	}
 
+	public int getWireLength()
+	{
+		return 16 + data.length + (extData.length > 0 ? 2 + extData.length : 0);
+	}
+
 	// Returns a copy of the data
 	public byte[] getData()
 	{
@@ -478,7 +483,7 @@ public class SnacPacket extends Packet
 		// Get SNAC data and extra data (if available)
 		byte[] extData;
 		byte[] data;
-		if (snacFlags == 0x8000)
+		if ((snacFlags & 0x8000) != 0)
 		{
 
 			// Check length (min. 12 bytes)

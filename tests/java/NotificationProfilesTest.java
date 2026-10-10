@@ -109,7 +109,26 @@ public final class NotificationProfilesTest {
         System.out.println("PASS: real MP3 resource selection, lock profiles, captured queued volume, silence/beep and typing volume");
     }
     public static void main(String[] args) throws Exception {
-        try{migration();menu();playback(args[0]);}
+        try{migration();menu();playback(args[0]);burst(args[0]);}
         finally{Jimm.getTimerRef().cancel();Timer timer=(Timer)field(ContactList.class,"soundTimer").get(null);if(timer!=null)timer.cancel();}
+    }
+
+    static void burst(String dir) throws Exception {
+        defaults();SplashCanvas.unlock(false);Options.setBoolean(Options.OPTION_SILENT_MODE,false);
+        ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);Manager.Sound first=last();
+        int count=Manager.started.size();
+        for(int i=0;i<300;i++)ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);
+        Vector pending=(Vector)field(ContactList.class,"soundQueue").get(null);
+        check(pending.size()==2 && Manager.started.size()==count,"message burst grows sound queue or starts overlapping players");
+        SplashCanvas.lock();Options.setInt(Options.OPTION_MESS_NOTIF_VOL,80);
+        ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);
+        java.util.TimerTask watch=(java.util.TimerTask)field(ContactList.class,"soundWatch").get(null);
+        watch.run();sound(dir,"message.mp3",80);Manager.Sound active=last();
+        check(Manager.started.size()==count+1 && pending.isEmpty(),"watchdog did not drain the one pending alert");
+        ContactList list=(ContactList)field(ContactList.class,"_this").get(null);
+        list.playerUpdate(first,javax.microedition.media.PlayerListener.END_OF_MEDIA,null);
+        check(!field(ContactList.class,"playerFree").getBoolean(null),"stale player event released the new sound");
+        active.finish();check(field(ContactList.class,"playerFree").getBoolean(null),"finished alert remains busy");
+        System.out.println("PASS: 300-message alert burst stays bounded, captures latest locked profile, watchdog advances queue; old player events ignored");
     }
 }

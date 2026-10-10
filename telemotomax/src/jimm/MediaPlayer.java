@@ -53,31 +53,26 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	// после последней — запускает плеер. В куче при этом одна-две части, а
 	// не весь клип. Нет записываемого корня — части не принимаем, и
 	// RequestBartAction собирает клип в памяти, как раньше.
-	private Vector partQueue;
+	private volatile MediaBuffer partQueue;
 	private Thread writer;
 	private OutputStream partOut;
-	private boolean partFailed;
-	private boolean partsDone;
-	private boolean partsOk;
+	private volatile boolean partFailed;
 
-	public synchronized boolean onBartPart(byte[] buf, int off, int len, int part, int total)
+	public boolean onBartPart(byte[] buf, int off, int len, int part, int total)
 	{
 		if (current != this || partFailed) return false;
 		Jimm.wakeBacklight();
 		if (partQueue == null)
 		{
-			String url = tempFileUrl(bartType == RequestBartAction.BART_VOICE ? ".amr" : ".3gp");
+			String url = tempFileUrl(temporarySuffix(bartType, buf, off, len));
 			if (url == null) return false;
 			filePath = url;
-			partQueue = new Vector();
+			partQueue = new MediaBuffer();
 			writer = new Thread() { public void run() { writeParts(); } };
 			writer.start();
 		}
-		byte[] copy = new byte[len];
-		System.arraycopy(buf, off, copy, 0, len);
-		partQueue.addElement(copy);
+		if (!partQueue.put(buf, off, len)) return false;
 		clipSize += len;
-		notifyAll();
 		// Части идут прямо в файл, минуя onBartProgress, — счётчик на
 		// экране обновляем сами, иначе за всю загрузку не меняется ничего.
 		waited = 0;
@@ -90,39 +85,19 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	public synchronized void onBartDone(boolean ok)
 	{
-		partsDone = true;
-		partsOk = ok;
-		notifyAll();
+		if (partQueue != null) partQueue.finish(ok);
 	}
 
 	private void writeParts()
 	{
-		Exception err = null;
+		Throwable err = null;
+		boolean partsOk = false;
 		final String path = filePath;
 		try
 		{
 			TempFiles.api().recreate(path);
 			partOut = TempFiles.out(path);
-			for (;;)
-			{
-				byte[] chunk;
-				synchronized (this)
-				{
-					while (partQueue.isEmpty() && !partsDone && current == this)
-					{
-						try { wait(); } catch (InterruptedException ignore) {}
-					}
-					if (current != this) break;
-					if (partQueue.isEmpty())
-					{
-						if (partsDone) break;
-						continue;
-					}
-					chunk = (byte[]) partQueue.elementAt(0);
-					partQueue.removeElementAt(0);
-				}
-				partOut.write(chunk);
-			}
+			partsOk = partQueue.writeTo(partOut);
 			status = ResourceBundle.getString("media_saving");
 			repaint();
 			partOut.flush();
@@ -130,10 +105,11 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			long written = TempFiles.size(path);
 			if (written == 0) throw new Exception("empty temp file");
 		}
-		catch (Exception e)
+		catch (Throwable e)
 		{
 			err = e;
 			partFailed = true;
+			partQueue.finish(false);
 		}
 		try { if (partOut != null) partOut.close(); } catch (Exception ignore) {}
 		partOut = null;
@@ -218,7 +194,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		TempFiles.remove(url);
 	}
 
-	private static MediaPlayer current;
+	private static volatile MediaPlayer current;
 
 	private final JimmScreen back;
 	private final int bartType;
@@ -402,7 +378,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	private Exception playFromFile(byte[] data)
 	{
-		String url = tempFileUrl(bartType == RequestBartAction.BART_VOICE ? ".amr" : ".3gp");
+		String url = tempFileUrl(temporarySuffix(bartType, data, 0, data.length));
 		if (url == null) return new Exception(TempFiles.lastError);
 		OutputStream os = null;
 		try
@@ -597,6 +573,17 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	// Место под временный файл — честным созданием (TempFiles): canWrite()
 	// на несуществующем файле V8 отвечает «нет» при живом доступе к файлам,
 	// и плеер говорил «no writable root», а из памяти MP4 он не играет.
+	static String temporarySuffix(int kind, byte[] data, int offset, int length)
+	{
+		// Current bridges wrap AMR in 3GP. An .amr suffix made the native
+		// file player select the wrong format and fall back to a large buffer.
+		// Older bridges' bare AMR is still identified by its actual header.
+		return kind == RequestBartAction.BART_VOICE && length >= 6
+				&& data[offset] == '#' && data[offset + 1] == '!'
+				&& data[offset + 2] == 'A' && data[offset + 3] == 'M'
+				&& data[offset + 4] == 'R' && data[offset + 5] == 10 ? ".amr" : ".3gp";
+	}
+
 	private static String tempFileUrl(String ext)
 	{
 		return TempFiles.writableUrl("tmm_media" + ext, true);
@@ -613,7 +600,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	// Short name of an exception: "javax.microedition.media.MediaException"
 	// does not fit the screen, "MediaException" does.
-	private static String shortName(Exception e)
+	private static String shortName(Throwable e)
 	{
 		if (e == null) return "?";
 		String name = e.getClass().getName();
@@ -652,7 +639,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 				bartType == RequestBartAction.BART_VOICE ? "voice_failed2" : "video_failed");
 	}
 
-	private void fail(Exception fileErr, Exception streamErr)
+	private void fail(Throwable fileErr, Throwable streamErr)
 	{
 		settled = true;                // отсчёт ожидания больше не затирает экран
 		status = failedText();
@@ -826,7 +813,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	private void close()
 	{
 		if (current == this) current = null;
-		synchronized (this) { notifyAll(); }   // разбудить писателя, чтобы вышел
+		if (partQueue != null) partQueue.finish(false);
 		stop();                            // free the player and the temp file first
 		if (back != null) back.activate();
 		else JimmUI.backToLastScreen();

@@ -44,10 +44,10 @@ public class PhotoLoadingTest {
   ByteArrayOutputStream body=new ByteArrayOutputStream();DataOutputStream error=new DataOutputStream(body);
   error.writeShort(1);error.writeShort(0x9003);error.writeShort(text.length);error.write(text);
   Method forward=RequestBartAction.class.getDeclaredMethod("forward",Packet.class);forward.setAccessible(true);
-  forward.invoke(action,new SnacPacket(0x10,1,77,new byte[0],body.toByteArray()));
+  forward.invoke(action,new SnacPacket(0x10,1,f(RequestBartAction.class,"requestId").getInt(action),new byte[0],body.toByteArray()));
   check(action.isCompleted() && ("photo_download_failed: "+reason).equals(f(PhotoViewer.class,"status").get(viewer)),"server failure reason lost on photo screen");
   viewer=viewer();action=new RequestBartAction("1000001",RequestBartAction.BART_PHOTO,new byte[16],viewer);
-  f(RequestBartAction.class,"lastActivity").set(action,new Date(0));
+  f(RequestBartAction.class,"lastActivity").setLong(action,0);
   check(action.isError(),"expired request did not fail");
   check("photo_download_failed: media_timeout".equals(f(PhotoViewer.class,"status").get(viewer)),"timeout reason lost on photo screen");
   String previous=ConnLog.text();action.isError();

@@ -105,16 +105,17 @@ public final class SecureTransport {
             else{off+=n;length-=n;}}
     }
     private static final class State {
-        private final byte[] key,auth,header=new byte[10],nonce=new byte[12];
+        private final byte[] key,header=new byte[10],nonce=new byte[12],macTag=new byte[16];
+        private final SecureCrypto.RecordMac mac;
         private final SecureCrypto.ChaCha cipher=new SecureCrypto.ChaCha();
         private long sequence;
-        State(byte[] k,byte[] a){key=k;auth=a;}
+        State(byte[] k,byte[] a){key=k;mac=new SecureCrypto.RecordMac(a);}
         void prepare(int size) throws Failure {
             if(size<1 || size>MAX_RECORD || sequence==Long.MAX_VALUE)throw new Failure(184);
             SecureCrypto.putLong(header,0,sequence);header[8]=(byte)(size>>>8);header[9]=(byte)size;
             SecureCrypto.putLong(nonce,4,sequence);
         }
-        byte[] tag(byte[] data,int length){return SecureCrypto.recordMac(auth,header,data,length);}
+        byte[] tag(byte[] data,int length){mac.calculate(header,data,length,macTag);return macTag;}
         void crypt(byte[] data,int length){cipher.crypt(key,nonce,0,data,length);sequence++;}
     }
     private static final class RecordInput extends InputStream {
