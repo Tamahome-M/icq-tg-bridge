@@ -644,19 +644,27 @@ class ExpressSide:
 
     # --- вложения -------------------------------------------------------
 
+    def _cached_message(self, peer_id: int, number: int):
+        message = self._messages.get(number)
+        if message is not None and (chat_peer(message.chat_id) == peer_id
+                or any(peer == peer_id and chat.id == message.chat_id
+                       for (peer, _), chat in self._threads.items())):
+            return message
+        return None
+
     async def _message(self, peer_id: int, number: int):
         """Сообщение по номеру: из памяти, иначе из истории чата, а затем его
         обсуждений — телефон просит вложение по номеру, не называя темы."""
-        message = self._messages.get(number)
+        message = self._cached_message(peer_id, number)
         if message is None:
             await self._fetch(peer_id, FIND_DEPTH)
-            message = self._messages.get(number)
+            message = self._cached_message(peer_id, number)
         for (peer, topic) in list(self._threads):
             if message is not None:
                 break
             if peer == peer_id:
                 await self._fetch(peer_id, FIND_DEPTH, topic)
-                message = self._messages.get(number)
+                message = self._cached_message(peer_id, number)
         if message is None:
             log.warning("eXpress: сообщение %s в чате %s не нашлось", number, peer_id)
         return message

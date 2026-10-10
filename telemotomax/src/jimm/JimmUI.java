@@ -994,7 +994,17 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			while (para.length() > 0)
 			{
 				int fit = para.length();
-				while (fit > 1 && font.stringWidth(para.substring(0, fit)) > width) fit--;
+				if (font.substringWidth(para, 0, fit) > width)
+				{
+					int low = 1, high = fit;
+					while (low < high)
+					{
+						int mid = (low + high + 1) / 2;
+						if (font.substringWidth(para, 0, mid) <= width) low = mid;
+						else high = mid - 1;
+					}
+					fit = low;
+				}
 				if (fit < para.length())
 				{
 					int space = para.lastIndexOf(' ', fit);

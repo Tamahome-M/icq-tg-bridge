@@ -764,6 +764,16 @@ class MaxSide:
         attach = {"photo": Photo, "video": Video, "voice": Voice}.get(kind, File)(path=path, name=name)
         return await self.send(peer_id, caption, topic_id, plain=True, attachments=[attach])
 
+    def _remember_own(self, chat_id: int, message_id: int) -> None:
+        if not message_id:
+            return
+        key = (chat_id, message_id)
+        self._own_ids.pop(key, None)
+        self._own_ids[key] = time.time()
+        if len(self._own_ids) > 500:
+            # dict insertion order is the send order, including refreshed IDs.
+            self._own_ids.pop(next(iter(self._own_ids)))
+
     async def send(self, peer_id: int, text: str, topic_id: int = 0, *, plain: bool = False,
                    attachments=None) -> int | None:
         """Отправляет сообщение; возвращает его время в счёте MAX — по нему
@@ -785,18 +795,16 @@ class MaxSide:
         else:
             message = await self.client.send_message(chat_id, text, **({"attachments": attachments} if attachments else {}))
         message_id = int(_attr(message, "id", 0) or 0)
-        if message_id:
-            self._own_ids[(chat_id, message_id)] = time.time()
-            if len(self._own_ids) > 500:
-                oldest = min(self._own_ids, key=self._own_ids.get)
-                self._own_ids.pop(oldest, None)
+        self._remember_own(chat_id, message_id)
         receipt = int(_attr(message, "time", 0) or 0) or message_id
         return SentMessage(receipt, message_id) if receipt else None
 
     async def quote(self, peer_id: int, source_peer: int, message_id: int, topic_id: int = 0) -> int | None:
         message = await self.client.forward_message(chat_id=from_peer(peer_id), message_id=message_id,
                                                     source_chat_id=from_peer(source_peer))
-        return int(_attr(message, "id", 0) or 0) or None
+        message_id = int(_attr(message, "id", 0) or 0)
+        self._remember_own(from_peer(peer_id), message_id)
+        return message_id or None
 
     async def set_typing(self, peer_id: int, active: bool) -> None:
         return None                        # PyMax этого не умеет
@@ -1040,13 +1048,12 @@ class MaxSide:
         from pymax import File, Voice
         chat_id = from_peer(peer_id)
         if voice:
-            attach = Voice(data, name="voice.ogg", duration=max(1, seconds) * 1000)
+            attach = Voice(data, name="voice.ogg")
         else:
             attach = File(data, name="voice.amr")
         message = await self.client.send_message(chat_id, None, attachments=[attach])
         message_id = int(_attr(message, "id", 0) or 0)
-        if message_id:
-            self._own_ids[(chat_id, message_id)] = time.time()
+        self._remember_own(chat_id, message_id)
         return int(_attr(message, "time", 0) or 0) or message_id or None
 
     async def send_video(self, peer_id: int, data: bytes, seconds: int = 0,
@@ -1060,8 +1067,7 @@ class MaxSide:
             attach = Video(data, name=name or "video.3gp")
         message = await self.client.send_message(chat_id, None, attachments=[attach])
         message_id = int(_attr(message, "id", 0) or 0)
-        if message_id:
-            self._own_ids[(chat_id, message_id)] = time.time()
+        self._remember_own(chat_id, message_id)
         return int(_attr(message, "time", 0) or 0) or message_id or None
 
     async def send_photo(self, peer_id: int, data: bytes, caption: str = "",
@@ -1072,8 +1078,7 @@ class MaxSide:
         message = await self.client.send_message(
             chat_id, caption or None, attachments=[Photo(data, name="camera.jpg")])
         message_id = int(_attr(message, "id", 0) or 0)
-        if message_id:
-            self._own_ids[(chat_id, message_id)] = time.time()
+        self._remember_own(chat_id, message_id)
         return int(_attr(message, "time", 0) or 0) or message_id or None
 
     async def file_bytes(self, peer_id: int, message_id: int,
@@ -1108,8 +1113,7 @@ class MaxSide:
         chat_id = from_peer(peer_id)
         message = await self.client.send_message(chat_id, None, attachments=[File(path=path, name=name)])
         message_id = int(_attr(message, "id", 0) or 0)
-        if message_id:
-            self._own_ids[(chat_id, message_id)] = time.time()
+        self._remember_own(chat_id, message_id)
         return int(_attr(message, "time", 0) or 0) or message_id or None
 
     async def video_bytes(self, peer_id: int, message_id: int, max_bytes: int) -> bytes | None:

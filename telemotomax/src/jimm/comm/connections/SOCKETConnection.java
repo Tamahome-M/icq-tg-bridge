@@ -26,7 +26,6 @@ package jimm.comm.connections;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.util.Vector;
 
 //#sijapp cond.if target!="DEFAULT"#
 	import javax.microedition.io.SocketConnection;
@@ -104,6 +103,7 @@ public class SOCKETConnection extends Connection implements Runnable
 		try
 		{
 			state = false;
+			rcvThread = null; // retire the old receiver before replacing socket fields
 			//#sijapp cond.if target!="DEFAULT"#
 			sc = (SocketConnection) Connector.open("socket://"
 					+ hostAndPort, Connector.READ_WRITE);
@@ -113,6 +113,7 @@ public class SOCKETConnection extends Connection implements Runnable
 			is = sc.openInputStream();
 			os = sc.openOutputStream();
 
+			clearPackets();
 			setInputCloseFlag(false);
 			if (Options.getBoolean(Options.OPTION_ENCRYPTION))
 			{
@@ -190,9 +191,10 @@ public class SOCKETConnection extends Connection implements Runnable
 //#sijapp cond.end#
 			} catch (IOException e)
 			{
+				boolean closing = getInputCloseFlag();
 				state = false;
 				notifyToDisconnect();
-				if (!getInputCloseFlag()) throw new JimmException(120, 3, this.typeNetwork);
+				if (!closing) throw new JimmException(120, 3, this.typeNetwork);
 			}
 
 		}
@@ -201,56 +203,53 @@ public class SOCKETConnection extends Connection implements Runnable
 
 
 	// Дочитывает ровно len байт; false — поток кончился.
-	private boolean readFully(byte[] buf, int off, int len) throws IOException
+	private boolean readFully(InputStream source, byte[] buf, int off, int len) throws IOException
 	{
 		int got = 0;
 		while (got < len)
 		{
-			int n = is.read(buf, off + got, len - got);
+			int n = source.read(buf, off + got, len - got);
 			if (n == -1) return false;
-			got += n;
+			if (n == 0) { int one = source.read(); if (one == -1) return false; buf[off + got++] = (byte)one; }
+			else got += n;
 		}
 		return true;
 	}
 	// Main loop
 	public void run()
 	{
+		Thread receiver = Thread.currentThread();
+		// Own these streams even if the same Connection is reused for BOS.
+		InputStream source;
+		OutputStream destination;
+		javax.microedition.io.Connection socket;
+		synchronized (this)
+		{
+			if (receiver != rcvThread) return;
+			source = is;
+			destination = os;
+			socket = sc;
+		}
 		// Required variables
 		byte[] flapHeader = new byte[6];
 		byte[] rcvdPacket;
 		int bRead = 0, bReadSum;
 
-		// Reset packet buffer
-		synchronized (this)
-		{
-			rcvdPackets = new Vector();
-		}
 
 		// Try
 		try
 		{
 			// Check abort condition
-			while (!getInputCloseFlag())
+			while (receiver == rcvThread && !getInputCloseFlag())
 			{
-				// Read flap header
-				bReadSum = 0;
+				// Check cancellation in the optional available()-polling mode too.
 				if (Options.getInt(Options.OPTION_CONN_PROP) == 1)
 				{
-					while (is.available() == 0)
+					while (receiver == rcvThread && !getInputCloseFlag() && source.available() == 0)
 						Thread.sleep(250);
-					if (is == null)
-						break;
+					if (receiver != rcvThread || getInputCloseFlag()) break;
 				}
-				do
-				{
-					bRead = is.read(flapHeader, bReadSum, flapHeader.length
-							- bReadSum);
-					if (bRead == -1)
-						break;
-					bReadSum += bRead;
-				} while (bReadSum < flapHeader.length);
-				if (bRead == -1)
-					break;
+				if (!readFully(source, flapHeader, 0, flapHeader.length)) { bRead = -1; break; }
 
 				// Verify flap header
 				if (Util.getByte(flapHeader, 0) != 0x2A)
@@ -263,12 +262,13 @@ public class SOCKETConnection extends Connection implements Runnable
 				// копировал тело во второй — на части списка чатов или истории
 				// это лишние 10–24 КБ в куче на каждый пакет.
 				int flapLen = Util.getWord(flapHeader, 4);
+				if (!waitForPacketSpace(flapLen + 6) || receiver != rcvThread) break;
 				int channel = Util.getByte(flapHeader, 1);
 				Object ready;
 				if (channel == 2 && flapLen >= 10)
 				{
 					byte[] head = new byte[10];
-					if (!readFully(head, 0, 10)) break;
+					if (!readFully(source, head, 0, 10)) break;
 					int family = Util.getWord(head, 0), command = Util.getWord(head, 2), flags = Util.getWord(head, 4);
 					long reference = Util.getDWord(head, 6);
 					if ((family == SnacPacket.CLI_TOICQSRV_FAMILY && command == SnacPacket.CLI_TOICQSRV_COMMAND)
@@ -278,26 +278,26 @@ public class SOCKETConnection extends Connection implements Runnable
 						rcvdPacket = new byte[6 + flapLen];
 						System.arraycopy(flapHeader, 0, rcvdPacket, 0, 6);
 						System.arraycopy(head, 0, rcvdPacket, 6, 10);
-						if (!readFully(rcvdPacket, 16, flapLen - 10)) break;
+						if (!readFully(source, rcvdPacket, 16, flapLen - 10)) break;
 						ready = rcvdPacket;
 					}
 					else
 					{
 						byte[] extData = new byte[0];
 						int bodyLen = flapLen - 10;
-						if (flags == 0x8000)
+						if ((flags & 0x8000) != 0)
 						{
 							byte[] lenBuf = new byte[2];
 							if (bodyLen < 2) throw new JimmException(133, 1);
-							if (!readFully(lenBuf, 0, 2)) break;
+							if (!readFully(source, lenBuf, 0, 2)) break;
 							int extLen = Util.getWord(lenBuf, 0);
 							if (bodyLen < 2 + extLen) throw new JimmException(133, 2);
 							extData = new byte[extLen];
-							if (!readFully(extData, 0, extLen)) break;
+							if (!readFully(source, extData, 0, extLen)) break;
 							bodyLen -= 2 + extLen;
 						}
 						byte[] data = new byte[bodyLen];
-						if (!readFully(data, 0, bodyLen)) break;
+						if (!readFully(source, data, 0, bodyLen)) break;
 						ready = new SnacPacket(Util.getWord(flapHeader, 2), family, command, flags, reference, extData, data);
 					}
 				}
@@ -305,7 +305,7 @@ public class SOCKETConnection extends Connection implements Runnable
 				{
 					rcvdPacket = new byte[flapHeader.length + flapLen];
 					System.arraycopy(flapHeader, 0, rcvdPacket, 0, flapHeader.length);
-					if (!readFully(rcvdPacket, flapHeader.length, flapLen)) break;
+					if (!readFully(source, rcvdPacket, flapHeader.length, flapLen)) break;
 					ready = rcvdPacket;
 				}
 				bReadSum = flapLen;
@@ -315,10 +315,11 @@ public class SOCKETConnection extends Connection implements Runnable
 				MainThread.updateContactListCaption();
 //#sijapp cond.end#
 
-				// Lock object and add rcvd packet to vector
-				synchronized (rcvdPackets)
+				// Reusing this Connection cannot put an old frame in the new queue.
+				synchronized (this)
 				{
-					rcvdPackets.addElement(ready);
+					if (receiver != rcvThread) break;
+					queuePacket(ready);
 				}
 
 				// Notify main loop
@@ -338,13 +339,13 @@ public class SOCKETConnection extends Connection implements Runnable
 		// Catch JimmException
 		catch (JimmException e)
 		{
-			JimmException.handleException(e);
+			if (receiver == rcvThread && !getInputCloseFlag()) JimmException.handleException(e);
 		}
 		// Catch IO exception
 		catch (IOException e)
 		{
 			// Construct and handle exception (only if input close flag has not been set)
-			if (!getInputCloseFlag() && Icq.isMyConnection(this) && (this.typeNetwork == JimmException.ICQ_MAIN))
+			if (receiver == rcvThread && !getInputCloseFlag() && Icq.isMyConnection(this) && (this.typeNetwork == JimmException.ICQ_MAIN))
 			{
 				jimm.ConnLog.note("ошибка чтения сокета");
 				JimmException f = e instanceof SecureTransport.Failure
@@ -358,7 +359,7 @@ public class SOCKETConnection extends Connection implements Runnable
 		// молча — сокет открыт, клиент «в сети», а читать некому.
 		catch (Throwable t)
 		{
-			if (!getInputCloseFlag() && Icq.isMyConnection(this) && (this.typeNetwork == JimmException.ICQ_MAIN))
+			if (receiver == rcvThread && !getInputCloseFlag() && Icq.isMyConnection(this) && (this.typeNetwork == JimmException.ICQ_MAIN))
 			{
 				JimmException f = new JimmException(120, 5, this.typeNetwork);
 				JimmException.handleException(f);
@@ -366,14 +367,28 @@ public class SOCKETConnection extends Connection implements Runnable
 		}
 		finally
 		{
-			state = false;
-			closeStreams();
-			if (Icq.isMyConnection(this) && (this.typeNetwork == JimmException.ICQ_MAIN))
-				Icq.setNotConnected();
+			try { if (source != null) source.close(); } catch (Exception ignore) {}
+			try { if (destination != null) destination.close(); } catch (Exception ignore) {}
+			try { if (socket != null) socket.close(); } catch (Exception ignore) {}
+			synchronized (this)
+			{
+				if (receiver == rcvThread)
+				{
+					state = false;
+					is = null; os = null; sc = null;
+				}
+			}
+			// Never take the Icq lock while holding the connection lock.
+			synchronized (Icq.class)
+			{
+				if (receiver == rcvThread && Icq.isMyConnection(this)
+						&& (this.typeNetwork == JimmException.ICQ_MAIN))
+					Icq.setNotConnected();
+			}
 		}
 		
 		// Sometimes Nokia emulator stops working and bRead returns -1 
-		if (bRead == -1 && !getInputCloseFlag())
+		if (receiver == rcvThread && bRead == -1 && !getInputCloseFlag() && Icq.isMyConnection(this))
 		{
 			if (this.typeNetwork == JimmException.ICQ_MAIN) jimm.ConnLog.note("сервер закрыл соединение");
 			JimmException f = new JimmException(120, 4, this.typeNetwork);
@@ -396,7 +411,7 @@ public class SOCKETConnection extends Connection implements Runnable
 	
 	public void forceDisconnect()
 	{
-		setInputCloseFlag(true);
+		notifyToDisconnect();
 		closeStreams();
 	}
 

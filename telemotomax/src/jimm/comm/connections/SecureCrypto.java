@@ -15,7 +15,7 @@ public final class SecureCrypto {
         byte[] out=new byte[length];System.arraycopy(data,start,out,0,length);return out;
     }
     public static boolean equal(byte[] a,int off,byte[] b,int length) {
-        if(off<0 || off+length>a.length || length>b.length)return false;
+        if(a==null || b==null || off<0 || length<0 || off>a.length-length || length>b.length)return false;
         int diff=0;for(int i=0;i<length;i++)diff|=a[off+i]^b[i];return diff==0;
     }
     public static void putLong(byte[] out,int off,long value) {
@@ -26,6 +26,32 @@ public final class SecureCrypto {
     }
     public static byte[] recordMac(byte[] key,byte[] header,byte[] data,int length) {
         return hmac(key,header,data,length,null);
+    }
+    // Record keys do not change until reconnect. Keep only their two SHA
+    // prefix states; share one small work area between all socket streams.
+    // The lock covers CPU work only, never socket I/O or callbacks.
+    private static Sha256 recordDigest;
+    private static byte[] recordHash;
+    public static final class RecordMac {
+        private final int[] prefixes=new int[16];
+        public RecordMac(byte[] key) {
+            synchronized(SecureCrypto.class) {
+                if(recordDigest==null){recordDigest=new Sha256();recordHash=new byte[32];}
+                byte[] pad=new byte[64],actual=key.length>64?sha256(key):key;
+                for(int i=0;i<64;i++)pad[i]=(byte)((i<actual.length?actual[i]:0)^0x36);
+                recordDigest.reset();recordDigest.update(pad,0,64);recordDigest.save(prefixes,0);
+                for(int i=0;i<64;i++)pad[i]^=0x36^0x5c;
+                recordDigest.reset();recordDigest.update(pad,0,64);recordDigest.save(prefixes,8);
+            }
+        }
+        public void calculate(byte[] header,byte[] data,int length,byte[] out) {
+            synchronized(SecureCrypto.class) {
+                recordDigest.restore(prefixes,0);recordDigest.update(header,0,header.length);
+                recordDigest.update(data,0,length);recordDigest.finish(recordHash);
+                recordDigest.restore(prefixes,8);recordDigest.update(recordHash,0,32);
+                recordDigest.finish(out);
+            }
+        }
     }
     private static byte[] hmac(byte[] key,byte[] a,byte[] b,int length,byte[] c) {
         byte[] pad=new byte[64];
@@ -93,10 +119,18 @@ public final class SecureCrypto {
             0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
             0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
             0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2};
-        private final int[] h={0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
+        private final int[] h=new int[8];
         private final int[] w=new int[16];
         private final byte[] buffer=new byte[64];
         private long count;private int used;
+        Sha256(){reset();}
+        void reset() {
+            h[0]=0x6a09e667;h[1]=0xbb67ae85;h[2]=0x3c6ef372;h[3]=0xa54ff53a;
+            h[4]=0x510e527f;h[5]=0x9b05688c;h[6]=0x1f83d9ab;h[7]=0x5be0cd19;
+            count=0;used=0;
+        }
+        void save(int[] target,int off){System.arraycopy(h,0,target,off,8);}
+        void restore(int[] source,int off){System.arraycopy(source,off,h,0,8);count=64;used=0;}
         private static int right(int v,int n){return (v>>>n)|(v<<(32-n));}
         void update(byte[] data,int off,int length) {
             count+=length;
@@ -122,12 +156,13 @@ public final class SecureCrypto {
             h[0]+=a;h[1]+=b;h[2]+=c;h[3]+=d;h[4]+=e;h[5]+=f;h[6]+=g;h[7]+=v;
         }
         byte[] finish() {
+            byte[] out=new byte[32];finish(out);return out;
+        }
+        void finish(byte[] out) {
             long bits=count*8;buffer[used++]=(byte)0x80;
             if(used>56){while(used<64)buffer[used++]=0;compress();used=0;}
             while(used<56)buffer[used++]=0;putLong(buffer,56,bits);compress();
-            byte[] out=new byte[32];
-            for(int i=0;i<8;i++)for(int j=0;j<4;j++)out[i*4+j]=(byte)(h[i]>>>(24-j*8));
-            return out;
+            for(int i=0;i<out.length;i++)out[i]=(byte)(h[i>>>2]>>>(24-((i&3)<<3)));
         }
     }
 }

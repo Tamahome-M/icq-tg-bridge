@@ -15,7 +15,6 @@
 
 package jimm.comm;
 
-import java.util.Date;
 import jimm.DebugLog;
 import jimm.JimmException;
 import jimm.util.ResourceBundle;
@@ -66,7 +65,8 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	 * Слушатель, который забирает части сразу, по одной: ролик или
 	 * голосовое так уходят прямо во временный файл, и в куче лежит одна
 	 * часть, а не весь клип целиком (до 240 КБ — почти всё, что есть у V3).
-	 * Вернул false — часть не принята, дальше собираем в памяти как обычно.
+	 * Вернул false на первой части — собираем в памяти. Отказ после
+	 * начала записи означает ошибку; хвост не является целым файлом.
 	 * После последней части приходит onBart(null-или-пусто) через onBartDone.
 	 */
 	public interface PartSink extends ProgressListener
@@ -95,7 +95,8 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	private byte[] clicookie;
 	private Listener listener;
 	private int state;
-	private Date lastActivity = new Date();
+	private long lastActivity = System.currentTimeMillis();
+	private int nextPart = 1, expectedTotal;
 	private boolean active;
 	// Replies that come in parts (the clip): collected here until the last one.
 	// The buffer is allocated once, by the size of the first part, so the
@@ -106,6 +107,12 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	private boolean streaming;        // части уходят слушателю по одной
 	private int extraFlags;           // свои биты во флагах приметы (0x40 — ссылку на файл)
 	private String failureReason;
+	private final int requestId = Util.getCounter();
+	//#sijapp cond.if modules_CAMERA is "true" #
+	private static final int MAX_MEMORY = 2 * 1024 * 1024;
+	//#sijapp cond.else#
+	//# private static final int MAX_MEMORY = 128 * 1024;
+	//#sijapp cond.end#
 
 	public void setFlags(int flags)
 	{
@@ -129,7 +136,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 		if (Icq.bartUsable())
 		{
 			this.sendRequest();
-			this.lastActivity = new Date();
+			this.lastActivity = System.currentTimeMillis();
 			return;
 		}
 		try
@@ -145,7 +152,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 			this.state = STATE_ERROR;
 			throw (new JimmException(100, 50, true));
 		}
-		this.lastActivity = new Date();
+		this.lastActivity = System.currentTimeMillis();
 	}
 
 	private void sendRequest() throws JimmException
@@ -172,7 +179,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 		Util.putByte(buf, 4 + uinLength, flags);
 		Util.putByte(buf, 5 + uinLength, 0x10);
 		System.arraycopy(token, 0, buf, 6 + uinLength, 16);
-		SnacPacket request = new SnacPacket(0x0010, 0x0006, 0x0006, new byte[0], buf);
+		SnacPacket request = new SnacPacket(0x0010, 0x0006, requestId, new byte[0], buf);
 		try
 		{
 			Icq.bartC.sendPacket(request);
@@ -268,8 +275,10 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 					{
 						byte[] buf = snacPacket.getDataRef();   // только читаем
 						int marker = 0;
+						if (buf.length < 1) throw new JimmException(133, 1, false);
 						int uinLength = Util.getByte(buf, marker);
 						marker += 1 + uinLength;
+						if (buf.length - marker < 43) throw new JimmException(133, 2, false);
 						// Ответ службы адресован примете: типу и «хешу» —
 						// у нас это токен. Пока идёт одна загрузка, может
 						// начаться другая (история и снимок, например), и
@@ -293,13 +302,17 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 						marker += 2 + 1 + 1 + 16 + 1 + 2 + 1 + 1 + 16;
 						int dataLength = Util.getWord(buf, marker);
 						marker += 2;
+						if (dataLength > buf.length - marker || total < 1 || part != nextPart
+								|| part > total || (expectedTotal != 0 && total != expectedTotal))
+							throw new JimmException(133, 3, false);
+						expectedTotal = total; nextPart++;
 						if (total > 1 && listener instanceof PartSink
 								&& (streaming || parts == null)
 								&& ((PartSink) listener).onBartPart(buf, marker, dataLength, part, total))
 						{
 							streaming = true;
 							buf = null;
-							this.lastActivity = new Date();
+							this.lastActivity = System.currentTimeMillis();
 							if (part < total)
 							{
 								this.active = false;
@@ -308,17 +321,34 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 							notified = true;
 							((PartSink) listener).onBartDone(true);
 						}
+						else if (streaming)
+						{
+							// The file already has a prefix. Never deliver its tail as a clip.
+							// Storage/cancel is local: keep the shared socket usable for
+							// another photo/history request already in flight.
+							this.state = STATE_ACTION_DONE;
+							this.active = false;
+							notified = true;
+							((PartSink)listener).onBartDone(false);
+							return true;
+						}
 						else if (total > 1)
 						{
 							if (parts == null)
 							{
 								// Части, кроме последней, одного размера —
 								// значит по первой известен весь объём.
-								parts = new byte[dataLength * total];
+								int capacity = dataLength * total;
+								if (capacity > MAX_MEMORY || capacity > Runtime.getRuntime().freeMemory() / 2)
+									throw new JimmException(120, 5, true);
+								parts = new byte[capacity];
 								filled = 0;
 							}
 							if (filled + dataLength > parts.length)
 							{
+								if (filled + dataLength > MAX_MEMORY
+										|| filled + dataLength > Runtime.getRuntime().freeMemory() / 2)
+									throw new JimmException(120, 5, true);
 								byte[] bigger = new byte[filled + dataLength];
 								System.arraycopy(parts, 0, bigger, 0, filled);
 								parts = bigger;
@@ -330,12 +360,12 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 								((ProgressListener) listener).onBartProgress(part, total);
 							if (part < total)
 							{
-								this.lastActivity = new Date();
+								this.lastActivity = System.currentTimeMillis();
 								this.active = false;
 								return true;           // wait for the rest
 							}
 							byte[] all = parts;
-							if (filled != all.length)
+							if (!(listener instanceof RangeListener) && filled != all.length)
 							{
 								// Последняя часть короче — отдаём ровно то,
 								// что пришло.
@@ -344,7 +374,8 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 							}
 							parts = null;
 							notified = true;
-							listener.onBart(all);
+							if (listener instanceof RangeListener) ((RangeListener) listener).onBart(all, 0, filled);
+							else listener.onBart(all);
 						}
 						else
 						{
@@ -365,11 +396,18 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 					else if ((snacPacket.getFamily() == SnacPacket.SRV_REPLYAVATAR_FAMILY)
 							&& (snacPacket.getCommand() == 0x0001))
 					{
+						// Concurrent history/photo requests share the BART socket.
+						// An error has no attachment token; identify its own request.
+						if (snacPacket.getReference() != requestId && snacPacket.getReference() != 0)
+						{
+							this.active = false;
+							return false;
+						}
 						// Old bridges send only the error code. New ones add
 						// TLV 0x9003 with a reason; other listeners keep their contract.
 						notified = true;
 						if (listener instanceof ErrorListener)
-							((ErrorListener) listener).onBartError(errorText(snacPacket.getData()));
+							((ErrorListener) listener).onBartError(errorText(snacPacket.getDataRef()));
 						else listener.onBart(null);
 						this.state = STATE_ACTION_DONE;
 						consumed = true;
@@ -377,15 +415,16 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 				}
 				break;
 			}
-			if (consumed) this.lastActivity = new Date();
+			if (consumed) this.lastActivity = System.currentTimeMillis();
 			this.active = false;
 			return (consumed);
 		}
 		catch (JimmException e)
 		{
-			this.lastActivity = new Date();
+			this.lastActivity = System.currentTimeMillis();
 			this.active = false;
 			this.state = STATE_ERROR;
+			this.failureReason = e.getMessage();
 			throw (e);
 		}
 	}
@@ -421,7 +460,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 			Icq.disconnectBart(true);
 			return;
 		}
-		this.lastActivity = new Date();
+		this.lastActivity = System.currentTimeMillis();
 		this.state = STATE_CONNECTION_ESTB;
 	}
 
@@ -439,7 +478,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	public boolean isError()
 	{
 		if ((this.state != STATE_ERROR) && !this.active
-				&& (this.lastActivity.getTime() + this.TIMEOUT < System.currentTimeMillis()))
+				&& (this.lastActivity + this.TIMEOUT < System.currentTimeMillis()))
 		{
 			this.state = STATE_ERROR;
 			this.failureReason = ResourceBundle.getString("media_timeout");

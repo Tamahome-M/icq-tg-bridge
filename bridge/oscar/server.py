@@ -173,6 +173,7 @@ class Session:
         # чтения не должен ждать чужой сети — иначе пропадают пинги и
         # подтверждения, а сторож считает живой телефон отвалившимся.
         self._tasks: set[asyncio.Task] = set()
+        self._media_jobs = 0
 
     def spawn(self, coro) -> asyncio.Task:
         """Запускает обработчик в фоне и не даёт его ошибке пропасть молча."""
@@ -626,9 +627,20 @@ class Session:
             log.debug("SNAC %s без обработчика — пропускаю", snac_name(s.family, s.subtype))
             return
         if (s.family, s.subtype) in background:
-            self.spawn(handler(s))
+            media = s.family == C.SSBI and s.subtype in (C.SSBI_ICQ_REQ, C.SSBI_QUOTE)
+            if media and self._media_jobs >= 4:
+                await self.send_error(C.SSBI, 0x0001, s.request_id,
+                                      "Дождитесь завершения текущих загрузок и повторите запрос")
+                return
+            task = self.spawn(handler(s))
+            if media:
+                self._media_jobs += 1
+                task.add_done_callback(self._media_finished)
             return
         await handler(s)
+
+    def _media_finished(self, task: asyncio.Task) -> None:
+        self._media_jobs -= 1
 
     async def on_versions(self, s: Snac) -> None:
         body = b"".join(struct.pack(">HH", f, v) for f, v in C.FAMILY_VERSIONS.items())
@@ -1591,10 +1603,35 @@ class Session:
                              pstr8(target.encode()) + (b"\x00" if ok else b"\x01"),
                              request_id=s.request_id)
 
+    def _bart_part_size(self, length: int) -> int:
+        owner = (self.server.session if self.service_only else None) or self
+        small_heap = (owner.profile_name == "v3"
+                      or (owner.device is not None and 0 < owner.device.memory_kb < 2048))
+        preferred = 12 * 1024 if small_heap else C.VIDEO_PART_BYTES
+        # Part/total are bytes. Keep large replies representable, and create
+        # only the current slice rather than duplicating the entire clip.
+        return max(preferred, (length + 254) // 255)
+
+    async def _send_bart_parts(self, target: int, token: bytes, data: bytes,
+                               kind: int, request_id: int) -> None:
+        size = self._bart_part_size(len(data))
+        if size > C.VIDEO_PART_BYTES:
+            await self.send_error(C.SSBI, 0x0001, request_id,
+                                  "Файл слишком большой для загрузки в приложении")
+            return
+        total = max(1, (len(data) + size - 1) // size)
+        for index in range(total):
+            chunk = data[index * size:(index + 1) * size]
+            if not await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
+                    blocks.icon_reply(target, token, chunk, kind, index + 1, total),
+                    request_id=request_id):
+                return
+
     async def on_icon_request(self, s: Snac) -> None:
         """SNAC 10/06 — клиент просит аватарку контакта или, по токену,
         снимок из сообщения (расширение TeleMotoMax, тип приметы 0x0080)."""
         r = Reader(s.data)
+        target = ""
         try:
             target = r.pstr8().decode("latin-1")
             r.u8()                                   # число примет, у Jimm всегда одна
@@ -1663,14 +1700,7 @@ class Session:
             data = blocks.chat_records(rows, C.CHATS_MAX_BYTES)
             log.info("список чатов отдан телефону: %d чатов, %d байт",
                      len(rows), len(data))
-            parts = [data[i:i + C.VIDEO_PART_BYTES]
-                     for i in range(0, len(data), C.VIDEO_PART_BYTES)] or [b""]
-            for index, chunk in enumerate(parts, start=1):
-                if not await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
-                                            blocks.icon_reply(int(target), token, chunk,
-                                                              C.BART_CHATS, index, len(parts)),
-                                            request_id=s.request_id):
-                    return
+            await self._send_bart_parts(int(target), token, data, C.BART_CHATS, s.request_id)
             return
         if bart_type == C.BART_OPEN and self.extended:
             # Телефон просит вернуть чат в список: снимаем скрытие и шлём
@@ -1700,15 +1730,8 @@ class Session:
                          what, token[:4].hex())
                 await self.send_error(C.SSBI, 0x0001, s.request_id)
                 return
-            parts = [got[i:i + C.VIDEO_PART_BYTES] for i in range(0, len(got), C.VIDEO_PART_BYTES)]
-            log.info("%s для %s отдано: %d байт в %d частях",
-                     what, self.server.name_of(target), len(got), len(parts))
-            for index, chunk in enumerate(parts, start=1):
-                if not await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
-                                            blocks.icon_reply(int(target), token, chunk, bart_type,
-                                                              index, len(parts)),
-                                            request_id=s.request_id):
-                    return
+            log.info("%s для %s отдано: %d байт", what, self.server.name_of(target), len(got))
+            await self._send_bart_parts(int(target), token, got, bart_type, s.request_id)
             return
         if bart_type == C.BART_FILE and self.extended:
             got = await self.server.file(token)
@@ -1720,15 +1743,8 @@ class Session:
             # Имя — хвостом… нет, головой первой части: клиент открывает
             # файл до того, как начнёт писать в него первый кусок.
             data = pstr8(name.encode("utf-8")[:200]) + data
-            parts = [data[i:i + C.VIDEO_PART_BYTES] for i in range(0, len(data), C.VIDEO_PART_BYTES)]
-            log.info("файл «%s» для %s отдан: %d байт в %d частях",
-                     name, self.server.name_of(target), len(data), len(parts))
-            for index, chunk in enumerate(parts, start=1):
-                if not await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
-                                            blocks.icon_reply(int(target), token, chunk, C.BART_FILE,
-                                                              index, len(parts)),
-                                            request_id=s.request_id):
-                    return
+            log.info("файл %s для %s отдан: %d байт", name, self.server.name_of(target), len(data))
+            await self._send_bart_parts(int(target), token, data, C.BART_FILE, s.request_id)
             return
         if bart_type == C.BART_PHOTO:
             # «Фото боком» — те же флаги, что у ролика: 0x20 всегда, 0x10 никогда.
@@ -1934,10 +1950,13 @@ class OscarServer:
         # вправе унести задачу на середине, и отправитель однажды просто
         # не проснётся.
         self._own_tasks: set[asyncio.Task] = set()
+        self._sessions: set[Session] = set()
+        self._stopping = False
 
     # --- жизненный цикл -------------------------------------------------
 
     async def start(self) -> None:
+        self._stopping = False
         self._server = await asyncio.start_server(
             self._accept, self.cfg.oscar_host, self.cfg.oscar_port)
         self._keep(self.sender_loop())
@@ -1958,18 +1977,31 @@ class OscarServer:
         return task
 
     async def stop(self) -> None:
-        """Перестаёт принимать подключения и закрывает текущую сессию."""
-        if self._server is not None:
-            self._server.close()
-            try:
-                await self._server.wait_closed()
-            except Exception:
-                pass
-            self._server = None
+        """Закрывает также BART, незавершённый вход и фоновые задачи."""
+        self._stopping = True
+        listener, self._server = self._server, None
+        if listener is not None:
+            listener.close()
+        tasks = [task for task in self._own_tasks if task is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        sessions = set(self._sessions)
         if self.session is not None:
-            await self.session.close()
+            sessions.add(self.session)
+        jobs = [task for session in sessions for task in session._tasks
+                if task is not asyncio.current_task()]
+        await asyncio.gather(*(session.close("остановка моста") for session in sessions))
+        await asyncio.gather(*jobs, return_exceptions=True)
+        # Recent asyncio versions wait for accepted transports too. Close
+        # those first, otherwise a silent BART socket prevents shutdown.
+        if listener is not None:
+            await listener.wait_closed()
 
     async def _accept(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if self._stopping:
+            writer.close()
+            return
         peer = writer.get_extra_info("peername")
         host = peer[0] if peer else ""
 
@@ -1994,12 +2026,14 @@ class OscarServer:
             return
 
         session = Session(self, reader, writer)
+        self._sessions.add(session)
         self._active[session.peer] = time.time()
         log.info("соединение с %s (занято %d из %d)", session.peer,
                  self.access.connections, self.access.max_connections)
         try:
             await session.run()
         finally:
+            self._sessions.discard(session)
             self._active.pop(session.peer, None)
             self.access.free_slot()
 

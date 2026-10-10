@@ -146,8 +146,12 @@ class Snac:
         family, subtype, flags, request_id = struct.unpack(">HHHI", payload[:10])
         body = payload[10:]
         # Флаг 0x8000 — перед телом идёт блок расширений произвольной длины.
-        if flags & 0x8000 and len(body) >= 2:
+        if flags & 0x8000:
+            if len(body) < 2:
+                raise ProtocolError("SNAC короче длины расширений")
             ext_len = struct.unpack(">H", body[:2])[0]
+            if ext_len > len(body) - 2:
+                raise ProtocolError("SNAC короче блока расширений")
             body = body[2 + ext_len:]
         return cls(family, subtype, flags, request_id, body)
 

@@ -96,7 +96,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	private static boolean needPlayMessNotif = false;
 	
 //#sijapp cond.if target!="DEFAULT"#
-	public static boolean playerFree = true;
+	private static volatile boolean playerFree = true;
 	private static long stopTime = StopTimeControl.RESET;
 //#sijapp cond.end#	
 
@@ -1457,7 +1457,8 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	//                                //
 	////////////////////////////////////
 	
-	private static Vector soundQueue = new Vector();
+	private static Vector soundQueue = new Vector(2);
+	private static volatile Player soundPlayer;
 
 	// TeleMotoMax: плеер уведомления закрывается по концу звука; если телефон
 	// конец не сообщил, закроем сами через несколько секунд — иначе плеер
@@ -1472,16 +1473,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		soundWatch = new TimerTask() {
 			public void run()
 			{
-				try
-				{
-					if (p.getState() != Player.CLOSED)
-					{
-						p.removePlayerListener(_this);
-						p.close();
-					}
-				}
-				catch (Exception ignore) {}
-				if (!playerFree) playerFree = true;
+				finishSound(p);
 			}
 		};
 		soundTimer.schedule(soundWatch, 8000L);
@@ -1521,11 +1513,40 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 
 	private static void discardPlayer(Player player)
 	{
-		if (player != null)
+		if (player == soundPlayer) finishSound(player);
+		else
 		{
-			player.close();
+			try { if (player != null) player.close(); } catch (Exception ignore) {}
+			finishSound(null);
 		}
-		playerFree = true;
+	}
+
+	private static void finishSound(Player player)
+	{
+		TimerTask watch;
+		synchronized (soundQueue)
+		{
+			if (player != soundPlayer || (player == null && playerFree)) return;
+			soundPlayer = null;
+			playerFree = false; // close the old native player before starting another
+			watch = soundWatch;
+			soundWatch = null;
+		}
+		if (watch != null) watch.cancel();
+		try { if (player != null) { player.removePlayerListener(_this); player.close(); } } catch (Exception ignore) {}
+		String next = null;
+		int volume = 0;
+		synchronized (soundQueue)
+		{
+			if (!soundQueue.isEmpty())
+			{
+				next = (String)soundQueue.elementAt(0);
+				volume = ((Integer)soundQueue.elementAt(1)).intValue();
+				soundQueue.removeAllElements();
+			}
+			playerFree = next == null;
+		}
+		if (next != null) playSound_Internal(next, volume);
 	}
 
 
@@ -1543,53 +1564,40 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			playerFree = true;
 //#sijapp cond.end#
 			Player p = createPlayer(fileName);
-			if (p == null) return;
+			if (p == null) { finishSound(null); return; }
 			setVolume(p, volume);
 			startPlayer (p);
 		}
-		catch (Exception e) {} 
+		catch (Exception e) { finishSound(soundPlayer); }
 	}
 	
 	private static void playSound(String fileName, int volume)
 	{
-		if (playerFree) playSound_Internal(fileName, volume);
-		else 
+		synchronized (soundQueue)
 		{
-			soundQueue.addElement(fileName);
-			soundQueue.addElement(new Integer(volume));
+			if (!playerFree)
+			{
+				// Keep one follow-up alert with the latest profile, not every beep.
+				soundQueue.removeAllElements();
+				soundQueue.addElement(fileName);
+				soundQueue.addElement(new Integer(volume));
+				return;
+			}
+			playerFree = false; // reserve before native MMAPI calls; no lock during I/O
 		}
+		playSound_Internal(fileName, volume);
 	}
 
 	// Reaction to player events. (Thanks to Alexander Barannik for idea!)
 	public void playerUpdate(final Player player, final String event, Object eventData)
 	{
-		if (event.equals(PlayerListener.END_OF_MEDIA))
-		{
-			if (player!=null) {
-				player.removePlayerListener(_this);
-				player.close();
-			}
-			playerFree = true;
-			
-			if (soundQueue.size() != 0)
-			{
-				String name = (String)soundQueue.elementAt(0);
-				Integer volume = (Integer)soundQueue.elementAt(1);
-				playSound(name, volume.intValue());
-				soundQueue.removeElementAt(0);
-				soundQueue.removeElementAt(0);
-			}
-		} else if (event.equals(PlayerListener.CLOSED))
-		{
-			playerFree = true;
-		}
+		if (event.equals(PlayerListener.END_OF_MEDIA) || event.equals(PlayerListener.CLOSED))
+			finishSound(player);
 	}
 
 	/* Creates player for file 'source' */
 	static private Player createPlayer(String source)
 	{
-		if (!playerFree) return null;
-
 		Player p = Util.createPlayer(source);
 		if (p == null) return null;
 	
@@ -1598,12 +1606,13 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			p.realize();
 			p.prefetch();
 			updateStopTime(p);
-			p.addPlayerListener(_this);
+			soundPlayer = p;
 			playerFree = false;
+			p.addPlayerListener(_this);
 			watchPlayer(p);
 		} catch (Exception e)
 		{
-			try { p.close(); } catch (Exception ig) {}     // иначе плеер течёт
+			discardPlayer(p);
 			return null;
 		}
 		return p;

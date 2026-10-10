@@ -61,6 +61,11 @@ def shrink(raw: bytes, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT,
     try:
         Image.MAX_IMAGE_PIXELS = MAX_SOURCE_PIXELS
         image = Image.open(io.BytesIO(raw))
+        # JPEG can downsample during decoding. Do this before EXIF transpose
+        # or RGB conversion loads the full multi-megapixel bitmap. A square
+        # target covers either EXIF orientation and the phone's rotation.
+        bound = max(width, height) * 2
+        image.draft("RGB", (bound, bound))
         image = ImageOps.exif_transpose(image)
         if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
             # Прозрачное (стикеры) — на белом, а не на чёрном, как даёт convert.
@@ -81,14 +86,22 @@ def shrink(raw: bytes, width: int = DEFAULT_WIDTH, height: int = DEFAULT_HEIGHT,
     if quality:
         quality = max(10, min(95, int(quality)))
         steps = (quality,) + tuple(q for q in QUALITY_STEPS if q < quality)
-    for quality in steps:
-        buffer = io.BytesIO()
-        image.save(buffer, format="JPEG", quality=quality, optimize=True,
-                   progressive=False)      # старые браузеры не любят прогрессивный JPEG
-        data = buffer.getvalue()
-        if len(data) <= max_bytes:
-            break
-    return data, image.width, image.height
+    while True:
+        for quality in steps:
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=quality, optimize=True,
+                       progressive=False)  # old phones need baseline JPEG
+            data = buffer.getvalue()
+            if len(data) <= max_bytes:
+                return data, image.width, image.height
+        # Noise may exceed the limit even at the lowest quality. Honour the
+        # heap/traffic budget by reducing dimensions rather than returning an
+        # oversized JPEG. Impossible limits fail without an endless loop.
+        if image.width == 1 and image.height == 1:
+            log.warning("картинка не ужалась до %d байт", max_bytes)
+            return None
+        image = image.resize((max(1, image.width * 3 // 4),
+                              max(1, image.height * 3 // 4)), Image.LANCZOS)
 
 
 class PhotoStore:

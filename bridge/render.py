@@ -197,6 +197,7 @@ class Transcoder:
         if known is not None:
             return known
         names: set[str] = set()
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 self.ffmpeg, "-hide_banner", "-encoders",
@@ -209,6 +210,12 @@ class Transcoder:
                     names.add(parts[1])
         except Exception as exc:
             log.warning("не смог спросить у ffmpeg список кодировщиков: %s", exc)
+        finally:
+            # Timeout/cancellation during startup must not leave the encoder
+            # probe alive. Conversion and size/duration probes already clean up.
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.communicate()
         _ENCODERS[self.ffmpeg] = names
         return names
 

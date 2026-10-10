@@ -43,7 +43,7 @@ import jimm.util.ResourceBundle;
 public class FileDownloader extends Canvas implements CommandListener, JimmScreen,
 		RequestBartAction.PartSink
 {
-	private static FileDownloader current;
+	private static volatile FileDownloader current;
 
 	private final JimmScreen back;
 	private final String uin;
@@ -51,9 +51,8 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 	private String fileName;
 	private String filePath;
 	private long got;
-	private Vector partQueue;
-	private Thread writer;
-	private boolean partsDone, partsOk, failed;
+	private volatile MediaBuffer partQueue;
+		private volatile boolean failed;
 
 	private FileDownloader(String uin, JimmScreen back)
 	{
@@ -120,7 +119,7 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 
 	private int firstPart;           // размер первой части: по нему виден весь объём
 
-	public synchronized boolean onBartPart(byte[] buf, int off, int len, int part, int total)
+	public boolean onBartPart(byte[] buf, int off, int len, int part, int total)
 	{
 		if (current != this || failed) return false;
 		Jimm.wakeBacklight();
@@ -135,15 +134,11 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 			len -= 1 + nameLen;
 			filePath = targetUrl(fileName);
 			if (filePath == null) return false;
-			partQueue = new Vector();
-			writer = new Thread() { public void run() { writeParts(); } };
-			writer.start();
+			partQueue = new MediaBuffer();
+			new Thread() { public void run() { writeParts(); } }.start();
 		}
-		byte[] copy = new byte[len];
-		System.arraycopy(buf, off, copy, 0, len);
-		partQueue.addElement(copy);
+		if (!partQueue.put(buf, off, len)) return false;
 		got += len;
-		notifyAll();
 		if (part == 1) firstPart = len;
 		status = ResourceBundle.getString("file_loading") + " " + part + "/" + total + ", "
 				+ MediaPlayer.loaded(got, firstPart, part, total);
@@ -153,14 +148,13 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 
 	public synchronized void onBartDone(boolean ok)
 	{
-		partsDone = true;
-		partsOk = ok;
-		notifyAll();
+		if (partQueue != null) partQueue.finish(ok);
 	}
 
 	private void writeParts()
 	{
-		Exception err = null;
+		Throwable err = null;
+		boolean partsOk = false;
 		FileConnection fc = null;
 		OutputStream out = null;
 		final String path = filePath;
@@ -170,29 +164,10 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 			if (fc.exists()) fc.delete();
 			fc.create();
 			out = fc.openOutputStream();
-			for (;;)
-			{
-				byte[] chunk;
-				synchronized (this)
-				{
-					while (partQueue.isEmpty() && !partsDone && current == this)
-					{
-						try { wait(); } catch (InterruptedException ignore) {}
-					}
-					if (current != this) break;
-					if (partQueue.isEmpty())
-					{
-						if (partsDone) break;
-						continue;
-					}
-					chunk = (byte[]) partQueue.elementAt(0);
-					partQueue.removeElementAt(0);
-				}
-				out.write(chunk);
-			}
+			partsOk = partQueue.writeTo(out);
 			out.flush();
 		}
-		catch (Exception e) { err = e; failed = true; }
+		catch (Throwable e) { err = e; failed = true; partQueue.finish(false); }
 		try { if (out != null) out.close(); } catch (Exception ignore) {}
 		try { if (fc != null) fc.close(); } catch (Exception ignore) {}
 		if (current != this || err != null || !partsOk)
@@ -283,7 +258,7 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 		catch (Exception ignore) {}
 	}
 
-	private static String shortName(Exception e)
+	private static String shortName(Throwable e)
 	{
 		if (e == null) return "?";
 		String name = e.getClass().getName();
@@ -325,7 +300,7 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 	private void close()
 	{
 		if (current == this) current = null;
-		synchronized (this) { notifyAll(); }
+		if (partQueue != null) partQueue.finish(false);
 		if (back != null) back.activate();
 		else JimmUI.backToLastScreen();
 	}

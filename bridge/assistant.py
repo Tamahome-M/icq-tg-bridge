@@ -21,6 +21,7 @@ import os
 import pwd
 import shlex
 import shutil
+import signal
 import sys
 import time
 
@@ -233,18 +234,25 @@ class Assistant:
         started = time.monotonic()
         try:
             proc = await asyncio.create_subprocess_exec(
-                *argv, cwd=self.workdir or None, env=env,
+                *argv, cwd=self.workdir or None, env=env, start_new_session=True,
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE)
         except OSError as exc:
             raise AssistantError(f"не запустился: {exc}") from exc
+        finished = False
         try:
             out, err = await asyncio.wait_for(proc.communicate(text.encode()),
                                               timeout=self.timeout)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise AssistantError(f"не ответил за {int(self.timeout)} с")
+            finished = True
+        except asyncio.TimeoutError as exc:
+            raise AssistantError(f"не ответил за {int(self.timeout)} с") from exc
+        finally:
+            if not finished:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                await proc.communicate()
         took = time.monotonic() - started
         stderr = err.decode(errors="replace").strip()
         reply = self._parse(out)

@@ -42,6 +42,7 @@ def convert(raw: bytes, size: int = DEFAULT_SIZE,
     try:
         Image.MAX_IMAGE_PIXELS = MAX_SOURCE_PIXELS
         with Image.open(io.BytesIO(raw)) as img:
+            img.draft("RGB", (size * 2, size * 2))
             img = ImageOps.exif_transpose(img)
             # Квадрат по центру: в списке контактов аватарка всё равно квадратная.
             img = ImageOps.fit(img.convert("RGB"), (size, size))

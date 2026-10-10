@@ -65,12 +65,13 @@ public class MainThread implements Runnable
 	
 	private static void addMainThreadTask(int taskId, Object[] data)
 	{
-		Object[] packed = new Object[] {new Integer(taskId), data};
 		boolean schedule;
 		synchronized (mainThreadTasks)
 		{
 			schedule = mainThreadTasks.isEmpty();
-			mainThreadTasks.addElement(packed);
+			// Flat pairs avoid an extra array for every UI event.
+			mainThreadTasks.addElement(new Integer(taskId));
+			mainThreadTasks.addElement(data);
 		}
 		if (schedule) Jimm.display.callSerially(_this);
 	}
@@ -86,20 +87,27 @@ public class MainThread implements Runnable
 	
 	public void run()
 	{
-		Object[][] tasksArray;
+		Object[] tasksArray;
 		
 		synchronized (mainThreadTasks)
 		{
-			tasksArray = new Object[mainThreadTasks.size()][];
+			tasksArray = new Object[mainThreadTasks.size()];
 			mainThreadTasks.copyInto(tasksArray);
 			mainThreadTasks.removeAllElements();
+			// A one-off roster burst must not leave a large reference array
+			// attached to this static queue for the rest of the session.
+			if (mainThreadTasks.capacity() > 64)
+			{
+				mainThreadTasks.trimToSize();
+				mainThreadTasks.ensureCapacity(16);
+			}
 		}
 		
-		for (int i = 0; i < tasksArray.length; i++)
+		for (int i = 0; i < tasksArray.length; i += 2)
 		{
-			Object[] task = tasksArray[i];
-			int mode = ((Integer)task[0]).intValue();
-			Object[] taskData = (Object[]) task[1];
+			int mode = ((Integer)tasksArray[i]).intValue();
+			Object[] taskData = (Object[]) tasksArray[i + 1];
+			tasksArray[i] = tasksArray[i + 1] = null;
 			try
 			{
 				execureTask(mode, taskData);

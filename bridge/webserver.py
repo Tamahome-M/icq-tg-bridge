@@ -20,6 +20,7 @@ import hmac
 import html
 import logging
 import os
+from pathlib import Path
 import re
 import secrets
 import time
@@ -48,6 +49,18 @@ SESSION_SECONDS = 30 * 24 * 3600     # вошёл с телефона — и н�
 # Ссылки внутри страниц, к которым дописывается токен сеанса.
 _LINK_RE = re.compile(rb'(href|src)="(/[^"?#]*)"')
 _NOT_FOUND_BODY = "не найдено".encode("utf-8")
+
+
+class FileBody:
+    """A file/range descriptor; the HTTP writer reads only one small chunk."""
+    __slots__ = ("path", "start", "length")
+
+    def __init__(self, path, start: int = 0, length: int | None = None):
+        self.path, self.start = path, start
+        self.length = os.path.getsize(path) if length is None else length
+
+    def __len__(self):
+        return self.length
 
 # Раздел «Загрузки»: типы файлов, которые телефон должен опознать. JAD и JAR
 # важнее всего — по ним ставятся программы; для остального хватит общего типа.
@@ -117,16 +130,25 @@ class PhotoServer:
         self.client_dir = client_dir if client_dir and os.path.isdir(client_dir) else ""
         self._sessions: dict[str, float] = {}       # cookie -> срок
         self._server: asyncio.AbstractServer | None = None
+        self._writers: set[asyncio.StreamWriter] = set()
+        self._stopping = False
 
     async def start(self) -> None:
+        self._stopping = False
         self._server = await asyncio.start_server(self._handle, self.host, self.port)
         log.info("раздача фотографий и страниц на %s:%d%s", self.host, self.port,
                  " (с паролем)" if self.password else "")
 
     async def stop(self) -> None:
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
+        self._stopping = True
+        listener, self._server = self._server, None
+        if listener is not None:
+            listener.close()
+        # A stalled browser must not hold shutdown waiting for its download.
+        for writer in list(self._writers):
+            writer.transport.abort()
+        if listener is not None:
+            await listener.wait_closed()
         if self.videos is not None:
             await self.videos.stop()
 
@@ -134,6 +156,9 @@ class PhotoServer:
 
     async def _handle(self, reader: asyncio.StreamReader,
                       writer: asyncio.StreamWriter) -> None:
+        if self._stopping:
+            writer.close()
+            return
         peer = writer.get_extra_info("peername")
         host = peer[0] if peer else ""
         if not self.access.allowed(host) or self.access.banned(host) \
@@ -141,6 +166,7 @@ class PhotoServer:
             log.warning("отказано %s в доступе к веб-серверу", host)
             writer.close()
             return
+        self._writers.add(writer)
         try:
             line = await asyncio.wait_for(reader.readline(), timeout=10)
             if not line or len(line) > MAX_REQUEST_LINE:
@@ -175,6 +201,7 @@ class PhotoServer:
         except Exception:
             log.exception("ошибка обработки запроса")
         finally:
+            self._writers.discard(writer)
             self.access.free_slot()
             try:
                 writer.close()
@@ -208,13 +235,15 @@ class PhotoServer:
                 await self._challenge(writer, path, head_only)
                 return
 
-        found = (self.videos.resolve(path, start=not head_only)
-                 if self.videos is not None and path.startswith("/v/") else self._find(path))
+        found = (self.videos.resolve(path, start=not head_only, as_path=True)
+                 if self.videos is not None and path.startswith("/v/") else self._find(path, as_path=True))
         if found is None:
             log.info("запрос мимо: %s от %s", path[:64], (writer.get_extra_info("peername") or ("?",))[0])
             await self._reply(writer, 404, "text/plain; charset=utf-8", _NOT_FOUND_BODY)
             return
         content, mime, what = found
+        if isinstance(content, Path):
+            content = FileBody(content)
         if url_token and what in ("страница", "список", "загрузки"):
             # Браузер без cookie: токен сеанса едет дальше в каждой ссылке —
             # и в картинках, и во вложениях, — иначе следующий шаг снова
@@ -233,7 +262,9 @@ class PhotoServer:
         span = _parse_range(headers.get("range", ""), len(content))
         if span is not None:
             start, end = span
-            status, part = 206, content[start:end + 1]
+            status = 206
+            part = (FileBody(content.path, start, end - start + 1)
+                    if isinstance(content, FileBody) else memoryview(content)[start:end + 1])
             extra.append(f"Content-Range: bytes {start}-{end}/{len(content)}")
             note = f", байты {start}-{end} из {len(content)}"
         elif headers.get("range"):
@@ -241,7 +272,7 @@ class PhotoServer:
 
         if what in ("вложение", "файл"):
             # Имя с расширением — ещё одна подсказка телефону, что это за файл.
-            name = unquote(path.rsplit("/", 1)[-1]).replace('"', "")
+            name = unquote(path.rsplit("/", 1)[-1]).replace('"', "").replace("\r", "").replace("\n", "")
             extra.append(f'Content-Disposition: inline; filename="{name}"')
         sent = await self._reply(writer, status, mime, part, head_only, extra=extra)
         if sent:
@@ -377,12 +408,14 @@ class PhotoServer:
 
     # --- содержимое -------------------------------------------------------
 
-    def _find(self, path: str) -> tuple[bytes, str, str] | None:
+    def _find(self, path: str, as_path: bool = False) -> tuple[bytes | Path, str, str] | None:
         """Ищет, что отдать по этому пути: снимок, список, страницу или вложение."""
         if path.startswith("/p/") and path.endswith(".jpg"):
             file_path = self.store.path_for(path[len("/p/"):-len(".jpg")])
             if file_path is None:
                 return None
+            if as_path:
+                return Path(file_path), "image/jpeg", "картинка"
             with open(file_path, "rb") as fh:
                 return fh.read(), "image/jpeg", "картинка"
 
@@ -390,7 +423,7 @@ class PhotoServer:
             return self._home(), f"{MIME_PAGE}; charset=utf-8", "главная"
 
         if path.startswith("/d/") and self.download_dirs:
-            return self._download(path[len("/d/"):])
+            return self._download(path[len("/d/"):], as_path=as_path)
 
         if self.render is None:
             return None
@@ -404,6 +437,8 @@ class PhotoServer:
             asset = self.render.asset_for(token)
             if asset is None:
                 return None
+            if as_path:
+                return Path(asset.path), asset.mime, "вложение"
             with open(asset.path, "rb") as fh:
                 return fh.read(), asset.mime, "вложение"
 
@@ -453,7 +488,7 @@ class PhotoServer:
         return sorted(n for n in names if not n.startswith(".")
                       and os.path.isfile(os.path.join(folder, n)))
 
-    def _download(self, name: str) -> tuple[bytes, str, str] | None:
+    def _download(self, name: str, as_path: bool = False) -> tuple[bytes | Path, str, str] | None:
         """Файл из каталога загрузок или их список — только по имени файла,
         без подкаталогов и обходных путей."""
         name = unquote(name)
@@ -471,6 +506,8 @@ class PhotoServer:
             return None
         mime = DOWNLOAD_TYPES.get(os.path.splitext(name)[1].lower(),
                                   "application/octet-stream")
+        if as_path:
+            return Path(path), mime, "файл"
         with open(path, "rb") as fh:
             return fh.read(), mime, "файл"
 
@@ -505,7 +542,7 @@ class PhotoServer:
             + "".join(rows) + "</body></html>\n"
         ).encode("utf-8", "xmlcharrefreplace")
 
-    async def _reply(self, writer, status: int, mime: str, body: bytes,
+    async def _reply(self, writer, status: int, mime: str, body: bytes | FileBody,
                      head_only: bool = False, extra: list[str] | None = None) -> bool:
         """Пишет ответ и дожидается, пока он уйдёт. False — клиент оборвал приём.
 
@@ -520,7 +557,23 @@ class PhotoServer:
         lines.append("Connection: close")
         header = ("\r\n".join(lines) + "\r\n\r\n").encode("utf-8")
         try:
-            writer.write(header if head_only else header + body)
+            writer.write(header)
+            if not head_only and isinstance(body, FileBody):
+                with open(body.path, "rb") as source:
+                    source.seek(body.start)
+                    remaining = len(body)
+                    while remaining:
+                        chunk = source.read(min(remaining, 16 * 1024))
+                        if not chunk:
+                            raise OSError("file truncated during HTTP response")
+                        writer.write(chunk)
+                        remaining -= len(chunk)
+                        await writer.drain()
+            elif not head_only:
+                view = memoryview(body)
+                for offset in range(0, len(view), 16 * 1024):
+                    writer.write(view[offset:offset + 16 * 1024])
+                    await writer.drain()
             await writer.drain()
             writer.close()
             await writer.wait_closed()

@@ -37,6 +37,14 @@ public class Font {
  public int stringWidth(String s){strings++;return substringWidth(s,0,s.length());}
  public int substringWidth(String s,int offset,int length){int width=0;measured+=length;for(int i=0;i<length;i++)width+=charWidth(s.charAt(offset+i));return width;}
 }'''
+    stubs['javax/microedition/lcdui/Graphics.java'] = '''package javax.microedition.lcdui;
+public class Graphics {
+ public static final int TOP=16,BOTTOM=32,HCENTER=1,VCENTER=2,LEFT=4,RIGHT=8,BASELINE=64;
+ public static java.util.Vector wrapped;
+ public void drawString(String s,int x,int y,int a){if(wrapped!=null)wrapped.addElement(s);}
+ public void setColor(int c){}public void fillRect(int x,int y,int w,int h){}public void setFont(Font f){}
+ public void drawImage(Image i,int x,int y,int a){}
+}'''
     return stubs
 
 
