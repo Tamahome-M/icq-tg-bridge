@@ -510,14 +510,19 @@ public class Util
 	// getTlv(byte[] buf, int off) => byte[]
 	public static byte[] getTlv(byte[] buf, int off)
 	{
-		if (off + 4 > buf.length)
-			return (null); // Length check (#1)
-		int length = Util.getWord(buf, off + 2);
-		if (off + 4 + length > buf.length)
-			return (null); // Length check (#2)
+		int length = getTlvLength(buf, off, buf.length);
+		if (length < 0) return null;
 		byte[] value = new byte[length];
 		System.arraycopy(buf, off + 4, value, 0, length);
 		return (value);
+	}
+
+	// Validate a TLV within its enclosing range without allocating its value.
+	public static int getTlvLength(byte[] buf, int off, int end)
+	{
+		if (off < 0 || end < off || end > buf.length || end - off < 4) return -1;
+		int length = getWord(buf, off + 2);
+		return length <= end - off - 4 ? length : -1;
 	}
 
 	// Extracts a string from the buffer (buf) starting at position off, ending at position off+len
@@ -697,34 +702,45 @@ public class Util
 	// Removes all CR occurences
 	public static String removeCr(String val)
 	{
-		StringBuffer result = new StringBuffer();
-		for (int i = 0; i < val.length(); i++)
+		int size = val.length(), kept = 0;
+		for (int i = 0; i < size; i++)
 		{
 			char chr = val.charAt(i);
-			if ((chr == 0) || (chr == '\r'))
-				continue;
-			result.append(chr);
+			if (chr != 0 && chr != '\r') kept++;
 		}
-		return result.toString();
+		if (kept == size) return val;
+		char[] result = new char[kept];
+		int out = 0;
+		for (int i = 0; i < size; i++)
+		{
+			char chr = val.charAt(i);
+			if (chr != 0 && chr != '\r') result[out++] = chr;
+		}
+		return new String(result);
 	}
 
 	// Restores CRLF sequense from LF
 	public static String restoreCrLf(String val)
 	{
-		StringBuffer result = new StringBuffer();
-		int size = val.length();
-		char chr;
+		int size = val.length(), length = size;
+		boolean changed = false;
 		for (int i = 0; i < size; i++)
 		{
-			chr = val.charAt(i);
-			if (chr == '\r')
-				continue;
-			if (chr == '\n')
-				result.append("\r\n");
-			else
-				result.append(chr);
+			char chr = val.charAt(i);
+			if (chr == '\r') { length--; changed = true; }
+			else if (chr == '\n') { length++; changed = true; }
 		}
-		return result.toString();
+		if (!changed) return val;
+		char[] result = new char[length];
+		int out = 0;
+		for (int i = 0; i < size; i++)
+		{
+			char chr = val.charAt(i);
+			if (chr == '\r') continue;
+			if (chr == '\n') result[out++] = '\r';
+			result[out++] = chr;
+		}
+		return new String(result);
 	}
 
 	public static String removeClRfAndTabs(String val)
