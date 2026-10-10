@@ -107,7 +107,10 @@ class TextItem
 
 class TextLine
 {
-	private Vector items = new Vector();
+	// Most wrapped lines contain one text fragment. Avoid allocating a
+	// Vector and its ten-slot backing array for each of these lines.
+	private TextItem first;
+	private Vector more;
 
 	int height = -1;
 
@@ -117,12 +120,19 @@ class TextLine
 
 	TextItem elementAt(int index)
 	{
-		return (TextItem)items.elementAt(index);
+		if (index == 0 && first != null) return first;
+		if (index < 1 || more == null) throw new ArrayIndexOutOfBoundsException();
+		return (TextItem)more.elementAt(index - 1);
 	}
 	
 	void add(TextItem item)
 	{
-		items.addElement(item);
+		if (first == null) first = item;
+		else
+		{
+			if (more == null) more = new Vector(1);
+			more.addElement(item);
+		}
 	}
 
 	int getHeight(int fontSize)
@@ -131,7 +141,7 @@ class TextLine
 		{
 			height = fontSize;
 			int currHeight;
-			for (int i = items.size() - 1; i >= 0; i--)
+			for (int i = size() - 1; i >= 0; i--)
 			{
 				currHeight = elementAt(i).getHeight(fontSize);
 				if (currHeight > height) height = currHeight;
@@ -143,20 +153,20 @@ class TextLine
 	int getWidth(int fontSize)
 	{
 		int width = 0;
-		for (int i = items.size() - 1; i >= 0; i--)
+		for (int i = size() - 1; i >= 0; i--)
 			width += elementAt(i).getWidth(fontSize);
 		return width;
 	}
 
 	void setItemColor(int value)
 	{
-		for (int i = items.size() - 1; i >= 0; i--)
+		for (int i = size() - 1; i >= 0; i--)
 			elementAt(i).setColor(value);
 	}
 
 	void paint(int xpos, int ypos, Graphics g, int fontSize, VirtualList vl, boolean nextAniStep)
 	{
-		int count = items.size();
+		int count = size();
 		int itemHeight = getHeight(fontSize);
 
 		TextItem item;
@@ -199,25 +209,26 @@ class TextLine
 	
 	int size()
 	{
-		return items.size();
+		return first == null ? 0 : 1 + (more == null ? 0 : more.size());
 	}
 	
 	void readText(StringBuffer buffer)
 	{
-		for (int i = 0; i < items.size(); i++) buffer.append(elementAt(i).text);
+		int count = size();
+		for (int i = 0; i < count; i++) buffer.append(elementAt(i).text);
 	}
 	
 	boolean replaceImages(Image from, Image to)
 	{
 		boolean replaced = false;
-		for (int i = items.size()-1; i >= 0; i--) 
+		for (int i = size()-1; i >= 0; i--)
 			replaced |= elementAt(i).replaceImage(from, to);
 		return replaced;
 	}
 	
 	void setIndexedColor(int color, int value)
 	{
-		for (int i = items.size()-1; i >= 0; i--)
+		for (int i = size()-1; i >= 0; i--)
 			elementAt(i).setIndexedColor(color, value);
 	}
 	
@@ -806,15 +817,20 @@ public class TextList extends VirtualList implements Runnable
 	// cursor moved by that much. Returns the number of lines removed.
 	public int removeTextByIndex(int textIndex)
 	{
-		int removed = 0;
-		for (int i = lines.size() - 1; i >= 0; i--)
+		int kept = 0, count = lines.size();
+		for (int i = 0; i < count; i++)
 		{
-			if (getLine(i).bigTextIndex != textIndex) continue;
-			lines.removeElementAt(i);
-			removed++;
+			TextLine line = getLine(i);
+			if (line.bigTextIndex == textIndex) continue;
+			if (kept != i) lines.setElementAt(line, kept);
+			kept++;
 		}
+		int removed = count - kept;
 		if (removed > 0)
 		{
+			// Compact once; removing each wrapped line separately shifts all
+			// remaining messages again and again on the V3.
+			lines.setSize(kept);
 			itemsRemovedAtTop(removed);
 			invalidate();
 		}

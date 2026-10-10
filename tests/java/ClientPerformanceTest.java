@@ -10,6 +10,12 @@ public class ClientPerformanceTest {
  static boolean baseline;
  static void check(boolean b,String message){if(!b)throw new AssertionError(message);}
  static Field f(Class type,String name)throws Exception{Field field=type.getDeclaredField(name);field.setAccessible(true);return field;}
+ static Vector items(Object line)throws Exception{
+  Method size=line.getClass().getDeclaredMethod("size");size.setAccessible(true);
+  Method at=line.getClass().getDeclaredMethod("elementAt",int.class);at.setAccessible(true);
+  Vector result=new Vector();int count=((Integer)size.invoke(line)).intValue();
+  for(int i=0;i<count;i++)result.addElement(at.invoke(line,i));return result;
+ }
  static String text(Object item)throws Exception{return (String)f(item.getClass(),"text").get(item);}
  static String layout(String value,boolean append)throws Exception {
   TextList list=new TextList("layout");
@@ -17,7 +23,7 @@ public class ClientPerformanceTest {
   list.addBigText(value,0,Font.STYLE_PLAIN,7);
   Vector lines=(Vector)f(TextList.class,"lines").get(list);StringBuffer out=new StringBuffer();
   for(int i=0;i<lines.size();i++){
-   Object line=lines.elementAt(i);Vector items=(Vector)f(line.getClass(),"items").get(line);
+   Object line=lines.elementAt(i);Vector items=items(line);
    out.append('[');
    for(int j=0;j<items.size();j++)out.append(text(items.elementAt(j))).append('|');
    out.append(':').append((int)f(line.getClass(),"last_charaster").getChar(line)).append(']');
