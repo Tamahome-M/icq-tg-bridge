@@ -205,106 +205,7 @@ public class ActionListener
 			else if ((snacPacket.getFamily() == SnacPacket.SRV_USERONLINE_FAMILY)
 					&& (snacPacket.getCommand() == SnacPacket.SRV_USERONLINE_COMMAND))
 			{
-
-
-				byte[] capabilities_old = null; // Buffer for old style capabilities (TLV 0x000D)
-				byte[] capabilities_new = null; // Buffer for new style capabilities (TLV 0x0019)
-
-				//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-				// Buddy Icon
-				byte[] biHash = new byte[16];	// Buffer for buddy icon md5 hash
-				//#sijapp cond.end#
-
-				// Time variables
-				int idle = -1;
-				int online = -1;
-				int signon = -1;
-				int regdate = -1;
-
-				// Get data
-				byte[] buf = snacPacket.getDataRef();
-
-				// Get UIN of the contact changing status
-				int uinLen = Util.getByte(buf, 0);
-				String uin = Util.byteArrayToString(buf, 1, uinLen);
-				// Get new status and client capabilities
-				int status = ContactList.STATUS_ONLINE;
-				int marker = 1 + uinLen + 2;
-				int tlvNum = Util.getWord(buf, marker);
-				marker += 2;
-				for (int i = 0; i < tlvNum; i++)
-				{
-					int tlvType = Util.getWord(buf, marker);
-					byte[] tlvData = Util.getTlv(buf, marker);
-					if (tlvType == 0x0006) // STATUS
-					{
-						status = (int) Util.getDWord(tlvData, 0);
-					} else if (tlvType == 0x000D) // Old style CAPABILITIES
-					{
-						//DebugLog.addText("Old caps");
-						capabilities_old = tlvData;
-					} else if (tlvType == 0x0019) // New style CAPABILITIES
-					{
-						//DebugLog.addText("New caps");
-						capabilities_new = tlvData;
-					}
-
-					else if (tlvType == 0x001D)
-					{
-						int marker1d = 0;
-						while (tlvData.length > marker1d)
-						{
-							int bart_id = Util.getWord(tlvData, marker1d);
-							marker1d += 2;
-							int bart_flg = Util.getByte(tlvData, marker1d);
-							marker1d ++;
-							int bart_len = Util.getByte(tlvData, marker1d);
-							marker1d ++;
-
-							//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-							if ((bart_id == 0x0001) && (bart_flg == 0x0001))	// ICON HASH
-							{
-								System.arraycopy(tlvData, marker1d, biHash, 0, (bart_len < 17) ? bart_len : 0x0010);
-							}
-							//#sijapp cond.end#
-							marker1d += bart_len;
-						}
-					}
-					
-					
-					else if (tlvType == 0x0003) // Signon time
-					{
-						signon = (int) Util.gmtTimeToLocalTime(Util.byteArrayToLong(tlvData));
-						//System.out.println(Util.getDateString(false,signon));
-					} else if (tlvType == 0x0004) // Idle time
-					{
-						idle = (int) Util.byteArrayToLong(tlvData) / 256;
-					} else if (tlvType == 0x000F) // Online time
-					{
-						online = (int) Util.byteArrayToLong(tlvData);
-					} else if (tlvType == 0x0005) // Date of registration
-					{
-						regdate = (int) Util.byteArrayToLong(tlvData);
-					}
-
-					marker += 2 + 2 + tlvData.length;
-
-				}
-
-				// Способности контакта (TLV 0x0D/0x19) разбираются всегда: раньше
-				// это сидело под FILES вместе с прямыми соединениями, и без модуля
-				// телефон не знал, что собеседник понимает «печатает», — и не слал.
-				ContactItem item = ContactList.getItembyUIN(uin);
-				if (item != null)
-				{
-					byte[] capsArray = Icq.mergeCapabilities(capabilities_old, capabilities_new);
-					Icq.parseCapabilities(item, capsArray);
-				}
-				MainThread.updateContactList(uin, status, null, null, 0, 0, 0, 0, signon, online, idle, regdate
-					//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-					, biHash
-					//#sijapp cond.end#
-				);
+				MainThread.updatePresence(snacPacket.getDataRef(), true);
 			}
 
 			/** ********************************************************************* */
@@ -313,16 +214,7 @@ public class ActionListener
 			if ((snacPacket.getFamily() == SnacPacket.SRV_USEROFFLINE_FAMILY)
 					&& (snacPacket.getCommand() == SnacPacket.SRV_USEROFFLINE_COMMAND))
 			{
-
-				// Get raw data
-				byte[] buf = snacPacket.getDataRef();
-
-				// Get UIN of the contact that goes offline
-				int uinLen = Util.getByte(buf, 0);
-				String uin = Util.byteArrayToString(buf, 1, uinLen);
-
-				// Update contact list
-				MainThread.userOffline(uin);
+				MainThread.updatePresence(snacPacket.getDataRef(), false);
 			}
 
 			/** ********************************************************************* */

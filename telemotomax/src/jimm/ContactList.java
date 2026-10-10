@@ -908,6 +908,47 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		}
 	}
 
+	private static int presenceDepth;
+	private static final Vector presenceGroups = new Vector(2);
+	private static TreeNode presenceCurrent;
+	private static boolean presenceCaption;
+
+	// A presence packet can contain many contacts. Keep the existing nodes
+	// and cursor, sort each affected group once, then rebuild/paint once.
+	public static void beginPresenceUpdates()
+	{
+		if (presenceDepth++ != 0) return;
+		presenceCurrent = tree.getCurrentItem();
+		presenceCaption = false;
+		tree.lock();
+	}
+
+	public static void endPresenceUpdates()
+	{
+		if (--presenceDepth != 0) return;
+		try
+		{
+			sortType = Options.getInt(Options.OPTION_CL_SORT_BY);
+			for (int i = 0; i < presenceGroups.size(); i++)
+				tree.sortNode((TreeNode)presenceGroups.elementAt(i));
+			if (presenceCaption)
+			{
+				//#sijapp cond.if modules_TRAFFIC="true"#
+				updateTitle(Traffic.getSessionTraffic());
+				//#sijapp cond.else#
+				//# updateTitle(0);
+				//#sijapp cond.end#
+			}
+			tree.setCurrentItem(presenceCurrent);
+		}
+		finally
+		{
+			presenceGroups.removeAllElements();
+			presenceCurrent = null;
+			tree.unlock();
+		}
+	}
+
 	// Must be called after any changes in contacts
 	public static void contactChanged(ContactItem item,
 			boolean setCurrent, boolean needSorting)
@@ -955,7 +996,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		contactExistsInList = (cItems.indexOf(item) != -1);
 
 		// Lock tree repainting
-		tree.lock();
+		if (presenceDepth == 0) tree.lock();
 
 		haveToAdd = contactExistsInList && !contactExistInTree;
 		if (only_online && !contactExistInTree)
@@ -993,7 +1034,11 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		}
 
 		// sort group
-		if (needSorting && !wasDeleted)
+		if (needSorting && !wasDeleted && presenceDepth != 0)
+		{
+			if (!presenceGroups.contains(groupNode)) presenceGroups.addElement(groupNode);
+		}
+		else if (needSorting && !wasDeleted)
 		{
 			boolean isCurrent = (tree.getCurrentItem() == cItemNode), inserted = false;
 
@@ -1029,7 +1074,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			tree.setCurrentItem(cItemNode);
 
 		// unlock tree and repaint
-		tree.unlock();
+		if (presenceDepth == 0) tree.unlock();
 
 		// change status for chat (if exists)
 		item.setStatusImage();
@@ -1061,6 +1106,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		}
 
 		long oldStatus = cItem.getIntValue(ContactItem.CONTACTITEM_STATUS);
+		int oldWeight = cItem.getSortWeight();
 
 		boolean statusChanged = (oldStatus != trueStatus);
 		boolean wasOnline = (oldStatus != STATUS_OFFLINE);
@@ -1098,12 +1144,11 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 
 		// Update visual list
 		if (statusChanged)
-			contactChanged(cItem, false, (wasOnline && !nowOnline)
-					|| (!wasOnline && nowOnline));
+			contactChanged(cItem, false, oldWeight != cItem.getSortWeight());
 		
-		Object curScr = JimmUI.getCurrentScreen();
-		if (tree.isActive())
+		if (tree.isActive() && presenceDepth == 0)
 		{
+			Object curScr = JimmUI.getCurrentScreen();
 			String text = null;
 			if (oldStatus != trueStatus && trueStatus != STATUS_ONLINE)
 			{
@@ -1214,14 +1259,17 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			changed = true;
 		}
 
-		if (group != null)
+		if (group != null && tolalChanges != 0)
 		{
 			group.updateCounters(0, tolalChanges);
 			changed |= (tolalChanges != 0);
 		}
 
 		if (changed)
-			MainThread.updateContactListCaption();
+		{
+			if (presenceDepth != 0) presenceCaption = true;
+			else MainThread.updateContactListCaption();
+		}
 	}
 
 	//Updates the title of the list
