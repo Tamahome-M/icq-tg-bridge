@@ -12,6 +12,12 @@ public final class HistoryMemoryTest {
  static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
  static Field f(Class type,String name)throws Exception{Field field=type.getDeclaredField(name);field.setAccessible(true);return field;}
  static Method m(Class type,String name,Class... args)throws Exception{Method method=type.getDeclaredMethod(name,args);method.setAccessible(true);return method;}
+ static Vector items(Object line)throws Exception{
+  Method size=line.getClass().getDeclaredMethod("size");size.setAccessible(true);
+  Method at=line.getClass().getDeclaredMethod("elementAt",int.class);at.setAccessible(true);
+  Vector result=new Vector();int count=((Integer)size.invoke(line)).intValue();
+  for(int i=0;i<count;i++)result.addElement(at.invoke(line,i));return result;
+ }
  static class Back implements JimmScreen {
   public void activate(){Jimm.display.setCurrent((Displayable)null);}
   public boolean isScreenActive(){return false;}
@@ -45,7 +51,7 @@ public final class HistoryMemoryTest {
  static String layout(TextList list)throws Exception{
   Vector lines=lines(list);StringBuffer text=new StringBuffer();
   for(int i=0;i<lines.size();i++){
-   Object line=lines.elementAt(i);Vector items=(Vector)f(line.getClass(),"items").get(line);
+   Object line=lines.elementAt(i);Vector items=items(line);
    if(items.isEmpty())continue;
    text.append('[').append(f(line.getClass(),"bigTextIndex").getInt(line)).append(':');
    for(int j=0;j<items.size();j++){

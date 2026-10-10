@@ -95,6 +95,34 @@ class MessData
 	//#sijapp cond.end#
 }
 
+// Background messages keep primitive metadata in one object, without a
+// separate Object[] and boxed Long/Integer values for each message.
+class DeferredMessage
+{
+	String from, message, url, thread;
+	byte[] attach, messageRef;
+	long time;
+	int messId, attachKind;
+	boolean red, offline, delivered;
+
+	DeferredMessage(String from, String message, String url, long time,
+			boolean red, boolean offline, int messId, byte[] attach,
+			int attachKind, String thread, byte[] messageRef)
+	{
+		this.from = from;
+		this.message = message;
+		this.url = url;
+		this.time = time;
+		this.red = red;
+		this.offline = offline;
+		this.messId = messId;
+		this.attach = attach;
+		this.attachKind = attachKind;
+		this.thread = thread;
+		this.messageRef = messageRef;
+	}
+}
+
 class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 {
 	// UI modes
@@ -152,7 +180,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	// TeleMotoMax: столько сообщений чат держит в памяти. Раньше предела не
 	// было: группа или канал, открытые входящим, копили всё подряд до
 	// закрытия чата руками, а каждое сообщение лежит в куче разложенным по
-	// словам (TextItem на слово) — на V3 это и съедало кучу за день.
+	// строкам — на V3 это и съедало кучу за день.
 	// Старое уходит, когда приходит новое; за старым — «История с сервера».
 	// Сколько именно — настройка «Сообщений в чате» (по умолчанию 15).
 	static int maxMessages()
@@ -608,7 +636,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	}
 
 	// TeleMotoMax: сообщения в чат, которого нет на экране, не верстаются
-	// сразу. Вёрстка — поиск смайлов по всему тексту и промер каждого слова
+	// сразу. Вёрстка — поиск смайлов по всему тексту и промер строк
 	// шрифтом — идёт в потоке интерфейса и на V3 стоит десятки миллисекунд
 	// на сообщение; в оживлённых группах это и делало навигацию по списку
 	// вялой. Запись откладывается и верстается при открытии чата. Текущий
@@ -632,14 +660,18 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	{
 		if (ChatHistory.currentChat != this && !textList.isActive())
 		{
-			if (deferred == null) deferred = new Vector();
+			if (deferred == null) deferred = new Vector(1);
 			int limit = maxMessages();
-			while (deferred.size() >= limit) deferred.removeElementAt(0);
-			deferred.addElement(new Object[] { from, message, url, new Long(time),
-					red ? Boolean.TRUE : Boolean.FALSE, offline ? Boolean.TRUE : Boolean.FALSE,
-					new Integer(messId), attach, new Integer(attachKind), thread, messageRef });
+			while (messageCount() >= limit)
+			{
+				if (!messData.isEmpty()) dropOldest();
+				else deferred.removeElementAt(0);
+			}
+			deferred.addElement(new DeferredMessage(from, message, url, time,
+					red, offline, messId, attach, attachKind, thread, messageRef));
 			return;
 		}
+		flushDeferred();
 		layout(from, message, url, time, red, offline, messId, attach, attachKind, thread, messageRef);
 	}
 
@@ -651,11 +683,13 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		deferred = null;
 		for (int i = 0; i < d.size(); i++)
 		{
-			Object[] r = (Object[]) d.elementAt(i);
-			layout((String) r[0], (String) r[1], (String) r[2], ((Long) r[3]).longValue(),
-					((Boolean) r[4]).booleanValue(), ((Boolean) r[5]).booleanValue(),
-					((Integer) r[6]).intValue(), (byte[]) r[7], ((Integer) r[8]).intValue(),
-					r.length > 9 ? (String) r[9] : null, r.length > 10 ? (byte[])r[10] : null);
+			DeferredMessage r = (DeferredMessage) d.elementAt(i);
+			// Release already formatted source strings during the batch,
+			// rather than keeping both representations until its last row.
+			d.setElementAt(null, i);
+			layout(r.from, r.message, r.url, r.time, r.red, r.offline,
+					r.messId, r.attach, r.attachKind, r.thread, r.messageRef);
+			if (r.delivered) messageIsDelivered(r.messId);
 		}
 	}
 
@@ -769,6 +803,12 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	
 	public void messageIsDelivered(int messId)
 	{
+		if (deferred != null)
+			for (int i = deferred.size() - 1; i >= 0; i--)
+			{
+				DeferredMessage row = (DeferredMessage)deferred.elementAt(i);
+				if (!row.red && row.messId == messId) row.delivered = true;
+			}
 		MessData data;
 		boolean ok;
 		for (int i = messData.size()-1; i >= 0; i--)
@@ -941,8 +981,8 @@ public class ChatHistory
 		if (chat.deferred != null)
 			for (int i = 0; i < chat.deferred.size(); i++)
 			{
-				Object[] row = (Object[])chat.deferred.elementAt(i);
-				if (!((Boolean)row[4]).booleanValue() && ((Integer)row[6]).intValue() == messageId) row[10] = ref;
+				DeferredMessage row = (DeferredMessage)chat.deferred.elementAt(i);
+				if (!row.red && row.messId == messageId) row.messageRef = ref;
 			}
 		chat.checkQuoteMenu();
 	}

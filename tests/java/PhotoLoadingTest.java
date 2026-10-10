@@ -9,6 +9,12 @@ import jimm.util.ResourceBundle;
 public class PhotoLoadingTest {
  static void check(boolean b,String m){if(!b)throw new AssertionError(m);}
  static Field f(Class c,String n)throws Exception{Field x=c.getDeclaredField(n);x.setAccessible(true);return x;}
+ static Vector items(Object line)throws Exception{
+  Method size=line.getClass().getDeclaredMethod("size");size.setAccessible(true);
+  Method at=line.getClass().getDeclaredMethod("elementAt",int.class);at.setAccessible(true);
+  Vector result=new Vector();int count=((Integer)size.invoke(line)).intValue();
+  for(int i=0;i<count;i++)result.addElement(at.invoke(line,i));return result;
+ }
  static byte[] hex(String text){byte[] b=new byte[text.length()/2];for(int i=0;i<b.length;i++)b[i]=(byte)Integer.parseInt(text.substring(i*2,i*2+2),16);return b;}
  static Packet next(SOCKETConnection c)throws Exception{
   long until=System.currentTimeMillis()+5000;
@@ -69,7 +75,7 @@ public class PhotoLoadingTest {
  static boolean hasImage(DrawControls.TextList card)throws Exception{
   Vector lines=(Vector)f(DrawControls.TextList.class,"lines").get(card);
   for(int i=0;i<lines.size();i++){
-   Object line=lines.elementAt(i);Vector items=(Vector)f(line.getClass(),"items").get(line);
+   Object line=lines.elementAt(i);Vector items=items(line);
    for(int j=0;j<items.size();j++){
     Object item=items.elementAt(j);if(f(item.getClass(),"image").get(item)!=null)return true;
    }

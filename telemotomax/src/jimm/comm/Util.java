@@ -526,7 +526,7 @@ public class Util
 	{
 
 		// Length check
-		if (buf.length < off + len)
+		if (off < 0 || len < 0 || off > buf.length || len > buf.length - off)
 		{
 			return (null);
 		}
@@ -540,18 +540,8 @@ public class Util
 		// Read string in UTF-8 format
 		if (utf8)
 		{
-			try
-			{
-				byte[] buf2 = new byte[len + 2];
-				Util.putWord(buf2, 0, len);
-				System.arraycopy(buf, off, buf2, 2, len);
-				ByteArrayInputStream bais = new ByteArrayInputStream(buf2);
-				DataInputStream dis = new DataInputStream(bais);
-				return (dis.readUTF());
-			} catch (Exception e)
-			{
-				// do nothing
-			}
+			String value = Utf8.decode(buf, off, len);
+			if (value != null) return value;
 		}
 
 		// CP1251 or default character encoding?
@@ -619,19 +609,7 @@ public class Util
 		// Write string in UTF-8 format
 		if (utf8)
 		{
-			try
-			{
-				ByteArrayOutputStream baos = new ByteArrayOutputStream();
-				DataOutputStream dos = new DataOutputStream(baos);
-				dos.writeUTF(val);
-				byte[] raw = baos.toByteArray();
-				byte[] result = new byte[raw.length - 2];
-				System.arraycopy(raw, 2, result, 0, raw.length - 2);
-				return result;
-			} catch (Exception e)
-			{
-				// Do nothing
-			}
+			return Utf8.encode(val);
 		}
 
 		// CP1251 or default character encoding?
