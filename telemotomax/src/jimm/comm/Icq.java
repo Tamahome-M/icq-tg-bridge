@@ -218,6 +218,14 @@ public class Icq implements Runnable
 
 	}
 
+	public static void cancelAction(Action action)
+	{
+		if (action == null || action.isCompleted()) return;
+		synchronized (_this) { reqAction.removeElement(action); }
+		action.onEvent(Action.ON_CANCEL);
+		synchronized (wait) { wait.notifyAll(); }
+	}
+
 	// Connects to the ICQ network
 	static public synchronized void connect()
 	{
@@ -286,6 +294,7 @@ public class Icq implements Runnable
 	static public synchronized void disconnect(boolean force)
 	{
 		jimm.NativeQuote.disconnected();
+		if (activeUpload != null) activeUpload.cancel();
 		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 		disconnectBart(force);
 		//#sijapp cond.end#
@@ -295,6 +304,7 @@ public class Icq implements Runnable
 		cancelKeepAlive();
 		
 		thread = null;
+		reqAction.removeAllElements();
 		setNotConnected();
 		synchronized (wait) { wait.notifyAll(); }		
 		// Отключение могло прийти до того, как новый поток создал сокет.
@@ -324,8 +334,14 @@ public class Icq implements Runnable
 	//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 	static public synchronized void disconnectBart(boolean force)
 	{
+		++bartGeneration;
+		bartWaiters = null;
+		bartReady = false;
+		Connection pending = bartPending;
+		bartPending = null;
+		if (pending != null) pending.forceDisconnect();
 		if (bartC == null) return;
-		
+
 		if (force) bartC.forceDisconnect();
 		else bartC.notifyToDisconnect();
 
@@ -446,43 +462,134 @@ public class Icq implements Runnable
 	// GPRS занимает секунды, а то и десятки секунд, и раньше всё это время
 	// стоял поток связи — не ходили ни сообщения, ни пинги. Готовое
 	// соединение становится bartC и будит главный цикл.
-	static public void connectBart(final String hostAndPort, final BartConnectListener l)
+	private static int bartGeneration;
+	private static Connection bartPending;
+	private static Vector bartWaiters;
+	private static boolean bartReady;
+
+	static public void connectBart(final String hostAndPort, final BartConnectListener listener)
 	{
-		new Thread() {
+		final int generation;
+		final Thread owner;
+		final Vector listeners;
+		synchronized (Icq.class)
+		{
+			if (bartWaiters != null) { bartWaiters.addElement(listener); return; }
+			if (bartC != null && bartC.getState())
+			{
+				// A redirect can arrive while another request authenticates
+				// this socket. Join it; isError() sends once it becomes ready.
+				listener.onBartConnected();
+				return;
+			}
+			disconnectBart(true);
+			generation = ++bartGeneration;
+			owner = thread;
+			listeners = new Vector(2);
+			listeners.addElement(listener);
+			bartWaiters = listeners;
+		}
+		try { new Thread() {
 			public void run()
 			{
-				disconnectBart(true);        // брошенный сокет никто больше не закроет
-				Connection conn = new SOCKETConnection(JimmException.ICQ_BART);
+				Connection conn = null;
+				JimmException error = null;
+				boolean admitted = false;
 				try
 				{
+					conn = new SOCKETConnection(JimmException.ICQ_BART);
+					synchronized (Icq.class)
+					{
+						if (generation != bartGeneration || owner != thread) return;
+						bartPending = conn;
+					}
 					conn.connect(hostAndPort);
+					synchronized (Icq.class)
+					{
+						if (generation != bartGeneration || owner != thread) return;
+						bartC = conn;
+						bartReady = false;
+						noteBartUse();
+						admitted = true;
+					}
 				}
-				catch (JimmException e)
+				catch (JimmException failure) { error = failure; }
+				catch (Throwable failure) { System.gc(); error = new JimmException(100, 52, false); }
+				finally
 				{
-					l.onBartConnectFailed(e);
-					return;
+					if (!admitted && conn != null) conn.forceDisconnect();
+					synchronized (Icq.class)
+					{
+						if (generation == bartGeneration) { bartPending = null; bartWaiters = null; }
+					}
 				}
-				catch (Exception e)
+				for (int i = 0; i < listeners.size(); i++)
 				{
-					l.onBartConnectFailed(new JimmException(100, 52, true));
-					return;
+					synchronized (Icq.class) { if (generation != bartGeneration || owner != thread) return; }
+					BartConnectListener next = (BartConnectListener)listeners.elementAt(i);
+					try
+					{
+						if (admitted) next.onBartConnected();
+						else next.onBartConnectFailed(error);
+					}
+					catch (Throwable failure) { System.gc(); }
 				}
-				synchronized (Icq.class)
-				{
-					bartC = conn;
-					noteBartUse();
-				}
-				l.onBartConnected();
 				synchronized (wait) { wait.notifyAll(); }
 			}
-		}.start();
+		}.start(); }
+		catch (Throwable failure)
+		{
+			System.gc();
+			synchronized (Icq.class)
+			{
+				if (generation != bartGeneration || owner != thread) return;
+				bartWaiters = null;
+				for (int i = 0; i < listeners.size(); i++)
+					try { ((BartConnectListener)listeners.elementAt(i)).onBartConnectFailed(new JimmException(100, 52, false)); }
+					catch (Throwable ignore) {}
+			}
+			synchronized (wait) { wait.notifyAll(); }
+		}
+	}
+
+	public static synchronized void markBartReady()
+	{
+		bartReady = true;
+		noteBartUse();
+	}
+
+	private static boolean hasBartPeers(Action except)
+	{
+		Vector active = actAction;
+		if (active != null) synchronized (active)
+		{
+			for (int i = 0; i < active.size(); i++)
+			{
+				Action action = (Action)active.elementAt(i);
+				if (action != except && action.isBartPending()) return true;
+			}
+		}
+		synchronized (reqAction)
+		{
+			for (int i = 0; i < reqAction.size(); i++)
+			{
+				Action action = (Action)reqAction.elementAt(i);
+				if (action != except && action.isBartPending()) return true;
+			}
+		}
+		return false;
+	}
+
+	public static synchronized void retireBartIfIdle(Action action)
+	{
+		if (!hasBartPeers(action)) disconnectBart(true);
 	}
 
 	static public synchronized boolean bartUsable()
 	{
 		if (bartC == null) return false;
-		if (bartC.getState()
-				&& System.currentTimeMillis() - bartLastUse < BART_REUSE_MS)
+		if (bartC.getState() && (bartWaiters != null || !bartReady)) return false;
+		if (bartC.getState() && (System.currentTimeMillis() - bartLastUse < BART_REUSE_MS || hasBartPeers(null)))
 			return true;
 		disconnectBart(true);
 		return false;
@@ -543,7 +650,8 @@ public class Icq implements Runnable
 		connected = false;
 
 		// Reset all timer tasks
-		Jimm.jimm.cancelTimer();
+		cancelKeepAlive();
+		SplashCanvas.resetLastTask();
 
 		// Delete all actions
 		if (actAction != null)
@@ -565,11 +673,13 @@ public class Icq implements Runnable
 	}
 
 	// Connection to the ICQ server
-	static Connection c;
+	static volatile Connection c;
 	//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-	static Connection bartC;
+	static volatile Connection bartC;
 	//  #sijapp cond.end#
 	
+	public static boolean isConnectionOwner(Connection conn) { return thread == Thread.currentThread() && c == conn; }
+
 	public static boolean isMyConnection(Connection conn)
 	{
 		return (conn == c);
@@ -583,6 +693,46 @@ public class Icq implements Runnable
 	// ни подтвердить входящее, ни отправить сообщение — клиент выглядит
 	// повисшим. 8 КБ уходят за пару секунд, между частями остальные успевают.
 	public static final int PHOTO_PART = 8000;
+	private static final Object uploadLock = new Object();
+	private static volatile Upload activeUpload;
+
+	public static class Upload implements UploadProgress
+	{
+		private final Connection connection = c;
+		private final Thread owner = thread;
+		private final String target;
+		private final int id;
+		private final UploadProgress progress;
+		private volatile boolean alive = true;
+		public Upload(String uin) { this(uin, null); }
+		private Upload(String uin, UploadProgress progress)
+		{
+			target = uin; this.progress = progress;
+			int next = Util.getCounter(); id = next == 0 ? Util.getCounter() : next;
+			synchronized (Icq.class) { activeUpload = this; }
+		}
+		public boolean isActive() { return alive && activeUpload == this && Icq.isConnected() && Icq.isCurrentConnection(owner, connection); }
+		public boolean matches(String uin, long request)
+		{
+			return isActive() && target.equals(uin) && request == (id & 0xFFFFFFFFL);
+		}
+		public void cancel() { alive = false; synchronized (Icq.class) { if (activeUpload == this) activeUpload = null; } }
+		public void onPart(int part, int total) { if (progress != null) progress.onPart(part, total); }
+		private void send(int subtype, byte[] data) throws JimmException
+		{
+			synchronized (uploadLock)
+			{
+				if (activeUpload != this || !isActive()) { cancel(); throw new JimmException(140, 0, false); }
+				connection.sendPacket(new SnacPacket(0x0010, subtype, id, new byte[0], data));
+			}
+		}
+	}
+
+	private static Upload upload(String uin, UploadProgress progress)
+	{
+		return progress instanceof Upload ? (Upload)progress : new Upload(uin, progress);
+	}
+
 
 	public static void sendPhoto(String uin, byte[] photo) throws JimmException
 	{
@@ -594,6 +744,7 @@ public class Icq implements Runnable
 	public static void sendPhoto(String uin, byte[] photo, UploadProgress progress)
 			throws JimmException
 	{
+		Upload transfer = upload(uin, progress);
 		byte[] uinRaw = Util.stringToByteArray(uin);
 		int total = (photo.length + PHOTO_PART - 1) / PHOTO_PART;
 		if (total < 1) total = 1;
@@ -610,7 +761,7 @@ public class Icq implements Runnable
 			Util.putWord(buf, marker, total); marker += 2;
 			Util.putWord(buf, marker, size); marker += 2;
 			System.arraycopy(photo, from, buf, marker, size);
-			sendPacket(new SnacPacket(0x0010, 0x0002, 0x00000000, new byte[0], buf));
+			transfer.send(0x0002, buf);
 			if (progress != null) progress.onPart(part, total);
 			if (part < total) breathe();
 		}
@@ -667,6 +818,7 @@ public class Icq implements Runnable
 	public static void sendFile(String uin, java.io.InputStream in, long size, String name,
 			UploadProgress progress, int kind) throws JimmException, java.io.IOException
 	{
+		Upload transfer = upload(uin, progress);
 		byte[] uinRaw = Util.stringToByteArray(uin);
 		byte[] nameRaw = Util.stringToByteArray(name == null ? "" : name, true);
 		if (nameRaw.length > 200) { byte[] cut = new byte[200]; System.arraycopy(nameRaw, 0, cut, 0, 200); nameRaw = cut; }
@@ -699,43 +851,56 @@ public class Icq implements Runnable
 				System.arraycopy(nameRaw, 0, buf, marker, nameRaw.length); marker += nameRaw.length;
 				Util.putByte(buf, marker, kind);
 			}
-			sendPacket(new SnacPacket(0x0010, 0x0008, 0x00000000, new byte[0], buf));
+			transfer.send(0x0008, buf);
 			if (progress != null) progress.onPart(part, total);
 			if (part < total) breathe();
 		}
 	}
 
-	private static void sendTimed(int subtype, String uin, byte[] voice, int seconds, String type,
+	private static void sendTimed(int subtype, String uin, byte[] data, int seconds, String type,
 			UploadProgress progress) throws JimmException
 	{
+		try { sendTimedStream(subtype, uin, new java.io.ByteArrayInputStream(data), data.length, seconds, type, progress); }
+		catch (java.io.IOException failure) { throw new JimmException(140, 0, false); }
+	}
+
+	public static void sendVideoStream(String uin, java.io.InputStream in, long size, int seconds, String type,
+			UploadProgress progress) throws JimmException, java.io.IOException
+	{
+		sendTimedStream(0x0005, uin, in, size, seconds, type, progress);
+	}
+
+	private static void sendTimedStream(int subtype, String uin, java.io.InputStream in, long length, int seconds, String type,
+			UploadProgress progress) throws JimmException, java.io.IOException
+	{
+		Upload transfer = upload(uin, progress);
 		byte[] uinRaw = Util.stringToByteArray(uin);
-		// Тип записи («audio/amr») идёт хвостом первой части: мосту он
-		// подсказывает, что ему прислали, а старый мост его просто не читает.
 		byte[] typeRaw = Util.stringToByteArray(type == null ? "" : type);
 		if (typeRaw.length > 60) typeRaw = new byte[0];
-		int total = (voice.length + PHOTO_PART - 1) / PHOTO_PART;
-		if (total < 1) total = 1;
+		int total = (int)((length + PHOTO_PART - 1) / PHOTO_PART);
+		if (total < 1 || total > 65535) throw new java.io.IOException("invalid media length");
 		for (int part = 1; part <= total; part++)
 		{
-			int from = (part - 1) * PHOTO_PART;
-			int size = voice.length - from;
-			if (size > PHOTO_PART) size = PHOTO_PART;
-			int tail = (part == 1) ? 1 + typeRaw.length : 0;
-			byte[] buf = new byte[1 + uinRaw.length + 2 + 2 + 2 + 2 + size + tail];
+			int size = (int)Math.min(PHOTO_PART, length - (long)(part - 1) * PHOTO_PART);
+			int tail = part == 1 ? 1 + typeRaw.length : 0;
+			byte[] buf = new byte[1 + uinRaw.length + 8 + size + tail];
 			int marker = 0;
-			Util.putByte(buf, marker, uinRaw.length); marker += 1;
+			Util.putByte(buf, marker++, uinRaw.length);
 			System.arraycopy(uinRaw, 0, buf, marker, uinRaw.length); marker += uinRaw.length;
 			Util.putWord(buf, marker, part); marker += 2;
 			Util.putWord(buf, marker, total); marker += 2;
 			Util.putWord(buf, marker, seconds); marker += 2;
 			Util.putWord(buf, marker, size); marker += 2;
-			System.arraycopy(voice, from, buf, marker, size); marker += size;
-			if (tail > 0)
+			int got = 0;
+			while (got < size)
 			{
-				Util.putByte(buf, marker, typeRaw.length); marker += 1;
-				System.arraycopy(typeRaw, 0, buf, marker, typeRaw.length);
+				int read = in.read(buf, marker + got, size - got);
+				if (read < 0) throw new java.io.IOException("media shorter than declared");
+				got += read;
 			}
-			sendPacket(new SnacPacket(0x0010, subtype, 0x00000000, new byte[0], buf));
+			marker += size;
+			if (tail > 0) { Util.putByte(buf, marker++, typeRaw.length); System.arraycopy(typeRaw, 0, buf, marker, typeRaw.length); }
+			transfer.send(subtype, buf);
 			if (progress != null) progress.onPart(part, total);
 			if (part < total) breathe();
 		}
@@ -743,14 +908,16 @@ public class Icq implements Runnable
 
 	public static void sendPacket(Packet packet) throws JimmException
 	{
-		if (c == null) return; // TODO: may be better to throw exception?
-		c.sendPacket(packet);
+		Connection connection = c;
+		if (connection == null) throw new JimmException(140, 0, false);
+		connection.sendPacket(packet);
 	}
 	
 	public static void connect(String data) throws JimmException
 	{
-		if (c == null) return; // TODO: may be better to throw exception?
-		c.connect(data);
+		Connection connection = c;
+		if (connection == null || !isCurrentConnection(Thread.currentThread(), connection)) throw new JimmException(140, 0, false);
+		connection.connect(data);
 	}
 
 	// Main loop
@@ -787,8 +954,7 @@ public class Icq implements Runnable
 				cancelKeepAlive();
 				sessionKeepAlive = new TimerTasks(TimerTasks.ICQ_KEEPALIVE, thread, c);
 				keepAliveTimerTask = sessionKeepAlive;
-				long keepAliveInterv = Integer.parseInt(Options
-						.getString(Options.OPTION_CONN_ALIVE_INVTERV)) * 1000;
+				long keepAliveInterv = Options.keepAliveMillis();
 				Jimm.getTimerRef().schedule(sessionKeepAlive, keepAliveInterv,
 						keepAliveInterv);
 			}
@@ -868,7 +1034,13 @@ public class Icq implements Runnable
 							bi = bartC;
 							if (quiet && bi != null && bi.available() > 0) quiet = false;
 				//  #sijapp cond.end#
-							if (quiet) wait.wait(/*Icq.STANDBY*/);
+							if (quiet && pendingCanStart()) quiet = false;
+							if (quiet && Icq.thread == thread)
+							{
+								long delay = nextActionDelay();
+								if (delay == Long.MAX_VALUE) wait.wait();
+								else wait.wait(delay);
+							}
 						}
 					} catch (InterruptedException e)
 					{
@@ -1024,6 +1196,24 @@ public class Icq implements Runnable
 			}
 		}
 
+	}
+
+	private static boolean pendingCanStart()
+	{
+		synchronized (reqAction)
+		{
+			if (reqAction.isEmpty()) return false;
+			if (actAction == null || actAction.isEmpty()) return true;
+			return !((Action)actAction.elementAt(0)).isExclusive() && !((Action)reqAction.elementAt(0)).isExclusive();
+		}
+	}
+
+	private static long nextActionDelay()
+	{
+		long deadline = Long.MAX_VALUE;
+		for (int i = 0; i < actAction.size(); i++)
+			deadline = Math.min(deadline, ((Action)actAction.elementAt(i)).getDeadline());
+		return deadline == Long.MAX_VALUE ? deadline : Math.max(1L, deadline - System.currentTimeMillis() + 1L);
 	}
 
 	public static boolean isNotCriticalConnectionError (int errcode) {

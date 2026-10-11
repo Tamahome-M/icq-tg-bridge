@@ -1199,15 +1199,13 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		dropIcons(MAX_ICONS);
 		if (iconDropTask != null) iconDropTask.cancel();
 		iconDropTask = new TimerTask() {
-			public void run() { dropIcons(0); }
+			public void run() { try { dropIcons(0); } catch (Throwable ignore) {} }
 		};
-		if (iconTimer == null) iconTimer = new Timer();
-		iconTimer.schedule(iconDropTask, ICON_TTL_MS);
+		Jimm.getTimerRef().schedule(iconDropTask, ICON_TTL_MS);
 	}
 	private static final int MAX_ICONS = 1;
 	private static final long ICON_TTL_MS = 30 * 1000L;
 	private static final Vector iconOwners = new Vector();
-	private static Timer iconTimer;
 	private static TimerTask iconDropTask;
 
 	// Photos need the decoded bitmap space more than this disposable cache.
@@ -1475,6 +1473,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 				cItem = createTempContact(uin);
 
 			/* Add message to chat */
+			boolean wasUnread = cItem.isContainingUnreadMessages();
 			ChatHistory.addMessage(cItem, message);
 
 			/* Notify splash canvas */
@@ -1493,8 +1492,8 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			/* Increment messages count for group */
 			ContactListGroupItem gItem = getGroupById(cItem
 					.getIntValue(ContactItem.CONTACTITEM_GROUP));
-			if (gItem != null)
-				gItem.changeMessCount(+1);
+			if (gItem != null && wasUnread != cItem.isContainingUnreadMessages())
+				gItem.changeMessCount(cItem.isContainingUnreadMessages() ? 1 : -1);
 
 			/* Update tree */
 			contactChanged(cItem, true, false);
@@ -1558,7 +1557,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		{
 			discardPlayer(player);
 		}
-		catch (Exception e)
+		catch (Throwable e)
 		{
 			discardPlayer(player);
 		}
@@ -1569,7 +1568,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		if (player == soundPlayer) finishSound(player);
 		else
 		{
-			try { if (player != null) player.close(); } catch (Exception ignore) {}
+			try { if (player != null) player.close(); } catch (Throwable ignore) {}
 			finishSound(null);
 		}
 	}
@@ -1586,7 +1585,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			soundWatch = null;
 		}
 		if (watch != null) watch.cancel();
-		try { if (player != null) { player.removePlayerListener(_this); player.close(); } } catch (Exception ignore) {}
+		try { if (player != null) { player.removePlayerListener(_this); player.close(); } } catch (Throwable ignore) {}
 		String next = null;
 		int volume = 0;
 		synchronized (soundQueue)
@@ -1621,7 +1620,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			setVolume(p, volume);
 			startPlayer (p);
 		}
-		catch (Exception e) { finishSound(soundPlayer); }
+		catch (Throwable e) { finishSound(soundPlayer); }
 	}
 	
 	private static void playSound(String fileName, int volume)
@@ -1631,9 +1630,11 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			if (!playerFree)
 			{
 				// Keep one follow-up alert with the latest profile, not every beep.
+				Integer level;
+				try { level = new Integer(volume); } catch (OutOfMemoryError failure) { return; }
 				soundQueue.removeAllElements();
 				soundQueue.addElement(fileName);
-				soundQueue.addElement(new Integer(volume));
+				soundQueue.addElement(level);
 				return;
 			}
 			playerFree = false; // reserve before native MMAPI calls; no lock during I/O
@@ -1663,7 +1664,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			playerFree = false;
 			p.addPlayerListener(_this);
 			watchPlayer(p);
-		} catch (Exception e)
+		} catch (Throwable e)
 		{
 			discardPlayer(p);
 			return null;
@@ -1734,7 +1735,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			if (mode == 1)
 			{
 				try { Manager.playTone(tone, 500, volume); }
-				catch (Exception ignore) {}
+				catch (Throwable ignore) {}
 			}
 			else if (mode == 2) playSound(file, volume);
 		}
@@ -1792,6 +1793,17 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		return false;
 	}
 
+	static public int unreadCount(ContactListGroupItem group)
+	{
+		int count = 0;
+		for (int i = 0; i < cItems.size(); i++)
+		{
+			ContactItem item = getCItem(i);
+			if (item.isContainingUnreadMessages() && group.containsGroup(getGroupById(item.getIntValue(ContactItem.CONTACTITEM_GROUP)))) count++;
+		}
+		return count;
+	}
+
 	static public ContactItem[] getItems(ContactListGroupItem group)
 	{
 		Vector data = new Vector();
@@ -1845,11 +1857,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 				if (!newExpanded)
 				{
 					ContactListGroupItem gItem = (ContactListGroupItem)item;
-					ContactItem[] cItems = getItems(gItem);
-					int unreadCounter = 0;
-					for (int i = 0; i < cItems.length; i++) 
-						unreadCounter += (cItems[i].isContainingUnreadMessages() ? 1 : 0);
-					gItem.setMessCount(unreadCounter);
+					gItem.setMessCount(unreadCount(gItem));
 				}
 				tree.setExpandFlag(node, newExpanded);
 			}

@@ -53,7 +53,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 	//Timer for repaint
 	static private TimerTasks t1;
-	static private Timer t2;
+	static private java.util.TimerTask t2;
 
 	// Image object, holds the splash image
 	private static Image imgSplash;
@@ -258,8 +258,8 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 		if (Options.getBoolean(Options.OPTION_DISPLAY_DATE))
 		{
-			(t2 = new Timer()).schedule(new TimerTasks(
-					TimerTasks.SC_AUTO_REPAINT), 20000, 20000);
+			t2 = new TimerTasks(TimerTasks.SC_AUTO_REPAINT);
+			Jimm.getTimerRef().schedule(t2, 20000, 20000);
 		}
 		
 //#sijapp cond.if target="MOTOROLA"#
@@ -713,13 +713,15 @@ public class SplashCanvas extends Canvas implements CommandListener
 		}
 	}
 
-	private static synchronized void cancelLastTask()
+	private static void cancelLastTask()
 	{
-		if (isLocked || !lastTaskCanCancel || lastAction == null || lastTimerTask == null
-				|| lastTimerTask.isCanceled() || lastAction.isCompleted() || lastAction.isError()) return;
-		Action action = lastAction;
-		// Сбрасываем до callback: повторное событие не отменит вход второй раз.
-		resetLastTask();
+		Action action;
+		synchronized (SplashCanvas.class)
+		{
+			if (isLocked || !lastTaskCanCancel || lastAction == null || lastAction.isCompleted()) return;
+			action = lastAction;
+			resetLastTask();
+		}
 		action.onEvent(Action.ON_CANCEL);
 	}
 
@@ -771,8 +773,10 @@ public class SplashCanvas extends Canvas implements CommandListener
 	
 	public static void addTimerTask(Action action)
 	{
-		lastTaskCanCancel = false;
-		cancelByKey = false;
+		boolean canCancel = cancelByKey && !isLocked && _this.isShown();
+		resetLastTask();
+		lastTaskCanCancel = canCancel;
+		cancelByKey = canCancel;
 		TimerTasks timerTask = new TimerTasks(action);
 
 		VirtualList.setMiniProgressBar(true);

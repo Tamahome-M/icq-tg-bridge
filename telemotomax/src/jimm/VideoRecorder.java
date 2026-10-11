@@ -61,8 +61,11 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 	private String status;
 	private String[] details;
 	private boolean recording;
-	private boolean sending;
+	private volatile boolean sending;
+	private Icq.Upload transfer;
+	private java.util.TimerTask answerTask;
 	private int sentParts, totalParts;
+	private long lastSize;
 	private String progress;                 // состояние справа в верхней полосе
 
 	private VideoRecorder(String uin, JimmScreen back)
@@ -115,7 +118,7 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 					status = null;
 					repaint();
 				}
-				catch (Exception e)
+				catch (Throwable e)
 				{
 					// Незакрытый плеер копит «too many players» — см. CameraShot.
 					if (p != null) { try { p.close(); } catch (Exception ig) {} }
@@ -153,7 +156,7 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 					startedAt = System.currentTimeMillis();
 					tick();
 				}
-				catch (Exception e)
+				catch (Throwable e)
 				{
 					recording = false;
 					failed(e);
@@ -187,84 +190,55 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 	private void stopAndSend()
 	{
 		if (!recording || sending) return;
-		recording = false;
-		sending = true;
+		recording = false; sending = true;
 		final int secs = Math.max(1, seconds());
-		status = null;
-		progress = ResourceBundle.getString("camera_sending");
-		repaint();
-		new Thread() {
-			public void run()
+		final String sourcePath = tempUrl;
+		transfer = new Icq.Upload(uin) {
+			public boolean isActive() { return current == VideoRecorder.this && sending && super.isActive(); }
+			public void onPart(int part, int total) {
+				Jimm.wakeBacklight(); sentParts = part; totalParts = total;
+				progress = (lastSize / 1024) + " КБ · " + part + "/" + total; repaint();
+			}
+		};
+		status = null; progress = ResourceBundle.getString("camera_sending"); repaint();
+		new Thread() { public void run() {
+			FileConnection source = null;
+			InputStream in = null;
+			try
 			{
-				byte[] data = null;
-				Exception err = null;
+				record.commit();
 				String type = null;
-				try
+				try { type = record.getContentType(); } catch (Exception ignore) {}
+				byte[] data = sink == null ? null : sink.toByteArray();
+				long length;
+				if (data == null)
 				{
-					record.commit();
-					try { type = record.getContentType(); } catch (Exception ignore) {}
-					data = (sink != null) ? sink.toByteArray() : readTemp();
+					source = (FileConnection)Connector.open(sourcePath, Connector.READ);
+					length = source.fileSize(); in = source.openInputStream();
 				}
-				catch (Exception e) { err = e; }
+				else length = data.length;
 				stopCamera();
-				if (data == null || data.length == 0)
-				{
-					sending = false;
-					failed(err);
-					return;
-				}
-				final int size = data.length;
-				try
-				{
-					Icq.sendVideo(uin, data, secs, type, new Icq.UploadProgress() {
-						public void onPart(int part, int total)
-						{
-							Jimm.wakeBacklight();
-							sentParts = part; totalParts = total;
-							progress = (size / 1024) + " КБ \u00b7 " + part + "/" + total;
-							repaint();
-						}
-					});
-					data = null;
-					deleteTemp();
-					progress = ResourceBundle.getString("cam_wait_bridge");
-					waitForBridge();
-				}
-				catch (Exception e)
-				{
-					sending = false;
-					deleteTemp();
-					status = ResourceBundle.getString("camera_failed") + " " + shortName(e);
-				}
-				repaint();
-			}
-		}.start();
-	}
+				if (current != VideoRecorder.this || !sending) return;
+				if (length <= 0 || length > 8 * 1024 * 1024) throw new Exception("invalid video length");
+				lastSize = length;
 
-	private byte[] readTemp() throws Exception
-	{
-		FileConnection fc = (FileConnection) Connector.open(tempUrl, Connector.READ);
-		InputStream in = null;
-		try
-		{
-			long size = fc.fileSize();
-			if (size <= 0 || size > 8 * 1024 * 1024) throw new Exception("size " + size);
-			byte[] buf = new byte[(int) size];
-			in = fc.openInputStream();
-			int got = 0;
-			while (got < buf.length)
-			{
-				int n = in.read(buf, got, buf.length - got);
-				if (n < 0) break;
-				got += n;
+				if (data != null) Icq.sendVideo(uin, data, secs, type, transfer);
+				else Icq.sendVideoStream(uin, in, lastSize, secs, type, transfer);
+				if (current != VideoRecorder.this || !sending) return;
+				progress = ResourceBundle.getString("cam_wait_bridge"); waitForBridge();
 			}
-			return buf;
-		}
-		finally
-		{
-			try { if (in != null) in.close(); } catch (Exception ignore) {}
-			try { fc.close(); } catch (Exception ignore) {}
-		}
+			catch (Throwable failure)
+			{
+				sending = false; if (transfer != null) transfer.cancel();
+				if (current == VideoRecorder.this) failed(failure);
+			}
+			finally
+			{
+				try { if (in != null) in.close(); } catch (Throwable ignore) {}
+				try { if (source != null) source.close(); } catch (Throwable ignore) {}
+				stopCamera(); deleteTemp(); repaint();
+			}
+		} }.start();
 	}
 
 	// Место под запись — честным созданием файла (TempFiles): canWrite() на
@@ -291,22 +265,26 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 	// Мост отвечает 10/03. Не ответил — не висим вечно.
 	private void waitForBridge()
 	{
-		new Thread() {
-			public void run()
-			{
-				try { Thread.sleep(ANSWER_WAIT); } catch (Exception ignore) {}
+		if (current != this || !sending) return;
+		if (answerTask != null) answerTask.cancel();
+		answerTask = new java.util.TimerTask() { public void run() {
+			try {
 				if (current != VideoRecorder.this || !sending) return;
 				sending = false;
+				if (transfer != null) transfer.cancel();
 				status = ResourceBundle.getString("video_not_sent");
 				repaint();
-			}
-		}.start();
+			} catch (Throwable ignore) {}
+		} };
+		Jimm.getTimerRef().schedule(answerTask, ANSWER_WAIT);
 	}
 
-	static public void videoSent(String uin, boolean ok)
+	static public void videoSent(String uin, boolean ok, long request)
 	{
 		VideoRecorder rec = current;
-		if (rec == null || !rec.uin.equals(uin)) return;
+		if (rec == null || !rec.sending || rec.transfer == null || !rec.transfer.matches(uin, request)) return;
+		if (rec.answerTask != null) rec.answerTask.cancel();
+		rec.transfer.cancel();
 		rec.sending = false;
 		if (ok)
 		{
@@ -317,7 +295,7 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 		rec.repaint();
 	}
 
-	private void failed(Exception e)
+	private void failed(Throwable e)
 	{
 		status = ResourceBundle.getString("camera_failed") + " " + shortName(e);
 		String types = "";
@@ -337,7 +315,7 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 		repaint();
 	}
 
-	private static String shortName(Exception e)
+	private static String shortName(Throwable e)
 	{
 		if (e == null) return "?";
 		String name = e.getClass().getName();
@@ -416,13 +394,15 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 
 	private void close()
 	{
-		if (current == this) current = null;
+		boolean owned = current == this;
+		if (owned) current = null;
+		if (transfer != null) transfer.cancel();
+		if (answerTask != null) answerTask.cancel();
 		recording = false;
 		stopCamera();
 		sink = null;
 		deleteTemp();
-		if (back != null) back.activate();
-		else JimmUI.backToLastScreen();
+		if (owned) MainThread.activateScreenMT(back);
 	}
 
 	public void activate()

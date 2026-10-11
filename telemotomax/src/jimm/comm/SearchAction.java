@@ -270,6 +270,8 @@ public class SearchAction extends Action
 	}
 
 	// Returns true if an error has occured
+	public long getDeadline() { return lastActivity + TIMEOUT; }
+
 	public synchronized boolean isError()
 	{
 		return (state == ConnectAction.STATE_ERROR)

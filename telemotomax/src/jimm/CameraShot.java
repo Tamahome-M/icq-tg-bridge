@@ -47,9 +47,12 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	private VideoControl video;
 	private String status;
 	private String[] details;          // что телефон отвечает про съёмку
-	private boolean sending;
+	private volatile boolean sending;
+	private Icq.Upload transfer;
+	private java.util.TimerTask answerTask;
 	private boolean flash;             // белый кадр на миг — снимок сделан
 	private String progress;           // состояние справа в верхней полосе
+	private String shotInfo;
 	private String locator = "?";      // какой источник открылся: camera, image или video
 
 	private CameraShot(String uin, JimmScreen back)
@@ -97,7 +100,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 					for (int i = 0; i < tries.length && p == null; i++)
 					{
 						try { p = Manager.createPlayer(tries[i]); locator = tries[i].substring(10); }
-						catch (Exception e) { why += tries[i].substring(10) + ": " + shortName(e) + "; "; }
+						catch (Throwable e) { why += tries[i].substring(10) + ": " + shortName(e) + "; "; }
 					}
 					if (p == null) throw new Exception(why);
 					p.realize();
@@ -114,7 +117,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 					status = null;
 					repaint();
 				}
-				catch (Exception e)
+				catch (Throwable e)
 				{
 					if (p != null) { try { p.close(); } catch (Exception ig) {} }
 					failed(e);
@@ -141,7 +144,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		return types;
 	}
 
-	private void failed(Exception e)
+	private void failed(Throwable e)
 	{
 		status = ResourceBundle.getString("camera_failed") + " " + shortName(e);
 		String types = captureTypes();
@@ -163,7 +166,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 			if (value.length() > 40) value = value.substring(0, 40);
 			return value;
 		}
-		catch (Exception e) { return "?"; }
+		catch (Throwable e) { return "?"; }
 	}
 
 	private static String shortName(Throwable e)
@@ -270,6 +273,15 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	{
 		if (video == null || sending) return;
 		sending = true;
+		transfer = new Icq.Upload(uin) {
+			public boolean isActive() { return current == CameraShot.this && sending && super.isActive(); }
+			public void onPart(int part, int total)
+			{
+				Jimm.wakeBacklight();
+				progress = shotInfo + " \u00b7 " + part + "/" + total;
+				repaint();
+			}
+		};
 		status = null;
 		progress = ResourceBundle.getString("cam_shooting");
 		repaint();
@@ -277,7 +289,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 			public void run()
 			{
 				byte[] shot = null;
-				Exception err = null;
+				Throwable err = null;
 				String how = "";
 				// Размер из настроек — если телефон его знает; иначе как есть.
 				String size = Options.getString(Options.OPTION_CAMERA_SIZE);
@@ -289,7 +301,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 					{
 						shot = video.getSnapshot("encoding=jpeg&width=" + w + "&height=" + h);
 					}
-					catch (Exception e) { err = e; }
+					catch (Throwable e) { err = e; }
 					// V8 на неподдерживаемый размер не бросает исключение, а
 					// отдаёт пустой массив (1024×768 — «?, 0 КБ») — это не
 					// снимок, идём к следующей попытке.
@@ -302,13 +314,13 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 				if (shot == null)
 				{
 					try { shot = video.getSnapshot("encoding=jpeg"); err = null; }
-					catch (Exception e) { if (err == null) err = e; }
+					catch (Throwable e) { if (err == null) err = e; }
 					if (shot != null && jpegSize(shot) == null) shot = null;
 				}
 				if (shot == null)
 				{
 					try { shot = video.getSnapshot(null); err = null; }
-					catch (Exception e) { if (err == null) err = e; }
+					catch (Throwable e) { if (err == null) err = e; }
 				}
 				stopCamera();
 				// Вспышка на экране — снимок сделан: видоискатель уже закрыт,
@@ -321,6 +333,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 				if (shot == null)
 				{
 					sending = false;
+					if (transfer != null) transfer.cancel();
 					failed(err);
 					return;
 				}
@@ -332,23 +345,18 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 						+ (size != null && size.length() > 0 ? ", просили " + size : "") + ")");
 				try
 				{
-					final String sent = info;
-					progress = sent;
+					shotInfo = info;
+					progress = info;
 					repaint();
-					Icq.sendPhoto(uin, shot, new Icq.UploadProgress() {
-						public void onPart(int part, int total)
-						{
-							Jimm.wakeBacklight();
-							progress = sent + " \u00b7 " + part + "/" + total;
-							repaint();
-						}
-					});
+					Icq.sendPhoto(uin, shot, transfer);
+					if (current != CameraShot.this || !sending) return;
 					progress = ResourceBundle.getString("cam_wait_bridge");
 					waitForBridge();
 				}
-				catch (Exception e)
+				catch (Throwable e)
 				{
 					sending = false;
+					if (transfer != null) transfer.cancel();
 					status = ResourceBundle.getString("camera_failed") + " " + shortName(e);
 				}
 				repaint();
@@ -361,23 +369,27 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	// висеть с «Отправляю».
 	private void waitForBridge()
 	{
-		new Thread() {
-			public void run()
-			{
-				try { Thread.sleep(ANSWER_WAIT); } catch (Exception ignore) {}
+		if (current != this || !sending) return;
+		if (answerTask != null) answerTask.cancel();
+		answerTask = new java.util.TimerTask() { public void run() {
+			try {
 				if (current != CameraShot.this || !sending) return;
 				sending = false;
+				if (transfer != null) transfer.cancel();
 				status = ResourceBundle.getString("camera_not_sent");
 				repaint();
-			}
-		}.start();
+			} catch (Throwable ignore) {}
+		} };
+		Jimm.getTimerRef().schedule(answerTask, ANSWER_WAIT);
 	}
 
 	// The bridge said whether the picture reached the chat.
-	static public void photoSent(String uin, boolean ok)
+	static public void photoSent(String uin, boolean ok, long request)
 	{
 		CameraShot shot = current;
-		if (shot == null || !shot.uin.equals(uin)) return;
+		if (shot == null || !shot.sending || shot.transfer == null || !shot.transfer.matches(uin, request)) return;
+		if (shot.answerTask != null) shot.answerTask.cancel();
+		shot.transfer.cancel();
 		shot.sending = false;
 		if (ok)
 		{
@@ -444,10 +456,13 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 
 	private void close()
 	{
-		if (current == this) current = null;
+		boolean owned = current == this;
+		if (owned) current = null;
+		if (transfer != null) transfer.cancel();
+		if (answerTask != null) answerTask.cancel();
+		shotInfo = null;
 		stopCamera();
-		if (back != null) back.activate();
-		else JimmUI.backToLastScreen();
+		if (owned) MainThread.activateScreenMT(back);
 	}
 
 	public void activate()

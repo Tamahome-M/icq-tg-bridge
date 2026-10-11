@@ -46,7 +46,10 @@ public class FileSender extends Canvas implements CommandListener, JimmScreen
 	private FileSystem2 browser;
 	private String status;
 	private String fileName;
-	private boolean sending;
+	private long lastSize;
+	private volatile boolean sending;
+	private Icq.Upload transfer;
+	private java.util.TimerTask answerTask;
 	private final boolean media;             // «как фото/видео»: вид по расширению
 
 	private FileSender(String uin, JimmScreen back, boolean media)
@@ -93,6 +96,17 @@ public class FileSender extends Canvas implements CommandListener, JimmScreen
 	private void send(final String path)
 	{
 		sending = true;
+		final FileSystem2 source = browser;
+		transfer = new Icq.Upload(uin) {
+			public boolean isActive() { return current == FileSender.this && sending && super.isActive(); }
+			public void onPart(int part, int parts)
+			{
+				Jimm.wakeBacklight();
+				status = ResourceBundle.getString("file_sending") + " " + part + "/" + parts
+						+ " (" + (lastSize / 1024) + " КБ)";
+				repaint();
+			}
+		};
 		status = ResourceBundle.getString("file_sending") + " " + fileName;
 		repaint();
 		new Thread() {
@@ -101,33 +115,27 @@ public class FileSender extends Canvas implements CommandListener, JimmScreen
 				InputStream in = null;
 				try
 				{
-					browser.openFile(path, Connector.READ);
-					long size = browser.fileSize();
+					source.openFile(path, Connector.READ);
+					long size = source.fileSize();
 					if (size <= 0) throw new Exception("empty file");
 					if (size > MAX_BYTES) throw new Exception("too big: " + (size / 1024) + " KB");
-					in = browser.openInputStream();
-					final long total = size;
-					Icq.sendFile(uin, in, size, fileName, new Icq.UploadProgress() {
-						public void onPart(int part, int parts)
-						{
-							Jimm.wakeBacklight();
-							status = ResourceBundle.getString("file_sending") + " " + part + "/" + parts
-									+ " (" + (total / 1024) + " КБ)";
-							repaint();
-						}
-					}, media ? kindOf(fileName) : 0);
+					in = source.openInputStream();
+					lastSize = size;
+					Icq.sendFile(uin, in, size, fileName, transfer, media ? kindOf(fileName) : 0);
+					if (current != FileSender.this || !sending) return;
 					status = ResourceBundle.getString("video_waiting_bridge");
 					waitForBridge();
 				}
-				catch (Exception e)
+				catch (Throwable e)
 				{
 					sending = false;
+					if (transfer != null) transfer.cancel();
 					status = ResourceBundle.getString("file_failed") + " " + shortName(e);
 				}
 				finally
 				{
 					try { if (in != null) in.close(); } catch (Exception ignore) {}
-					try { browser.close(); } catch (Exception ignore) {}
+					try { if (source != null) source.close(); } catch (Exception ignore) {}
 				}
 				repaint();
 			}
@@ -136,23 +144,27 @@ public class FileSender extends Canvas implements CommandListener, JimmScreen
 
 	private void waitForBridge()
 	{
-		new Thread() {
-			public void run()
-			{
-				try { Thread.sleep(ANSWER_WAIT); } catch (Exception ignore) {}
+		if (current != this || !sending) return;
+		if (answerTask != null) answerTask.cancel();
+		answerTask = new java.util.TimerTask() { public void run() {
+			try {
 				if (current != FileSender.this || !sending) return;
 				sending = false;
+				if (transfer != null) transfer.cancel();
 				status = ResourceBundle.getString("file_not_sent");
 				repaint();
-			}
-		}.start();
+			} catch (Throwable ignore) {}
+		} };
+		Jimm.getTimerRef().schedule(answerTask, ANSWER_WAIT);
 	}
 
 	// Мост ответил 10/03.
-	static public void fileSent(String uin, boolean ok)
+	static public void fileSent(String uin, boolean ok, long request)
 	{
 		FileSender sender = current;
-		if (sender == null || !sender.uin.equals(uin)) return;
+		if (sender == null || !sender.sending || sender.transfer == null || !sender.transfer.matches(uin, request)) return;
+		if (sender.answerTask != null) sender.answerTask.cancel();
+		sender.transfer.cancel();
 		sender.sending = false;
 		if (ok)
 		{
@@ -173,7 +185,7 @@ public class FileSender extends Canvas implements CommandListener, JimmScreen
 		return 0;
 	}
 
-	private static String shortName(Exception e)
+	private static String shortName(Throwable e)
 	{
 		if (e == null) return "?";
 		String name = e.getClass().getName();
@@ -201,12 +213,14 @@ public class FileSender extends Canvas implements CommandListener, JimmScreen
 
 	private void close()
 	{
-		if (current == this) current = null;
+		boolean owned = current == this;
+		if (owned) current = null;
+		if (transfer != null) transfer.cancel();
+		if (answerTask != null) answerTask.cancel();
 		sending = false;
 		try { if (browser != null) browser.close(); } catch (Exception ignore) {}
 		browser = null;
-		if (back != null) back.activate();
-		else JimmUI.backToLastScreen();
+		if (owned) MainThread.activateScreenMT(back);
 	}
 
 	public void activate()

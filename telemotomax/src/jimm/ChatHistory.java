@@ -808,7 +808,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		checkQuoteMenu();
 		textList.activate(Jimm.display);
 		ChatHistory.updateCaption_Internal(this);
-		contact.resetUnreadMessages();
+		if (messageCount() != 0) contact.resetUnreadMessages();
 		contact.setStatusImage();
 		JimmUI.setLastScreen(this, false);
 		JimmUI.removeScreen(contact); 
@@ -1138,14 +1138,20 @@ public class ChatHistory
 
 	static private void closeOldestIdleChat()
 	{
+		// Prefer read chats; unread flags belong to ContactItem and survive
+		// cache eviction. Their contents can be requested from the bridge.
+		for (int pass = 0; pass < 2; pass++)
 		for (int i = 0; i < historyUins.size(); i++)
 		{
 			String uin = (String) historyUins.elementAt(i);
 			ChatTextList chat = (ChatTextList) historyTable.get(uin);
 			ContactItem item = ContactList.getItembyUIN(uin);
-			if (chat == null || item == null) continue;
-			if (chat.isVisible() || item.isContainingUnreadMessages()) continue;
-			chatHistoryDelete(uin);
+			if (chat == null || chat.isVisible()) continue;
+			if (pass == 0 && item != null && item.isContainingUnreadMessages()) continue;
+			historyTable.remove(uin);
+			historyUins.removeElementAt(i);
+			if (item != null) item.setBooleanValue(ContactItem.CONTACTITEM_HAS_CHAT, false);
+			chat.preloadRequest = 0;
 			return;
 		}
 	}
@@ -1196,6 +1202,7 @@ public class ChatHistory
 		chat.addTextToForm(chat.contact.getStringValue(ContactItem.CONTACTITEM_NAME),
 				text, "", Util.createCurrentDate(false), incoming, true, -1, attach, kind, thread, ref);
 		chat.checkTextForPhoto();
+		if (chat.isVisible() && chat.messageCount() != 0) chat.contact.resetUnreadMessages();
 	}
 
 	// Creates a new chat form

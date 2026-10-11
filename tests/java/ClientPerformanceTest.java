@@ -79,6 +79,7 @@ public class ClientPerformanceTest {
  }
  static void tasks()throws Exception {
   Constructor ctor=MainThread.class.getDeclaredConstructor();ctor.setAccessible(true);ctor.newInstance();
+  if(!baseline){boundedTasks();return;}
   Previous back=new Previous();Vector stack=(Vector)f(JimmUI.class,"lastScreens").get(null);stack.removeAllElements();stack.addElement(back);
   final int showTime=f(MainThread.class,"TYPE_SHOW_TIME").getInt(null);
   for(int i=0;i<100;i++){MainThread.addMainThreadTask(showTime,"event "+i);MainThread.backToLastScreenMT();}
@@ -94,20 +95,40 @@ public class ClientPerformanceTest {
   check("during callback".equals(f(VirtualList.class,"bottomText").get(null)),"UI event queued during a callback lost its wakeup");
   System.out.println("PASS: actual MainThread preserves event order and starts the next batch, including events queued during a callback");
  }
+ static void boundedTasks()throws Exception {
+  final Vector handled=new Vector();
+  final int run=f(MainThread.class,"TYPE_RUN").getInt(null);
+  for(int i=0;i<1000;i++)MainThread.showTime();
+  check(Display.queued.size()==1&&((Vector)f(MainThread.class,"mainThreadTasks").get(null)).size()==2,"clock ticks did not coalesce");
+  Display.flush();
+  Thread producer=new Thread(){public void run(){for(int i=0;i<200;i++){
+   final int n=i;MainThread.addMainThreadTask(run,new Runnable(){public void run(){handled.addElement(Integer.valueOf(n));}});
+  }}};
+  producer.start();long limit=System.currentTimeMillis()+4000;
+  while((producer.isAlive()||!Display.queued.isEmpty())&&System.currentTimeMillis()<limit){Display.flush();Thread.sleep(1);}
+  producer.join(100);check(!producer.isAlive()&&handled.size()==200,"bounded queue lost/stalled a producer");
+  for(int i=0;i<200;i++)check(((Integer)handled.elementAt(i)).intValue()==i,"UI task order changed");
+  check(((Vector)f(MainThread.class,"mainThreadTasks").get(null)).capacity()<=128,"UI queue retained burst capacity");
+  MainThread.addMainThreadTask(run,new Runnable(){public void run(){MainThread.addMainThreadTask(run,new Runnable(){public void run(){handled.addElement("during callback");}});}});
+  Display.flush();check("during callback".equals(handled.lastElement()),"nested UI event lost its wake");
+  MainThread.addMainThreadTask(run,new Runnable(){public void run(){handled.addElement("next batch");}});
+  Display.flush();check("next batch".equals(handled.lastElement()),"next UI batch lost its wake");
+  System.out.println("PASS: coalesced clocks, bounded UI queue, 200 ordered events and next/nested callback delivery");
+ }
  static void timers()throws Exception {
   int count=0;
   if(f(TextList.class,"aniTimer").get(null)!=null)count++;
-  if(f(ContactList.class,"iconTimer").get(null)!=null)count++;
+  if(f(ContactList.class,baseline?"iconTimer":"iconDropTask").get(null)!=null)count++;
   if(f(ContactList.class,"soundTimer").get(null)!=null)count++;
   System.out.println("METRIC unused watchdog/animation timers="+count);
   if(!baseline){
    check(f(TextList.class,"aniTimer").get(null)==null,"static pictures started an animation timer");
-   check(f(ContactList.class,"iconTimer").get(null)==null,"unused avatars started a timer");
+   check(f(ContactList.class,"iconDropTask").get(null)==null,"unused avatars started a timer task");
    check(f(ContactList.class,"soundTimer").get(null)==null,"unused sound started a timer");
   }
   if(!baseline)System.out.println("PASS: animation/avatar/sound watchdog timers are lazy");
  }
- static void cancel(Class type,String name)throws Exception{Timer timer=(Timer)f(type,name).get(null);if(timer!=null)timer.cancel();}
+ static void cancel(Class type,String name)throws Exception{try{Object timer=f(type,name).get(null);if(timer instanceof Timer)((Timer)timer).cancel();}catch(NoSuchFieldException removed){}}
  static Vector oldWrap(String text,int width,Font font){
   Vector out=new Vector();int start=0;
   while(start<text.length()){

@@ -52,7 +52,7 @@ public final class ClientUiTest {
             SplashCanvas.addTimerTask(ResourceBundle.key("connecting"),task,state!=2);
             if(state==3)SplashCanvas.resetLastTask();
             press.invoke(screen,-22);
-            check(task.cancelled==0,"inactive/noncancellable task cancelled");
+            check(task.cancelled==(state==1?1:0),"inactive task guard or error-state Cancel failed");
         }
         Task search=new Task();
         SplashCanvas.addTimerTask("wait",search,true);
@@ -64,7 +64,11 @@ public final class ClientUiTest {
         Task locked=new Task();SplashCanvas.addTimerTask(ResourceBundle.key("connecting"),locked,true);SplashCanvas.lock();
         press.invoke(screen,-22);check(locked.cancelled==0 && SplashCanvas.locked(),"lock key cancelled login");
         SplashCanvas.unlock(false);SplashCanvas.resetLastTask();
-        System.out.println("PASS: full-screen login, hidden right-key cancel once, completed/error/quiet/locked guards; search cancel");
+        Task initial=new Task();SplashCanvas.addTimerTask(ResourceBundle.key("connecting"),initial,true);
+        ((TimerTasks)field(SplashCanvas.class,"lastTimerTask").get(null)).cancel();
+        Task retry=new Task();SplashCanvas.addTimerTask(retry);press.invoke(screen,-22);
+        check(initial.cancelled==0&&retry.cancelled==1,"visible login retry lost Cancel");
+        System.out.println("PASS: full-screen login, hidden right-key cancel once, error-state/visible retry Cancel, completed/quiet/locked guards and search cancellation");
     }
     static final class Socket extends Connection {
         Vector packets=new Vector();
@@ -286,7 +290,7 @@ public final class ClientUiTest {
         try {preferences();cancelScreen();statusMenu();mediaOptions();bridgeFeatures();incomingMessages(args[0]);}
         finally {
             Jimm.getTimerRef().cancel();
-            Timer iconTimer=(Timer)field(ContactList.class,"iconTimer").get(null);if(iconTimer!=null)iconTimer.cancel();
+            try { Timer iconTimer=(Timer)field(ContactList.class,"iconTimer").get(null);if(iconTimer!=null)iconTimer.cancel(); } catch(NoSuchFieldException removed){}
             Timer soundTimer=(Timer)field(ContactList.class,"soundTimer").get(null);if(soundTimer!=null)soundTimer.cancel();
         }
     }

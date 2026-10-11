@@ -835,6 +835,17 @@ public class Options
 		return value >= 0 && value <= 999 ? (int) value : 2;
 	}
 
+	public static long keepAliveMillis()
+	{
+		try
+		{
+			int value = Integer.parseInt(getString(OPTION_CONN_ALIVE_INVTERV));
+			if (value > 0 && value <= 9999) return value * 1000L;
+		}
+		catch (Exception ignore) {}
+		return 120000L;
+	}
+
 	public static int pingMissLimit()
 	{
 		long value = getLong(OPTION_PING_MISS_LIMIT);
@@ -2764,8 +2775,16 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 	private void readInterfaceOptions()
 	{
+		int lockMinutes = number(autoLockTextField, 0, 999);
+		int captionOffset = number(txtCapOffset, 0, 99);
+//#sijapp cond.if target="MOTOROLA" | target="MIDP2" #
+		int lightSeconds = number(lightTimeout, 0, 999);
+		number(historyCount, 1, 100);
+		number(chatMessages, 1, 100);
+//#sijapp cond.end#
+		if (!Options.validLockPin(lockPinTextField.getString())) throw new IllegalArgumentException(ResourceBundle.getString("pin_format"));
 		Options.setString(Options.OPTION_LOCK_PIN, lockPinTextField.getString());
-		Options.setLong(Options.OPTION_AUTOLOCK_MINUTES, Integer.parseInt(autoLockTextField.getString()));
+		Options.setLong(Options.OPTION_AUTOLOCK_MINUTES, lockMinutes);
 		if (ResourceBundle.langAvailable.length > 1)
 			Options.setString(Options.OPTION_UI_LANGUAGE,
 					ResourceBundle.langAvailable[uiLanguageChoiceGroup.getSelectedIndex()]);
@@ -2844,7 +2863,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 		//#sijapp cond.if target="MOTOROLA" | target="MIDP2" #
 		boolean useBackLight = lightManual.isSelected(0);
-		Options.setInt(Options.OPTION_LIGHT_TIMEOUT, Integer.parseInt(lightTimeout.getString()));
+		Options.setInt(Options.OPTION_LIGHT_TIMEOUT, lightSeconds);
 		Options.setBoolean(Options.OPTION_LIGHT_MANUAL, useBackLight);
 		Jimm.device.setBackLightOnTime(useBackLight, Options.getInt(Options.OPTION_LIGHT_TIMEOUT));
 		
@@ -2853,7 +2872,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		//#sijapp cond.end#
 		//#sijapp cond.end#
 		
-		int capOffset = Integer.parseInt(txtCapOffset.getString());
+		int capOffset = captionOffset;
 		if (capOffset < 0) capOffset = 0;
 		if (capOffset > 50) capOffset = 50;
 		Options.setInt(Options.OPTION_CAPTION_OFFSET, capOffset);
@@ -2892,17 +2911,32 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	}
 //#sijapp cond.end#	
 
+	private static int number(TextField input, int low, int high)
+	{
+		try
+		{
+			int value = Integer.parseInt(input.getString());
+			if (value >= low && value <= high) return value;
+		}
+		catch (NumberFormatException ignore) {}
+		throw new IllegalArgumentException(ResourceBundle.getString("number_format") + " " + low + ".." + high);
+	}
+
 	private void readNetworkOptions()
 	{
+		int port = number(srvPortTextField, 1, 65535);
+		int interval = number(connAliveIntervTextField, 1, 9999);
+		int retries = number(reconnectNumberTextField, 0, 99);
+		if (srvHostTextField.getString().trim().length() == 0) throw new IllegalArgumentException(ResourceBundle.getString("number_format"));
 		Options.setString(Options.OPTION_SRV_HOST, srvHostTextField.getString());
-		Options.setString(Options.OPTION_SRV_PORT, srvPortTextField.getString());
+		Options.setString(Options.OPTION_SRV_PORT, String.valueOf(port));
 //#sijapp cond.if modules_PROXY is "true"#
 		Options.setInt(Options.OPTION_CONN_TYPE, connTypeChoiceGroup.getSelectedIndex() == 1 ? Options.CONN_TYPE_PROXY : Options.CONN_TYPE_SOCKET);
 //#sijapp cond.end#
 		Options.setBoolean(Options.OPTION_KEEP_CONN_ALIVE,
 				keepConnAliveChoiceGroup.isSelected(0));
 		Options.setString(Options.OPTION_CONN_ALIVE_INVTERV,
-				connAliveIntervTextField.getString());
+				String.valueOf(interval));
 		Options.setLong(Options.OPTION_PING_MISS_LIMIT, pingMissLimitChoice.getSelectedIndex() + 1);
 		Options.setBoolean(Options.OPTION_AUTO_CONNECT,
 				autoConnectChoiceGroup.isSelected(0));
@@ -2918,8 +2952,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		Options.setBoolean(Options.OPTION_SHADOW_CON,
 				connPropChoiceGroup.isSelected(3));
 		//#sijapp cond.end#
-		Options.setInt(Options.OPTION_RECONNECT_NUMBER, Integer
-				.parseInt(reconnectNumberTextField.getString()));
+		Options.setInt(Options.OPTION_RECONNECT_NUMBER, retries);
 		Options.setBoolean(Options.OPTION_ENCRYPTION, encryptionChoiceGroup.isSelected(0));
 		Options.setString(Options.OPTION_ENCRYPTION_PSK, encryptionPskTextField.getString().trim());
 		
@@ -3123,7 +3156,15 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				Jimm.display.setCurrent(alert, optionsForm);
 				return;
 			}
-			boolean skipNextScreen = readDataFromForm();
+			boolean skipNextScreen;
+			try { skipNextScreen = readDataFromForm(); }
+			catch (IllegalArgumentException invalid)
+			{
+				Alert alert = new Alert(ResourceBundle.getString("error"), invalid.getMessage(), null, AlertType.WARNING);
+				alert.setTimeout(Alert.FOREVER);
+				Jimm.display.setCurrent(alert, optionsForm);
+				return;
+			}
 
 			/* Save options */
 			Options.safeSave();
@@ -3168,9 +3209,98 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 	private void clearForm()
 	{
+		txtUIN = null;
+		uinTextField = null;
+		passwordTextField = null;
+		srvHostTextField = null;
+		srvPortTextField = null;
+		encryptionChoiceGroup = null;
+		encryptionPskTextField = null;
+		keepConnAliveChoiceGroup = null;
+		connAliveIntervTextField = null;
 		pingMissLimitChoice = null;
+		connPropChoiceGroup = null;
+//#sijapp cond.if modules_PROXY is "true"#
+		connTypeChoiceGroup = null;
+//#sijapp cond.end#
+		autoConnectChoiceGroup = null;
+		reconnectNumberTextField = null;
+		uiLanguageChoiceGroup = null;
 		lockPinTextField = null;
 		autoLockTextField = null;
+		videoRotateChoice = null;
+		photoRotateChoice = null;
+		mediaPhotoSize = null;
+		mediaPhotoQuality = null;
+		mediaPhotoKb = null;
+		mediaVideoKb = null;
+		mediaVideoSize = null;
+		mediaVideoKbps = null;
+		mediaVideoSeconds = null;
+		mediaVoiceKbps = null;
+		mediaVoiceSeconds = null;
+		mediaMemKb = null;
+		choiceInterfaceMisc = null;
+		clSortByChoiceGroup = null;
+		chrgChat = null;
+		chrgMessFormat = null;
+		unlockedVibrationDuration = null;
+		lockedVibrationDuration = null;
+		chsBringUp = null;
+		chsFSMode = null;
+		choiceCurAccount = null;
+		netEnabled = null;
+		netRosterLimit = null;
+		chsTimeZone = null;
+		chsCurrTime = null;
+		chsDayLight = null;
+//#sijapp cond.if modules_CAMERA="true"#
+		camRes = null;
+		camEnc = null;
+//#sijapp cond.end#
+//#sijapp cond.if target isnot "DEFAULT"#
+		messageNotificationSoundChoice = null;
+		messageNotificationSoundVolume = null;
+		unlockedNotificationSoundChoice = null;
+		typingNotificationSoundChoice = null;
+		unlockedNotificationSoundVolume = null;
+		typingNotificationSoundVolume = null;
+		backImgGroup = null;
+		backImgModeGroup = null;
+//#sijapp cond.end#
+//#sijapp cond.if target="MIDP2" | target="SIEMENS2"#
+		imagesScale = null;
+//#sijapp cond.end#
+//#sijapp cond.if modules_TRAFFIC is "true" #
+		costPerPacketTextField = null;
+		costPerDayTextField = null;
+		costPacketLengthTextField = null;
+		currencyTextField = null;
+//#sijapp cond.end#
+		choiceContactList = null;
+//#sijapp cond.if target="MOTOROLA" | target="MIDP2" #
+		lightTimeout = null;
+		historyCount = null;
+		chatMessages = null;
+//#sijapp cond.if modules_CAMERA="true"#
+		cameraSizes = null;
+//#sijapp cond.end#
+		lightManual = null;
+//#sijapp cond.end#
+		txtCapOffset = null;
+//#sijapp cond.if modules_PROXY is "true"#
+		srvProxyType = null;
+		srvProxyHostTextField = null;
+		srvProxyPortTextField = null;
+		srvProxyLoginTextField = null;
+		srvProxyPassTextField = null;
+		connAutoRetryTextField = null;
+//#sijapp cond.end#
+//#sijapp cond.if modules_ANTISPAM="true"#
+		chsUseAntispam = null;
+		txtfAntispamQ = null;
+		txtfAntispamA = null;
+//#sijapp cond.end#
 		optionsForm.removeCommand(cmdAddNewAccount);
 		optionsForm.removeCommand(cmdDeleteAccount);
 		//#sijapp cond.if target!="DEFAULT"#

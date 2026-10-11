@@ -621,10 +621,7 @@ public class ContactItem implements ContactListItem, JimmScreen
 
 		ContactListGroupItem gItem = ContactList.getGroupById(this.getIntValue(ContactItem.CONTACTITEM_GROUP));
 		if (gItem != null) {
-			ContactItem[] cItems = ContactList.getItems(gItem);
-			int unreadCounter = 0;
-			for (int i = 0; i < cItems.length; i++) unreadCounter += (cItems[i].isContainingUnreadMessages() ? 1 : 0);
-			gItem.setMessCount(unreadCounter);
+			gItem.setMessCount(ContactList.unreadCount(gItem));
 		}
 	}
 

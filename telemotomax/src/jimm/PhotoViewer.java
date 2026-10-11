@@ -37,8 +37,68 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen,
 	private static volatile PhotoViewer current;
 	private static final Object decodeLock = new Object();
 
+	private static Avatar pendingAvatar;
+	private static boolean avatarBusy;
+
+	private static final class Avatar
+	{
+		final String uin;
+		final byte[] hash, data;
+		final int offset, length, session;
+		Avatar(String uin, byte[] hash, byte[] data, int offset, int length)
+		{
+			this.uin = uin; this.hash = hash; this.data = data;
+			this.offset = offset; this.length = length; session = Icq.getSessionId();
+		}
+	}
+
+	public static void decodeAvatar(String uin, byte[] hash, byte[] data, int offset, int length)
+	{
+		try
+		{
+			synchronized (PhotoViewer.class) { pendingAvatar = new Avatar(uin, hash, data, offset, length); }
+			startAvatar();
+		}
+		catch (OutOfMemoryError failure) { System.gc(); }
+	}
+
+	private static void startAvatar()
+	{
+		final Avatar job;
+		synchronized (PhotoViewer.class)
+		{
+			if (avatarBusy || pendingAvatar == null) return;
+			job = pendingAvatar; pendingAvatar = null; avatarBusy = true;
+		}
+		try { new Thread() { public void run() {
+			boolean queued = false;
+			try
+			{
+				synchronized (decodeLock)
+				{
+					if (current != null || job.session != Icq.getSessionId()) return;
+					ContactList.releaseAvatars(); System.gc();
+					Image decoded = Image.createImage(job.data, job.offset, job.length);
+					if (current != null || job.session != Icq.getSessionId()) return;
+					MainThread.updateBuddyIcon(job.uin, decoded, job.hash);
+					queued = true;
+				}
+			}
+			catch (Throwable failure) { System.gc(); }
+			finally { if (!queued) avatarCommitted(); }
+		} }.start(); }
+		catch (Throwable failure) { synchronized (PhotoViewer.class) { avatarBusy = false; pendingAvatar = null; } }
+	}
+
+	public static void avatarCommitted()
+	{
+		synchronized (PhotoViewer.class) { avatarBusy = false; }
+		startAvatar();
+	}
+
 	private final JimmScreen back;
 	private volatile Image image;
+	private RequestBartAction request;
 	private volatile String status;
 
 	private PhotoViewer(JimmScreen back)
@@ -54,12 +114,13 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen,
 	{
 		PhotoViewer viewer = new PhotoViewer(back);
 		viewer.status = ResourceBundle.getString("photo_loading");
-		if (current != null) current.image = null;
+		if (current != null) { current.image = null; discardPhoto(current); Icq.cancelAction(current.request); }
 		current = viewer;
 		Jimm.display.setCurrent(viewer);
 		try
 		{
-			Icq.requestAction(new RequestBartAction(uin, RequestBartAction.BART_PHOTO, token, viewer));
+			viewer.request = new RequestBartAction(uin, RequestBartAction.BART_PHOTO, token, viewer);
+			Icq.requestAction(viewer.request);
 		}
 		catch (JimmException e)
 		{
@@ -82,61 +143,110 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen,
 			return;
 		}
 		image = null;
-		// Decoding a big picture takes a while; onBart runs on the comm thread,
-		// so decode on a thread of its own or the connection would stall.
-		final byte[] raw = data;
-		new Thread() {
-			public void run()
+		try
+		{
+			synchronized (PhotoViewer.class)
 			{
-				// A closed viewer may still be inside the native decoder. Do not
-				// allocate a second bitmap until that worker has left it.
-				synchronized (decodeLock)
+				if (current != this) return;
+				pendingPhoto = new Photo(this, data, offset, length);
+			}
+			startPhoto();
+		}
+		catch (Throwable failure) { System.gc(); onBartError(ResourceBundle.getString("photo_memory")); }
+	}
+
+	private static final class Photo
+	{
+		final PhotoViewer viewer;
+		final byte[] data;
+		final int offset, length;
+		Photo(PhotoViewer viewer, byte[] data, int offset, int length)
+		{
+			this.viewer = viewer; this.data = data; this.offset = offset; this.length = length;
+		}
+	}
+	private static Photo pendingPhoto;
+	private static boolean photoBusy;
+
+	private static void discardPhoto(PhotoViewer viewer)
+	{
+		synchronized (PhotoViewer.class)
+		{
+			if (pendingPhoto != null && pendingPhoto.viewer == viewer) pendingPhoto = null;
+		}
+	}
+
+	private static void startPhoto()
+	{
+		final Photo job;
+		synchronized (PhotoViewer.class)
+		{
+			if (photoBusy || pendingPhoto == null) return;
+			job = pendingPhoto; pendingPhoto = null; photoBusy = true;
+		}
+		try { new Thread() { public void run() {
+			try { job.viewer.decode(job.data, job.offset, job.length); }
+			catch (Throwable failure) { System.gc(); job.viewer.onBartError(ResourceBundle.getString("photo_memory")); }
+			finally
+			{
+				synchronized (PhotoViewer.class) { photoBusy = false; }
+				startPhoto();
+			}
+		} }.start(); }
+		catch (Throwable failure)
+		{
+			synchronized (PhotoViewer.class) { photoBusy = false; pendingPhoto = null; }
+			System.gc(); job.viewer.onBartError(ResourceBundle.getString("photo_memory"));
+		}
+	}
+
+	private void decode(byte[] raw, int offset, int length)
+	{
+		synchronized (decodeLock)
+		{
+			if (current != PhotoViewer.this) return;
+			long before = Runtime.getRuntime().freeMemory() / 1024;
+			//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
+			ContactList.releaseAvatars();
+			//#sijapp cond.end#
+			System.gc();
+			int size = jpegSize(raw, offset, length), width = size >>> 16, height = size & 0xFFFF;
+			ConnLog.note("фото: получено " + length + " байт"
+					+ (size == 0 ? "" : "; JPEG " + width + "x" + height)
+					+ "; свободно " + before + " -> "
+					+ (Runtime.getRuntime().freeMemory() / 1024) + " КБ");
+			Image img = null;
+			String failure = null;
+			for (int attempt = 0; attempt < 2; attempt++)
+			{
+				if (current != PhotoViewer.this) return;
+				try
 				{
-					if (current != PhotoViewer.this) return;
-					long before = Runtime.getRuntime().freeMemory() / 1024;
-					//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-					ContactList.releaseAvatars();
-					//#sijapp cond.end#
+					img = Image.createImage(raw, offset, length);
+					break;
+				}
+				catch (OutOfMemoryError e)
+				{
 					System.gc();
-					int size = jpegSize(raw, offset, length), width = size >>> 16, height = size & 0xFFFF;
-					ConnLog.note("фото: получено " + length + " байт"
-							+ (size == 0 ? "" : "; JPEG " + width + "x" + height)
-							+ "; свободно " + before + " -> "
-							+ (Runtime.getRuntime().freeMemory() / 1024) + " КБ");
-					Image img = null;
-					String failure = null;
-					for (int attempt = 0; attempt < 2; attempt++)
-					{
-						if (current != PhotoViewer.this) return;
-						try
-						{
-							img = Image.createImage(raw, offset, length);
-							break;
-						}
-						catch (OutOfMemoryError e)
-						{
-							System.gc();
-							ConnLog.note("фото: память JPEG, попытка " + (attempt + 1)
-									+ "; свободно " + (Runtime.getRuntime().freeMemory() / 1024)
-									+ " КБ" + (e.getMessage() == null ? "" : "; " + e.getMessage()));
-							if (attempt == 1) failure = ResourceBundle.getString("photo_memory");
-						}
-						catch (Throwable e)
-						{
-							failure = ResourceBundle.getString("photo_format");
-							ConnLog.note("фото: JPEG не открыт — " + e.getClass().getName());
-							break;
-						}
-					}
-					if (img == null && failure == null) failure = ResourceBundle.getString("photo_format");
-					if (current != PhotoViewer.this) return;
-					image = img;
-					status = failure;
-					if (img != null) ConnLog.note("фото: JPEG открыт");
-					repaint();
+					ConnLog.note("фото: память JPEG, попытка " + (attempt + 1)
+							+ "; свободно " + (Runtime.getRuntime().freeMemory() / 1024)
+							+ " КБ" + (e.getMessage() == null ? "" : "; " + e.getMessage()));
+					if (attempt == 1) failure = ResourceBundle.getString("photo_memory");
+				}
+				catch (Throwable e)
+				{
+					failure = ResourceBundle.getString("photo_format");
+					ConnLog.note("фото: JPEG не открыт — " + e.getClass().getName());
+					break;
 				}
 			}
-		}.start();
+			if (img == null && failure == null) failure = ResourceBundle.getString("photo_format");
+			if (current != PhotoViewer.this) return;
+			image = img;
+			status = failure;
+			if (img != null) ConnLog.note("фото: JPEG открыт");
+			repaint();
+		}
 	}
 
 	// Read the SOF dimensions without allocating or decoding a bitmap.
@@ -257,10 +367,12 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen,
 
 	private void close()
 	{
-		if (current == this) current = null;
+		boolean owned = current == this;
+		if (owned) current = null;
 		image = null;                     // free the picture first
-		if (back != null) back.activate();
-		else JimmUI.backToLastScreen();
+		discardPhoto(this);
+		Icq.cancelAction(request);
+		if (owned) MainThread.activateScreenMT(back);
 	}
 
 	public void activate()

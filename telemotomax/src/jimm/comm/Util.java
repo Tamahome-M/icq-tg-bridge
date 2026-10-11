@@ -1914,23 +1914,27 @@ public class Util
 	
 	static public Player createPlayer(String source)
 	{
+		InputStream is = null;
 		try
 		{
 			Class cls = new Object().getClass();
-			InputStream is = cls.getResourceAsStream(source);
+			is = cls.getResourceAsStream(source);
 			if (is == null) is = cls.getResourceAsStream("/" + source);
 			if (is == null) return null;
 			return Manager.createPlayer(is, Util.getMediaType(source));
 		}
-		catch (Exception e) {}
-		return null;
+		catch (Throwable failure)
+		{
+			try { if (is != null) is.close(); } catch (Throwable ignore) {}
+			return null;
+		}
 	}
-	
+
 	public static boolean testSoundFile(String source)
 	{
 		Player player = createPlayer(source);
 		boolean ok = (player != null);
-		if (player != null) player.close();
+		try { if (player != null) player.close(); } catch (Throwable ignore) {}
 		return ok;
 	}
 	

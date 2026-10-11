@@ -55,7 +55,10 @@ public class ContactListGroupItem implements ContactListItem
 
 	public void setParent(ContactListGroupItem parent)
 	{
+		if (this.parent == parent) return;
+		if (this.parent != null) this.parent.changeMessCount(-messCount);
 		this.parent = parent;
+		if (parent != null) parent.changeMessCount(messCount);
 	}
 
 	// Constructor for an existing group item
@@ -78,13 +81,25 @@ public class ContactListGroupItem implements ContactListItem
 
 	public void changeMessCount(int inc)
 	{
+		int before = messCount;
 		messCount += inc;
 		if (messCount < 0) messCount = 0;
+		if (parent != null) parent.changeMessCount(messCount - before);
 	}
 	
 	public void setMessCount(int value)
 	{
-		messCount = value;
+		changeMessCount(value - messCount);
+	}
+
+	public boolean containsGroup(ContactListGroupItem child)
+	{
+		while (child != null)
+		{
+			if (child == this) return true;
+			child = child.parent;
+		}
+		return false;
 	}
 
 	// Constructor for a new group item

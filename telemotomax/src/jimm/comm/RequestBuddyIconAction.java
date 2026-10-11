@@ -67,7 +67,7 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
     private byte[] clicookie;
 
     // Action state
-    private int state;
+    private volatile int state;
 
     // Last activity
     private Date lastActivity = new Date();
@@ -136,13 +136,14 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 		SnacPacket request = new SnacPacket(0x0010, 0x0006, requestId, new byte[0], buf);
 		try
 		{
+			if (this.state == STATE_CLI_COOKIE_SENT) Icq.markBartReady();
 			Icq.bartC.sendPacket(request);
 			Icq.noteBartUse();
 		}
 		catch (JimmException je)
 		{
 			this.state = RequestBuddyIconAction.STATE_ERROR;
-			Icq.disconnectBart(true);
+			Icq.retireBartIfIdle(this);
 			throw (new JimmException (je.getErrCode(), 53, true));
 		}
 		// Set STATE_CLI_REQBUDDYICON_SENT
@@ -194,7 +195,7 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 						}
 					}
 					// Check parameters
-					if (this.clicookie.length == 0)
+					if (this.clicookie == null || this.clicookie.length == 0)
 					{
 						this.state = RequestBuddyIconAction.STATE_ERROR;
 						throw (new JimmException(117, 0, false));
@@ -274,20 +275,7 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 					    int imgLength = Util.getWord(buf, marker);
 					    marker += 2;
 					    if (imgLength > buf.length - marker) { this.active = false; return false; }
-					    Image av = null;
-					    // Release the previous bitmap and decode the packet range.
-					    ContactList.releaseAvatars();
-					    System.gc();
-					    try {
-							av = Image.createImage(buf, marker, imgLength);
-					    } catch (OutOfMemoryError e) {
-					        System.gc();
-					        ConnLog.note("аватарка: не хватило памяти");
-					    } catch (Exception ignore) {/* Do nothing */}
-					    if (av != null) {
-							MainThread.updateBuddyIcon (uin, av, biHash);
-							av = null;
-					    }
+					    jimm.PhotoViewer.decodeAvatar(uin, biHash, buf, marker, imgLength);
 					    buf = null;
 	
 					    // Move to next state
@@ -345,31 +333,32 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 
     public void onBartConnected()
     {
-        if (this.state != RequestBuddyIconAction.STATE_CONNECTING)
-        {
-            Icq.disconnectBart(true);       // given up meanwhile
-            return;
-        }
+        if (this.state != STATE_CONNECTING) return;
         this.lastActivity = new Date();
-        this.state = RequestBuddyIconAction.STATE_CONNECTION_ESTB;
+        this.state = STATE_CONNECTION_ESTB;
     }
 
-    public void onBartConnectFailed(JimmException e)
+    public void onBartConnectFailed(JimmException error)
     {
-        DebugLog.addText(e.getMessage());
-        this.state = RequestBuddyIconAction.STATE_ERROR;
-        Icq.disconnectBart(true);
-        int ext = (e.getErrCode() == 100) ? 52 : 51;
-        JimmException.handleException(new JimmException(e.getErrCode(), ext, true));
+        if (this.state != STATE_CONNECTING) return;
+        this.state = STATE_ERROR;
     }
 
-    // Returns true if an error has occured
+    public boolean isBartPending() { return state != STATE_ERROR && state != STATE_ACTION_DONE; }
+
+    public long getDeadline() { return lastActivity.getTime() + TIMEOUT; }
+
     public boolean isError()
     {
+        if ((state == STATE_INIT_DONE || state == STATE_CONNECTING || state == STATE_CONNECTION_ESTB || state == STATE_CLI_COOKIE_SENT) && Icq.bartUsable())
+        {
+            try { sendBuddyIconRequest(); } catch (JimmException failure) { state = STATE_ERROR; }
+        }
+
     	if ((this.state != RequestBuddyIconAction.STATE_ERROR) && !this.active && (this.lastActivity.getTime() + this.TIMEOUT < System.currentTimeMillis()))
         {
             this.state = RequestBuddyIconAction.STATE_ERROR;
-            Icq.disconnectBart(true);       // the request is lost; so is the socket
+            Icq.retireBartIfIdle(this);       // the request is lost; so is the socket
         }
         return (this.state == RequestBuddyIconAction.STATE_ERROR);
     }
@@ -390,8 +379,9 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 	    		break;
 	    	case ON_CANCEL:
 	    	case ON_ERROR:
+				state = STATE_ERROR;
 				DebugLog.addText ("RequestBuddyIconAction ON_ERROR");
-				Icq.disconnectBart(true);
+				Icq.retireBartIfIdle(this);
 	    		break;
 		}
     }

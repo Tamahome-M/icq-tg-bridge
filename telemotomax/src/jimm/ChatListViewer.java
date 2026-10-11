@@ -43,9 +43,14 @@ import jimm.util.ResourceBundle;
  * last message, so the conversation shows up in the client.
  */
 public class ChatListViewer implements CommandListener, VirtualListCommands, JimmScreen,
-		RequestBartAction.Listener
+		RequestBartAction.ErrorListener, RequestBartAction.RangeListener
 {
-	private static ChatListViewer current;
+	private static volatile ChatListViewer current;
+	private static final int PAGE_SIZE = 20;
+	private int pageOffset;
+	private RequestBartAction request;
+	private boolean loading, opening, hasMore;
+	private final Command more = new Command(ResourceBundle.getString("more"), Command.SCREEN, 2);
 
 	private final JimmScreen back;
 	private TextList list;
@@ -62,15 +67,7 @@ public class ChatListViewer implements CommandListener, VirtualListCommands, Jim
 		current = viewer;
 		viewer.build();
 		viewer.addLine(ResourceBundle.getString("chats_loading"), null);
-		try
-		{
-			Icq.requestAction(new RequestBartAction(own(), RequestBartAction.BART_CHATS,
-					new byte[16], viewer));
-		}
-		catch (JimmException e)
-		{
-			viewer.onBart(null);
-		}
+		viewer.request();
 	}
 
 	// The list is not about one contact, so the request goes out under our
@@ -103,46 +100,85 @@ public class ChatListViewer implements CommandListener, VirtualListCommands, Jim
 		list.doCRLF(index);
 	}
 
-	// Called from the comm thread; laying out a few hundred lines takes long
-	// enough to hold up messages, so it happens on a thread of its own.
-	public void onBart(final byte[] data)
+	private void request()
 	{
-		if (current != this) return;
-		new Thread() {
-			public void run() { render(data); }
-		}.start();
+		if (loading || current != this) return;
+		byte[] token = new byte[16];
+		token[0] = 'P'; token[1] = '1';
+		Util.putWord(token, 2, pageOffset); token[4] = PAGE_SIZE;
+		Util.putDWord(token, 12, Util.getCounter());
+		loading = true;
+		try { request = new RequestBartAction(own(), RequestBartAction.BART_CHATS, token, this); Icq.requestAction(request); }
+		catch (JimmException error) { onBartError(error.getMessage()); }
 	}
 
-	private void render(byte[] data)
+	public void onBart(byte[] data) { onBart(data, 0, data == null ? 0 : data.length); }
+	public void onBart(byte[] data, int offset, int length) { receive(data, offset, length, null); }
+	public void onBartError(String reason) { receive(null, 0, 0, reason); }
+
+	private void receive(byte[] data, int offset, int length, String reason)
 	{
-		if (current != this) return;
-		list.lock();
-		list.clear();
-		uins.removeAllElements();
-		if (data == null)
+		if (current != this || list == null) return;
+		try { MainThread.runSerially(new Page(data, offset, length, reason)); }
+		catch (OutOfMemoryError error) { loading = false; System.gc(); }
+	}
+
+	private final class Page implements Runnable
+	{
+		private byte[] data;
+		private int marker, end, skip, added;
+		private final String reason;
+		private final TextList target = list;
+		private boolean started;
+		Page(byte[] data, int offset, int length, String reason)
 		{
-			addLine(ResourceBundle.getString("chats_failed"), null);
-		}
-		else
-		{
-			int marker = 0;
-			while (marker + 9 <= data.length)
+			this.data = data; marker = offset; end = offset + length; this.reason = reason;
+			if (data != null && length >= 4 && data[offset] == 'C' && data[offset + 1] == 'P' && data[offset + 2] == '1')
 			{
-				long uin = Util.getDWord(data, marker); marker += 4;
-				int flags = Util.getByte(data, marker); marker += 1;
-				int days = Util.getWord(data, marker); marker += 2;
-				int len = Util.getWord(data, marker); marker += 2;
-				if (marker + len > data.length) break;
-				String name = Util.byteArrayToString(data, marker, len, true);
-				marker += len;
-				addLine(line(flags, days, name), String.valueOf(uin));
+				hasMore = data[offset + 3] != 0;
+				marker += 4;
 			}
-			if (uins.size() == 0) addLine(ResourceBundle.getString("chats_empty"), null);
+			else { skip = pageOffset; hasMore = false; }
 		}
-		data = null;
-		list.unlock();
-		list.setTopItem(0);
-		list.repaint();
+		public void run()
+		{
+			if (current != ChatListViewer.this || list != target) { data = null; return; }
+			target.lock();
+			try
+			{
+				if (!started) { target.clear(); uins.removeAllElements(); started = true; }
+				if (data == null) addLine(reason == null ? ResourceBundle.getString("chats_failed") : reason, null);
+				else
+				{
+					int batch = 0;
+					while (marker + 9 <= end)
+					{
+						long uin = Util.getDWord(data, marker); marker += 4;
+						int flags = Util.getByte(data, marker++);
+						int days = Util.getWord(data, marker); marker += 2;
+						int len = Util.getWord(data, marker); marker += 2;
+						if (marker + len > end) throw new IllegalArgumentException();
+						if (skip > 0) { skip--; marker += len; continue; }
+						if (added == PAGE_SIZE) { hasMore = true; marker = end; break; }
+						String name = Util.byteArrayToString(data, marker, len, true); marker += len;
+						addLine(line(flags, days, name), String.valueOf(uin)); added++;
+						if (++batch == 4 && marker + 9 <= end) { MainThread.runSerially(this); return; }
+					}
+					if (added == 0) addLine(ResourceBundle.getString("chats_empty"), null);
+				}
+				loading = false; data = null;
+				target.setCaption(ResourceBundle.getString("all_chats")); target.setTopItem(0);
+				if (hasMore) target.addCommandEx(more, VirtualList.MENU_TYPE_RIGHT);
+				else target.removeCommandEx(more);
+			}
+			catch (Throwable failure)
+			{
+				data = null; loading = false;
+				target.setCaption(ResourceBundle.getString("chats_failed"));
+			}
+			finally { target.unlock(); }
+			target.repaint();
+		}
 	}
 
 	// «[M] Таня, 12 дн.» — сеть ([T]elegram, [M]AX, [E]xpress), название и
@@ -168,32 +204,40 @@ public class ChatListViewer implements CommandListener, VirtualListCommands, Jim
 	private void open()
 	{
 		final String uin = currentUin();
-		if (uin == null) return;
+		if (uin == null || loading || opening) return;
+		opening = true;
 		byte[] token = new byte[16];
 		try { Util.putDWord(token, 0, Long.parseLong(uin)); }
 		catch (Exception e) { return; }
 		list.setCaption(ResourceBundle.getString("chats_opening"));
-		RequestBartAction.Listener done = new RequestBartAction.Listener() {
+		RequestBartAction.ErrorListener done = new RequestBartAction.ErrorListener() {
 			public void onBart(byte[] answer)
 			{
 				boolean ok = answer != null && answer.length > 0 && answer[0] == 0;
 				if (current != ChatListViewer.this) return;
+				opening = false;
 				if (ok) close();
-				else
-				{
-					list.setCaption(ResourceBundle.getString("chats_failed"));
-					list.repaint();
-				}
+				else onBartError(null);
+			}
+			public void onBartError(final String reason)
+			{
+				opening = false;
+				MainThread.runSerially(new Runnable() { public void run() {
+					if (current == ChatListViewer.this && list != null)
+					{
+						list.setCaption(reason == null ? ResourceBundle.getString("chats_failed") : reason);
+						list.repaint();
+					}
+				} });
 			}
 		};
 		try
 		{
-			Icq.requestAction(new RequestBartAction(own(), RequestBartAction.BART_OPEN, token, done));
+			request = new RequestBartAction(own(), RequestBartAction.BART_OPEN, token, done); Icq.requestAction(request);
 		}
 		catch (JimmException e)
 		{
-			list.setCaption(ResourceBundle.getString("chats_failed"));
-			list.repaint();
+			done.onBartError(e.getMessage());
 		}
 	}
 
@@ -208,16 +252,23 @@ public class ChatListViewer implements CommandListener, VirtualListCommands, Jim
 
 	public void commandAction(Command c, Displayable d)
 	{
-		close();
+		if (c == more && hasMore && !loading && !opening) { pageOffset += PAGE_SIZE; request(); }
+		else if (c != more) close();
 	}
 
 	private void close()
 	{
+		MainThread.runSerially(new Runnable() { public void run() { closeNow(); } });
+	}
+
+	private void closeNow()
+	{
+		if (current != this) return;
+		Icq.cancelAction(request);
 		if (current == this) current = null;
 		list = null;
 		uins.removeAllElements();
-		if (back != null) back.activate();
-		else JimmUI.backToLastScreen();
+		MainThread.activateScreenMT(back);
 	}
 
 	public void activate()
