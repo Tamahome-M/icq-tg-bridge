@@ -19,7 +19,8 @@ def run(work, classes):
     stubs['jimm/Jimm.java'] = stubs['jimm/Jimm.java'].replace(
         'public Clock(){super(true);}', 'public static int scheduled;public Clock(){super(true);}').replace(
         'public void schedule(java.util.TimerTask task,long delay,long period){}',
-        'public void schedule(java.util.TimerTask task,long delay,long period){scheduled++;}')
+        'public void schedule(java.util.TimerTask task,long delay,long period){scheduled++;}'
+        'public void schedule(java.util.TimerTask task,long delay){scheduled++;}')
     stubs['javax/microedition/lcdui/Display.java'] = stubs['javax/microedition/lcdui/Display.java'].replace(
         'private Displayable current;', 'public static boolean foreground=true;private Displayable current;')
     stubs['javax/microedition/lcdui/Displayable.java'] = stubs['javax/microedition/lcdui/Displayable.java'].replace(

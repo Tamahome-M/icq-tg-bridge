@@ -117,68 +117,26 @@ public class TreeNode
 		return -1;
 	}
 
-	private static int getInsertionPos(Vector vect, TreeNode node,
-			VirtualTreeCommands comparer)
-	{
-		int size = vect.size();
-		int begin, end, middle, begRes, midRes, endRes;
-
-		if (size == 0)
-			return 0;
-
-		begin = 0;
-		end = size - 1;
-		begRes = comparer.vtCompareNodes(node, (TreeNode) vect.elementAt(begin));
-		endRes = comparer.vtCompareNodes(node, (TreeNode) vect.elementAt(end));
-
-		if (begRes < 0)
-			return 0;
-		if (endRes > 0)
-			return size;
-
-		for (;;)
-		{
-			middle = (begin + end) / 2;
-			midRes = comparer.vtCompareNodes(node, (TreeNode) vect
-					.elementAt(middle));
-
-			if (((midRes <= 0) && (endRes >= 0))
-					|| ((midRes >= 0) && (endRes <= 0)))
-			{
-				begin = middle;
-				begRes = midRes;
-			} else
-			{
-				end = middle;
-				endRes = midRes;
-			}
-
-			if ((end - begin) <= 1)
-			{
-				if (begRes < 0)
-					return begin;
-				else
-					return end;
-			}
-		}
-	}
-
 	protected void sort(VirtualTreeCommands comparer)
 	{
-		int i, count;
-		TreeNode currNode;
-		Vector newItems = new Vector();
-
-		if (items == null)
-			return;
-		count = items.size();
-		for (i = 0; i < count; i++)
+		if (items == null) return;
+		int count = items.size();
+		// Most presence updates leave a group sorted or move a few contacts.
+		// Keep its Vector and skip ordered neighbours, including equal names.
+		for (int i = 1; i < count; i++)
 		{
-			currNode = (TreeNode) items.elementAt(i);
-			newItems.insertElementAt(currNode, getInsertionPos(newItems,
-					currNode, comparer));
+			TreeNode node = elementAt(i);
+			if (comparer.vtCompareNodes(elementAt(i - 1), node) <= 0) continue;
+			int low = 0, high = i - 1;
+			while (low < high)
+			{
+				int middle = (low + high) / 2;
+				if (comparer.vtCompareNodes(node, elementAt(middle)) < 0) high = middle;
+				else low = middle + 1;
+			}
+			for (int j = i; j > low; j--) items.setElementAt(elementAt(j - 1), j);
+			items.setElementAt(node, low);
 		}
-		items = newItems;
 	}
 
 }

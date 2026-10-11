@@ -52,7 +52,8 @@ public class SplashCanvas extends Canvas implements CommandListener
 		cancelCommand = new Command(ResourceBundle.getString("cancel"), Jimm.cmdBack, 1);
 
 	//Timer for repaint
-	static private Timer t1, t2;
+	static private TimerTasks t1;
+	static private Timer t2;
 
 	// Image object, holds the splash image
 	private static Image imgSplash;
@@ -144,7 +145,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 		setFullScreenMode(true);
 //#sijapp cond.end#
 		setMessage(message);
-		showKeylock = false;
+		clearKeylockHint();
 	}
 
 	// Constructor, blank message
@@ -162,7 +163,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 	// Sets the informational message
 	static public synchronized void setLastErrCode(String errcode)
 	{
-		SplashCanvas.lastErrCode = (errcode != null) ? new String(errcode) : null;
+		SplashCanvas.lastErrCode = errcode;
 		_this.repaint();
 	}
 
@@ -176,7 +177,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 	// Sets the informational message
 	static public synchronized void setMessage(String message)
 	{
-		SplashCanvas.message = new String(message);
+		SplashCanvas.message = message;
 		SplashCanvas._this.repaint();
 	}
 
@@ -244,7 +245,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 		clearPinInput();
 		poundPressTime = 0;
-		showKeylock = false;
+		clearKeylockHint();
 		isLocked = true;
 		Jimm.setBkltOn(false);
 		setProgress(0);
@@ -279,7 +280,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 	{
 		clearPinInput();
 		poundPressTime = 0;
-		showKeylock = false;
+		clearKeylockHint();
 		isLocked = false;
 		VirtualList.touch();
 		availableMessages = 0;
@@ -289,8 +290,11 @@ public class SplashCanvas extends Canvas implements CommandListener
 		//  #sijapp cond.if target is "MOTOROLA"#
 		//#		if (Options.getBoolean(Options.OPTION_LIGHT_MANUAL)) Jimm.setBkltOn(true);
 		//  #sijapp cond.end#
-		if (Options.getBoolean(Options.OPTION_DISPLAY_DATE) && (t2 != null))
+		if (t2 != null)
+		{
 			t2.cancel();
+			t2 = null;
+		}
 
 		if (_this.isShown()) JimmUI.backToLastScreen();
 	}
@@ -327,8 +331,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 		clearPinInput();
 		pinInput = new char[Options.LOCK_PIN_MAX];
 		poundPressTime = 0;
-		showKeylock = false;
-		if (t1 != null) { t1.cancel(); t1 = null; }
+		clearKeylockHint();
 		repaint();
 	}
 
@@ -365,6 +368,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 	protected void hideNotify()
 	{
 		clearPinInput();
+		clearKeylockHint();
 		imgSplash = null;
 //		resetLastTask();
 	}
@@ -412,12 +416,36 @@ public class SplashCanvas extends Canvas implements CommandListener
 				poundPressTime = System.currentTimeMillis();
 			} else
 			{
-				if (t1 != null)
-					t1.cancel();
-				showKeylock = true;
+				showKeylockHint();
 				this.repaint();
 			}
 		}
+	}
+
+	private static synchronized void clearKeylockHint()
+	{
+		if (t1 != null) t1.cancel();
+		t1 = null;
+		showKeylock = false;
+	}
+
+	private static synchronized void showKeylockHint()
+	{
+		clearKeylockHint();
+		showKeylock = true;
+		t1 = new TimerTasks(TimerTasks.SC_HIDE_KEYLOCK);
+		// Schedule once per key press, never while painting. Use the
+		// application's existing timer instead of a new timer thread.
+		Jimm.getTimerRef().schedule(t1, 2000);
+	}
+
+	static synchronized void hideKeylockHint(TimerTasks task)
+	{
+		// A cancelled callback that was already running must not hide a
+		// hint started by a newer key press.
+		if (t1 != task) return;
+		clearKeylockHint();
+		Repaint();
 	}
 
 	private boolean isCancelKey(int keyCode)
@@ -602,9 +630,6 @@ public class SplashCanvas extends Canvas implements CommandListener
 					.getString("keylock_message"), x + 4, y + 4,
 					size_x - 8, size_y - 8, VirtualList.MEDIUM_FONT, 0, textColor);
 
-			(t1 = new Timer()).schedule(new TimerTasks(
-					TimerTasks.SC_HIDE_KEYLOCK), 2000);
-
 		}
 
 		if (pinLocked())
@@ -701,6 +726,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 	public static void addTimerTask(String captionLngStr, Action action,
 			boolean canCancel)
 	{
+		clearKeylockHint();
 		if (t2 != null)
 		{
 			t2.cancel();
