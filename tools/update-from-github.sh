@@ -74,6 +74,16 @@ NEW=$(find "$WORK/unpacked" -mindepth 1 -maxdepth 1 -type d | head -1)
 [ -n "$NEW" ] || die "в архиве не нашлось каталога с исходниками"
 [ -f "$NEW/run.py" ] || die "в архиве нет run.py — похоже, скачалось не то"
 
+# Новые архивы содержат только исходники клиента. Скачиваем ровно релиз из
+# их VERSION и проверяем все JAR/JAD ДО остановки службы и изменения файлов.
+# Для первого перехода с версий, хранивших JAR в Git, нужна свежая копия
+# этого скрипта (см. DEPLOY.md); затем он обновляет сам себя как раньше.
+if [ -f "$NEW/tools/telemotomax-release.py" ]; then
+    say "Скачиваю и проверяю сборки TeleMotoMax из Releases"
+    "$PYTHON" "$NEW/tools/telemotomax-release.py" download \
+        --source "$NEW" --repo "$REPO" --dest "$NEW/telemotomax/dist"
+fi
+
 # Общие правила для показа и для обновления — один текст, чтобы -n не врал.
 RULES=$(cat <<'PY'
 import pathlib

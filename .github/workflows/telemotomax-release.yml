@@ -1,0 +1,56 @@
+name: TeleMotoMax release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'telemotomax/**'
+      - '!telemotomax/README.md'
+      - 'tools/telemotomax-release.py'
+      - 'tools/update-from-github.sh'
+      - 'tests/test_client_release.py'
+      - '.github/workflows/telemotomax-release.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'telemotomax/**'
+      - '!telemotomax/README.md'
+      - 'tools/telemotomax-release.py'
+      - 'tools/update-from-github.sh'
+      - 'tests/test_client_release.py'
+      - '.github/workflows/telemotomax-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telemotomax-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test release integrity and VPS update
+        run: python3 tests/test_client_release.py
+      - name: Require a new version when the client changes
+        run: python3 tools/telemotomax-release.py check --repo "$GITHUB_REPOSITORY"
+  release:
+    needs: check
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, sign and publish all three variants
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/telemotomax-release.py publish
+          --repo "$GITHUB_REPOSITORY"
+          --work "$RUNNER_TEMP/telemotomax-release"
