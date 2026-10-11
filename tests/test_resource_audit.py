@@ -215,9 +215,21 @@ time.sleep(60)
             ids = json.loads((directory / "ids.json").read_text())
             task.cancel()
             await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 2)
-            for pid in ids:
-                stat = Path(f"/proc/{pid}/stat")
-                assert not stat.exists() or stat.read_text().split()[2] == "Z", "CLI process survived cancellation"
+            # SIGKILL delivery to a grandchild can finish after its parent's
+            # pipes close. Allow scheduling, but bound actual process cleanup.
+            deadline = asyncio.get_running_loop().time() + 1
+            while True:
+                alive = []
+                for pid in ids:
+                    try:
+                        if Path(f"/proc/{pid}/stat").read_text().split()[2] != "Z":
+                            alive.append(pid)
+                    except FileNotFoundError:
+                        pass
+                if not alive:
+                    break
+                assert asyncio.get_running_loop().time() < deadline, f"CLI survived cancellation: {alive}"
+                await asyncio.sleep(.01)
         finally:
             task.cancel(); await asyncio.gather(task, return_exceptions=True)
 

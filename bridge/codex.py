@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import os
-import signal
 import time
 
 from .assistant import Assistant, AssistantError
@@ -113,28 +112,14 @@ class CodexAssistant(Assistant):
         env.setdefault("TERM", "dumb")
         started = time.monotonic()
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv, cwd=self.workdir or None, env=env, start_new_session=True,
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE)
-        except OSError as exc:
-            raise AssistantError(f"не запустился: {exc}") from exc
-        finished = False
-        try:
-            out, err = await asyncio.wait_for(proc.communicate(text.encode()), timeout=self.timeout)
-            finished = True
+            returncode, out, err = await self._communicate(argv, text, env)
         except asyncio.TimeoutError as exc:
             raise AssistantError(f"не ответил за {int(self.timeout)} с") from exc
-        finally:
-            if not finished:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                await proc.wait()
+        except OSError as exc:
+            raise AssistantError(f"не запустился: {exc}") from exc
         stderr = err.decode(errors="replace").strip()
         reply = self._parse(out)
-        if proc.returncode or reply is None:
+        if returncode or reply is None:
             detail = str(reply.get("result") or "") if reply and reply.get("is_error") else stderr
             missing = ("no session found", "no conversation found", "no rollout found", "could not find session")
             if "resume" in argv and any(reason in detail.lower() for reason in missing):
@@ -142,6 +127,6 @@ class CodexAssistant(Assistant):
             if reply and reply.get("is_error"):
                 return reply
             raise AssistantError(detail.splitlines()[-1][:200] if detail
-                                 else f"код выхода {proc.returncode}, нет завершённого ответа")
+                                 else f"код выхода {returncode}, нет завершённого ответа")
         log.info("Codex ответил за %.0f с", time.monotonic() - started)
         return reply

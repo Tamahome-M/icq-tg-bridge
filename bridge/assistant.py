@@ -233,26 +233,11 @@ class Assistant:
         env.setdefault("HOME", pwd.getpwuid(os.getuid()).pw_dir)
         started = time.monotonic()
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv, cwd=self.workdir or None, env=env, start_new_session=True,
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE)
-        except OSError as exc:
-            raise AssistantError(f"не запустился: {exc}") from exc
-        finished = False
-        try:
-            out, err = await asyncio.wait_for(proc.communicate(text.encode()),
-                                              timeout=self.timeout)
-            finished = True
+            returncode, out, err = await self._communicate(argv, text, env)
         except asyncio.TimeoutError as exc:
             raise AssistantError(f"не ответил за {int(self.timeout)} с") from exc
-        finally:
-            if not finished:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                await proc.communicate()
+        except OSError as exc:
+            raise AssistantError(f"не запустился: {exc}") from exc
         took = time.monotonic() - started
         stderr = err.decode(errors="replace").strip()
         reply = self._parse(out)
@@ -260,13 +245,56 @@ class Assistant:
             if "No conversation found" in stderr:
                 return None
             log.warning("claude завершился с кодом %s за %.0f с: %s",
-                        proc.returncode, took, stderr[-300:] or "(тишина)")
+                        returncode, took, stderr[-300:] or "(тишина)")
             raise AssistantError(stderr.splitlines()[-1][:200] if stderr
-                                 else f"код выхода {proc.returncode}")
+                                 else f"код выхода {returncode}")
         log.info("claude ответил за %.0f с (ходов: %s)", took, reply.get("num_turns", "?"))
         if stderr:
             log.debug("claude stderr: %s", stderr[-500:])
         return reply
+
+    async def _communicate(self, argv: list[str], text: str,
+                           env: dict[str, str]) -> tuple[int, bytes, bytes]:
+        # Cancellation during pipe setup can kill only the CLI leader inside
+        # asyncio, before we receive its PID. Finish spawning under shield so
+        # cleanup can always stop the entire process group.
+        spawning = asyncio.create_task(asyncio.create_subprocess_exec(
+            *argv, cwd=self.workdir or None, env=env, start_new_session=True,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE))
+        finished = False
+        try:
+            proc = await asyncio.shield(spawning)
+            out, err = await asyncio.wait_for(proc.communicate(text.encode()),
+                                              timeout=self.timeout)
+            finished = True
+            return proc.returncode, out, err
+        finally:
+            if not finished:
+                cleanup = asyncio.create_task(self._stop_process(spawning))
+                cancelled = False
+                # A repeated cancel during bridge shutdown must not interrupt
+                # cleanup and leave descendants or pipe transports alive.
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                cleanup.result()
+                if cancelled:
+                    raise asyncio.CancelledError
+
+    @staticmethod
+    async def _stop_process(spawning: asyncio.Task) -> None:
+        try:
+            proc = await spawning
+        except Exception:
+            return  # The original spawn failure is raised by _communicate.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await proc.communicate()
 
     @staticmethod
     def _parse(out: bytes) -> dict | None:
