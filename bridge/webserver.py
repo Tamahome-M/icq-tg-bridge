@@ -124,7 +124,7 @@ class PhotoServer:
         # а установщик телефона, и пароля он спросить не умеет.
         self.downloads_dir = downloads_dir
         self.downloads_protected = downloads_protected
-        # Сборки TeleMotoMax из репозитория (telemotomax/dist): раздел
+        # Сборки TeleMotoMax из Releases (локальный telemotomax/dist): раздел
         # «Загрузки» показывает их всегда, даже если [downloads] dir пуст —
         # клиент ставится на телефон именно отсюда, по ссылке на JAD.
         self.client_dir = client_dir if client_dir and os.path.isdir(client_dir) else ""

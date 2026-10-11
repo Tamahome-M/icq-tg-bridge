@@ -75,6 +75,18 @@ chown -R icqbridge:icqbridge /opt/icq-tg-bridge
 chmod 750 /opt/icq-tg-bridge
 ```
 
+Готовые клиенты лежат в GitHub Releases. После распаковки исходников скачайте
+версию для этой установки (проверяется по `telemotomax/VERSION`):
+
+```bash
+cd /opt/icq-tg-bridge
+sudo -u icqbridge python3 tools/telemotomax-release.py download
+```
+
+JAR/JAD появятся в локальном `telemotomax/dist/` и будут доступны телефону
+по прежним ссылкам `/d/TeleMotoMax.jad`, `/d/TeleMotoMax-Light.jad` и
+`/d/TeleMotoMax-V8.jad`.
+
 ## 3. Окружение Python
 
 ```bash
@@ -433,6 +445,17 @@ git pull --ff-only
 машине не нужны — скачивание и распаковка идут через Python, который и так
 стоит вместе с мостом.
 
+**Первый переход на Releases.** Старый обновлятор ожидает JAR внутри архива
+исходников. Один раз скачайте новую версию скрипта и запустите её:
+
+```bash
+curl -fL https://raw.githubusercontent.com/Tamahome-M/icq-tg-bridge/main/tools/update-from-github.sh -o /tmp/icq-update.sh
+sh /tmp/icq-update.sh -n   # проверить переход без изменения установки
+sh /tmp/icq-update.sh      # обновить; свежий скрипт останется в tools/
+```
+
+Затем обновляйтесь установленным скриптом как обычно:
+
 ```bash
 /opt/icq-tg-bridge/tools/update-from-github.sh -n   # показать, что изменится
 /opt/icq-tg-bridge/tools/update-from-github.sh      # обновить
@@ -444,6 +467,13 @@ git pull --ff-only
 владельца и права `600` на настройки с сессией, запускает службу и показывает
 хвост журнала. Если служба не поднялась, он говорит об этом и выходит с
 ошибкой — файлы при этом уже обновлены.
+
+До остановки службы скрипт скачивает архив исходников и соответствующий
+релиз TeleMotoMax, проверяет SHA-256 исходников и каждого файла, версии,
+размеры JAR в JAD и сертификаты V8. При недоступности GitHub, отсутствии
+готового релиза или повреждении файлов установленный мост продолжает
+работать без изменений; повторите обновление после публикации готового
+релиза. `-n` также скачивает и проверяет релиз, но не меняет установку.
 
 Не трогает вовсе, ни перезаписью, ни удалением: `config.toml`, файлы сессий
 (`tg.session`, `max.session`), `bridge.db` вместе с копиями, каталоги

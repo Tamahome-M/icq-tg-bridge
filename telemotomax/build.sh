@@ -164,18 +164,18 @@ open(jad, "w", encoding="utf-8").write("\n".join(lines) + "\n")
 PY
 say "Готово: $WORK/out/TeleMotoMax.jar ($(wc -c < "$WORK/out/TeleMotoMax.jar") байт), TeleMotoMax.jad"
 
-# TMM_DIST=1 — положить сборку в telemotomax/dist (в репозиторий): оттуда её
-# раздаёт веб-сервер моста в разделе «Загрузки», и после обновления моста
-# на VPS свежий клиент ставится на телефон по ссылке http://…/d/. Сборка
+# TMM_DIST=1 — положить сборку в локальный telemotomax/dist (вне Git): оттуда
+# её раздаёт веб-сервер моста в разделе «Загрузки». TMM_DIST_DIR позволяет
+# собрать файлы отдельно для публикации в GitHub Releases. Сборка
 # v8 ложится как TeleMotoMax-V8.jar/.jad, v3 — как TeleMotoMax.jar/.jad,
 # v3light — как TeleMotoMax-Light.jar/.jad (то же имя мидлета: ставится
 # поверх обычной и наоборот, настройки остаются).
 if [ -n "${TMM_DIST:-}" ]; then
-	DIST="$HERE/dist"; mkdir -p "$DIST"
+	DIST="${TMM_DIST_DIR:-$HERE/dist}"; mkdir -p "$DIST"
 	case "${TMM_MODULES:-v3}" in v8) BASE=TeleMotoMax-V8 ;; v3light) BASE=TeleMotoMax-Light ;; *) BASE=TeleMotoMax ;; esac
 	cp "$WORK/out/TeleMotoMax.jar" "$DIST/$BASE.jar"
 	sed "s|^MIDlet-Jar-URL: .*|MIDlet-Jar-URL: $BASE.jar|" "$WORK/out/TeleMotoMax.jad" > "$DIST/$BASE.jad"
-	# Сборка V8 в репозитории — подписанная: на V8 файлы (JSR-75) даёт
+	# Сборка V8 в Releases — подписанная: на V8 файлы (JSR-75) даёт
 	# только доверенное приложение, а телефон доверяет корню из
 	# telemotomax/sign-keys (см. README, «Своя подпись»). V3 остаётся без
 	# подписи — там этот корень не прописан, и подписанный JAD чужим
@@ -197,5 +197,5 @@ if [ -n "${TMM_DIST:-}" ]; then
 		sed "s|^MIDlet-Jar-URL: .*|MIDlet-Jar-URL: $BASE.jar|" "$DIST/$BASE.jad" > "$DIST/$BASE-Signed-NoRoot.jad"
 		TMM_NO_ROOT=1 sh "$HERE/sign.sh" "$DIST/$BASE-Signed-NoRoot.jad" | sed 's/^/   /'
 	fi
-	say "В репозиторий: telemotomax/dist/$BASE.jar"
+	say "В каталог сборок: $DIST/$BASE.jar"
 fi
