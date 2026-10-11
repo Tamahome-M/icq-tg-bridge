@@ -15,9 +15,11 @@
 package jimm;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Enumeration;
 import java.util.Vector;
+import java.util.TimerTask;
 
 import javax.microedition.io.Connector;
 import javax.microedition.lcdui.Canvas;
@@ -46,7 +48,7 @@ import jimm.util.ResourceBundle;
  * both the file and the player are dropped when the screen is closed.
  */
 public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
-		RequestBartAction.PartSink, PlayerListener
+		RequestBartAction.PartSink, PlayerListener, Runnable
 {
 	// Потоковый приём: части клипа складываются в очередь, писатель в своём
 	// потоке дописывает их во временный файл (ввод-вывод не в потоке связи),
@@ -66,11 +68,17 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		{
 			String url = tempFileUrl(temporarySuffix(bartType, buf, off, len));
 			if (url == null) return false;
-			filePath = url;
-			partQueue = new MediaBuffer();
-			writer = new Thread() { public void run() { writeParts(); } };
-			writer.start();
+			final String path = url;
+			synchronized (this)
+			{
+				if (current != this || closed) { deleteFile(path); return false; }
+				filePath = path;
+				partQueue = new MediaBuffer();
+				writer = new Thread() { public void run() { writeParts(path); } };
+				writer.start();
+			}
 		}
+		stopClock();
 		if (!partQueue.put(buf, off, len)) return false;
 		clipSize += len;
 		// Части идут прямо в файл, минуя onBartProgress, — счётчик на
@@ -88,11 +96,21 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		if (partQueue != null) partQueue.finish(ok);
 	}
 
-	private void writeParts()
+	private void writeParts(String path)
+	{
+		try { writePartsToFile(path); }
+		finally
+		{
+			String livePath;
+			synchronized (this) { writer = null; livePath = filePath; }
+			if (current != this || !path.equals(livePath)) deleteFile(path);
+		}
+	}
+
+	private void writePartsToFile(String path)
 	{
 		Throwable err = null;
 		boolean partsOk = false;
-		final String path = filePath;
 		try
 		{
 			TempFiles.api().recreate(path);
@@ -117,7 +135,8 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		if (err != null || !partsOk)
 		{
 			deleteTemp();
-			if (err != null) fail(err, null); else { status = failedText(); repaint(); }
+			if (err instanceof OutOfMemoryError) noMemory();
+			else if (err != null) fail(err, null); else { status = failedText(); repaint(); }
 			return;
 		}
 		status = ResourceBundle.getString("media_opening");
@@ -128,14 +147,22 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			status = null;
 			repaint();
 		}
+		catch (OutOfMemoryError e) { deleteTemp(); noMemory(); }
 		catch (Exception e)
 		{
+			if (current != this) return;
 			// Плеер не взял файл — пробуем из памяти, как при однопакетном
 			// ответе: на V8 из памяти играет не всё, но клип уже у нас.
 			Exception streamErr = null;
-			byte[] clip = readFile(path, memoryLimit());
-			if (clip != null) streamErr = playFromStream(clip);
+			byte[] clip;
+			try
+			{
+				clip = readFile(path, memoryLimit());
+				if (clip != null) streamErr = playFromStream(clip);
+			}
+			catch (OutOfMemoryError oom) { deleteTemp(); noMemory(); return; }
 			deleteTemp();
+			if (current != this) return;
 			if (clip == null || streamErr != null)
 			{
 				fail(e, streamErr);
@@ -201,25 +228,32 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	private final String mime;
 	private String status;
 	private String[] details;          // why it did not play, shown under the status
-	private Player player;
+	private volatile Player player;
 	private String filePath;           // temp file URL, or null if played from memory
 	private int clipSize;
 	private int waited;              // секунд ждём первую часть (мост качает)
-	private boolean settled;         // ответ пришёл (или всё сломалось): отсчёт стоп
+	private volatile boolean settled; // ответ пришёл (или всё сломалось): отсчёт стоп
 	private int firstPart;           // размер первой части: по нему виден весь объём
 	private byte[] token;            // примета вложения: нужна, чтобы просить следующий кусок
 	private String uin;
 	private int segment;             // какой кусок ролика смотрим (0 — первый)
 	private static final Command cmdNext = new Command(ResourceBundle.getString("video_next"), Command.ITEM, 2);
-	private boolean paused;
-	private boolean finished;
-	private boolean ticking;
+	private volatile boolean paused;
+	private volatile boolean finished;
+	private boolean closed;
+	private ClockTask clockTask;
+	private boolean clockQueued;
+	private long waitingSince, lastLight;
+	private String waitingCaption;
+	private static int nextTempId;
+	private final int tempId;
 
 	private MediaPlayer(JimmScreen back, int bartType, String mime)
 	{
 		this.back = back;
 		this.bartType = bartType;
 		this.mime = mime;
+		synchronized (MediaPlayer.class) { tempId = ++nextTempId; }
 		setFullScreenMode(true);
 		addCommand(JimmUI.cmdBack);
 		setCommandListener(this);
@@ -251,15 +285,19 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	static private void open(String uin, byte[] token, JimmScreen back,
 			int bartType, String mime, String waiting, int segment)
 	{
+		MediaPlayer previous = current;
+		if (previous != null) previous.close(false);
 		MediaPlayer viewer = new MediaPlayer(back, bartType, mime);
 		viewer.uin = uin;
 		viewer.token = token;
 		viewer.segment = segment;
 		if (bartType == RequestBartAction.BART_VIDEO) viewer.addCommand(cmdNext);
 		viewer.status = waiting + (segment > 0 ? " (" + (segment + 1) + ")" : "");
+		viewer.waitingCaption = viewer.status;
+		viewer.waitingSince = System.currentTimeMillis();
 		current = viewer;
 		Jimm.display.setCurrent(viewer);
-		viewer.tickWaiting();
+		viewer.startClock();
 		try
 		{
 			byte[] ask = token;
@@ -282,48 +320,81 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	public void onBartProgress(int part, int total)
 	{
 		if (current != this) return;
+		settled = true;
+		stopClock();
 		waited = 0;
 		status = waitingText() + " " + part + "/" + total;
 		repaint();
 	}
 
-	// Подсветка на время просмотра: гасить её телефон начинает по своему
-	// сроку, а нажимать клавиши во время ролика некому. Держим, подновляя
-	// раз в несколько секунд, пока экран наш и плеер жив.
-	private void keepLit()
+	/** One shared timer, no waiting/backlight/elapsed-time helper threads. */
+	private static final class ClockTask extends TimerTask
 	{
-		new Thread() {
-			public void run()
-			{
-				while (current == MediaPlayer.this && player != null)
-				{
-					Jimm.wakeBacklight(true);
-					try { Thread.sleep(4000); } catch (Exception ignore) {}
-				}
-			}
-		}.start();
+		private volatile MediaPlayer owner;
+		ClockTask(MediaPlayer screen) { owner = screen; }
+		public void run() { MediaPlayer screen = owner; if (screen != null) screen.queueClock(this); }
+		void release() { owner = null; cancel(); }
 	}
 
-	// Пока не пришла первая часть, мост качает вложение и перекодирует его
-	// — на медленной сети это минуты. Без отсчёта экран выглядит повисшим,
-	// поэтому показываем, сколько ждём; с первой частью счётчик частей
-	// заменяет отсчёт.
-	private void tickWaiting()
+	private synchronized void startClock()
 	{
-		new Thread() {
-			public void run()
+		if (current != this || closed || clockTask != null) return;
+		try
+		{
+			clockTask = new ClockTask(this);
+			Jimm.getTimerRef().schedule(clockTask, 1000, 1000);
+		}
+		catch (OutOfMemoryError e) { stopClock(); }
+		catch (Exception e) { stopClock(); }
+	}
+
+	private synchronized void stopClock()
+	{
+		if (clockTask != null) clockTask.release();
+		clockTask = null;
+	}
+
+	private synchronized void queueClock(ClockTask task)
+	{
+		if (current != this || closed || clockTask != task || clockQueued || !isShown()) return;
+		long elapsed = System.currentTimeMillis() - lastLight;
+		if (player != null && (bartType != RequestBartAction.BART_VOICE || paused || finished)
+				&& elapsed >= 0 && elapsed < 4000) return;
+		clockQueued = true;
+		try { Jimm.display.callSerially(this); }
+		catch (OutOfMemoryError e) { clockQueued = false; stopClock(); }
+		catch (Exception e) { clockQueued = false; stopClock(); }
+	}
+
+	public void run()
+	{
+		synchronized (this)
+		{
+			clockQueued = false;
+			if (current != this || closed || clockTask == null || !isShown()) return;
+		}
+		try
+		{
+			long now = System.currentTimeMillis();
+			if (player == null)
 			{
-				String waiting = status;
-				while (current == MediaPlayer.this && partQueue == null && player == null && !settled)
-				{
-					try { Thread.sleep(1000); } catch (Exception ignore) {}
-					if (current != MediaPlayer.this || partQueue != null || player != null || settled) return;
-					waited++;
-					status = waiting + " " + waited + " с";
-					repaint();
-				}
+				if (settled || partQueue != null) { stopClock(); return; }
+				int seconds = now > waitingSince ? (int)((now - waitingSince) / 1000) : 0;
+				if (seconds == waited) return;
+				waited = seconds;
+				status = waitingCaption + " " + waited + " с";
+				repaint();
+				return;
 			}
-		}.start();
+			if (now < lastLight || now - lastLight >= 4000)
+			{
+				Jimm.wakeBacklight(true);
+				lastLight = now;
+			}
+			if (bartType == RequestBartAction.BART_VOICE && !paused && !finished) repaint();
+		}
+		catch (OutOfMemoryError e) { stopClock(); }
+		catch (Exception ignore) {}
 	}
 
 	// Called from the comm thread with the whole clip (or null).
@@ -331,6 +402,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	{
 		if (current != this) return;
 		settled = true;
+		stopClock();
 		if (data == null)
 		{
 			// На последнем куске мост отвечает ошибкой: ролик кончился.
@@ -358,6 +430,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 				{
 					fileErr = playFromFile(clip);
 					if (fileErr == null) return;
+					if (current != MediaPlayer.this) return;
 					streamErr = playFromStream(clip);
 					if (streamErr == null) return;
 				}
@@ -365,10 +438,8 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 				{
 					// Не хватило куска кучи под буфер плеера: скажем прямо,
 					// вместо того чтобы падать посреди показа.
-					status = ResourceBundle.getString("video_no_memory");
-					details = new String[] { (clip.length / 1024) + " КБ клип, свободно "
-							+ (Runtime.getRuntime().freeMemory() / 1024) + " КБ" };
-					repaint();
+					deleteTemp();
+					noMemory();
 					return;
 				}
 				fail(fileErr, streamErr);
@@ -380,6 +451,11 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	{
 		String url = tempFileUrl(temporarySuffix(bartType, data, 0, data.length));
 		if (url == null) return new Exception(TempFiles.lastError);
+		synchronized (this)
+		{
+			if (current != this || closed) { deleteFile(url); return new IOException("media closed"); }
+			filePath = url;
+		}
 		OutputStream os = null;
 		try
 		{
@@ -387,7 +463,6 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			os.write(data);
 			os.flush();
 			os.close(); os = null;
-			filePath = url;
 			// Данные уже во временном файле — держать их ещё и в куче незачем:
 			// плеер читает с «диска», а памяти на V3 немного.
 			data = null;
@@ -399,6 +474,11 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			try { if (os != null) os.close(); } catch (Exception ignore) {}
 			deleteTemp();
 			return e;
+		}
+		finally
+		{
+			try { if (os != null) os.close(); } catch (Exception ignore) {}
+			if (current != this) deleteFile(url);
 		}
 	}
 
@@ -414,6 +494,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		Exception last = null;
 		for (int i = 0; i < types.length; i++)
 		{
+			if (current != this) return new IOException("media closed");
 			if (types[i] == null || (i > 0 && types[i].equals(types[0]))) continue;
 			try
 			{
@@ -439,24 +520,6 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			paused = false;
 			repaint();
 		}
-	}
-
-	// Redraws the running time about twice a second while the voice plays.
-	private void tick()
-	{
-		if (ticking) return;
-		ticking = true;
-		new Thread() {
-			public void run()
-			{
-				while (current == MediaPlayer.this && player != null)
-				{
-					repaint();
-					try { Thread.sleep(500); } catch (Exception ignore) {}
-				}
-				ticking = false;
-			}
-		}.start();
 	}
 
 	// Pause and resume; at the end of the voice message "fire" plays it again.
@@ -525,6 +588,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	private void start(Player p) throws Exception
 	{
+		stopClock();
 		try
 		{
 			startInternal(p);
@@ -533,18 +597,35 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 		{
 			// Не завёлся — закрыть сразу, а не держать до выхода с экрана:
 			// вторая попытка (из памяти) создаёт ещё один плеер.
-			try { p.close(); } catch (Exception ig) {}
-			if (player == p) player = null;
+			discardPlayer(p);
 			throw e;
 		}
+		catch (OutOfMemoryError e) { discardPlayer(p); throw e; }
+	}
+
+	private void discardPlayer(Player p)
+	{
+		synchronized (this) { if (player == p) player = null; }
+		try { p.stop(); } catch (Throwable ignore) {}
+		try { p.close(); } catch (Throwable ignore) {}
+	}
+
+	private void requirePlayer(Player p) throws IOException
+	{
+		if (current != this || player != p) throw new IOException("media closed");
 	}
 
 	private void startInternal(Player p) throws Exception
 	{
-		player = p;
-		player.realize();
+		synchronized (this)
+		{
+			if (current != this || closed) throw new IOException("media closed");
+			player = p;
+		}
+		p.realize();
+		requirePlayer(p);
 		VideoControl vc = (bartType == RequestBartAction.BART_VOICE)
-				? null : (VideoControl) player.getControl("VideoControl");
+				? null : (VideoControl) p.getControl("VideoControl");
 		if (vc != null)
 		{
 			vc.initDisplayMode(VideoControl.USE_DIRECT_VIDEO, this);
@@ -556,17 +637,20 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 			vc.setDisplayLocation((getWidth() - dw) / 2, (getHeight() - dh) / 2);
 			vc.setVisible(true);
 		}
-		player.prefetch();
+		p.prefetch();
+		requirePlayer(p);
 		if (bartType == RequestBartAction.BART_VOICE)
 		{
-			try { player.addPlayerListener(this); } catch (Exception ignore) {}
+			try { p.addPlayerListener(this); } catch (Exception ignore) {}
 		}
-		player.start();
+		p.start();
+		requirePlayer(p);
 		// Пока идёт ролик, по клавишам не нажимают — подсветка гаснет на
 		// середине. Держим её включённой, пока плеер играет; при выходе с
 		// экрана возвращаем телефону обычный режим.
-		keepLit();
-		if (bartType == RequestBartAction.BART_VOICE) tick();
+		Jimm.wakeBacklight(true);
+		lastLight = System.currentTimeMillis();
+		startClock();
 	}
 
 	// A writable temp file URL, or null if no root is available.
@@ -584,17 +668,23 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 				&& data[offset + 4] == 'R' && data[offset + 5] == 10 ? ".amr" : ".3gp";
 	}
 
-	private static String tempFileUrl(String ext)
+	private String tempFileUrl(String ext)
 	{
-		return TempFiles.writableUrl("tmm_media" + ext, true);
+		return TempFiles.writableUrl("tmm_media_" + tempId + ext, true);
 	}
 
 	private void deleteTemp()
 	{
-		String path = filePath;
-		filePath = null;
+		String path;
+		boolean writing;
+		synchronized (this)
+		{
+			path = filePath;
+			filePath = null;
+			writing = writer != null && writer.isAlive();
+		}
 		// Пока писатель дописывает части, файл удалит он сам, когда выйдет.
-		if (writer != null && writer.isAlive()) return;
+		if (writing) return;
 		deleteFile(path);
 	}
 
@@ -641,6 +731,8 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	private void fail(Throwable fileErr, Throwable streamErr)
 	{
+		if (current != this) return;
+		stopClock();
 		settled = true;                // отсчёт ожидания больше не затирает экран
 		status = failedText();
 		String types = "";
@@ -758,13 +850,23 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	private void stop()
 	{
-		if (player != null)
-		{
-			try { player.stop(); } catch (Exception ignore) {}
-			try { player.close(); } catch (Exception ignore) {}
-			player = null;
-		}
+		stopClock();
+		Player p;
+		synchronized (this) { p = player; player = null; }
+		if (p != null) discardPlayer(p);
 		deleteTemp();
+	}
+
+	private void noMemory()
+	{
+		if (current != this) return;
+		settled = true;
+		stopClock();
+		status = ResourceBundle.getString("video_no_memory");
+		try { details = new String[] { (clipSize / 1024) + " КБ клип, свободно "
+				+ (Runtime.getRuntime().freeMemory() / 1024) + " КБ" }; }
+		catch (OutOfMemoryError e) { details = null; }
+		repaint();
 	}
 
 	protected void keyPressed(int keyCode)
@@ -800,7 +902,7 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 	// целиком длинный ролик по GPRS ехал бы десятки минут.
 	private void next()
 	{
-		if (token == null || bartType != RequestBartAction.BART_VIDEO) return;
+		if (current != this || token == null || bartType != RequestBartAction.BART_VIDEO) return;
 		String uin = this.uin, mime = this.mime;
 		byte[] tok = this.token;
 		int nextSegment = this.segment + 1;
@@ -812,9 +914,21 @@ public class MediaPlayer extends Canvas implements CommandListener, JimmScreen,
 
 	private void close()
 	{
-		if (current == this) current = null;
+		close(true);
+	}
+
+	private void close(boolean returnScreen)
+	{
+		synchronized (this) { if (closed) return; closed = true; }
+		boolean wasCurrent = current == this;
+		if (wasCurrent) current = null;
 		if (partQueue != null) partQueue.finish(false);
 		stop();                            // free the player and the temp file first
+		token = null;
+		uin = null;
+		details = null;
+		waitingCaption = null;
+		if (!wasCurrent || !returnScreen) return;
 		if (back != null) back.activate();
 		else JimmUI.backToLastScreen();
 	}
