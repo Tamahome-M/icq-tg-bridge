@@ -347,6 +347,11 @@ class Storage:
         ).fetchone()
         return Contact(**dict(row)) if row else None
 
+    def uins_for_peer(self, peer_id: int) -> list[int]:
+        """Основной чат и его темы: прочтение относится к их общему peer."""
+        return [int(row[0]) for row in self.conn.execute(
+            "SELECT uin FROM contacts WHERE peer_id = ?", (peer_id,))]
+
     # --- очередь офлайна ------------------------------------------------
 
     @contextmanager

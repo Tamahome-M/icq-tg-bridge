@@ -87,6 +87,18 @@ class MessData
 		return messId;
 	}
 
+	int receiptState()
+	{
+		return (rowData >>> 28) & 3;
+	}
+
+	boolean advanceReceipt(int state)
+	{
+		if (getIncoming() || state <= receiptState()) return false;
+		rowData = (rowData & ~0x30000000) | (state << 28);
+		return true;
+	}
+
 	//#sijapp cond.if target != "DEFAULT"#
 	public boolean isURL()
 	{
@@ -103,7 +115,8 @@ class DeferredMessage
 	byte[] attach, messageRef;
 	long time;
 	int messId, attachKind;
-	boolean red, offline, delivered;
+	boolean red, offline;
+	byte receiptState;
 
 	DeferredMessage(String from, String message, String url, long time,
 			boolean red, boolean offline, int messId, byte[] attach,
@@ -689,7 +702,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 			d.setElementAt(null, i);
 			layout(r.from, r.message, r.url, r.time, r.red, r.offline,
 					r.messId, r.attach, r.attachKind, r.thread, r.messageRef);
-			if (r.delivered) messageIsDelivered(r.messId);
+			if (r.receiptState != 0) messageReceipt(r.messId, r.receiptState);
 		}
 	}
 
@@ -804,21 +817,34 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	
 	public void messageIsDelivered(int messId)
 	{
+		messageReceipt(messId, 1);
+	}
+
+	public void messageIsRead(int messId)
+	{
+		messageReceipt(messId, 2);
+	}
+
+	private void messageReceipt(int messId, int state)
+	{
 		if (deferred != null)
 			for (int i = deferred.size() - 1; i >= 0; i--)
 			{
 				DeferredMessage row = (DeferredMessage)deferred.elementAt(i);
-				if (!row.red && row.messId == messId) row.delivered = true;
+				if (!row.red && row.messId == messId && row.receiptState < state)
+					row.receiptState = (byte)state;
 			}
 		MessData data;
-		boolean ok;
 		for (int i = messData.size()-1; i >= 0; i--)
 		{
 			data = (MessData)messData.elementAt(i);
-			if (data.getMessId() == messId)
+			if (!data.getIncoming() && data.getMessId() == messId)
 			{
-				ok = textList.replaceImages(firstMess + i, JimmUI.eventPlainMessageImg, JimmUI.imgMessDeliv);
-				if (ok) textList.repaint();
+				int previous = data.receiptState();
+				if (!data.advanceReceipt(state)) break;
+				Image from = previous == 0 ? JimmUI.eventPlainMessageImg : JimmUI.imgMessDeliv;
+				Image to = state == 1 ? JimmUI.imgMessDeliv : JimmUI.messageReadImage();
+				if (textList.replaceImages(firstMess + i, from, to)) textList.repaint();
 				break;
 			}
 		}
@@ -1308,5 +1334,11 @@ public class ChatHistory
 		ChatTextList msgDisplay = (ChatTextList) historyTable.get(uin);
 		if (msgDisplay == null) return;
 		msgDisplay.messageIsDelivered(messId);
+	}
+
+	public static void messageIsRead(String uin, int messId)
+	{
+		ChatTextList chat = (ChatTextList)historyTable.get(uin);
+		if (chat != null) chat.messageIsRead(messId);
 	}
 }

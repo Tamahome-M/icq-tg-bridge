@@ -1277,11 +1277,11 @@ class Bridge:
         await self.oscar.notify_typing(uin, False)
 
     async def on_telegram_read(self, peer_id: int, max_id: int) -> None:
-        """Собеседник прочитал наши сообщения — телефон ставит галочку."""
-        contact = self.storage.contact_by_peer(peer_id)
-        if contact is not None:
-            log.debug("Telegram: в чате «%s» прочитано до %d", contact.title, max_id)
-            await self.oscar.confirm_read(contact.uin, max_id)
+        """Telegram/MAX/eXpress: подтвердить основной чат и его темы."""
+        for uin in self.storage.uins_for_peer(peer_id):
+            log.debug("%s: в чате %s прочитано до %d", self.network_of(peer_id),
+                      self.oscar.name_of(uin), max_id)
+            await self.oscar.confirm_read(uin, max_id)
 
     async def on_phone_privacy(self, uin: int, muted: bool) -> None:
         """Списки видимости в клиенте управляют уведомлениями Telegram.

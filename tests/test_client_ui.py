@@ -113,7 +113,11 @@ public class Font {
 """
 STUBS["javax/microedition/lcdui/Image.java"] = """
 package javax.microedition.lcdui;
-public class Image {public static Image createImage(String s) throws java.io.IOException {throw new java.io.IOException();}}
+public class Image {
+ public static Image createImage(String s) throws java.io.IOException {throw new java.io.IOException();}
+ public static Image createRGBImage(int[] pixels,int width,int height,boolean alpha){return new Image();}
+ public void getRGB(int[] pixels,int offset,int scan,int x,int y,int width,int height){}
+}
 """
 STUBS["DrawControls/ImageList.java"] = """
 package DrawControls;

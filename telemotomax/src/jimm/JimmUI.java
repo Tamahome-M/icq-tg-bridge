@@ -1169,6 +1169,32 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	final public static Image eventSysActionImg;
 	final public static Image imgTyping;
 	final public static Image imgMessDeliv;
+	private static Image imgMessRead;
+
+	public static Image messageReadImage()
+	{
+		if (imgMessRead != null) return imgMessRead;
+		if (imgMessDeliv == null) return null;
+		try
+		{
+			int width = imgMessDeliv.getWidth(), height = imgMessDeliv.getHeight();
+			int[] pixels = new int[width * height];
+			imgMessDeliv.getRGB(pixels, 0, width, 0, 0, width, height);
+			int shift = Math.max(2, width / 3);
+			// Overlay a shifted check beneath the original, within the same
+			// transparent tile. Ascending x reads only unmodified pixels.
+			for (int y = 0; y < height; y++)
+				for (int x = 0; x < width - shift; x++)
+				{
+					int at = y * width + x;
+					if ((pixels[at] >>> 24) == 0) pixels[at] = pixels[at + shift];
+				}
+			imgMessRead = Image.createRGBImage(pixels, width, height, true);
+		}
+		catch (OutOfMemoryError e) { return imgMessDeliv; }
+		catch (Exception e) { return imgMessDeliv; }
+		return imgMessRead;
+	}
 	final public static Image imgNoAuth;
 	
 	final public static StatusInfo[] statusInfos;
