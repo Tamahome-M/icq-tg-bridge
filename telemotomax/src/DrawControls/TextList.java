@@ -24,7 +24,6 @@
 package DrawControls;
 
 import java.util.Enumeration;
-import java.util.Hashtable;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.Vector;
@@ -244,7 +243,9 @@ public class TextList extends VirtualList implements Runnable
 	private static TimerTask aniTimerTask;
 	private static Timer aniTimer;
 	private Vector lines = new Vector(); // Vector of lines. Each line contains cols. Col can be text or image
-	private Hashtable indexedColors = new Hashtable(); 
+	// Chat themes use two indexed colours. A small pair array avoids a
+	// Hashtable, entries and boxed keys/values for every open text screen.
+	private int[] indexedColors;
 	
 	
 	//! Construct new text list 
@@ -692,8 +693,13 @@ public class TextList extends VirtualList implements Runnable
 		if (color == -1) color = getTextColor();
 		else if ((color&0xFF000000) != 0)
 		{
-			Integer indexedColor = (Integer)indexedColors.get(new Integer(color));
-			if (indexedColor != null) color = (0xFF000000&color)|indexedColor.intValue(); 
+			if (indexedColors != null)
+				for (int i = 0; i < indexedColors.length; i += 2)
+					if (indexedColors[i] == color)
+					{
+						color = (0xFF000000&color)|indexedColors[i + 1];
+						break;
+					}
 		}
 		
 		text = normalizeLines(text);
@@ -958,14 +964,19 @@ public class TextList extends VirtualList implements Runnable
 	
 	public void setIndexedColor(int color, int value)
 	{
-		Integer colorInt = new Integer(color);
-		Integer lastValueInt = (Integer)indexedColors.get(colorInt);
-		int lastValue = (lastValueInt == null) ? -1 : lastValueInt.intValue();
-		if (value != lastValue)
+		int size = indexedColors == null ? 0 : indexedColors.length;
+		int index = 0;
+		while (index < size && indexedColors[index] != color) index += 2;
+		if (value == (index < size ? indexedColors[index + 1] : -1)) return;
+		if (index == size)
 		{
-			for (int i = getSize()-1; i >= 0; i--) getLine(i).setIndexedColor(color, value);
-			indexedColors.put(colorInt, new Integer(value));
+			int[] colors = new int[size + 2];
+			if (size != 0) System.arraycopy(indexedColors, 0, colors, 0, size);
+			colors[size] = color;
+			indexedColors = colors;
 		}
+		for (int i = getSize()-1; i >= 0; i--) getLine(i).setIndexedColor(color, value);
+		indexedColors[index + 1] = value;
 	}
 	
 }

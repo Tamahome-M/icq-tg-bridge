@@ -962,7 +962,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 
 		int status = item.getIntValue(ContactItem.CONTACTITEM_STATUS);
 
-		String uin = item.getStringValue(ContactItem.CONTACTITEM_UIN);
+		int uin = item.getUIN();
 
 		// which group id ?
 		groupId = item.getIntValue(ContactItem.CONTACTITEM_GROUP);
@@ -984,8 +984,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			data = cItemNode.getData();
 			if (!(data instanceof ContactItem))
 				continue;
-			if (!((ContactItem) data).getStringValue(
-					ContactItem.CONTACTITEM_UIN).equals(uin))
+			if (((ContactItem) data).getUIN() != uin)
 				continue;
 			contactExistInTree = true;
 			break;

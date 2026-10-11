@@ -82,6 +82,27 @@ public final class ClientLockTest {
     }
     static char[] buffer() throws Exception {return (char[])field(SplashCanvas.class,"pinInput").get(null);}
     static void erased(char[] old) {for(char ch:old)check(ch==0,"PIN input buffer not erased");}
+    static void hints() throws Exception {
+        defaults();screen=new SplashCanvas();check(SplashCanvas.getMessage()==null,"blank splash rejects a null message");
+        Vector stack=(Vector)field(JimmUI.class,"lastScreens").get(null);stack.clear();stack.addElement(new Previous());
+        SplashCanvas.lock();press('1');
+        TimerTask first=(TimerTask)field(SplashCanvas.class,"t1").get(null);
+        check(first!=null && field(SplashCanvas.class,"showKeylock").getBoolean(null),"legacy hint not scheduled on key press");
+        int scheduled=Jimm.Clock.scheduled;
+        for(int i=0;i<40;i++)method(SplashCanvas.class,"paint",Graphics.class).invoke(screen,new Graphics());
+        check(field(SplashCanvas.class,"t1").get(null)==first && Jimm.Clock.scheduled==scheduled,"repainting reschedules the hint or creates another task");
+        press('2');TimerTask second=(TimerTask)field(SplashCanvas.class,"t1").get(null);
+        check(second!=first && Jimm.Clock.scheduled==scheduled+1,"new key does not restart hint deadline");
+        first.run();check(field(SplashCanvas.class,"t1").get(null)==second && field(SplashCanvas.class,"showKeylock").getBoolean(null),"cancelled old hint hides a newer hint");
+        second.run();check(field(SplashCanvas.class,"t1").get(null)==null && !field(SplashCanvas.class,"showKeylock").getBoolean(null),"hint expiry retains its task or prompt");
+        press('3');first=(TimerTask)field(SplashCanvas.class,"t1").get(null);hold();
+        check(!SplashCanvas.locked() && field(SplashCanvas.class,"t1").get(null)==null,"unlock retains hint task");
+        first.run();check(!field(SplashCanvas.class,"showKeylock").getBoolean(null),"stale hint resurrected after unlock");
+        SplashCanvas.lock();press('4');method(SplashCanvas.class,"hideNotify").invoke(screen);
+        check(field(SplashCanvas.class,"t1").get(null)==null && !field(SplashCanvas.class,"showKeylock").getBoolean(null),"background transition retains hint task");
+        hold();
+        System.out.println("PASS: blank splash; no hint tasks during repaint; shared-timer deadline restarts on keys, stale callbacks ignored, expiry/unlock/background release task");
+    }
     static void keys() throws Exception {
         defaults();screen=new SplashCanvas("test");Previous previous=new Previous();
         Vector stack=(Vector)field(JimmUI.class,"lastScreens").get(null);stack.clear();stack.addElement(previous);
@@ -194,10 +215,11 @@ public final class ClientLockTest {
         System.out.println("PASS: existing queued clock locks after idle; live timeout/off, key press/hold/release, editors/forms/media/login exemptions, hidden list, PIN and return screen; no extra timer task");
     }
     public static void main(String[] args) throws Exception {
-        try{settings();keys();reconnect();autoLock();}
+        try{settings();hints();keys();reconnect();autoLock();}
         finally{
             Jimm.getTimerRef().cancel();
-            for(String name:new String[]{"t1","t2"}){Timer timer=(Timer)field(SplashCanvas.class,name).get(null);if(timer!=null)timer.cancel();}
+            TimerTask hint=(TimerTask)field(SplashCanvas.class,"t1").get(null);if(hint!=null)hint.cancel();
+            Timer timer=(Timer)field(SplashCanvas.class,"t2").get(null);if(timer!=null)timer.cancel();
             Object canvas=field(DrawControls.VirtualList.class,"virtualCanvas").get(null);
             ((Timer)field(canvas.getClass(),"repeatTimer").get(canvas)).cancel();
         }

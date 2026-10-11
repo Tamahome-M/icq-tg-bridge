@@ -115,7 +115,8 @@ public final class ClientVibrationTest {
         try{migration();preferences();delivery();}
         finally{
             Jimm.getTimerRef().cancel();
-            for(String name:new String[]{"t1","t2"}){Timer timer=(Timer)field(SplashCanvas.class,name).get(null);if(timer!=null)timer.cancel();}
+            TimerTask hint=(TimerTask)field(SplashCanvas.class,"t1").get(null);if(hint!=null)hint.cancel();
+            Timer timer=(Timer)field(SplashCanvas.class,"t2").get(null);if(timer!=null)timer.cancel();
             Object canvas=field(DrawControls.VirtualList.class,"virtualCanvas").get(null);((Timer)field(canvas.getClass(),"repeatTimer").get(canvas)).cancel();
         }
     }

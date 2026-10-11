@@ -90,10 +90,9 @@ public class TimerTasks extends TimerTask
 				break;
 				
 			case SC_HIDE_KEYLOCK:
-				SplashCanvas.showKeylock = false;
-				SplashCanvas.Repaint();
+				SplashCanvas.hideKeylockHint(this);
 				break;
-				
+
 			case SC_RESET_TEXT_AND_IMG:
 				SplashCanvas.setMessage(ResourceBundle.getString("keylock_enabled"));
 				SplashCanvas.setStatusToDraw(null);
