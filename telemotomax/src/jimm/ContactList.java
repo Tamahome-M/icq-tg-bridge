@@ -152,6 +152,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		{
 			haveToBeCleared = false;
 			cItems = new Vector();
+			invalidateUinIndex();
 			gItems = new Vector();
 		}
 		
@@ -355,6 +356,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	{
 		// Initialize vectors
 		ContactList.cItems = new Vector();
+		invalidateUinIndex();
 		ContactList.gItems = new Vector();
 
 		// Check whether record store exists
@@ -426,6 +428,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 						ContactItem ci = new ContactItem();
 						ci.loadFromStream(dis);
 						ContactList.cItems.addElement(ci);
+						invalidateUinIndex();
 					}
 					// Group of contacts
 					else if (type == 1)
@@ -579,6 +582,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			if (haveToBeCleared)
 			{
 				cItems.removeAllElements();
+				invalidateUinIndex();
 				gItems.removeAllElements();
 				haveToBeCleared = false;
 				ssiNumberOfItems = 0;
@@ -590,6 +594,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 				if (items[i] instanceof ContactItem)
 				{
 					cItems.addElement(items[i]);
+					invalidateUinIndex();
 				} else if (items[i] instanceof ContactListGroupItem)
 				{
 					gItems.addElement(items[i]);
@@ -845,23 +850,58 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		return null;
 	}
 
-	// Returns reference to contact item with uin or null if not found  
+	private static volatile ContactItem[] uinIndex;
+	private static Vector indexedItems;
+
+	private static void invalidateUinIndex() { indexedItems = null; uinIndex = null; }
+
+	// One pointer per contact, sorted without changing roster/tree order.
+	// Unlike a Hashtable this has no entries, boxed keys or spare buckets.
 	static public ContactItem getItembyUIN(String uin)
 	{
-		int uinInt;
-		try {
-			uinInt = Integer.parseInt(uin);
-		} catch (NumberFormatException ne){
-			return null;
-		}
-		ContactItem citem;
-		for (int i = cItems.size() - 1; i >= 0; i--)
+		int number;
+		try { number = Integer.parseInt(uin); }
+		catch (NumberFormatException invalid) { return null; }
+		Vector source = cItems;
+		synchronized (source)
 		{
-			citem = getCItem(i);
-			if (citem.getUIN() == uinInt)
-				return citem;
+			ContactItem[] index = uinIndex;
+			if (index == null || indexedItems != source || index.length != source.size())
+			{
+				try
+				{
+					index = new ContactItem[source.size()];
+					source.copyInto(index);
+					for (int i = 1; i < index.length; i++)
+					{
+						ContactItem item = index[i];
+						int at = i;
+						while (at > 0 && index[at - 1].getUIN() > item.getUIN())
+						{ index[at] = index[at - 1]; at--; }
+						index[at] = item;
+					}
+					indexedItems = source;
+					uinIndex = index;
+				}
+				catch (OutOfMemoryError lowHeap)
+				{
+					for (int i = source.size() - 1; i >= 0; i--)
+					{
+						ContactItem item = (ContactItem)source.elementAt(i);
+						if (item.getUIN() == number) return item;
+					}
+					return null;
+				}
+			}
+			int low = 0, high = index.length;
+			while (low < high)
+			{
+				int mid = (low + high) / 2;
+				if (index[mid].getUIN() <= number) low = mid + 1;
+				else high = mid;
+			}
+			return low > 0 && index[low - 1].getUIN() == number ? index[low - 1] : null;
 		}
-		return null;
 	}
 
 	static public ContactItem[] getGroupItems(int groupId)
@@ -1101,8 +1141,20 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			//#sijapp cond.end#
 	)
 	{
-		ContactItem cItem = getItembyUIN(uin);
+		updatePresence(getItembyUIN(uin), status, signon, online, idle, regdate
+			//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
+			, biHash
+			//#sijapp cond.end#
+		);
+	}
 
+	static public synchronized void updatePresence(ContactItem cItem, int status,
+			int signon, int online, int idle, int regdate
+			//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
+			, byte[] biHash
+			//#sijapp cond.end#
+	)
+	{
 		int trueStatus = Util.translateStatusReceived(status);
 
 		if (cItem == null)
@@ -1299,6 +1351,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		{
 			// Remove given contact item
 			ContactList.cItems.removeElement(cItem);
+			invalidateUinIndex();
 
 			// Update visual list
 			contactChanged(cItem, false, false);
@@ -1333,6 +1386,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 
 				// Add given contact item
 				cItems.addElement(cItem);
+				invalidateUinIndex();
 				cItem.setBooleanValue(ContactItem.CONTACTITEM_ADDED,
 						true);
 
@@ -1396,6 +1450,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 					if (isOnlineStatus(cItem.getIntValue(ContactItem.CONTACTITEM_STATUS)))
 						onlineCounter--;
 					cItems.removeElementAt(i);
+					invalidateUinIndex();
 				}
 			}
 			cItem = null;
@@ -1428,6 +1483,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 				return null;
 			}
 			cItems.addElement(cItem);
+			invalidateUinIndex();
 			cItem.setBooleanValue(ContactItem.CONTACTITEM_IS_TEMP, true);
 			return cItem;
 		}

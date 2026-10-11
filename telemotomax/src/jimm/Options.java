@@ -44,7 +44,6 @@
 package jimm;
 
 import jimm.comm.Action;
-import jimm.comm.SearchAction;
 import jimm.comm.UpdateContactListAction;
 import jimm.comm.Util;
 import jimm.comm.Icq;
@@ -1909,8 +1908,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			return;
 			
 		case OPTIONS_SEARCH_USER:
-			Search searchf = new Search();
-			searchf.getSearchForm().activate(Search.SearchForm.ACTIV_JUST_SHOW);
+			new Search(this).show();
 			return;
 
 		// TeleMotoMax: весь список чатов моста, включая те, что не влезли
@@ -2519,10 +2517,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 			break;
 			
 		case OPTIONS_ADD_USER:
-			Search search = new Search();
-			String data[] = new String[Search.LAST_INDEX];
-			data[Search.UIN] = txtUIN.getString();
-			return Icq.runActionAndProcessError(new SearchAction(search, data, SearchAction.CALLED_BY_ADDUSER));
+			return new Search(this).lookup(txtUIN.getString(), true);
 			
 		case OPTIONS_ADD_GROUP:
 			ContactListGroupItem newGroup = new ContactListGroupItem(txtUIN.getString());

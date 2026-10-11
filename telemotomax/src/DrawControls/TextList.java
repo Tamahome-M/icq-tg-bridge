@@ -239,6 +239,11 @@ class TextLine
 public class TextList extends VirtualList implements Runnable
 {
 	private boolean alwaysShowCursor;
+	private int lineLimit;
+	private boolean truncated;
+
+	public void setLineLimit(int limit) { lineLimit = limit; truncated = false; }
+	public boolean wasTruncated() { return truncated; }
 	private boolean animated;
 	private static TimerTask aniTimerTask;
 	private static Timer aniTimer;
@@ -323,6 +328,9 @@ public class TextList extends VirtualList implements Runnable
 	 * their text. Existing message indices shift by the page's record count.
 	 * The source is emptied; both lists must use the same font and colours. */
 	public void prependFrom(TextList prefix, int textIndexOffset)
+	{ prependFrom(prefix, textIndexOffset, Integer.MAX_VALUE); }
+
+	public void prependFrom(TextList prefix, int textIndexOffset, int keepMessages)
 	{
 		if (prefix == this) return;
 		int addedLines = prefix.getSize();
@@ -330,8 +338,10 @@ public class TextList extends VirtualList implements Runnable
 		Vector previous = lines, combined = prefix.lines;
 		// doCRLF leaves an empty insertion line after the page's last record.
 		combined.setSize(addedLines);
-		combined.ensureCapacity(addedLines + previous.size());
-		for (int i = 0; i < previous.size(); i++)
+		int keepLines = 0;
+		while (keepMessages > 0 && keepLines < previous.size() && ((TextLine)previous.elementAt(keepLines)).bigTextIndex < keepMessages) keepLines++;
+		combined.ensureCapacity(addedLines + keepLines);
+		for (int i = 0; i < keepLines; i++)
 		{
 			TextLine line = (TextLine) previous.elementAt(i);
 			if (line.bigTextIndex >= 0) line.bigTextIndex += textIndexOffset;
@@ -377,6 +387,7 @@ public class TextList extends VirtualList implements Runnable
 
 	private void internAdd(String text, int color, int imageIndex, int fontStyle, int textIndex, boolean doCRLF, char last_charaster)
 	{
+		if (truncated) return;
 		TextItem newItem = new TextItem();
 		
 		newItem.text = text;
@@ -390,6 +401,7 @@ public class TextList extends VirtualList implements Runnable
 		if (doCRLF)
 		{
 			textLine.last_charaster = last_charaster;
+			if (lineLimit > 0 && lines.size() >= lineLimit) { truncated = true; return; }
 			TextLine newLine = new TextLine();
 			newLine.bigTextIndex = textIndex;
 			lines.addElement(newLine);
@@ -574,6 +586,8 @@ public class TextList extends VirtualList implements Runnable
 
 	public TextList doCRLF(int blockTextIndex)
 	{
+		if (truncated) return this;
+		if (lineLimit > 0 && lines.size() >= lineLimit) { truncated = true; return this; }
 		if (lines.size() != 0) ((TextLine) lines.lastElement()).last_charaster = '\n';
 		TextLine newLine = new TextLine();
 		newLine.bigTextIndex = blockTextIndex;
@@ -583,6 +597,7 @@ public class TextList extends VirtualList implements Runnable
 	
 	public TextList addAniImage(Image[] image, byte[] imgNumsAndTimes, String altarnateText, int blockTextIndex)
 	{
+		if (truncated) return this;
 		if (lines.isEmpty()) lines.addElement(new TextLine());
 		TextLine textLine = (TextLine) lines.lastElement();
 		textLine.bigTextIndex = blockTextIndex;
@@ -590,6 +605,7 @@ public class TextList extends VirtualList implements Runnable
 		if ((textLine.getWidth(getFontSize()) + image[0].getWidth()) > getTextAreaWidth())
 		{
 			doCRLF(blockTextIndex);
+			if (truncated) return this;
 			textLine = (TextLine) lines.lastElement();
 		}
 
@@ -719,6 +735,7 @@ public class TextList extends VirtualList implements Runnable
 		String insString;
 		for (curPos = 0; curPos < textLen;)
 		{
+			if (truncated) return;
 			curChar = text.charAt(curPos);
 			wordEnd = (curChar == ' ');
 			lineBreak = (curChar == '\n');

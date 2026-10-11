@@ -1278,7 +1278,7 @@ class Bridge:
         repeat = self.cfg.typing_repeat
         send = True
         if old is None:
-            log.info("«%s» печатает — показываю на телефоне", contact.title)
+            log.debug("«%s» печатает — показываю на телефоне", contact.title)
         else:
             old.cancel()
             since = now - self._typing_sent.get(contact.uin, 0.0)
@@ -1299,7 +1299,7 @@ class Bridge:
         self._typing.pop(uin, None)
         self._typing_sent.pop(uin, None)
         contact = self._by_uin.get(uin) or self.storage.contact_by_uin(uin)
-        log.info("«%s» перестал печатать — гашу по молчанию (%d с)",
+        log.debug("«%s» перестал печатать — гашу по молчанию (%d с)",
                  contact.title if contact else uin, TYPING_TIMEOUT)
         await self.oscar.notify_typing(uin, False)
 
@@ -1311,7 +1311,7 @@ class Bridge:
             return
         task.cancel()
         contact = self._by_uin.get(uin) or self.storage.contact_by_uin(uin)
-        log.info("«%s» перестал печатать — %s", contact.title if contact else uin, why)
+        log.debug("«%s» перестал печатать — %s", contact.title if contact else uin, why)
         await self.oscar.notify_typing(uin, False)
 
     async def on_telegram_read(self, peer_id: int, max_id: int) -> None:
@@ -1406,7 +1406,7 @@ class Bridge:
         """Владелец печатает в Jimm — передаём в Telegram."""
         contact = self.storage.contact_by_uin(uin)
         if contact is not None and contact.peer_id not in BOT_PEERS:
-            log.info("телефон %s в чате «%s»", "печатает" if active else "перестал печатать",
+            log.debug("телефон %s в чате «%s»", "печатает" if active else "перестал печатать",
                      contact.title)
             await self.side_for(contact.peer_id).set_typing(contact.peer_id, active)
 

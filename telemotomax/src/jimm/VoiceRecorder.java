@@ -14,7 +14,10 @@
 
 package jimm;
 
-import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.IOException;
+import java.util.Vector;
 
 import javax.microedition.lcdui.Canvas;
 import javax.microedition.lcdui.Command;
@@ -47,18 +50,19 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 	/** Столько ждём от моста ответа «ушло или нет». */
 	public static final int ANSWER_WAIT = 45 * 1000;
 
-	private static VoiceRecorder current;
+	private static volatile VoiceRecorder current;
 
 	private final JimmScreen back;
 	private final String uin;
 	private Player player;
 	private RecordControl record;
-	private ByteArrayOutputStream sink;
+	private RecordingBuffer sink;
 	private long startedAt;
 	private String status;
 	private String hint;
 	private String[] details;
-	private boolean recording;
+	private volatile boolean recording;
+	private boolean opening, stopRequested;
 	private volatile boolean sending;
 	private Icq.Upload transfer;
 	private java.util.TimerTask answerTask, returnTask;
@@ -89,39 +93,132 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 	// Opening the microphone blocks, so it happens off the UI thread.
 	private void start()
 	{
-		if (recording || sending) return;
-		recording = true;
+		synchronized (this)
+		{
+			if (current != this || recording || sending || done) return;
+			recording = opening = true; stopRequested = false;
+			startedAt = 0; lastSize = 0; details = null; stopReason = "";
+		}
 		status = ResourceBundle.getString("voice_recording");
 		repaint();
-		new Thread() {
+		try { new Thread() {
 			public void run()
 			{
+				Player local = null;
+				boolean owned = false;
 				try
 				{
-					Player p = openMicrophone();
-					RecordControl rc = (RecordControl) p.getControl("RecordControl");
-					if (rc == null) throw new Exception("no RecordControl");
-					sink = new ByteArrayOutputStream();
-					rc.setRecordStream(sink);
-					// Потолок размера не ставим: телефон вправе урезать его до
-					// своего (на V3 это обрывало запись на ~10 секундах), а
-					// длину мы и так держим сами — по времени и по размеру.
-					try { p.addPlayerListener(VoiceRecorder.this); } catch (Exception ignore) {}
-					p.start();
-					rc.startRecord();
-					if (current != VoiceRecorder.this || !recording) { try { rc.stopRecord(); p.close(); } catch (Throwable ignore) {} return; }
-					player = p;
-					record = rc;
-					startedAt = System.currentTimeMillis();
-					repaintLater();
+					local = openMicrophone();
+					synchronized (VoiceRecorder.this)
+					{
+						if (current != VoiceRecorder.this || !recording) return;
+						player = local; owned = true;
+					}
+					RecordControl control = (RecordControl)local.getControl("RecordControl");
+					if (control == null) throw new Exception("no RecordControl");
+					RecordingBuffer buffer = new RecordingBuffer((int)Math.min(MAX_BYTES,
+							Math.max(0, (Runtime.getRuntime().freeMemory() - 48 * 1024) / 2)));
+					control.setRecordStream(buffer);
+					try { local.addPlayerListener(VoiceRecorder.this); } catch (Exception ignore) {}
+					synchronized (VoiceRecorder.this)
+					{
+						if (current != VoiceRecorder.this || !recording) return;
+						record = control; sink = buffer;
+					}
+					local.start(); control.startRecord();
+					synchronized (VoiceRecorder.this)
+					{
+						if (current != VoiceRecorder.this || !recording) return;
+						startedAt = System.currentTimeMillis(); opening = false;
+					}
+					if (stopRequested) stopAndSend();
+					// Reuse the microphone worker instead of a second polling thread.
+					while (recording && current == VoiceRecorder.this)
+					{
+						int secs = seconds(); lastSize = buffer.size();
+						status = ResourceBundle.getString("voice_recording") + " " + time(secs);
+						repaint();
+						if (secs >= MAX_SECONDS || buffer.full()) { stopAndSend(); return; }
+						try { Thread.sleep(500); } catch (Exception ignore) {}
+					}
 				}
-				catch (Throwable e)
+				catch (Throwable failure) { abort(failure); }
+				finally
 				{
-					recording = false;
-					failed(e);
+					if (!owned && local != null) { try { local.close(); } catch (Throwable ignore) {} }
 				}
 			}
-		}.start();
+		}.start(); }
+		catch (Throwable failure) { abort(failure); }
+	}
+
+	private void abort(Throwable failure)
+	{
+		stopRecorder();
+		synchronized (this) { recording = opening = sending = false; }
+		if (transfer != null) transfer.cancel();
+		if (current == this) failed(failure);
+	}
+
+	/** Bounded chunks: no growing whole-recording array and no final copy. */
+	private static final class RecordingBuffer extends OutputStream
+	{
+		private static final int CHUNK = 2048;
+		private final Vector chunks = new Vector();
+		private final int limit;
+		private int count;
+		private boolean sealed, overflow;
+		RecordingBuffer(int limit) throws IOException
+		{ if (limit < CHUNK) throw new IOException("low memory"); this.limit = limit; }
+		public synchronized int size() { return count; }
+		public synchronized boolean full() { return overflow || count >= limit; }
+		private final byte[] single = new byte[1];
+		public synchronized void write(int value) throws IOException
+		{ single[0] = (byte)value; write(single, 0, 1); }
+		public synchronized void write(byte[] bytes, int offset, int length) throws IOException
+		{
+			if (sealed) throw new IOException("recording closed");
+			if (offset < 0 || length < 0 || offset > bytes.length - length) throw new IndexOutOfBoundsException();
+			int remaining = Math.min(length, limit - count);
+			while (remaining > 0)
+			{
+				int part = count / CHUNK, position = count % CHUNK;
+				if (part == chunks.size()) chunks.addElement(new byte[Math.min(CHUNK, limit - count)]);
+				byte[] chunk = (byte[])chunks.elementAt(part);
+				int take = Math.min(remaining, chunk.length - position);
+				System.arraycopy(bytes, offset, chunk, position, take);
+				count += take; offset += take; remaining -= take; length -= take;
+			}
+			if (length > 0) { overflow = true; throw new IOException("recording limit"); }
+		}
+		public synchronized InputStream input()
+		{
+			sealed = true;
+			return new InputStream() {
+				private int at;
+				private final byte[] single = new byte[1];
+				public int read() throws IOException
+				{ return read(single, 0, 1) < 0 ? -1 : single[0] & 255; }
+				public int read(byte[] bytes, int offset, int length) throws IOException
+				{
+					if (offset < 0 || length < 0 || offset > bytes.length - length) throw new IndexOutOfBoundsException();
+					if (length == 0) return 0;
+					if (at == count) return -1;
+					int taken = 0;
+					while (length > 0 && at < count)
+					{
+						int part = at / CHUNK, position = at % CHUNK;
+						byte[] chunk = (byte[])chunks.elementAt(part);
+						int take = Math.min(length, Math.min(chunk.length - position, count - at));
+						System.arraycopy(chunk, position, bytes, offset, take);
+						at += take; offset += take; length -= take; taken += take;
+						if (at % CHUNK == 0 || at == count) chunks.setElementAt(null, part);
+					}
+					return taken;
+				}
+				public void close() { chunks.removeAllElements(); }
+			};
+		}
 	}
 
 	// AMR is what the bridge expects and what the phone records anyway, but
@@ -157,25 +254,6 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 		throw last != null ? last : new Exception("no microphone");
 	}
 
-	// Redraws the running time once a second while recording.
-	private void repaintLater()
-	{
-		new Thread() {
-			public void run()
-			{
-				while (recording && current == VoiceRecorder.this)
-				{
-					int secs = seconds();
-					lastSize = (sink == null) ? 0 : sink.size();
-					status = ResourceBundle.getString("voice_recording") + " " + time(secs);
-					repaint();
-					if (secs >= MAX_SECONDS || lastSize >= MAX_BYTES) { stopAndSend(); return; }
-					try { Thread.sleep(500); } catch (Exception ignore) {}
-				}
-			}
-		}.start();
-	}
-
 	// Телефон может прекратить запись сам — по своему потолку размера или
 	// по ошибке. Молча терять записанное нельзя: заканчиваем и отправляем,
 	// а причину показываем на экране.
@@ -208,67 +286,53 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 
 	private void stopAndSend()
 	{
-		if (!recording || sending) return;
-		recording = false;
-		sending = true;
+		synchronized (this)
+		{
+			if (!recording || sending || current != this) return;
+			if (opening) { stopRequested = true; return; }
+			recording = false; sending = true;
+		}
 		final int secs = Math.max(1, seconds());
-		transfer = new Icq.Upload(uin) {
-			public boolean isActive() { return current == VoiceRecorder.this && sending && super.isActive(); }
-			public void onPart(int part, int total)
-			{
-				Jimm.wakeBacklight();
-				sentPart = part;
-				sentTotal = total;
-				repaint();
-			}
-		};
-		status = ResourceBundle.getString("voice_recorded") + time(secs);
-		hint = null;
-		repaint();
-		new Thread() {
-			public void run()
-			{
-				byte[] data = null;
-				Throwable err = null;
-				try
+		try
+		{
+			transfer = new Icq.Upload(uin) {
+				public boolean isActive() { return current == VoiceRecorder.this && sending && super.isActive(); }
+				public void onPart(int part, int total)
 				{
-					record.commit();
-					data = sink.toByteArray();
+					Jimm.wakeBacklight(); sentPart = part; sentTotal = total; repaint();
 				}
-				catch (Throwable e) { err = e; }
-				// Тип записи спрашиваем, пока плеер ещё жив.
-				String type = "";
-				try { if (player != null) type = String.valueOf(player.getContentType()); }
-				catch (Exception ignore) {}
-				stopRecorder();
-				if (data == null || data.length == 0)
+			};
+			status = ResourceBundle.getString("voice_recorded") + time(secs);
+			hint = null; repaint();
+			new Thread() {
+				public void run()
 				{
-					sending = false;
-					if (transfer != null) transfer.cancel();
-					failed(err);
-					return;
+					RecordingBuffer buffer;
+					RecordControl control;
+					Player microphone;
+					synchronized (VoiceRecorder.this) { buffer = sink; control = record; microphone = player; }
+					InputStream input = null;
+					try
+					{
+						if (current != VoiceRecorder.this || !sending || buffer == null || control == null) return;
+						try { control.commit(); }
+						catch (Exception error) { if (buffer.size() == 0) throw error; }
+						String type = "";
+						try { if (microphone != null) type = String.valueOf(microphone.getContentType()); } catch (Exception ignore) {}
+						lastSize = buffer.size(); input = buffer.input();
+						stopRecorder();
+						if (lastSize == 0) throw new IOException("empty recording");
+						status = ResourceBundle.getString("camera_sending"); repaint();
+						Icq.sendVoiceStream(uin, input, lastSize, secs, type, transfer);
+						if (current != VoiceRecorder.this || !sending) return;
+						status = ResourceBundle.getString("voice_waiting"); waitForBridge(); repaint();
+					}
+					catch (Throwable failure) { abort(failure); }
+					finally { if (input != null) try { input.close(); } catch (Exception ignore) {} }
 				}
-				lastSize = data.length;
-				status = ResourceBundle.getString("camera_sending");
-				repaint();
-				try
-				{
-					// Заливка идёт частями и не быстро — показываем, сколько ушло.
-					Icq.sendVoice(uin, data, secs, type, transfer);
-					if (current != VoiceRecorder.this || !sending) return;
-					status = ResourceBundle.getString("voice_waiting");
-					waitForBridge();
-				}
-				catch (Throwable e)
-				{
-					sending = false;
-					if (transfer != null) transfer.cancel();
-					failed(e);
-					return;
-				}
-				repaint();
-			}
-		}.start();
+			}.start();
+		}
+		catch (Throwable failure) { abort(failure); }
 	}
 
 	// Ответ моста (10/03) может и не прийти — например, связь оборвалась на
@@ -417,13 +481,12 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 
 	private void stopRecorder()
 	{
-		record = null;
-		sink = null;
-		if (player != null)
+		Player old;
+		synchronized (this) { old = player; player = null; record = null; sink = null; }
+		if (old != null)
 		{
-			try { player.stop(); } catch (Exception ignore) {}
-			try { player.close(); } catch (Exception ignore) {}
-			player = null;
+			try { old.stop(); } catch (Throwable ignore) {}
+			try { old.close(); } catch (Throwable ignore) {}
 		}
 	}
 
@@ -439,7 +502,7 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 		if (transfer != null) transfer.cancel();
 		if (answerTask != null) answerTask.cancel();
 		if (returnTask != null) returnTask.cancel();
-		recording = false;
+		synchronized (this) { recording = sending = false; }
 		stopRecorder();
 		if (owned) MainThread.activateScreenMT(back);
 	}

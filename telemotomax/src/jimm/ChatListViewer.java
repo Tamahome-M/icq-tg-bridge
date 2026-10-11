@@ -47,9 +47,9 @@ public class ChatListViewer implements CommandListener, VirtualListCommands, Jim
 {
 	private static volatile ChatListViewer current;
 	private static final int PAGE_SIZE = 20;
-	private int pageOffset;
+	private int pageOffset, requestOffset;
 	private RequestBartAction request;
-	private boolean loading, opening, hasMore;
+	private boolean loading, opening, hasMore = true, havePage;
 	private final Command more = new Command(ResourceBundle.getString("more"), Command.SCREEN, 2);
 
 	private final JimmScreen back;
@@ -80,36 +80,48 @@ public class ChatListViewer implements CommandListener, VirtualListCommands, Jim
 
 	private void build()
 	{
-		list = new TextList(null);
-		JimmUI.setColorScheme(list, false, -1, true);
-		list.setCaption(ResourceBundle.getString("all_chats"));
-		list.addCommandEx(JimmUI.cmdBack, VirtualList.MENU_TYPE_LEFT_BAR);
-		// Правая софт-клавиша с меню: в него попадают «Ещё», «Показать фото»
-		// и «Прослушать» — без неё они некуда было бы нажать.
-		list.addCommandEx(JimmUI.cmdMenu, VirtualList.MENU_TYPE_RIGHT_BAR);
-		list.setCommandListener(this);
-		list.setVLCommands(this);
+		list = createList();
 		list.activate(Jimm.display);
 	}
 
-	private void addLine(String text, String uin)
+	private TextList createList()
 	{
-		int index = uins.size();
-		uins.addElement(uin);
-		list.addBigText(text, -1, Font.STYLE_PLAIN, index);
-		list.doCRLF(index);
+		TextList result = new TextList(null);
+		JimmUI.setColorScheme(result, false, -1, true);
+		result.setCaption(ResourceBundle.getString("all_chats"));
+		result.addCommandEx(JimmUI.cmdBack, VirtualList.MENU_TYPE_LEFT_BAR);
+		result.addCommandEx(JimmUI.cmdMenu, VirtualList.MENU_TYPE_RIGHT_BAR);
+		result.setCommandListener(this);
+		result.setVLCommands(this);
+		return result;
+	}
+
+	private void addLine(String text, String uin) { addLine(list, uins, text, uin); }
+
+	private void addLine(TextList target, Vector rows, String text, String uin)
+	{
+		int index = rows.size();
+		rows.addElement(uin);
+		target.addBigText(text, -1, Font.STYLE_PLAIN, index);
+		target.doCRLF(index);
 	}
 
 	private void request()
 	{
 		if (loading || current != this) return;
-		byte[] token = new byte[16];
-		token[0] = 'P'; token[1] = '1';
-		Util.putWord(token, 2, pageOffset); token[4] = PAGE_SIZE;
-		Util.putDWord(token, 12, Util.getCounter());
-		loading = true;
-		try { request = new RequestBartAction(own(), RequestBartAction.BART_CHATS, token, this); Icq.requestAction(request); }
+		try
+		{
+			byte[] token = new byte[16];
+			token[0] = 'P'; token[1] = '1';
+			Util.putWord(token, 2, requestOffset); token[4] = PAGE_SIZE;
+			Util.putDWord(token, 12, Util.getCounter());
+			loading = true;
+			request = new RequestBartAction(own(), RequestBartAction.BART_CHATS, token, this);
+			Icq.requestAction(request);
+		}
 		catch (JimmException error) { onBartError(error.getMessage()); }
+		catch (Throwable failure) { loading = false; try { failedPage(null); } catch (Throwable ignore) {} }
+
 	}
 
 	public void onBart(byte[] data) { onBart(data, 0, data == null ? 0 : data.length); }
@@ -120,7 +132,7 @@ public class ChatListViewer implements CommandListener, VirtualListCommands, Jim
 	{
 		if (current != this || list == null) return;
 		try { MainThread.runSerially(new Page(data, offset, length, reason)); }
-		catch (OutOfMemoryError error) { loading = false; System.gc(); }
+		catch (Throwable error) { loading = false; try { failedPage(reason); } catch (Throwable ignore) {} }
 	}
 
 	private final class Page implements Runnable
@@ -128,57 +140,64 @@ public class ChatListViewer implements CommandListener, VirtualListCommands, Jim
 		private byte[] data;
 		private int marker, end, skip, added;
 		private final String reason;
-		private final TextList target = list;
-		private boolean started;
+		private final TextList previous = list;
+		private final int offset = requestOffset;
+		private TextList target;
+		private Vector rows;
+		private boolean nextMore;
 		Page(byte[] data, int offset, int length, String reason)
 		{
 			this.data = data; marker = offset; end = offset + length; this.reason = reason;
+			if (data != null && (offset < 0 || length < 0 || offset > data.length - length))
+				throw new IllegalArgumentException();
 			if (data != null && length >= 4 && data[offset] == 'C' && data[offset + 1] == 'P' && data[offset + 2] == '1')
-			{
-				hasMore = data[offset + 3] != 0;
-				marker += 4;
-			}
-			else { skip = pageOffset; hasMore = false; }
+			{ nextMore = data[offset + 3] != 0; marker += 4; }
+			else skip = this.offset;
 		}
 		public void run()
 		{
-			if (current != ChatListViewer.this || list != target) { data = null; return; }
-			target.lock();
+			if (current != ChatListViewer.this || list != previous) { data = null; return; }
 			try
 			{
-				if (!started) { target.clear(); uins.removeAllElements(); started = true; }
-				if (data == null) addLine(reason == null ? ResourceBundle.getString("chats_failed") : reason, null);
-				else
+				if (data == null) { failedPage(reason); return; }
+				if (target == null) { target = createList(); rows = new Vector(PAGE_SIZE); }
+				int batch = 0;
+				while (marker + 9 <= end)
 				{
-					int batch = 0;
-					while (marker + 9 <= end)
-					{
-						long uin = Util.getDWord(data, marker); marker += 4;
-						int flags = Util.getByte(data, marker++);
-						int days = Util.getWord(data, marker); marker += 2;
-						int len = Util.getWord(data, marker); marker += 2;
-						if (marker + len > end) throw new IllegalArgumentException();
-						if (skip > 0) { skip--; marker += len; continue; }
-						if (added == PAGE_SIZE) { hasMore = true; marker = end; break; }
-						String name = Util.byteArrayToString(data, marker, len, true); marker += len;
-						addLine(line(flags, days, name), String.valueOf(uin)); added++;
-						if (++batch == 4 && marker + 9 <= end) { MainThread.runSerially(this); return; }
-					}
-					if (added == 0) addLine(ResourceBundle.getString("chats_empty"), null);
+					long uin = Util.getDWord(data, marker); marker += 4;
+					int flags = Util.getByte(data, marker++);
+					int days = Util.getWord(data, marker); marker += 2;
+					int len = Util.getWord(data, marker); marker += 2;
+					if (len > end - marker) throw new IllegalArgumentException();
+					if (skip > 0) { skip--; marker += len; continue; }
+					if (added == PAGE_SIZE) { nextMore = true; marker = end; break; }
+					String name = Util.byteArrayToString(data, marker, len, true); marker += len;
+					addLine(target, rows, line(flags, days, name), String.valueOf(uin)); added++;
+					if (++batch == 4 && marker + 9 <= end) { MainThread.runSerially(this); return; }
 				}
-				loading = false; data = null;
-				target.setCaption(ResourceBundle.getString("all_chats")); target.setTopItem(0);
-				if (hasMore) target.addCommandEx(more, VirtualList.MENU_TYPE_RIGHT);
-				else target.removeCommandEx(more);
+				if (marker != end) throw new IllegalArgumentException();
+				if (added == 0) addLine(target, rows, ResourceBundle.getString("chats_empty"), null);
+				data = null;
+				if (current != ChatListViewer.this || list != previous) return;
+				if (nextMore) target.addCommandEx(more, VirtualList.MENU_TYPE_RIGHT);
+				boolean active = previous.isActive();
+				list = target; uins = rows; pageOffset = offset;
+				hasMore = nextMore; havePage = true; loading = false;
+				previous.clear();
+				if (active) target.activate(Jimm.display);
 			}
-			catch (Throwable failure)
-			{
-				data = null; loading = false;
-				target.setCaption(ResourceBundle.getString("chats_failed"));
-			}
-			finally { target.unlock(); }
-			target.repaint();
+			catch (Throwable failure) { data = null; target = null; rows = null; failedPage(null); }
 		}
+	}
+
+	private void failedPage(String reason)
+	{
+		loading = false;
+		if (current != this || list == null) return;
+		list.setCaption(reason == null ? ResourceBundle.getString("chats_failed") : reason);
+		// Keep both the previous page and the offset of the failed request.
+		list.addCommandEx(more, VirtualList.MENU_TYPE_RIGHT);
+		list.repaint();
 	}
 
 	// «[M] Таня, 12 дн.» — сеть ([T]elegram, [M]AX, [E]xpress), название и
@@ -208,7 +227,7 @@ public class ChatListViewer implements CommandListener, VirtualListCommands, Jim
 		opening = true;
 		byte[] token = new byte[16];
 		try { Util.putDWord(token, 0, Long.parseLong(uin)); }
-		catch (Exception e) { return; }
+		catch (Exception e) { opening = false; return; }
 		list.setCaption(ResourceBundle.getString("chats_opening"));
 		RequestBartAction.ErrorListener done = new RequestBartAction.ErrorListener() {
 			public void onBart(byte[] answer)
@@ -252,7 +271,7 @@ public class ChatListViewer implements CommandListener, VirtualListCommands, Jim
 
 	public void commandAction(Command c, Displayable d)
 	{
-		if (c == more && hasMore && !loading && !opening) { pageOffset += PAGE_SIZE; request(); }
+		if (c == more && hasMore && !loading && !opening) { if (havePage && requestOffset == pageOffset) requestOffset += PAGE_SIZE; request(); }
 		else if (c != more) close();
 	}
 

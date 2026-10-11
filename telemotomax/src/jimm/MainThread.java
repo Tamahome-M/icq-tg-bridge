@@ -285,6 +285,7 @@ public class MainThread implements Runnable
 				VirtualList.setBottomText(Util.getDateString(true));
 			}
 			JimmUI.checkAutoLock();
+			Threads.checkReconnect();
 			break;
 		case TYPE_RUN:
 			((Runnable)data[0]).run();

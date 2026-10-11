@@ -200,6 +200,8 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	protected boolean forward(Packet packet) throws JimmException
 	{
 		if (notified || state == STATE_ERROR) return false;
+		Listener recipient = listener;
+		if (recipient == null) return false;
 		this.active = true;
 		try
 		{
@@ -322,9 +324,9 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 								|| part > total || (expectedTotal != 0 && total != expectedTotal))
 							throw new JimmException(133, 3, false);
 						expectedTotal = total; nextPart++;
-						if (total > 1 && listener instanceof PartSink
+						if (total > 1 && recipient instanceof PartSink
 								&& (streaming || parts == null)
-								&& ((PartSink) listener).onBartPart(buf, marker, dataLength, part, total))
+								&& ((PartSink) recipient).onBartPart(buf, marker, dataLength, part, total))
 						{
 							streaming = true;
 							buf = null;
@@ -335,7 +337,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 								return true;           // wait for the rest
 							}
 							notified = true;
-							((PartSink) listener).onBartDone(true);
+							((PartSink) recipient).onBartDone(true);
 						}
 						else if (streaming)
 						{
@@ -345,7 +347,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 							this.state = STATE_ACTION_DONE;
 							this.active = false;
 							notified = true;
-							((PartSink)listener).onBartDone(false);
+							((PartSink)recipient).onBartDone(false);
 							return true;
 						}
 						else if (total > 1)
@@ -372,8 +374,8 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 							System.arraycopy(buf, marker, parts, filled, dataLength);
 							filled += dataLength;
 							buf = null;
-							if (listener instanceof ProgressListener)
-								((ProgressListener) listener).onBartProgress(part, total);
+							if (recipient instanceof ProgressListener)
+								((ProgressListener) recipient).onBartProgress(part, total);
 							if (part < total)
 							{
 								this.lastActivity = System.currentTimeMillis();
@@ -381,7 +383,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 								return true;           // wait for the rest
 							}
 							byte[] all = parts;
-							if (!(listener instanceof RangeListener) && filled != all.length)
+							if (!(recipient instanceof RangeListener) && filled != all.length)
 							{
 								// Последняя часть короче — отдаём ровно то,
 								// что пришло.
@@ -390,19 +392,19 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 							}
 							parts = null;
 							notified = true;
-							if (listener instanceof RangeListener) ((RangeListener) listener).onBart(all, 0, filled);
-							else listener.onBart(all);
+							if (recipient instanceof RangeListener) ((RangeListener) recipient).onBart(all, 0, filled);
+							else recipient.onBart(all);
 						}
 						else
 						{
 							notified = true;
-							if (listener instanceof RangeListener)
-								((RangeListener) listener).onBart(buf, marker, dataLength);
+							if (recipient instanceof RangeListener)
+								((RangeListener) recipient).onBart(buf, marker, dataLength);
 							else
 							{
 								byte[] data = new byte[dataLength];
 								System.arraycopy(buf, marker, data, 0, dataLength);
-								listener.onBart(data);
+								recipient.onBart(data);
 							}
 							buf = null;
 						}
@@ -422,9 +424,9 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 						// Old bridges send only the error code. New ones add
 						// TLV 0x9003 with a reason; other listeners keep their contract.
 						notified = true;
-						if (listener instanceof ErrorListener)
-							((ErrorListener) listener).onBartError(errorText(snacPacket.getDataRef()));
-						else listener.onBart(null);
+						if (recipient instanceof ErrorListener)
+							((ErrorListener) recipient).onBartError(errorText(snacPacket.getDataRef()));
+						else recipient.onBart(null);
 						this.state = STATE_ACTION_DONE;
 						consumed = true;
 					}
@@ -443,6 +445,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 			this.failureReason = e.getMessage();
 			throw (e);
 		}
+		finally { if (notified) { listener = null; parts = null; } }
 	}
 
 	public boolean isCompleted()
@@ -505,15 +508,8 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 		// говорим сами — один раз — и отпускаем собранные части.
 		if (this.state == STATE_ERROR && !this.notified)
 		{
-			this.notified = true;
-			this.parts = null;
-			// Jimm рассчитывает на onEvent(ON_ERROR), но главный цикл его
-			// не вызывает — соединение, в котором запрос пропал, закрываем
-			// здесь, иначе следующий запрос уйдёт в тот же мёртвый сокет.
 			Icq.retireBartIfIdle(this);
-			if (streaming) ((PartSink) listener).onBartDone(false);
-			else if (listener instanceof ErrorListener) ((ErrorListener) listener).onBartError(failureReason);
-			else if (listener != null) listener.onBart(null);
+			notifyFailure();
 		}
 		return (this.state == STATE_ERROR);
 	}
@@ -534,15 +530,23 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 			state = STATE_ERROR;
 			DebugLog.addText("RequestBartAction ON_ERROR");
 			parts = null;
-			if (!notified)
-			{
-				notified = true;
-				if (streaming) ((PartSink) listener).onBartDone(false);
-				else if (listener instanceof ErrorListener) ((ErrorListener) listener).onBartError(failureReason);
-				else if (listener != null) listener.onBart(null);
-			}
+			notifyFailure();
 			Icq.retireBartIfIdle(this);
 			break;
 		}
+	}
+
+	private void notifyFailure()
+	{
+		Listener recipient;
+		synchronized (this)
+		{
+			parts = null;
+			if (notified) { listener = null; return; }
+			notified = true; recipient = listener; listener = null;
+		}
+		if (streaming && recipient instanceof PartSink) ((PartSink)recipient).onBartDone(false);
+		else if (recipient instanceof ErrorListener) ((ErrorListener)recipient).onBartError(failureReason);
+		else if (recipient != null) recipient.onBart(null);
 	}
 }

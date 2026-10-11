@@ -144,6 +144,8 @@ STUBS["DrawControls/VirtualList.java"] = BASE["DrawControls/VirtualList.java"].r
     " public static void setCapOffset(int n){}\n")
 STUBS["DrawControls/TextList.java"] = BASE["DrawControls/TextList.java"].replace(
     "public TextList(String caption) {}", "public TextList(String caption) {}\n"
+    " public void setLineLimit(int limit){} public boolean wasTruncated(){return false;}\n"
+    " public void prependFrom(TextList prefix,int count,int keep){prependFrom(prefix,count);}\n"
     " public void prependFrom(TextList prefix,int count){for(int i=prefix.labels.size()-1;i>=0;i--)labels.insertElementAt(prefix.labels.elementAt(i),0);"
     " for(int i=prefix.headers.size()-1;i>=0;i--)headers.insertElementAt(prefix.headers.elementAt(i),0);prefix.clear();}\n"
     " public void selectTextByIndex(int n){selected=n;}\n"
@@ -158,6 +160,7 @@ public class JimmUI {
  public static void addMessageText(TextList l,String s,int color,int index){l.labels.addElement(s);}
  public static int returned;
  public static void setColorScheme(VirtualList l,boolean a,int b,boolean c){}
+ public static void setLastScreen(JimmScreen screen,boolean root){} public static void removeScreen(JimmScreen screen){}
  public static void backToLastScreen(){returned++;jimm.Jimm.display.setCurrent(null);}
  public static boolean isControlActive(VirtualList o){return o!=null && o==jimm.Jimm.display.getCurrent();}
  public static int getCommandType(Command c,int tag){return 0;}

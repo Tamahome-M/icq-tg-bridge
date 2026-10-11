@@ -70,7 +70,7 @@ public final class PresenceUpdate {
                     ContactItem item = ContactList.getItembyUIN(uin);
                     if (item != null)
                         Icq.parseCapabilities(item, data, capsOffset, capsLength, shortOffset, shortLength);
-                    ContactList.update(uin, status, null, null, 0, 0, 0, 0, signon, online, idle, regdate
+                    ContactList.updatePresence(item, status, signon, online, idle, regdate
                         //#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
                         , hash
                         //#sijapp cond.end#
