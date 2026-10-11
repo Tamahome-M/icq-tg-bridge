@@ -87,6 +87,12 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	public static final int STATUS_NONE = 0x10000000;
 	public static final int STATUS_ONLINE = 0x00000000;
 
+	// In this bridge, invisible means the contact's network is unavailable.
+	public static boolean isOnlineStatus(int status)
+	{
+		return status != STATUS_OFFLINE && status != STATUS_INVISIBLE;
+	}
+
 	/* Sound notification typs */
 	public static final int SOUND_TYPE_MESSAGE = 1;
 	public static final int SOUND_TYPE_TYPING = 3;
@@ -779,7 +785,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			cItem = getCItem(i);
 
 			if (only_online
-					&& (cItem.getIntValue(ContactItem.CONTACTITEM_STATUS) == STATUS_OFFLINE)
+					&& !isOnlineStatus(cItem.getIntValue(ContactItem.CONTACTITEM_STATUS))
 					&& !cItem.mustBeShownAnyWay())
 				continue;
 
@@ -901,7 +907,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			if (data instanceof ContactItem)
 			{
 				counts[1]++;
-				if (((ContactItem) data).getIntValue(ContactItem.CONTACTITEM_STATUS) != STATUS_OFFLINE)
+				if (isOnlineStatus(((ContactItem) data).getIntValue(ContactItem.CONTACTITEM_STATUS)))
 					counts[0]++;
 			}
 			else countNode(child, counts);
@@ -998,12 +1004,12 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		if (presenceDepth == 0) tree.lock();
 
 		haveToAdd = contactExistsInList && !contactExistInTree;
-		if (only_online && !contactExistInTree)
-			haveToAdd |= ((status != STATUS_OFFLINE) | item.mustBeShownAnyWay());
+		if (only_online)
+			haveToAdd &= isOnlineStatus(status) || item.mustBeShownAnyWay();
 
 		haveToDelete = !contactExistsInList && contactExistInTree;
 		if (only_online && contactExistInTree)
-			haveToDelete |= ((status == STATUS_OFFLINE) && !item
+			haveToDelete |= (!isOnlineStatus(status) && !item
 					.mustBeShownAnyWay());
 
 		// if have to add new contact
@@ -1033,11 +1039,12 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		}
 
 		// sort group
-		if (needSorting && !wasDeleted && presenceDepth != 0)
+		boolean visibleNode = !wasDeleted && (contactExistInTree || haveToAdd);
+		if (needSorting && visibleNode && presenceDepth != 0)
 		{
 			if (!presenceGroups.contains(groupNode)) presenceGroups.addElement(groupNode);
 		}
-		else if (needSorting && !wasDeleted)
+		else if (needSorting && visibleNode)
 		{
 			boolean isCurrent = (tree.getCurrentItem() == cItemNode), inserted = false;
 
@@ -1069,7 +1076,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		}
 
 		// if set current
-		if (setCurrent)
+		if (setCurrent && visibleNode)
 			tree.setCurrentItem(cItemNode);
 
 		// unlock tree and repaint
@@ -1104,14 +1111,14 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			return;
 		}
 
-		long oldStatus = cItem.getIntValue(ContactItem.CONTACTITEM_STATUS);
+		int oldStatus = cItem.getIntValue(ContactItem.CONTACTITEM_STATUS);
 		int oldWeight = cItem.getSortWeight();
 
 		boolean statusChanged = (oldStatus != trueStatus);
-		boolean wasOnline = (oldStatus != STATUS_OFFLINE);
-		boolean nowOnline = (trueStatus != STATUS_OFFLINE);
+		boolean wasOnline = isOnlineStatus(oldStatus);
+		boolean nowOnline = isOnlineStatus(trueStatus);
 
-		if (status == STATUS_OFFLINE)
+		if (!nowOnline)
 		{
 			//#sijapp cond.if target isnot "DEFAULT"#
 			cItem.BeginTyping(false);
@@ -1301,7 +1308,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			// Update online counters
 			statusChanged(
 					cItem,
-					cItem.getIntValue(ContactItem.CONTACTITEM_STATUS) != STATUS_OFFLINE,
+					isOnlineStatus(cItem.getIntValue(ContactItem.CONTACTITEM_STATUS)),
 					false, -1);
 
 			// Save list
@@ -1354,8 +1361,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 				statusChanged(
 						cItem,
 						false,
-						cItem
-								.getIntValue(ContactItem.CONTACTITEM_STATUS) != STATUS_OFFLINE,
+						isOnlineStatus(cItem.getIntValue(ContactItem.CONTACTITEM_STATUS)),
 						1);
 
 				// Save list
@@ -1389,7 +1395,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 				cItem = getCItem(i);
 				if (cItem.getIntValue(ContactItem.CONTACTITEM_GROUP) == gItem.getId())
 				{
-					if (cItem.getIntValue(ContactItem.CONTACTITEM_STATUS) != STATUS_OFFLINE)
+					if (isOnlineStatus(cItem.getIntValue(ContactItem.CONTACTITEM_STATUS)))
 						onlineCounter--;
 					cItems.removeElementAt(i);
 				}

@@ -273,12 +273,24 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 					if ((snacPacket.getFamily() == SnacPacket.SRV_REPLYAVATAR_FAMILY)
 							&& (snacPacket.getCommand() == SnacPacket.SRV_REPLYAVATAR_COMMAND))
 					{
+						// History parameters can match across chats. Also match
+						// the request reference; old bridges may echo zero.
+						long reference = snacPacket.getReference();
+						if (reference != 0 && reference != (requestId & 0xFFFFFFFFL))
+						{
+							this.active = false;
+							return false;
+						}
 						byte[] buf = snacPacket.getDataRef();   // только читаем
 						int marker = 0;
 						if (buf.length < 1) throw new JimmException(133, 1, false);
 						int uinLength = Util.getByte(buf, marker);
+						if (buf.length - uinLength - 1 < 43) throw new JimmException(133, 2, false);
+						boolean ownUin = uinLength == this.uin.length();
+						for (int i = 0; ownUin && i < uinLength; i++)
+							ownUin = Util.getByte(buf, i + 1) == this.uin.charAt(i);
+						if (!ownUin) { this.active = false; return false; }
 						marker += 1 + uinLength;
-						if (buf.length - marker < 43) throw new JimmException(133, 2, false);
 						// Ответ службы адресован примете: типу и «хешу» —
 						// у нас это токен. Пока идёт одна загрузка, может
 						// начаться другая (история и снимок, например), и
@@ -398,7 +410,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 					{
 						// Concurrent history/photo requests share the BART socket.
 						// An error has no attachment token; identify its own request.
-						if (snacPacket.getReference() != requestId && snacPacket.getReference() != 0)
+						if (snacPacket.getReference() != (requestId & 0xFFFFFFFFL) && snacPacket.getReference() != 0)
 						{
 							this.active = false;
 							return false;

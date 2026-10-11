@@ -28,6 +28,7 @@ public class Jimm extends javax.microedition.midlet.MIDlet {
     "jimm/Options.java": """
 package jimm;
 public class Options {
+    public static int pingMissLimit() { return 3; }
     public static int[] mediaSize(int key) { return null; }
     public static int getInt(int key) { return 0; }
     public static int mediaVideoKbps() { return getInt(118); }

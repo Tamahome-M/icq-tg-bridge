@@ -103,6 +103,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		Util.putWord(token, 0, count);
 		Util.putWord(token, 2, shown);
 		Util.putByte(token, 4, 1);
+		Util.putDWord(token, 12, Util.getCounter());
 		try
 		{
 			Icq.requestAction(new RequestBartAction(uin, RequestBartAction.BART_HISTORY, token, this));
@@ -115,51 +116,136 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 
 	// Last message of a chat that has none yet: asked from the bridge and
 	// put into the chat itself, token and all.
-	static public void preloadLast(final String uin, final ChatTextList chat)
+	static public void preloadLast(String uin, ChatTextList chat)
 	{
-		byte[] token = new byte[16];
-		Util.putWord(token, 0, 1);
-		RequestBartAction.Listener into = new RequestBartAction.Listener() {
-			public void onBart(byte[] data)
-			{
-				if (data == null || data.length < 3) return;
-				int len = Util.getWord(data, 0);
-				if (2 + len + 1 > data.length) return;
-				String text = Util.byteArrayToString(data, 2, len, true);
-				int flag = Util.getByte(data, 2 + len);
-				byte[] photo = null;
-				int marker = 2 + len + 1;
-				if ((flag & 1) != 0 && marker + 16 <= data.length)
-				{
-					photo = new byte[16];
-					System.arraycopy(data, marker, photo, 0, 16);
-					marker += 16;
-				}
-				// Обсуждение под сообщением — его UIN за токеном (мост 0.74+).
-				String thread = null;
-				if ((flag & 0x10) != 0 && marker + 4 <= data.length)
-				{
-					thread = String.valueOf(Util.getDWord(data, marker));
-					marker += 4;
-				}
-				byte[] ref = null;
-				if ((flag & 0x20) != 0 && marker + 8 <= data.length)
-				{
-					ref = new byte[8];
-					System.arraycopy(data, marker, ref, 0, 8);
-				}
-				// Вид вложения — как в полной истории: бит 2 — видео,
-				// бит 4 — голосовое, иначе фото. Раньше голосовое здесь
-				// считалось фото, и в чате была кнопка «Показать фото».
-				int kind = ((flag & 6) == 6) ? 4 : ((flag & 4) != 0 ? 3 : ((flag & 2) != 0 ? 2 : 1));
-				ChatHistory.addHistoryLine(uin, text, photo, kind, thread, ref);
-			}
-		};
-		try
+		synchronized (ChatHistory.class)
 		{
-			Icq.requestAction(new RequestBartAction(uin, RequestBartAction.BART_HISTORY, token, into));
+			if (!Icq.isConnected() || chat.messageCount() != 0
+					|| chat.contact.getIntValue(ContactItem.CONTACTITEM_STATUS) == ContactList.STATUS_INVISIBLE) return;
+			int session = Icq.getSessionId();
+			if (chat.preloadRequest != 0 && chat.preloadSession == session) return;
+			int request = Util.getCounter();
+			if (request == 0) request = Util.getCounter();
+			chat.preloadRequest = request;
+			chat.preloadSession = session;
+			Preload into;
+			try { into = new Preload(uin, request, session); }
+			catch (OutOfMemoryError e) { chat.preloadRequest = 0; return; }
+			try
+			{
+				byte[] token = new byte[16];
+				Util.putWord(token, 0, 1);
+				// The bridge ignores these unused parameter bytes and echoes
+				// the entire token. Even legacy zero-reference replies stay unique.
+				Util.putDWord(token, 12, request);
+				Icq.requestAction(new RequestBartAction(uin, RequestBartAction.BART_HISTORY, token, into));
+			}
+			catch (JimmException e) { into.onBartError(e.getMessage()); }
+			catch (OutOfMemoryError e) { into.abandon(); }
 		}
-		catch (JimmException ignore) {}
+	}
+
+	// Retain only the UIN and request/session numbers, not a closed chat's rows.
+	private static final class Preload implements RequestBartAction.RangeListener,
+			RequestBartAction.ErrorListener, Runnable
+	{
+		private final String uin;
+		private final int request, session;
+		private byte[] data;
+		private int offset, length;
+		private String error;
+		private boolean received;
+		Preload(String uin, int request, int session)
+		{ this.uin = uin; this.request = request; this.session = session; }
+		public void onBart(byte[] data) { onBart(data, 0, data == null ? 0 : data.length); }
+		public void onBart(byte[] data, int offset, int length) { receive(data, offset, length, null); }
+		public void onBartError(String message) { receive(null, 0, 0, message); }
+
+		private ChatTextList target()
+		{
+			ChatTextList chat = ChatHistory.getChatHistoryAt(uin);
+			return chat != null && chat.preloadRequest == request && chat.preloadSession == session
+					&& Icq.getSessionId() == session ? chat : null;
+		}
+		private void abandon()
+		{
+			data = null; error = null;
+			synchronized (ChatHistory.class)
+			{
+				ChatTextList chat = target();
+				if (chat != null) chat.preloadRequest = 0;
+			}
+		}
+		private synchronized void receive(byte[] data, int offset, int length, String error)
+		{
+			if (received) return;
+			received = true;
+			synchronized (ChatHistory.class)
+			{
+				ChatTextList chat = target();
+				if (chat == null) return;
+				if (chat.messageCount() != 0) { chat.preloadRequest = 0; return; }
+			}
+			this.data = data; this.offset = offset; this.length = length; this.error = error;
+			try { Jimm.display.callSerially(this); }
+			catch (OutOfMemoryError e) { abandon(); }
+			catch (Exception e) { abandon(); }
+		}
+		public void run()
+		{
+			byte[] bytes = data; data = null;
+			synchronized (ChatHistory.class)
+			{
+				ChatTextList chat = target();
+				if (chat == null) { error = null; return; }
+				chat.preloadRequest = 0;
+				if (chat.messageCount() != 0) { error = null; return; }
+				try
+				{
+					if (bytes == null) { failure(chat, error); return; }
+					if (offset < 0 || length < 0 || offset > bytes.length - length)
+						throw new IllegalArgumentException("history range");
+					int end = offset + length, start = historyStart(bytes, offset, end);
+					int count = recordCount(bytes, start, end);
+					if (count == 0) return;
+					if (count != 1) throw new IllegalArgumentException("last history record");
+					int len = Util.getWord(bytes, start);
+					String text = Util.byteArrayToString(bytes, start + 2, len, true);
+					int flag = Util.getByte(bytes, start + 2 + len), marker = start + 3 + len;
+					byte[] attach = null, ref = null;
+					if ((flag & 1) != 0)
+					{
+						attach = new byte[16];
+						System.arraycopy(bytes, marker, attach, 0, 16); marker += 16;
+					}
+					String thread = null;
+					if ((flag & 0x10) != 0) { thread = String.valueOf(Util.getDWord(bytes, marker)); marker += 4; }
+					if ((flag & 0x20) != 0)
+					{
+						ref = new byte[8]; System.arraycopy(bytes, marker, ref, 0, 8);
+					}
+					int kind = (flag & 6) == 6 ? 4 : (flag & 4) != 0 ? 3 : (flag & 2) != 0 ? 2 : 1;
+					ChatHistory.addHistoryLine(uin, text, attach, kind, thread, ref, (flag & 8) == 0);
+				}
+				catch (OutOfMemoryError e) { failure(chat, null); }
+				catch (Exception e) { failure(chat, null); }
+				finally { error = null; }
+			}
+		}
+		private static void failure(ChatTextList chat, String error)
+		{
+			try
+			{
+				if (chat.messageCount() == 0) chat.textList.clear();
+				if (!chat.isVisible()) return;
+				String title = ResourceBundle.getString("history_failed");
+				Alert alert = new Alert(title, error == null ? title : error, null, AlertType.ERROR);
+				alert.setTimeout(Alert.FOREVER);
+				Jimm.display.setCurrent(alert, Jimm.display.getCurrent());
+			}
+			catch (OutOfMemoryError ignore) {}
+			catch (Exception ignore) {}
+		}
 	}
 
 	private void build()

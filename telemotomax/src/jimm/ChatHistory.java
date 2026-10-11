@@ -187,6 +187,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	
 	public String ChatName;
 	ContactItem contact;
+	int preloadRequest, preloadSession;
 
 	private Vector messData = new Vector();
 
@@ -716,83 +717,86 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 			boolean red, boolean offline, int messId, byte[] attach, int attachKind, String thread, byte[] messageRef)
 	{
 		int texOffset = 0;
-		boolean deliveryReqOn = Options.getBoolean(Options.OPTION_DELIV_MES_INFO); 
+		boolean deliveryReqOn = Options.getBoolean(Options.OPTION_DELIV_MES_INFO);
 
 		textList.lock();
 
-		int limit = maxMessages();
-		while (messData.size() >= limit) dropOldest();
-	
-		boolean shortMsg = (inOneMinute (lastMsgTime, time)) 
-			&& (lastDirection == red) 
-			&& !deliveryReqOn;
+		try
+		{
+			int limit = maxMessages();
+			while (messData.size() >= limit) dropOldest();
 
-		int lastSize = textList.getSize();
-		
-		StringBuffer messHeader = new StringBuffer();
-		
-		if (((Options.getBoolean(Options.OPTION_SHOW_MESS_ICON)) && (!shortMsg)) || deliveryReqOn)
-		{
-			textList.addImage(JimmUI.eventPlainMessageImg, "", messTotalCounter);
-			messHeader.append(' ');
-		}
-		
-		if ((Options.getBoolean(Options.OPTION_SHOW_NICK)) && (!shortMsg))
-		{
-			messHeader.append(from);
-			messHeader.append(' ');
-		}
-		
-		if ((Options.getBoolean(Options.OPTION_SHOW_MESS_DATE)) && (!shortMsg))
-		{
-			messHeader.append('(');
-			messHeader.append(Util.getDateString(!offline, time));
-			messHeader.append(')');
-		}
-		
-		if (messHeader.length() != 0) messHeader.append(": ");
-		
-		if (messHeader.length() != 0)
-		{
-			textList.addBigText(messHeader.toString(), getInOutColor(red), Font.STYLE_BOLD, messTotalCounter);
-			if (offline || Options.getBoolean(Options.OPTION_SHOW_MESS_CLRF)) textList.doCRLF(messTotalCounter);
-			String restoredHeadText = textList.getTextByIndex(0, false, messTotalCounter);
-			texOffset = restoredHeadText.length();
-		}
-		else texOffset = 0;
+			boolean shortMsg = (inOneMinute (lastMsgTime, time))
+				&& (lastDirection == red)
+				&& !deliveryReqOn;
 
-		if (url.length() > 0)
-		{
-			textList.addBigText(ResourceBundle.getString("url") + ": " + url,
-					0x00FF00, Font.STYLE_PLAIN, messTotalCounter);
+			int lastSize = textList.getSize();
+
+			StringBuffer messHeader = new StringBuffer();
+
+			if (((Options.getBoolean(Options.OPTION_SHOW_MESS_ICON)) && (!shortMsg)) || deliveryReqOn)
+			{
+				textList.addImage(JimmUI.eventPlainMessageImg, "", messTotalCounter);
+				messHeader.append(' ');
+			}
+
+			if ((Options.getBoolean(Options.OPTION_SHOW_NICK)) && (!shortMsg))
+			{
+				messHeader.append(from);
+				messHeader.append(' ');
+			}
+
+			if ((Options.getBoolean(Options.OPTION_SHOW_MESS_DATE)) && (!shortMsg))
+			{
+				messHeader.append('(');
+				messHeader.append(Util.getDateString(!offline, time));
+				messHeader.append(')');
+			}
+
+			if (messHeader.length() != 0) messHeader.append(": ");
+
+			if (messHeader.length() != 0)
+			{
+				textList.addBigText(messHeader.toString(), getInOutColor(red), Font.STYLE_BOLD, messTotalCounter);
+				if (offline || Options.getBoolean(Options.OPTION_SHOW_MESS_CLRF)) textList.doCRLF(messTotalCounter);
+				String restoredHeadText = textList.getTextByIndex(0, false, messTotalCounter);
+				texOffset = restoredHeadText.length();
+			}
+			else texOffset = 0;
+
+			if (url.length() > 0)
+			{
+				textList.addBigText(ResourceBundle.getString("url") + ": " + url,
+						0x00FF00, Font.STYLE_PLAIN, messTotalCounter);
+			}
+
+			int textColor = Options.getBoolean(Options.OPTION_MESS_COLORED_TEXT) ? getInOutColor(red) : textList.getTextColor();
+			JimmUI.addMessageText(textList, message, textColor, messTotalCounter);
+
+			boolean contains_url = Util.hasURL(url);
+			//#sijapp cond.if target is "MIDP2" | target is "SIEMENS2" | target is "MOTOROLA"#
+			if (VideoLink.hasVisibleURL(message))
+			{
+				contains_url = true;
+				if (texOffset == 1)
+					textList.addCommandEx(JimmUI.cmdGotoURL, VirtualList.MENU_TYPE_RIGHT);
+			}
+			//#sijapp cond.end#
+			MessData md = new MessData(red, time, texOffset, contains_url, messId);
+			md.attach = attach;
+			md.attachKind = attachKind;
+			md.thread = thread;
+			md.videoUrl = VideoLink.url(message);
+			if (md.videoUrl == null && attachKind == 2 && url.length() > 0) md.videoUrl = url;
+			md.messageRef = messageRef;
+			getMessData().addElement(md);
+			messTotalCounter++;
+			lastMsgTime = (shortMsg) ? lastMsgTime : time;
+			lastDirection = red;
+
+			textList.setTopItem(lastSize);
 		}
-
-		int textColor = Options.getBoolean(Options.OPTION_MESS_COLORED_TEXT) ? getInOutColor(red) : textList.getTextColor(); 
-		JimmUI.addMessageText(textList, message, textColor, messTotalCounter);
-
-		boolean contains_url = Util.hasURL(url);
-		//#sijapp cond.if target is "MIDP2" | target is "SIEMENS2" | target is "MOTOROLA"#
-		if (VideoLink.hasVisibleURL(message))
-		{
-			contains_url = true;
-			if (texOffset == 1)
-				textList.addCommandEx(JimmUI.cmdGotoURL, VirtualList.MENU_TYPE_RIGHT);
-		}
-		//#sijapp cond.end#
-		MessData md = new MessData(red, time, texOffset, contains_url, messId);
-		md.attach = attach;
-		md.attachKind = attachKind;
-		md.thread = thread;
-		md.videoUrl = VideoLink.url(message);
-		if (md.videoUrl == null && attachKind == 2 && url.length() > 0) md.videoUrl = url;
-		md.messageRef = messageRef;
-		getMessData().addElement(md);
-		messTotalCounter++;
-		lastMsgTime = (shortMsg) ? lastMsgTime : time;
-		lastDirection = red;
-
-		textList.setTopItem(lastSize);
-		textList.unlock();
+		finally { textList.unlock(); }
 	}
 
 	public void activate()
@@ -1164,7 +1168,7 @@ public class ChatHistory
 			newChatForm(contact, contact.getStringValue(ContactItem.CONTACTITEM_NAME));
 		ChatTextList chat = (ChatTextList) historyTable.get(uin);
 		chat.activate();
-		if (fresh && chat.messageCount() == 0) HistoryViewer.preloadLast(uin, chat);
+		if (chat.messageCount() == 0) HistoryViewer.preloadLast(uin, chat);
 	}
 
 	// TeleMotoMax: a history record from the bridge goes into the chat as
@@ -1182,10 +1186,15 @@ public class ChatHistory
 	static synchronized void addHistoryLine(String uin, String text, byte[] attach, int kind,
 			String thread, byte[] ref)
 	{
+		addHistoryLine(uin, text, attach, kind, thread, ref, true);
+	}
+	static synchronized void addHistoryLine(String uin, String text, byte[] attach, int kind,
+			String thread, byte[] ref, boolean incoming)
+	{
 		ChatTextList chat = (ChatTextList) historyTable.get(uin);
 		if (chat == null) return;
 		chat.addTextToForm(chat.contact.getStringValue(ContactItem.CONTACTITEM_NAME),
-				text, "", Util.createCurrentDate(false), true, true, -1, attach, kind, thread, ref);
+				text, "", Util.createCurrentDate(false), incoming, true, -1, attach, kind, thread, ref);
 		chat.checkTextForPhoto();
 	}
 

@@ -2,6 +2,7 @@ import java.lang.reflect.*;
 import java.util.*;
 import javax.microedition.lcdui.*;
 import jimm.*;
+import DrawControls.TreeNode;
 
 public final class ClientGroupsTest {
     static void check(boolean ok,String why){if(!ok)throw new AssertionError(why);}
@@ -28,6 +29,11 @@ public final class ClientGroupsTest {
     }
     static void rebuild()throws Exception{
         ContactList.optionsChanged(true,true);invoke(ContactList.class,"buildTree");invoke(ContactList.class,"sortAll");
+    }
+    static boolean inTree(TreeNode node,ContactItem contact){
+        if(node.getData()==contact)return true;
+        for(int i=0;i<node.size();i++)if(inTree(node.elementAt(i),contact))return true;
+        return false;
     }
     public static void main(String[] args){
         try{run();}catch(Throwable error){error.printStackTrace();System.exit(1);}
@@ -61,6 +67,35 @@ public final class ClientGroupsTest {
         ContactList.update("1000003",ContactList.STATUS_ONLINE);counts("Telegram/Personal",1,1);counts("Telegram",2,3);
         ContactList.update("1000004",ContactList.STATUS_ONLINE);counts("MAX",1,1);counts("Telegram",2,3);
         check(field(ContactList.class,"onlineCounter").getInt(null)==3,"global online count double counts ancestors");
+        ContactItem max=(ContactItem)contacts.elementAt(3);
+        ContactList.update("1000002",ContactList.STATUS_INVISIBLE);counts("Telegram/Work/Forum",0,1);counts("Telegram",2,3);
+        ContactList.update("1000004",ContactList.STATUS_INVISIBLE);counts("MAX",0,1);
+        check(field(ContactList.class,"onlineCounter").getInt(null)==2,"unavailable network counts as online");
+        check(max.getIntValue(ContactItem.CONTACTITEM_STATUS)==ContactList.STATUS_INVISIBLE && max.getSortWeight()==20,
+            "unavailable contact lost its icon status or sorts with available contacts");
+        ContactList.update("1000004",ContactList.STATUS_INVISIBLE);counts("MAX",0,1);
+        ContactItem unavailable=contact(4,"1000006",false);unavailable.setIntValue(ContactItem.CONTACTITEM_STATUS,ContactList.STATUS_INVISIBLE);
+        ContactList.addContactItem(unavailable);counts("MAX",0,2);
+        ContactList.removeContactItem(unavailable);counts("MAX",0,1);
+        rebuild();counts("Telegram",2,3);counts("MAX",0,1);
+        for(int status:new int[]{ContactList.STATUS_AWAY,ContactList.STATUS_NA,ContactList.STATUS_DND,ContactList.STATUS_OCCUPIED}){
+            ContactList.update("1000001",status);counts("Telegram",2,3);
+            check(field(ContactList.class,"onlineCounter").getInt(null)==2,"ordinary policy/away status became unavailable");
+        }
+        ContactList.update("1000001",ContactList.STATUS_ONLINE);
+        Options.setBoolean(Options.OPTION_CL_HIDE_OFFLINE,true);rebuild();
+        DrawControls.VirtualTree tree=(DrawControls.VirtualTree)field(ContactList.class,"tree").get(null);
+        check(!inTree(tree.getRoot(),max) && !inTree(tree.getRoot(),two),"hidden-offline keeps unavailable contacts");
+        ContactList.update("1000004",ContactList.STATUS_ONLINE);check(inTree(tree.getRoot(),max),"network recovery did not restore hidden contact");
+        ContactList.update("1000004",ContactList.STATUS_INVISIBLE);check(!inTree(tree.getRoot(),max),"network outage did not remove hidden contact");
+        unavailable=contact(4,"1000006",false);unavailable.setIntValue(ContactItem.CONTACTITEM_STATUS,ContactList.STATUS_INVISIBLE);
+        ContactList.addContactItem(unavailable);check(!inTree(tree.getRoot(),unavailable),"new unavailable contact bypasses hidden-offline filter");
+        ContactList.removeContactItem(unavailable);
+        Options.setBoolean(Options.OPTION_CL_HIDE_OFFLINE,false);rebuild();
+        ContactList.update("1000002",ContactList.STATUS_OFFLINE);ContactList.update("1000004",ContactList.STATUS_ONLINE);
+        counts("Telegram",2,3);counts("MAX",1,1);
+        check(field(ContactList.class,"onlineCounter").getInt(null)==3,"recovery/rebuild corrupts global count");
+        System.out.println("PASS: unavailable network keeps invisible icon, sorts/hides with offline, leaves nested/global online counts, add/remove and rebuild exact; ordinary away/NA/DND/occupied remain online");
         ContactItem added=contact(2,"1000005",false);added.setIntValue(ContactItem.CONTACTITEM_STATUS,ContactList.STATUS_ONLINE);
         ContactList.addContactItem(added);counts("Telegram",3,4);counts("Telegram/Work",2,3);counts("Telegram/Work/Forum",1,2);
         ContactList.removeContactItem(added);counts("Telegram",2,3);counts("Telegram/Work",1,2);counts("Telegram/Work/Forum",0,1);
