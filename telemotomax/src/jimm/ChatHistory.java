@@ -30,7 +30,6 @@ import javax.microedition.lcdui.*;
 import jimm.comm.Icq;
 import jimm.comm.Message;
 import jimm.comm.PlainMessage;
-import jimm.comm.SearchAction;
 import jimm.comm.SysNoticeAction;
 import jimm.comm.SystemNotice;
 import jimm.comm.UrlMessage;
@@ -436,21 +435,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		/* Add temporary user to contact list */
 		else if (c == cmdAddUrs)
 		{
-			Search search = new Search();
-			String data[] = new String[Search.LAST_INDEX];
-			data[Search.UIN] = contact.getStringValue(ContactItem.CONTACTITEM_UIN);
-
-			SearchAction act = new SearchAction(search, data, SearchAction.CALLED_BY_ADDUSER);
-
-			try
-			{
-				Icq.requestAction(act);
-			} catch (JimmException e)
-			{
-				JimmException.handleException(e);
-			}
-
-			SplashCanvas.addTimerTask("wait", act, false);
+			new Search(contact).lookup(contact.getStringValue(ContactItem.CONTACTITEM_UIN), true);
 		}
 		
 		/* Add selected text to history */

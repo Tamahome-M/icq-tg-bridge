@@ -105,9 +105,10 @@ public final class NativeQuote extends Action
     }
 
     public boolean isCompleted() { return done; }
+    public long getDeadline() { return started == 0 || done ? Long.MAX_VALUE : started + 60000; }
     public boolean isError()
     {
-        if (!done && started > 0 && System.currentTimeMillis() - started > 60000)
+        if (!done && started > 0 && System.currentTimeMillis() >= getDeadline())
             finish(ResourceBundle.getString("quote_timeout"));
         return false;
     }

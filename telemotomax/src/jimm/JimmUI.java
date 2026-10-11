@@ -306,7 +306,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 
 					if (messText.length() != 0)
 					{
-						sendMessage(messText, textMessReceiver);
+						if (!sendMessage(messText, textMessReceiver)) return;
 						if (Jimm.getPhoneVendor() == Device.PHONE_SONYERICSSON)
 						{
 							messageTextbox = null;
@@ -1508,39 +1508,39 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		//#sijapp cond.end#
 	}
 
-	public static void sendMessage(String text, ContactItem textMessReceiver)
+	public static boolean sendMessage(String text, ContactItem textMessReceiver)
 	{
-		/* Construct plain message object and request new SendMessageAction
-		 Add the new message to the chat history */
-
-		if (text == null)
-			return;
-		if (text.length() == 0)
-			return;
-
-		PlainMessage plainMsg = new PlainMessage(Options.getString(Options.OPTION_UIN), textMessReceiver, Message.MESSAGE_TYPE_NORM, Util.createCurrentDate(false), text);
-
-		SendMessageAction sendMsgAct = new SendMessageAction(plainMsg);
-		
-		int messId = sendMsgAct.getMessId();
-		ChatHistory.addMyMessage(textMessReceiver, text, plainMsg.getNewDate(), textMessReceiver.getStringValue(ContactItem.CONTACTITEM_NAME), messId);
-		
+		if (text == null || text.length() == 0) return false;
+		PlainMessage plainMsg;
+		SendMessageAction sendMsgAct;
 		try
 		{
+			plainMsg = new PlainMessage(Options.getString(Options.OPTION_UIN), textMessReceiver,
+					Message.MESSAGE_TYPE_NORM, Util.createCurrentDate(false), text);
+			sendMsgAct = new SendMessageAction(plainMsg);
 			Icq.requestAction(sendMsgAct);
 		} catch (JimmException e)
 		{
 			JimmException.handleException(e);
-			if (e.isCritical())
-				return;
+			return false;
+		} catch (OutOfMemoryError e)
+		{
+			System.gc();
+			return false;
 		}
-
-		//#sijapp cond.if modules_HISTORY is "true" #
-		if (Options.getBoolean(Options.OPTION_HISTORY))
-			HistoryStorage.addText(textMessReceiver.getStringValue(ContactItem.CONTACTITEM_UIN),
-					text, (byte) 1, ResourceBundle.getString("me"), plainMsg
-							.getNewDate());
-		//#sijapp cond.end#
+		// The queue owns the message now. A display allocation failure must
+		// not leave a draft that would send the accepted message a second time.
+		try
+		{
+			ChatHistory.addMyMessage(textMessReceiver, text, plainMsg.getNewDate(),
+					textMessReceiver.getStringValue(ContactItem.CONTACTITEM_NAME), sendMsgAct.getMessId());
+			//#sijapp cond.if modules_HISTORY is "true" #
+			if (Options.getBoolean(Options.OPTION_HISTORY))
+				HistoryStorage.addText(textMessReceiver.getStringValue(ContactItem.CONTACTITEM_UIN),
+						text, (byte) 1, ResourceBundle.getString("me"), plainMsg.getNewDate());
+			//#sijapp cond.end#
+		} catch (OutOfMemoryError e) { System.gc(); }
+		return true;
 	}
 	
 	/////////////////////////////////////////////////////

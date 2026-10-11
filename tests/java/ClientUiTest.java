@@ -210,12 +210,11 @@ public final class ClientUiTest {
 
         new Icq();Socket socket=new Socket();field(Icq.class,"c").set(null,socket);
         method(Icq.class,"setConnected").invoke(null);field(Icq.class,"reqAction").set(null,new Vector());
-        Search search=new Search();Search.SearchForm query=search.getSearchForm();
-        Form searchForm=(Form)field(query.getClass(),"searchForm").get(query);
-        check(searchForm.items.size()==7,"search filters remain or query fields disappeared");
-        for(Object item:searchForm.items)check(item instanceof TextField,"search filter remains");
-        ((TextField)field(query.getClass(),"keywordSearchTextBox").get(query)).setString("Ceph");
-        query.commandAction((Command)field(query.getClass(),"searchCommand").get(query),searchForm);
+        Search search=new Search(null);search.show();
+        Form searchForm=(Form)field(Search.class,"query").get(search);
+        check(searchForm.items.size()==1,"legacy search filters remain");
+        TextField query=(TextField)searchForm.items.elementAt(0);query.setString("Ceph");
+        search.commandAction((Command)field(Search.class,"search").get(search),searchForm);
         SearchAction action=(SearchAction)((Vector)field(Icq.class,"reqAction").get(null)).lastElement();
         method(SearchAction.class,"init").invoke(action);
         ToIcqSrvPacket packet=(ToIcqSrvPacket)socket.packets.lastElement();

@@ -870,6 +870,12 @@ public class Icq implements Runnable
 		sendTimedStream(0x0005, uin, in, size, seconds, type, progress);
 	}
 
+	public static void sendVoiceStream(String uin, java.io.InputStream in, long size, int seconds, String type,
+			UploadProgress progress) throws JimmException, java.io.IOException
+	{
+		sendTimedStream(0x0004, uin, in, size, seconds, type, progress);
+	}
+
 	private static void sendTimedStream(int subtype, String uin, java.io.InputStream in, long length, int seconds, String type,
 			UploadProgress progress) throws JimmException, java.io.IOException
 	{
@@ -896,7 +902,13 @@ public class Icq implements Runnable
 			{
 				int read = in.read(buf, marker + got, size - got);
 				if (read < 0) throw new java.io.IOException("media shorter than declared");
-				got += read;
+				if (read == 0)
+				{
+					int value = in.read();
+					if (value < 0) throw new java.io.IOException("media shorter than declared");
+					buf[marker + got++] = (byte)value;
+				}
+				else got += read;
 			}
 			marker += size;
 			if (tail > 0) { Util.putByte(buf, marker++, typeRaw.length); System.arraycopy(typeRaw, 0, buf, marker, typeRaw.length); }

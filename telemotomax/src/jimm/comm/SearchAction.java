@@ -23,259 +23,82 @@
 
 package jimm.comm;
 
+import java.io.ByteArrayOutputStream;
 import jimm.JimmException;
 import jimm.Options;
 import jimm.Search;
 
-import java.io.ByteArrayOutputStream;
-
-public class SearchAction extends Action
+/** UIN lookup or a single chat-name query; retains only bridge result fields. */
+public final class SearchAction extends Action
 {
+    public static final int TLV_TYPE_UIN = 0x3601, TLV_TYPE_KEYWORD = 0x2602;
+    private Search owner;
+    private final String query;
+    private final boolean byUin;
+    private boolean done, failed, notified;
+    private long lastActivity;
 
-	// States of search mission
-	public static final int STATE_ERROR = -1;
+    public SearchAction(Search owner, String query, boolean byUin)
+    { super(true, true); this.owner = owner; this.query = query; this.byUin = byUin; }
 
-	public static final int STATE_UIN_SEARCH_SENT = 1;
+    protected void init() throws JimmException
+    {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        Util.writeWord(body, 0x5f05, true);
+        if (byUin)
+        {
+            int uin;
+            try { uin = Integer.parseInt(query); }
+            catch (NumberFormatException error) { failed = true; return; }
+            Util.writeWord(body, TLV_TYPE_UIN, true);
+            Util.writeWord(body, 4, false);
+            Util.writeDWord(body, uin, false);
+        }
+        else Util.writeAsciizTLV(TLV_TYPE_KEYWORD, body, query);
+        Icq.sendPacket(new ToIcqSrvPacket(SnacPacket.CLI_TOICQSRV_COMMAND, 2,
+                Options.getString(Options.OPTION_UIN), 0x07D0, new byte[0], body.toByteArray()));
+        lastActivity = System.currentTimeMillis();
+    }
 
-	public static final int STATE_EMAIL_SEARCH_SENT = 2;
+    protected boolean forward(Packet packet) throws JimmException
+    {
+        if (done || failed || !(packet instanceof FromIcqSrvPacket)) return false;
+        byte[] data = ((FromIcqSrvPacket)packet).getDataRef();
+        if (data.length < 3) return false;
+        int type = Util.getWord(data, 0);
+        if (type != 0xa401 && type != 0xae01) return false;
+        lastActivity = System.currentTimeMillis();
+        if (data[2] != 10) { failed = true; return true; }
+        try
+        {
+            if (data.length < 9) throw new IllegalArgumentException();
+            String uin = String.valueOf(Util.getDWord(data, 5, false));
+            String name = uin;
+            int at = 9;
+            for (int i = 0; i < 4; i++)
+            {
+                if (at + 2 > data.length) throw new IllegalArgumentException();
+                int length = Util.getWord(data, at, false); at += 2;
+                if (length > data.length - at) throw new IllegalArgumentException();
+                if (i == 0) name = Util.byteArrayToString(data, at, length);
+                at += length;
+            }
+            if (at >= data.length) throw new IllegalArgumentException();
+            owner.addResult(uin, name, data[at] == 0);
+            done = type == 0xae01;
+        }
+        catch (RuntimeException malformed) { failed = true; }
+        return true;
+    }
 
-	public static final int STATE_WHITEPAGES_SEARCH_SENT = 3;
-
-	public static final int STATE_FIRSTRESULT_RECEIVED = 4;
-
-	public static final int STATE_LASTRESULT_RECEIVED = 5;
-
-	public static final int STATE_SEARCH_FINISHED = 6;
-
-	public static final int STATE_SEARCH_CANCELED = 7;
-
-	// TLVs used in LE format
-	public static final int TLV_TYPE_UIN = 0x3601; // long (4 byte)
-
-	public static final int TLV_TYPE_NICK = 0x5401; // String (2 byte length + string)
-
-	public static final int TLV_TYPE_FIRSTNAME = 0x4001; // String (2 byte length + string)
-
-	public static final int TLV_TYPE_LASTNAME = 0x4A01; // String (2 byte length + string)
-
-	public static final int TLV_TYPE_EMAIL = 0x5E01; // String (2 byte length + string + 1 byte email code)
-
-	public static final int TLV_TYPE_CITY = 0x9001; // String (2 byte length + string)
-
-	public static final int TLV_TYPE_KEYWORD = 0x2602; // String (2 byte length + string)
-
-	// Search action was called by
-	public static final int CALLED_BY_SEARCHUSER = 0;
-
-	public static final int CALLED_BY_ADDUSER = 1;
-
-	// Timeout
-	public static final int TIMEOUT = 60 * 1000; // milliseconds
-
-	/****************************************************************************/
-
-	// Action state
-	private int state;
-
-	// Search object as container for request and results
-	private String[] search;
-
-	private Search cont;
-
-	// Last activity
-	private long lastActivity = System.currentTimeMillis();
-
-	public SearchAction(Search cont, String[] search, int _calledBy)
-	{
-		super(false, true);
-		this.search = search;
-		this.cont = cont;
-	}
-
-	// Init action
-	protected void init() throws JimmException
-	{
-		ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-
-		for (int i = search.length - 1; i >= 0; i--)
-			if (search[i] == null)
-				search[i] = Options.emptyString;
-
-		Util.writeWord(buffer, 0x5f05, true);
-
-		// UIN
-		if (search[Search.UIN].length() != 0)
-		{
-			Util.writeWord(buffer, TLV_TYPE_UIN, true);
-			Util.writeWord(buffer, 0x0004, false);
-			Util
-					.writeDWord(buffer, Integer.parseInt(search[Search.UIN]),
-							false);
-		}
-
-		// NICK
-		if (search[Search.NICK].length() != 0)
-			Util.writeAsciizTLV(TLV_TYPE_NICK, buffer, search[Search.NICK]);
-
-		// First name
-		if (search[Search.FIRST_NAME].length() != 0)
-			Util.writeAsciizTLV(TLV_TYPE_FIRSTNAME, buffer,
-					search[Search.FIRST_NAME]);
-
-		// Last name
-		if (search[Search.LAST_NAME].length() != 0)
-			Util.writeAsciizTLV(TLV_TYPE_LASTNAME, buffer,
-					search[Search.LAST_NAME]);
-
-		// email
-		if (search[Search.EMAIL].length() != 0)
-			Util.writeAsciizTLV(TLV_TYPE_EMAIL, buffer, search[Search.EMAIL]);
-
-		// City
-		if (search[Search.CITY].length() != 0)
-			Util.writeAsciizTLV(TLV_TYPE_CITY, buffer, search[Search.CITY]);
-
-		// Keyword
-		if (search[Search.KEYWORD].length() != 0)
-			Util.writeAsciizTLV(TLV_TYPE_KEYWORD, buffer,
-					search[Search.KEYWORD]);
-
-		ToIcqSrvPacket packet = new ToIcqSrvPacket(
-				SnacPacket.CLI_TOICQSRV_COMMAND, 0x0002, Options
-						.getString(Options.OPTION_UIN), 0x07D0, new byte[0],
-				buffer.toByteArray());
-		Icq.sendPacket(packet);
-
-		this.state = STATE_UIN_SEARCH_SENT;
-	}
-
-	// Forwards received packet, returns true if packet was consumed
-	protected synchronized boolean forward(Packet packet) throws JimmException
-	{
-		// Flag indicates whether packet has been consumed or not
-		boolean consumed = false;
-
-		if (this.state == STATE_UIN_SEARCH_SENT
-				|| this.state == STATE_FIRSTRESULT_RECEIVED)
-		{
-			// Watch out for SRV_FROMICQSRV packet type
-			if (packet instanceof FromIcqSrvPacket)
-			{
-				FromIcqSrvPacket fromIcqServerPacket = (FromIcqSrvPacket) packet;
-
-				int marker = 0;
-
-				byte[] data = fromIcqServerPacket.getData();
-
-				if (Util.getWord(data, marker) == 0xa401)
-					this.state = STATE_FIRSTRESULT_RECEIVED;
-				if (Util.getWord(data, marker) == 0xae01)
-					this.state = STATE_LASTRESULT_RECEIVED;
-
-				marker += 2;
-				if (Util.getByte(data, marker) == 0x0A)
-				{
-					// Get UIN
-					marker += 3;
-					long uin = Util.getDWord(data, marker, false);
-
-					// Get nick
-					marker += 4;
-
-					String[] strings = new String[4];
-
-					// Get the strings
-					// #0 Nick
-					// #1 Firstname
-					// #2 Lastname
-					// #3 EMail
-					for (int i = 0; i < 4; i++)
-					{
-						strings[i] = Util.byteArrayToString(data, marker + 2,
-								Util.getWord(data, marker, false));
-						marker += 2 + Util.getWord(data, marker, false);
-					}
-
-					// Get auth flag
-					String auth = (Util.getByte(data, marker) == 0) ? "1" : "0";
-					marker += 1;
-
-					// Get status
-					int status = Util.getWord(data, marker, false);
-					marker += 2;
-
-					// Get gender
-					String gender = Util.genderToString(Util.getByte(data,
-							marker));
-					marker += 1;
-
-					// Get age
-					int age = Util.getWord(data, marker, false);
-
-					cont.addResult(String.valueOf(uin), strings[0], strings[1]
-							+ " " + strings[2], strings[3], auth, status,
-							gender, age);
-
-					if (this.state == STATE_LASTRESULT_RECEIVED)
-					{
-						marker += 2;
-						/*long foundleft =*/ Util.getDWord(data, marker, false);
-						// System.out.println("foundleft: "+foundleft);
-						this.state = STATE_SEARCH_FINISHED;
-					}
-				} else
-				{
-					this.state = ConnectAction.STATE_ERROR;
-				}
-			}
-		}
-
-		// Update activity timestamp
-		this.lastActivity = System.currentTimeMillis();
-
-		return consumed;
-	}
-
-	public void onEvent(int eventTuype)
-	{
-		switch (eventTuype)
-		{
-		case ON_COMPLETE:
-			cont.getSearchForm().activate(Search.SearchForm.ACTIV_SHOW_RESULTS);
-			break;
-
-		case ON_ERROR:
-			if (this.state == STATE_FIRSTRESULT_RECEIVED)
-			{
-				JimmException.handleException(new JimmException(159, 0, true));
-			} else
-			{
-				cont.getSearchForm().activate(
-						Search.SearchForm.ACTIV_SHOW_NORESULTS);
-			}
-			break;
-
-		case ON_CANCEL:
-			cont.getSearchForm().activate(Search.SearchForm.ACTIV_JUST_SHOW);
-			state = STATE_SEARCH_CANCELED;
-			break;
-		}
-	}
-
-	// Returns true if the action is completed
-	public boolean isCompleted()
-	{
-		return (state == STATE_SEARCH_FINISHED)
-				|| (state == STATE_SEARCH_CANCELED);
-	}
-
-	// Returns true if an error has occured
-	public long getDeadline() { return lastActivity + TIMEOUT; }
-
-	public synchronized boolean isError()
-	{
-		return (state == ConnectAction.STATE_ERROR)
-				|| ((lastActivity + SearchAction.TIMEOUT) < System
-						.currentTimeMillis());
-	}
+    public void onEvent(int event)
+    {
+        if (notified) return;
+        notified = true; done = true;
+        Search result = owner; owner = null;
+        if (result != null) result.finished(event);
+    }
+    public boolean isCompleted() { return done; }
+    public long getDeadline() { return lastActivity == 0 || done ? Long.MAX_VALUE : lastActivity + 60000; }
+    public boolean isError() { return failed || System.currentTimeMillis() >= getDeadline(); }
 }

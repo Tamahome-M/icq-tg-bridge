@@ -86,11 +86,22 @@ public final class HistoryMemoryTest {
   HistoryViewer viewer=viewer();Font.measured=0;long firstWork=0;
   for(int batch=0;batch<10;batch++){
    Vector before=(Vector)lines(list(viewer)).clone();long beforeWork=Font.measured;
+   int previousShown=f(HistoryViewer.class,"shown").getInt(viewer);
+   int[] indices=new int[before.size()];for(int i=0;i<indices.length;i++)indices[i]=f(before.elementAt(i).getClass(),"bigTextIndex").getInt(before.elementAt(i));
    render(viewer,page(91-batch*10,10,2,true,false));
    if(batch==0)firstWork=Font.measured;
    if(!baseline && batch>0){
     Vector after=lines(list(viewer));
-    for(int i=0;i<before.size();i++)check(after.contains(before.elementAt(i)),"older-page load rebuilt existing TextLines");
+    int added=f(HistoryViewer.class,"shown").getInt(viewer)-previousShown;
+    int retained=((Vector)f(HistoryViewer.class,"tokens").get(viewer)).size()-added;
+    for(int i=0;i<before.size();i++){
+     Object line=before.elementAt(i);int index=indices[i];
+     if(index>=0 && index<retained)check(after.contains(line),"retained history was reformatted");
+    }
+    check(list(viewer).getSize()<=HistoryViewer.MAX_ROWS,"history exceeded row budget");
+    short[] sizes=(short[])f(HistoryViewer.class,"textBytes").get(viewer);int bytes=0;
+    for(int i=0;i<retained+added;i++)bytes+=sizes[i];
+    check(bytes<=HistoryViewer.MAX_TEXT_BYTES,"history exceeded text budget");
     check(Font.measured-beforeWork<firstWork*2,"older-page load measured existing messages again");
    }
   }
@@ -101,7 +112,7 @@ public final class HistoryMemoryTest {
    check(f(HistoryViewer.class,"kinds").get(viewer) instanceof byte[],"attachment types still use boxed Integers");
   }
   check(f(HistoryViewer.class,"shown").getInt(viewer)==100,"page offset did not advance");
-  System.out.println("METRIC history 10 pages / 100 messages: measured characters="+Font.measured+", separately stored message characters="+stored);
+  System.out.println("METRIC history 10 pages / 100 messages: measured characters="+Font.measured+", separately stored message characters="+stored+", retained rows="+list(viewer).getSize()+", retained messages="+((Vector)f(HistoryViewer.class,"tokens").get(viewer)).size());
   if(!baseline)System.out.println("PASS: only incoming messages are formatted; previous TextLine objects survive and full-message storage is absent");
   viewer.commandAction(JimmUI.cmdBack,null);
  }
@@ -129,16 +140,49 @@ public final class HistoryMemoryTest {
  }
  static void limits()throws Exception{
   HistoryViewer viewer=viewer();render(viewer,page(1001,190,2,true,false));
+  check(f(HistoryViewer.class,"shown").getInt(viewer)==HistoryViewer.PAGE_MESSAGES,"legacy large page was not bounded");
   new SplashCanvas("test");new Icq();m(Icq.class,"setConnected").invoke(null);Vector queued=new Vector();f(Icq.class,"reqAction").set(null,queued);
-  Options.setInt(Options.OPTION_HISTORY_COUNT,100);m(HistoryViewer.class,"request").invoke(viewer);
-  RequestBartAction request=(RequestBartAction)queued.lastElement();byte[] token=(byte[])f(RequestBartAction.class,"token").get(request);
-  check(Util.getWord(token,0)==10 && Util.getWord(token,2)==190,"next request can exceed the 200-message limit or has a wrong offset");
-  render(viewer,page(971,30,2,true,false));check(f(HistoryViewer.class,"shown").getInt(viewer)==200,"oversized page exceeded memory limit");
-  check(((Vector)f(HistoryViewer.class,"tokens").get(viewer)).size()==200,"metadata exceeded 200 messages");
-  list(viewer).selectTextByIndex(0);check(Arrays.equals(id(0x8000000000000000L+991),(byte[])m(HistoryViewer.class,"currentRef").invoke(viewer)),"oversized page discarded its newest records");
-  int pending=queued.size();m(HistoryViewer.class,"request").invoke(viewer);check(queued.size()==pending,"More still requests pages after the limit");
+  Options.setInt(Options.OPTION_HISTORY_COUNT,100);
+  while(f(HistoryViewer.class,"shown").getInt(viewer)<HistoryViewer.MAX_LINES){
+   int before=f(HistoryViewer.class,"shown").getInt(viewer);m(HistoryViewer.class,"request").invoke(viewer);
+   RequestBartAction request=(RequestBartAction)queued.lastElement();byte[] token=(byte[])f(RequestBartAction.class,"token").get(request);
+   check(Util.getWord(token,0)==Math.min(HistoryViewer.PAGE_MESSAGES,200-before) && Util.getWord(token,2)==before,"bounded request lost its actual offset");
+   byte[] oversized=page(971-before,30,2,true,false);f(HistoryViewer.class,"loading").setBoolean(viewer,false);render(viewer,oversized);
+   int accepted=f(HistoryViewer.class,"shown").getInt(viewer)-before;
+   check(accepted>0&&accepted<=HistoryViewer.PAGE_MESSAGES,"pagination failed to advance within the budget");
+   list(viewer).selectTextByIndex(0);check(Arrays.equals(id(0x8000000000000000L+1001-before-accepted),(byte[])m(HistoryViewer.class,"currentRef").invoke(viewer)),"limited page skipped its newest suffix");
+   check(list(viewer).getSize()<=HistoryViewer.MAX_ROWS,"oversized replies exceeded row budget");
+   Icq.cancelAction(request);queued.clear();
+  }
+  int pending=queued.size();m(HistoryViewer.class,"request").invoke(viewer);check(queued.size()==pending,"More still requests pages after 200 fetched messages");
   viewer.commandAction(JimmUI.cmdBack,null);
-  System.out.println("PASS: request count/offset and oversized replies obey the strict 200-message cap");
+  System.out.println("PASS: bounded pages advance by the accepted suffix; no gaps or wrong attachment references; strict 200-message traversal cap");
+ }
+ static void nested()throws Exception{
+  HistoryViewer parent=viewer();for(int i=0;i<8;i++)render(parent,page(91-i*10,10,2,true,true));
+  list(parent).selectTextByIndex(2);int offset=f(HistoryViewer.class,"shown").getInt(parent)-1-list(parent).getCurrTextIndex();
+  byte[] selected=(byte[])m(HistoryViewer.class,"currentRef").invoke(parent);
+  new Icq();m(Icq.class,"setConnected").invoke(null);Vector queued=new Vector();f(Icq.class,"reqAction").set(null,queued);
+  HistoryViewer.show("1000099","Discussion",parent);HistoryViewer child=(HistoryViewer)f(HistoryViewer.class,"current").get(null);
+  for(String key:new String[]{"list","tokens","refs","threads","videoUrls","kinds","textBytes","rowCounts"})check(f(HistoryViewer.class,key).get(parent)==null,"child retains parent history "+key);
+  RequestBartAction childRequest=(RequestBartAction)queued.lastElement();child.commandAction(JimmUI.cmdBack,null);
+  check(f(HistoryViewer.class,"current").get(null)==parent && !queued.contains(childRequest),"Back did not restore parent/cancel child");
+  byte[] token=(byte[])f(RequestBartAction.class,"token").get(queued.lastElement());int start=Util.getWord(token,2),count=Util.getWord(token,0);
+  check(start<=offset && offset<start+count,"parent restored latest page instead of focused position");
+  render(parent,page(101-start-count,count,2,true,true));
+  check(Arrays.equals(selected,(byte[])m(HistoryViewer.class,"currentRef").invoke(parent)),"parent focus/quote reference lost on Back");
+  parent.commandAction(JimmUI.cmdBack,null);
+  System.out.println("PASS: nested discussions release parent rows, cancel requests and reload the selected position on Back");
+ }
+ static void longMessage()throws Exception{
+  HistoryViewer viewer=viewer();ByteArrayOutputStream bytes=new ByteArrayOutputStream();DataOutputStream out=new DataOutputStream(bytes);
+  out.writeByte(255);out.writeByte(1);byte[] raw=new String(new char[3999]).replace('\0','\n').getBytes("UTF-8");
+  out.writeShort(raw.length);out.write(raw);out.writeByte(0x20);out.write(id(77));render(viewer,bytes.toByteArray());
+  check(list(viewer).getSize()<=HistoryViewer.MESSAGE_ROWS+3,"one message bypassed row budget");
+  check(layout(list(viewer)).indexOf("…")>=0,"clipped message has no visible marker");list(viewer).selectTextByIndex(0);
+  check(Arrays.equals(id(77),(byte[])m(HistoryViewer.class,"currentRef").invoke(viewer)),"clipped message lost native quote reference");
+  viewer.commandAction(JimmUI.cmdBack,null);
+  System.out.println("PASS: newline-heavy message has bounded rows, visible truncation and a full native quote reference");
  }
  static void rangeAndClose()throws Exception{
   HistoryViewer viewer=viewer();byte[] page=page(1,4,2,true,true),raw=new byte[page.length+17];System.arraycopy(page,0,raw,9,page.length);
@@ -168,7 +212,7 @@ public final class HistoryMemoryTest {
   try{
    f(Options.class,"options").set(null,new Hashtable());m(Options.class,"setDefaults").invoke(null);
    Options.setBoolean(Options.OPTION_USE_SMILES,false);Constructor ctor=MainThread.class.getDeclaredConstructor();ctor.setAccessible(true);ctor.newInstance();
-   golden();memory();if(!baseline){failures();limits();rangeAndClose();inactive();}
+   golden();memory();if(!baseline){failures();limits();rangeAndClose();inactive();nested();longMessage();}
   }finally{
    Jimm.getTimerRef().cancel();cancel(TextList.class,"aniTimer");cancel(ContactList.class,"iconTimer");cancel(ContactList.class,"soundTimer");
    Object canvas=f(VirtualList.class,"virtualCanvas").get(null);((Timer)f(canvas.getClass(),"repeatTimer").get(canvas)).cancel();

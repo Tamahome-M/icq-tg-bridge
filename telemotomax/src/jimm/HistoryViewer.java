@@ -52,6 +52,11 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	private final String name;
 	/** Больше строк на экране держать незачем — это память телефона. */
 	public static final int MAX_LINES = 200;
+	//#sijapp cond.if modules_CAMERA="true"#
+	public static final int MAX_ROWS = 1024, MAX_TEXT_BYTES = 32768, PAGE_MESSAGES = 20, MESSAGE_ROWS = 96;
+	//#sijapp cond.else#
+	//# public static final int MAX_ROWS = 384, MAX_TEXT_BYTES = 16384, PAGE_MESSAGES = 10, MESSAGE_ROWS = 48;
+	//#sijapp cond.end#
 
 	static final Command cmdMore = new Command(ResourceBundle.getString("history_more"),
 			Command.ITEM, 3);
@@ -64,6 +69,10 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	private byte[] kinds = new byte[MAX_LINES]; // one byte per message, without boxed Integers
 	private Vector refs = new Vector();
 	private Vector threads = new Vector();   // per message: String UIN обсуждения или null
+	private short[] textBytes = new short[MAX_LINES], rowCounts = new short[MAX_LINES];
+	private volatile RequestBartAction request;
+	private boolean suspended, closed;
+	private int restoreOffset = -1;
 	private int shown;                       // сколько сообщений уже загружено
 	private boolean more;                    // осталось ли что подгружать
 	private boolean paged;                   // мост ответил с пометкой «есть ещё»
@@ -83,6 +92,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		HistoryViewer viewer = new HistoryViewer(back, uin, name);
 		current = viewer;
 		viewer.build();
+		if (back instanceof HistoryViewer) ((HistoryViewer)back).suspend();
 		viewer.request();
 	}
 
@@ -91,27 +101,26 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	// пометкой «есть ещё» — старый мост её не приписывает.
 	private void request()
 	{
-		if (loading || list == null || tokens.size() >= MAX_LINES) return;
-		loading = true;
-		if (shown == 0) showStatus(ResourceBundle.getString("history_loading"));
-		else list.setCaption(ResourceBundle.getString("history_loading"));
-		list.repaint();
-		byte[] token = new byte[16];
-		int count = Options.getInt(Options.OPTION_HISTORY_COUNT);
-		if (count < 1) count = 10;
-		count = Math.min(count, MAX_LINES - tokens.size());
-		Util.putWord(token, 0, count);
-		Util.putWord(token, 2, shown);
-		Util.putByte(token, 4, 1);
-		Util.putDWord(token, 12, Util.getCounter());
+		if (loading || closed || current != this || list == null || shown >= MAX_LINES) return;
 		try
 		{
-			Icq.requestAction(new RequestBartAction(uin, RequestBartAction.BART_HISTORY, token, this));
+			loading = true;
+			if (tokens.isEmpty()) showStatus(ResourceBundle.getString("history_loading"));
+			else list.setCaption(ResourceBundle.getString("history_loading"));
+			list.repaint();
+			byte[] token = new byte[16];
+			int count = Options.getInt(Options.OPTION_HISTORY_COUNT);
+			if (count < 1) count = 10;
+			count = Math.min(Math.min(count, PAGE_MESSAGES), MAX_LINES - shown);
+			Util.putWord(token, 0, count);
+			Util.putWord(token, 2, shown);
+			Util.putByte(token, 4, 1);
+			Util.putDWord(token, 12, Util.getCounter());
+			request = new RequestBartAction(uin, RequestBartAction.BART_HISTORY, token, this);
+			Icq.requestAction(request);
 		}
-		catch (JimmException e)
-		{
-			onBart(null);
-		}
+		catch (JimmException e) { onBartError(e.getMessage()); }
+		catch (Throwable failure) { fail(failure, 0); }
 	}
 
 	// Last message of a chat that has none yet: asked from the bridge and
@@ -342,7 +351,9 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	private void receive(byte[] data, int offset, int length, String error)
 	{
 		if (current != this || list == null) { loading = false; return; }
-		new PageJob(data, offset, length, error).start();
+		request = null;
+		try { new PageJob(data, offset, length, error).start(); }
+		catch (Throwable failure) { loading = false; try { fail(failure, length); } catch (Throwable ignore) {} }
 	}
 
 	private void fail(Throwable t, int size)
@@ -363,9 +374,9 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	private void showFailure(String error)
 	{
 		loading = false;
-		if (shown == 0) showStatus(ResourceBundle.getString("history_failed")
+		if (tokens.isEmpty()) showStatus(ResourceBundle.getString("history_failed")
 				+ (error == null ? "" : ": " + error));
-		list.setCaption(name + (shown > 0 ? " (" + shown + ")" : ""));
+		list.setCaption(name + (tokens.size() > 0 ? " (" + tokens.size() + ")" : ""));
 		checkMore();
 		checkPhoto();
 		list.repaint();
@@ -398,64 +409,95 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			throw new IllegalArgumentException("history range");
 		int start = historyStart(data, job.offset, end);
 		int received = recordCount(data, start, end);
-		int count = Math.min(received, MAX_LINES - tokens.size());
-		boolean pageMore = start > job.offset
-				&& Util.getByte(data, start - 1) != 0;
+		int available = Math.min(Math.min(received, MAX_LINES - shown), PAGE_MESSAGES);
+		boolean pageMore = start > job.offset && Util.getByte(data, start - 1) != 0;
+		// Locate only the newest requested records. Decode in reverse so a
+		// page shortened by its byte/row budget advances by exactly its suffix.
+		int[] positions = new int[available];
+		int marker = start, skipped = received - available;
+		for (int i = 0; i < received; i++)
+		{
+			if (i >= skipped) positions[i - skipped] = marker;
+			int len = Util.getWord(data, marker); marker += 2 + len;
+			int flag = Util.getByte(data, marker++);
+			if ((flag & 1) != 0) marker += 16;
+			if ((flag & 0x10) != 0) marker += 4;
+			if ((flag & 0x20) != 0) marker += 8;
+		}
 		TextList page = new TextList(null);
 		JimmUI.setColorScheme(page, false, -1, true);
 		page.lock();
-		Vector newTokens = new Vector(count), newThreads = new Vector(count);
-		Vector newRefs = new Vector(count), newUrls = new Vector(count);
-		byte[] newKinds = new byte[count];
-		int marker = start, skipped = received - count, added = 0;
-		while (marker < end)
+		Vector newTokens = new Vector(available), newThreads = new Vector(available);
+		Vector newRefs = new Vector(available), newUrls = new Vector(available);
+		byte[] newKinds = new byte[available];
+		short[] newBytes = new short[available], newRows = new short[available];
+		int count = 0, bytes = 0;
+		for (int i = available - 1; i >= 0; i--)
 		{
 			if (current != this || list != target) { loading = false; return; }
+			marker = positions[i];
 			int len = Util.getWord(data, marker), textAt = marker + 2;
+			if (count > 0 && bytes + len > MAX_TEXT_BYTES / 2) break;
 			marker = textAt + len;
-			int flag = Util.getByte(data, marker++);
-			int tokenAt = marker;
+			int flag = Util.getByte(data, marker++), tokenAt = marker;
 			if ((flag & 1) != 0) marker += 16;
 			int threadAt = marker;
 			if ((flag & 0x10) != 0) marker += 4;
 			int refAt = marker;
-			if ((flag & 0x20) != 0) marker += 8;
-			// If an old bridge ignores the requested limit, retain the newest
-			// records of that page, and still stay within 200 messages total.
-			if (skipped-- > 0) continue;
 			String text = Util.byteArrayToString(data, textAt, len, true);
+			int kind = ((flag & 6) == 6) ? 4 : ((flag & 4) != 0 ? 3 : ((flag & 2) != 0 ? 2 : 1));
+			if ((flag & 8) != 0) kind += 8;
+			TextList one = new TextList(null);
+			JimmUI.setColorScheme(one, false, -1, true);
+			one.lock(); one.setLineLimit(MESSAGE_ROWS);
+			appendLine(one, text, kind, 0);
+			if (one.wasTruncated())
+			{
+				one.setLineLimit(0); one.doCRLF(0);
+				one.addBigText("…", one.getTextColor(), Font.STYLE_PLAIN, 0); one.doCRLF(0);
+			}
+			int rows = one.getSize();
+			if (count > 0 && page.getSize() + rows > MAX_ROWS / 2) break;
 			byte[] token = null, ref = null;
 			if ((flag & 1) != 0) { token = new byte[16]; System.arraycopy(data, tokenAt, token, 0, 16); }
 			if ((flag & 0x20) != 0) { ref = new byte[8]; System.arraycopy(data, refAt, ref, 0, 8); }
-			newTokens.addElement(token);
-			newRefs.addElement(ref);
-			newThreads.addElement((flag & 0x10) == 0 ? null : String.valueOf(Util.getDWord(data, threadAt)));
-			newUrls.addElement(VideoLink.url(text));
-			int kind = ((flag & 6) == 6) ? 4 : ((flag & 4) != 0 ? 3 : ((flag & 2) != 0 ? 2 : 1));
-			if ((flag & 8) != 0) kind += 8;
-			newKinds[added] = (byte) kind;
-			appendLine(page, text, kind, added++);
+			page.prependFrom(one, 1);
+			newTokens.insertElementAt(token, 0); newRefs.insertElementAt(ref, 0);
+			newThreads.insertElementAt((flag & 0x10) == 0 ? null : String.valueOf(Util.getDWord(data, threadAt)), 0);
+			newUrls.insertElementAt(VideoLink.url(text), 0);
+			System.arraycopy(newKinds, 0, newKinds, 1, count);
+			System.arraycopy(newBytes, 0, newBytes, 1, count);
+			System.arraycopy(newRows, 0, newRows, 1, count);
+			newKinds[0] = (byte)kind; newBytes[0] = (short)len; newRows[0] = (short)rows;
+			bytes += len; count++;
 		}
 		data = null;
 		synchronized (this)
 		{
 			if (current != this || list != target) { loading = false; return; }
-			boolean first = shown == 0;
+			boolean first = tokens.isEmpty();
+			int retain = 0, rows = page.getSize();
+			while (retain < tokens.size() && retain + count < MAX_LINES
+					&& bytes + textBytes[retain] <= MAX_TEXT_BYTES && rows + rowCounts[retain] <= MAX_ROWS)
+			{ bytes += textBytes[retain]; rows += rowCounts[retain++]; }
 			target.lock();
 			try
 			{
-				int capacity = tokens.size() + count;
-				tokens.ensureCapacity(capacity);
-				threads.ensureCapacity(capacity);
-				refs.ensureCapacity(capacity);
-				videoUrls.ensureCapacity(capacity);
-				if (first) target.clear();
+				int capacity = retain + count;
+				tokens.ensureCapacity(capacity); threads.ensureCapacity(capacity);
+				refs.ensureCapacity(capacity); videoUrls.ensureCapacity(capacity);
 				if (count > 0)
 				{
-					// Allocate the joining line-array before changing metadata.
-					target.prependFrom(page, count);
-					System.arraycopy(kinds, 0, kinds, count, tokens.size());
+					// The line-array allocation succeeds before any previous rows
+					// or metadata are discarded. Retained rows are never reformatted.
+					target.prependFrom(page, count, first ? 0 : retain);
+					tokens.setSize(retain); threads.setSize(retain); refs.setSize(retain); videoUrls.setSize(retain);
+					System.arraycopy(kinds, 0, kinds, count, retain);
+					System.arraycopy(textBytes, 0, textBytes, count, retain);
+					System.arraycopy(rowCounts, 0, rowCounts, count, retain);
 					System.arraycopy(newKinds, 0, kinds, 0, count);
+					System.arraycopy(newBytes, 0, textBytes, 0, count);
+					System.arraycopy(newRows, 0, rowCounts, 0, count);
 					for (int i = count - 1; i >= 0; i--)
 					{
 						tokens.insertElementAt(newTokens.elementAt(i), 0);
@@ -467,14 +509,14 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 				}
 				else if (first) showStatus(ResourceBundle.getString("history_empty"));
 				paged = start > job.offset;
-				more = pageMore && received > 0;
+				more = received > 0 && (pageMore || count < received);
 				if (received == 0) exhausted = true;
-				target.setCaption(name + (shown > 0 ? " (" + shown + ")" : ""));
-				// Empty older replies leave the current selection and viewport intact.
+				target.setCaption(name + (tokens.size() > 0 ? " (" + tokens.size() + ")" : ""));
 				if (count > 0) target.setTopItem(first ? target.getSize() : 0);
+				if (restoreOffset >= 0 && count > 0)
+				{ target.selectTextByIndex(Math.max(0, Math.min(tokens.size() - 1, shown - 1 - restoreOffset))); restoreOffset = -1; }
 				loading = false;
-				checkMore();
-				checkPhoto();
+				checkMore(); checkPhoto();
 			}
 			finally { target.unlock(); }
 		}
@@ -527,7 +569,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	{
 		list.removeCommandEx(cmdMore);
 		boolean worth = paged ? more : !exhausted;
-		if (worth && tokens.size() < MAX_LINES)
+		if (worth && shown < MAX_LINES)
 			list.addCommandEx(cmdMore, VirtualList.MENU_TYPE_RIGHT);
 	}
 
@@ -565,7 +607,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 	}
 	public static void refreshQuoteMenu()
 	{
-		if (current != null) NativeQuote.updateMenu(current.list, current.currentRef());
+		if (current != null && current.list != null) NativeQuote.updateMenu(current.list, current.currentRef());
 	}
 
 	private void checkPhoto()
@@ -665,28 +707,57 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			if (thread != null) HistoryViewer.show(thread, name, this);
 			return;
 		}
+		RequestBartAction pending;
 		synchronized (this)
 		{
+			if (closed) return;
+			closed = true; suspended = false;
 			if (current == this) current = null;
-			loading = false;
-			if (list != null) list.clear();
-			list = null;
-			videoUrls = null;
-			tokens = null;
-			kinds = null;
-			threads = null;
-			refs = null;
+			pending = releasePage();
 		}
+		Icq.cancelAction(pending);
 		if (back != null) back.activate();
 		else JimmUI.backToLastScreen();
 	}
 
+	private RequestBartAction releasePage()
+	{
+		loading = false;
+		RequestBartAction pending = request; request = null;
+		if (list != null) list.clear();
+		list = null; videoUrls = null; tokens = null; kinds = null;
+		threads = null; refs = null; textBytes = rowCounts = null;
+		return pending;
+	}
+
+	private void suspend()
+	{
+		RequestBartAction pending;
+		synchronized (this)
+		{
+			int index = list == null ? -1 : list.getCurrTextIndex();
+			if (index < 0) index = 0;
+			restoreOffset = Math.max(0, shown - 1 - index);
+			pending = releasePage(); suspended = true;
+		}
+		Icq.cancelAction(pending);
+	}
+
 	public void activate()
 	{
-		if (list != null)
+		if (closed) return;
+		if (suspended)
 		{
-			current = this;                // вернулись из вложенной истории
-			if (!loading) list.setCaption(name + (shown > 0 ? " (" + shown + ")" : ""));
+			tokens = new Vector(); threads = new Vector(); refs = new Vector(); videoUrls = new Vector();
+			kinds = new byte[MAX_LINES]; textBytes = new short[MAX_LINES]; rowCounts = new short[MAX_LINES];
+			shown = Math.max(0, restoreOffset - PAGE_MESSAGES / 2);
+			suspended = false; exhausted = paged = more = false;
+			current = this; build(); request();
+		}
+		else if (list != null)
+		{
+			current = this;
+			if (!loading) list.setCaption(name + (tokens.size() > 0 ? " (" + tokens.size() + ")" : ""));
 			list.activate(Jimm.display);
 		}
 	}

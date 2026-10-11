@@ -528,6 +528,9 @@ public class LangsTask extends Task
 			pairs = readLangFile(inDir+"/"+langName+".lang");
 			addKeysToSpecialKeys(pairs);
 		}
+		// Keep selected-language IDs stable, then register missing fallback
+		// keys before scanning/replacing the Java sources.
+		if (idealPairs != null) addKeysToSpecialKeys(idealPairs);
 		
 		try
 		{
@@ -561,6 +564,11 @@ public class LangsTask extends Task
 			String langName = (String)langs.elementAt(i);
 			pairs = readLangFile(inDir+"/"+langName+".lang");
 			correctToIdealLang(langName, pairs, idealHashTable);
+			for (int j = pairs.size() - 1; j >= 0; j--)
+			{
+				String key = ((String[])pairs.elementAt(j))[0];
+				if (key.startsWith("lang_") && !langs.contains(key.substring(5))) pairs.removeElementAt(j);
+			}
 			writeLngFile(pairs, outDir+"/"+langName+".lng", size == 1);
 		}
 		showWarnings();

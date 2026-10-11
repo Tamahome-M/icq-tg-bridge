@@ -37,6 +37,7 @@ public class Threads implements Runnable
 	// мост закрывал первый как «подключился заново», а второй ConnectAction
 	// застревал в очереди.
 	private static boolean reconnectPending;
+	private static long retryAt;
 
 	// Пауза между попытками, когда быстрые попытки кончились, а сети нет.
 	final static public long SLOW_RECONNECT_MS = 60 * 1000;
@@ -98,10 +99,34 @@ public class Threads implements Runnable
 		{
 			if (reconnectPending) return;
 			reconnectPending = true;
+			retryAt = 0;
 		}
-		Threads ri = new Threads(TYPE_RECONNECT);
-		ri.delay = delayMs;
-		new Thread(ri).start();
+		try
+		{
+			Threads ri = new Threads(TYPE_RECONNECT);
+			ri.delay = delayMs;
+			new Thread(ri).start();
+		}
+		catch (Throwable failure)
+		{
+			synchronized (Threads.class)
+			{
+				reconnectPending = false;
+				retryAt = System.currentTimeMillis() + SLOW_RECONNECT_MS;
+			}
+		}
+	}
+
+	// Reuse the existing UI clock: scheduling another timer/thread when
+	// native thread allocation failed would fail for the same reason.
+	static public void checkReconnect()
+	{
+		synchronized (Threads.class)
+		{
+			if (retryAt == 0 || System.currentTimeMillis() < retryAt) return;
+			retryAt = 0;
+		}
+		if (Options.getBoolean(Options.OPTION_RECONNECT) && !Icq.isDisconnected() && !Icq.isConnected() && !Icq.isConnecting()) reconnect(0);
 	}
 	
 		
