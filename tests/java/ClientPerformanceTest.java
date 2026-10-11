@@ -133,11 +133,20 @@ public class ClientPerformanceTest {
   Graphics.wrapped=null;
   System.out.println("PASS: status/file-path wrapping matches old layout, including whitespace and narrow screens, without quadratic prefix copies");
  }
+ static void browserActions()throws Exception {
+  if(baseline)return;
+  Displayable before=Jimm.display.getCurrent();
+  JimmUI.gotoURL(null);JimmUI.gotoURL("обычное сообщение без ссылки");
+  check(Jimm.display.getCurrent()==before,"empty URL action opened an empty panel");
+  JimmUI.gotoURL("https://ordinary.test/path");
+  check("https://ordinary.test/path".equals(Jimm.openedUrl),"browser did not receive the detected HTTPS URL");
+  System.out.println("PASS: real browser action ignores empty URLs and opens a single HTTPS address");
+ }
  public static void main(String[] args)throws Exception {
   baseline="baseline".equals(args[1]);
   try{
    f(Options.class,"options").set(null,new Hashtable());Method defaults=Options.class.getDeclaredMethod("setDefaults");defaults.setAccessible(true);defaults.invoke(null);
-   language(args[0]);layouts();tasks();timers();wrapped();
+   language(args[0]);layouts();tasks();timers();wrapped();browserActions();
   }finally{
    Jimm.getTimerRef().cancel();cancel(TextList.class,"aniTimer");cancel(ContactList.class,"iconTimer");cancel(ContactList.class,"soundTimer");
    Object canvas=f(VirtualList.class,"virtualCanvas").get(null);((Timer)f(canvas.getClass(),"repeatTimer").get(canvas)).cancel();

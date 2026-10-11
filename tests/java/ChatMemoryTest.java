@@ -126,6 +126,22 @@ public final class ChatMemoryTest {
         }
         System.out.println("PASS: background photo/video/voice/file metadata, quote references, timestamps and delivery acknowledgements");
     }
+    static void captionLinks() throws Exception {
+        if (baseline) return;
+        ChatTextList chat = chat(); ChatHistory.currentChat = chat;
+        String video = "[видео](http://host/v/token)";
+        String[] messages = {"обычный текст", "https://ordinary.test", video,
+            "www.before.test " + video, video + " https://after.test", "http://first.test https://second.test"};
+        boolean[] links = {false, true, false, true, true, true};
+        for (int i = 0; i < messages.length; i++) {
+            chat.addTextToForm("author", messages[i], "", 120000 + i, true, false, i);
+            MessData md = (MessData)chat.getMessData().lastElement();
+            check(md.isURL() == links[i], "chat URL menu flag does not match the visible caption: " + messages[i]);
+            check((i >= 2 && i <= 4) ? "http://host/v/token".equals(md.videoUrl) : md.videoUrl == null,
+                "caption link detection changed the browser video action");
+        }
+        System.out.println("PASS: live chat URL flags keep HTTPS/WWW caption actions separate from hidden browser-video addresses");
+    }
     static void compactRows() throws Exception {
         String text = new String(new char[280]).replace('\0', 'W'); TextList list = new TextList("rows");
         for (int i = 0; i < 100; i++) { list.addBigText(text, 0, Font.STYLE_PLAIN, i); list.doCRLF(i); }
@@ -218,7 +234,7 @@ public final class ChatMemoryTest {
             field(Options.class, "options").set(null, new Hashtable()); method(Options.class, "setDefaults").invoke(null);
             Constructor main = MainThread.class.getDeclaredConstructor(); main.setAccessible(true); main.newInstance();
             Options.setBoolean(Options.OPTION_USE_SMILES, false); Options.setInt(Options.OPTION_CHAT_MESSAGES, 15);
-            boundsAndOrder(); metadataAndDelivery(); compactRows(); utf8(); allocations();
+            boundsAndOrder(); metadataAndDelivery(); captionLinks(); compactRows(); utf8(); allocations();
         } finally {
             Font.beforeMeasure = null; Jimm.getTimerRef().cancel();
             Object canvas = field(VirtualList.class, "virtualCanvas").get(null);

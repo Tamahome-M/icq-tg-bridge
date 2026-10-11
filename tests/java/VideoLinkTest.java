@@ -30,6 +30,10 @@ public final class VideoLinkTest {
         }
         check("https://host/v/token".equals(VideoLink.url("[видео](https://host/v/token)")),
             "HTTPS video link was lost");
+        check(url.equals(VideoLink.url("[видео](bad) " + message)), "invalid earlier marker hid the valid video");
+        String longUrl = "http://host/" + new String(new char[2100]).replace('\0', 'a');
+        check(VideoLink.start("[видео](" + longUrl.substring(0, 2048) + ")") == 0, "valid maximum-length video URL rejected");
+        check(VideoLink.start("[видео](" + longUrl.substring(0, 2049) + ")") == -1, "oversized video URL accepted");
         VideoLink.open(VideoLink.url(message));
         check(url.equals(Jimm.openedUrl), "browser received a label or caption instead of the URL");
         System.out.println("PASS: labelled video links preserve captions and open the exact browser URL");

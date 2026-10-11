@@ -770,9 +770,9 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		int textColor = Options.getBoolean(Options.OPTION_MESS_COLORED_TEXT) ? getInOutColor(red) : textList.getTextColor(); 
 		JimmUI.addMessageText(textList, message, textColor, messTotalCounter);
 
-		boolean contains_url = url.length() > 0 && Util.parseMessageForURL(url) != null;
+		boolean contains_url = Util.hasURL(url);
 		//#sijapp cond.if target is "MIDP2" | target is "SIEMENS2" | target is "MOTOROLA"#
-		if (Util.parseMessageForURL(VideoLink.visibleText(message)) != null)
+		if (VideoLink.hasVisibleURL(message))
 		{
 			contains_url = true;
 			if (texOffset == 1)

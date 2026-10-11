@@ -1551,6 +1551,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	public static void gotoURL(String msg)
 	{
 		Vector v = Util.parseMessageForURL(msg);
+		if (v == null || v.isEmpty()) return;
 		if (v.size() == 1)
 		{
 			try
