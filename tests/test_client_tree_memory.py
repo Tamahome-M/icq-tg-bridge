@@ -38,7 +38,9 @@ def run(work, classes, baseline):
         sources.append(str(ROOT / 'tests/java/TreeMemoryTest.java'))
         subprocess.run([str(work / 'jdk/bin/javac'), '-encoding', 'UTF-8', '-cp', cp,
                         '-d', str(directory), *sources], check=True)
-        subprocess.run([str(work / 'jdk/bin/java'), '-XX:-DoEscapeAnalysis',
+        # Measure allocations without desktop JIT compilation/deoptimization
+        # artefacts. Comparison counts are independent of execution speed.
+        subprocess.run([str(work / 'jdk/bin/java'), '-Xint', '-XX:-DoEscapeAnalysis',
                         '-Xbootclasspath/a:' + str(resources), '-cp', str(directory) + os.pathsep + cp,
                         'DrawControls.TreeMemoryTest', 'baseline' if baseline else 'verify'],
                        check=True, timeout=30)

@@ -74,6 +74,7 @@ CAP_TMM_PREFIX = b"TMM:"
 # вложения (1 байт) и 16-байтный токен, по которому клиент просит снимок у
 # службы 0x10. Обычный Jimm дальше тела сообщения не читает.
 TMM_MESSAGE_REF = 0x0015     # ICBM: cookie + recipient + opaque 8-byte native ID
+TMM_MESSAGE_READ = 0x0016    # TeleMotoMax 1.11+: cookie + recipient; peer read it
 SSBI_QUOTE = 0x0009         # destination + source UIN + native ID
 SSBI_QUOTE_ACK = 0x000A     # status byte + UTF-8 error; same request_id
 TLV_TMM_MESSAGE_REF = 0x9002

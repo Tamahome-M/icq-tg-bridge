@@ -219,7 +219,22 @@ public class ActionListener
 
 			/** ********************************************************************* */
 
-			if (snacPacket.getFamily() == 4 && snacPacket.getCommand() == 0x15)
+			if (snacPacket.getFamily() == 4 && snacPacket.getCommand() == 0x16)
+			{
+				byte[] data = snacPacket.getDataRef();
+				if (data.length >= 10 && Options.getBoolean(Options.OPTION_DELIV_MES_INFO))
+				{
+					int len = Util.getByte(data, 8);
+					if (len != 0 && data.length == 9 + len)
+					{
+						for (int i = 9; i < data.length; i++)
+							if (data[i] < '0' || data[i] > '9') return;
+						MainThread.messageIsRead(Util.byteArrayToString(data, 9, len),
+								(int)Util.getDWord(data, 0));
+					}
+				}
+			}
+			else if (snacPacket.getFamily() == 4 && snacPacket.getCommand() == 0x15)
 			{
 				byte[] data = snacPacket.getDataRef();
 				if (data.length >= 17)
@@ -936,14 +951,14 @@ public class ActionListener
 			else if ((snacPacket.getFamily() == SnacPacket.SRV_MSG_ACK_FAMILY)
 					&& (snacPacket.getCommand() == SnacPacket.SRV_MSG_ACK_COMMAND))
 			{
-				ByteArrayInputStream stream = new ByteArrayInputStream(snacPacket.getDataRef());
-				int messId1 = Util.getDWord(stream, true);
-				int messId2 = Util.getDWord(stream, true);
-				Util.getWord(stream, true);
-				if ((messId2 == 0x0001) && Options.getBoolean(Options.OPTION_DELIV_MES_INFO))
+				byte[] data = snacPacket.getDataRef();
+				if (data.length >= 11 && (int)Util.getDWord(data, 4) == 1
+						&& Options.getBoolean(Options.OPTION_DELIV_MES_INFO))
 				{
-					String uin = Util.getLenAndString(stream, 1);
-					MainThread.messageIsDelevered(uin, messId1);
+					int len = Util.getByte(data, 10);
+					if (len != 0 && len <= data.length - 11)
+						MainThread.messageIsDelevered(Util.byteArrayToString(data, 11, len),
+								(int)Util.getDWord(data, 0));
 				}
 			}
 

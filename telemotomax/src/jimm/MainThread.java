@@ -54,6 +54,7 @@ public class MainThread implements Runnable
 	final static private int TYPE_NATIVE_QUOTE_RESULT = 26;
 	final static private int TYPE_PRESENCE_ONLINE = 27;
 	final static private int TYPE_PRESENCE_OFFLINE = 28;
+	final static private int TYPE_MESS_READ = 29;
 
 //#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 	final static public int TYPE_UPDATE_BUDDYICON    = 24;
@@ -216,6 +217,9 @@ public class MainThread implements Runnable
 		case TYPE_MESS_DELIVERED:
 			ChatHistory.messageIsDelivered((String)data[0], getInt(data, 1));
 			break;
+		case TYPE_MESS_READ:
+			ChatHistory.messageIsRead((String)data[0], getInt(data, 1));
+			break;
 			
 		case TYPE_BACK_TO_LAST_SCR:
 			JimmUI.backToLastScreen();
@@ -361,6 +365,11 @@ public class MainThread implements Runnable
 	static public void messageIsDelevered(String uin, int messId)
 	{
 		addMainThreadTask(TYPE_MESS_DELIVERED, uin, new Integer(messId));
+	}
+
+	static public void messageIsRead(String uin, int messId)
+	{
+		addMainThreadTask(TYPE_MESS_READ, uin, new Integer(messId));
 	}
 	
 	

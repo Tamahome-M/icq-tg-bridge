@@ -83,6 +83,7 @@ SNAC_NAMES = {
     (C.ICBM, C.ICBM_PARAM_REQ): "ICBM_PARAM_REQ", (C.ICBM, C.ICBM_PARAM_INFO): "ICBM_PARAM_INFO",
     (C.ICBM, C.ICBM_SEND): "ICBM_SEND", (C.ICBM, C.ICBM_INCOMING): "ICBM_INCOMING",
     (C.ICBM, C.ICBM_ACK): "ICBM_ACK", (C.ICBM, C.ICBM_CLIENT_ACK): "ICBM_CLIENT_ACK",
+    (C.ICBM, C.TMM_MESSAGE_READ): "TMM_MESSAGE_READ",
     (C.ICBM, C.ICBM_CLIENT_EVENT): "ICBM_TYPING",
     (C.PD, C.PD_RIGHTS_REQ): "PD_RIGHTS_REQ", (C.PD, C.PD_RIGHTS): "PD_RIGHTS",
     (C.SSI, C.SSI_RIGHTS_REQ): "SSI_RIGHTS_REQ", (C.SSI, C.SSI_RIGHTS): "SSI_RIGHTS",
@@ -1087,6 +1088,7 @@ class Session:
             return          # соединение за аватарками: ни списка статусов, ни очереди
         log.info("клиент готов: %s, %r", self.peer, self.client_name)
         self.spawn(self.announce_buddies())
+        self.spawn(self.server.replay_read_receipts())
         self.offline_phase = True
         self.spawn(self._offline_gate())
 
@@ -1252,7 +1254,14 @@ class Session:
         # Cookie в подтверждении обязан быть тем же, что прислал клиент:
         # по нему он и находит своё сообщение. Команду мосту подтверждаем
         # сразу: у неё нет номера в Telegram, и прочтения ждать не от кого.
-        if self.server.ack_on_read and sent_id > 0:
+        if self.read_receipts_enabled() and sent_id > 0:
+            # New clients show the normal ACK as accepted by the network,
+            # and a separate TMM receipt when the peer reads the message.
+            self.server.remember_sent(int(target), sent_id, cookie, channel)
+            await self.send_ack(cookie, channel, int(target))
+            # A read update may arrive while the network send RPC is pending.
+            await self.server.confirm_read(int(target), self.server._read_marks.get(int(target), 0))
+        elif self.server.ack_on_read and sent_id > 0:
             # Галочку поставим, когда собеседник прочитает сообщение.
             self.server.remember_sent(int(target), sent_id, cookie, channel)
         else:
@@ -1304,10 +1313,17 @@ class Session:
                              bytes([1 if error else 0]) + error.encode("utf-8")[:1000],
                              request_id=s.request_id)
 
-    async def send_ack(self, cookie: bytes, channel: int, uin: int) -> None:
-        await self.send_snac(C.ICBM, C.ICBM_ACK,
-                             cookie + struct.pack(">H", channel)
-                             + pstr8(str(uin).encode("ascii")))
+    def read_receipts_enabled(self) -> bool:
+        return not self.service_only and (self.tmm_version or (0, 0)) >= (1, 11)
+
+    async def send_ack(self, cookie: bytes, channel: int, uin: int) -> bool:
+        return await self.send_snac(C.ICBM, C.ICBM_ACK,
+                                    cookie + struct.pack(">H", channel)
+                                    + pstr8(str(uin).encode("ascii")))
+
+    async def send_read_receipt(self, cookie: bytes, uin: int) -> bool:
+        return await self.send_snac(C.ICBM, C.TMM_MESSAGE_READ,
+                                    cookie + pstr8(str(uin).encode("ascii")))
 
     def video_link_text(self, uin: int, text: str, attach: str) -> str:
         # История может идти по служебному соединению без сведений о телефоне.
@@ -1963,6 +1979,7 @@ class OscarServer:
         self.on_typing = self._ignore_typing
         self.ack_on_read = getattr(cfg, "ack_on", "read") == "read"
         self._sent: list[tuple[int, int, bytes, int]] = []   # uin, номер, cookie, канал
+        self._read_marks: dict[int, int] = {}  # bounded read watermarks, including early/offline updates
         self._probe_started = 0.0
         self.access = AccessControl(
             allow_from=getattr(cfg, "allow_from", ()),
@@ -2332,17 +2349,45 @@ class OscarServer:
         del self._sent[:-SENT_MEMORY]
 
     async def confirm_read(self, uin: int, max_id: int) -> int:
-        """Собеседник прочитал всё вплоть до max_id — ставим галочки."""
+        """Прочтение: отдельная отметка TMM или прежняя галочка Jimm."""
+        if not max_id or max_id <= 0:
+            return 0
+        previous = self._read_marks.pop(uin, 0)
+        self._read_marks[uin] = max_id = max(previous, max_id)
+        if len(self._read_marks) > SENT_MEMORY:
+            del self._read_marks[next(iter(self._read_marks))]
         if not self.online:
             return 0
+        session = self.session
         confirmed = [row for row in self._sent if row[0] == uin and row[1] <= max_id]
         if not confirmed:
             return 0
         self._sent = [row for row in self._sent if row not in confirmed]
-        for _, _, cookie, channel in confirmed:
-            await self.session.send_ack(cookie, channel, uin)
-        log.debug("отмечено прочитанными %d сообщений", len(confirmed))
-        return len(confirmed)
+        count = 0
+        try:
+            for _, _, cookie, channel in confirmed:
+                if self.session is not session or not self.online:
+                    break
+                if session.read_receipts_enabled():
+                    sent = await session.send_read_receipt(cookie, uin)
+                else:
+                    sent = await session.send_ack(cookie, channel, uin)
+                if sent is False:
+                    break
+                count += 1
+        finally:
+            # A disconnect or cancellation must not lose undelivered receipts.
+            self._sent.extend(confirmed[count:])
+            del self._sent[:-SENT_MEMORY]
+        log.debug("отмечено прочитанными %d сообщений", count)
+        return count
+
+    async def replay_read_receipts(self) -> None:
+        """Отдать прочтения, пришедшие во время переподключения телефона."""
+        for uin in dict.fromkeys(row[0] for row in self._sent):
+            if not self.online:
+                return
+            await self.confirm_read(uin, self._read_marks.get(uin, 0))
 
     def ssi_version(self, key: list, count: int) -> tuple[int, int]:
         """Версия контакт-листа: метка времени последнего изменения и число
