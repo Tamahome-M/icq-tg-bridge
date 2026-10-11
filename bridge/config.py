@@ -145,6 +145,17 @@ class Config:
     codex_session_hours: int = 0
     codex_title: str = "Codex"
     codex_group: str = "Боты"
+    taxi_enabled: bool = False
+    taxi_session: str = "taxi.session"
+    taxi_browser: str = ""
+    taxi_devtools_port: int = 0
+    taxi_title: str = "Яндекс Такси"
+    taxi_group: str = "Боты"
+    taxi_city: str = ""
+    taxi_timeout: float = 60
+    taxi_poll_seconds: float = 15
+    taxi_quote_seconds: float = 90
+    taxi_places: dict[str, str] = field(default_factory=dict)
     tmm_photo_width: int = 176
     tmm_photo_height: int = 176
     tmm_photo_max_kb: int = 20
@@ -174,6 +185,7 @@ class Config:
         dl = raw.get("downloads", {})
         ai = raw.get("assistant", {})
         cx = raw.get("codex", {})
+        tx = raw.get("taxi", {})
         tm = raw.get("telemotomax", {})
         tg = raw.get("telegram", {})
         mx = raw.get("max", {})
@@ -309,6 +321,17 @@ class Config:
             codex_session_hours=int(cx.get("session_hours", cls.codex_session_hours)),
             codex_title=str(cx.get("title", cls.codex_title)),
             codex_group=str(cx.get("group", cls.codex_group)),
+            taxi_enabled=bool(tx.get("enabled", cls.taxi_enabled)),
+            taxi_session=_resolve(base, str(tx.get("session", cls.taxi_session))),
+            taxi_browser=str(tx.get("browser", "")).strip(),
+            taxi_devtools_port=int(tx.get("devtools_port", cls.taxi_devtools_port)),
+            taxi_title=str(tx.get("title", cls.taxi_title)).strip() or cls.taxi_title,
+            taxi_group=str(tx.get("group", cls.taxi_group)).strip() or cls.taxi_group,
+            taxi_city=str(tx.get("city", "")).strip(),
+            taxi_timeout=float(tx.get("timeout", cls.taxi_timeout)),
+            taxi_poll_seconds=float(tx.get("poll_seconds", cls.taxi_poll_seconds)),
+            taxi_quote_seconds=float(tx.get("quote_seconds", cls.taxi_quote_seconds)),
+            taxi_places={str(k).casefold(): str(v).strip() for k, v in tx.get("places", {}).items()},
             tmm_photo_width=int(tm.get("photo_width", cls.tmm_photo_width)),
             tmm_photo_height=int(tm.get("photo_height", cls.tmm_photo_height)),
             tmm_photo_max_kb=int(tm.get("photo_max_kb", cls.tmm_photo_max_kb)),
@@ -343,6 +366,17 @@ class Config:
             raise ValueError("Заполните telegram.api_id и telegram.api_hash (my.telegram.org)")
         if not math.isfinite(cfg.network_retry_minutes) or cfg.network_retry_minutes <= 0:
             raise ValueError("bridge.network_retry_minutes должен быть больше нуля")
+        for name in ("timeout", "poll_seconds", "quote_seconds"):
+            value = getattr(cfg, "taxi_" + name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"taxi.{name} должен быть больше нуля")
+        if not 0 <= cfg.taxi_devtools_port <= 65535:
+            raise ValueError("taxi.devtools_port должен быть от 0 до 65535")
+        if cfg.taxi_enabled and cfg.express_enabled:
+            if os.path.realpath(cfg.taxi_session) == os.path.realpath(cfg.express_session):
+                raise ValueError("taxi.session и express.session должны быть разными профилями")
+            if cfg.taxi_devtools_port and cfg.taxi_devtools_port == cfg.express_devtools_port:
+                raise ValueError("taxi.devtools_port и express.devtools_port должны отличаться")
         return cfg
 
 
@@ -412,6 +446,8 @@ def describe(cfg: "Config") -> list[str]:
                                 else "выключен ([assistant] enabled = false)"),
         "контакт «Codex»: " + (f"включён, команда «{cfg.codex_command}», sandbox {cfg.codex_sandbox}"
                                if cfg.codex_enabled else "выключен ([codex] enabled = false)"),
+        "контакт «Яндекс Такси»: " + (f"включён, личный аккаунт, профиль {cfg.taxi_session}"
+                                    if cfg.taxi_enabled else "выключен ([taxi] enabled = false)"),
         f"журнал: {cfg.log_level}, telethon {cfg.log_telethon_level}, pymax {cfg.log_max_level}"
         + (f", файл {cfg.log_file}" if cfg.log_file else ", только консоль")
         + (", отсеянные на INFO" if cfg.log_filtered else ", отсеянные на DEBUG"),
