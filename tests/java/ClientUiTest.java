@@ -154,7 +154,12 @@ public final class ClientUiTest {
         Object form=((sun.misc.Unsafe)field(sun.misc.Unsafe.class,"theUnsafe").get(null)).allocateInstance(formClass);
         Form network=new Form("network");field(formClass,"optionsForm").set(form,network);
         method(formClass,"showNetworkOptions").invoke(form);
-        check(network.items.size()==9,"network form contains obsolete transport fields or lost encryption settings");
+        check(network.items.size()==10,"network form contains obsolete transport fields or lost ping/encryption settings");
+        ChoiceGroup pingLimit=(ChoiceGroup)field(formClass,"pingMissLimitChoice").get(form);
+        check(network.items.elementAt(4)==pingLimit && pingLimit.getType()==Choice.POPUP
+            && pingLimit.size()==10 && pingLimit.getSelectedIndex()==2,"ping threshold is not a 1..10 dropdown defaulting to 3");
+        for(int i=0;i<10;i++)check(pingLimit.getString(i).equals(String.valueOf(i+1)),"ping choices do not match their values");
+        pingLimit.setSelectedIndex(9,true);
         ((TextField)network.items.elementAt(0)).setString("bridge.example");
         ((TextField)network.items.elementAt(1)).setString("5190");
         ((ChoiceGroup)network.items.elementAt(2)).setSelectedIndex(0,true);
@@ -163,8 +168,21 @@ public final class ClientUiTest {
         String psk="moto 2026";
         ((TextField)field(formClass,"encryptionPskTextField").get(form)).setString(psk);
         method(formClass,"readNetworkOptions").invoke(form);
+        check(Options.pingMissLimit()==10,"ping threshold was not saved");
         check(Options.getBoolean(Options.OPTION_ENCRYPTION) && Options.getString(Options.OPTION_ENCRYPTION_PSK).equals(psk),"encryption switch/key not saved");
         Options.save();method(Options.class,"setDefaults").invoke(null);Options.load();
+        check(Options.pingMissLimit()==10,"ping threshold lost after RMS reload");
+        network.items.removeAllElements();method(formClass,"showNetworkOptions").invoke(form);
+        pingLimit=(ChoiceGroup)field(formClass,"pingMissLimitChoice").get(form);
+        check(pingLimit.getSelectedIndex()==9,"network form lost the saved ping threshold");
+        pingLimit.setSelectedIndex(0,true);method(formClass,"readNetworkOptions").invoke(form);
+        Options.save();method(Options.class,"setDefaults").invoke(null);Options.load();
+        check(Options.pingMissLimit()==1,"minimum ping threshold lost after RMS reload");
+        for(long invalid:new long[]{0,-1,11,Long.MAX_VALUE}){
+            Options.setLong(Options.OPTION_PING_MISS_LIMIT,invalid);
+            check(Options.pingMissLimit()==3,"invalid saved ping threshold is not bounded");
+        }
+        Options.setLong(Options.OPTION_PING_MISS_LIMIT,3);
         check(Options.getBoolean(Options.OPTION_ENCRYPTION) && Options.getString(Options.OPTION_ENCRYPTION_PSK).equals(psk),"encryption switch/key lost after RMS reload");
         Options.setBoolean(Options.OPTION_ENCRYPTION,false);
         check(Options.getString(Options.OPTION_SRV_HOST).equals("bridge.example"),"server field no longer saves");
@@ -240,8 +258,10 @@ public final class ClientUiTest {
     static void preferences() throws Exception {
         Field f=field(Options.class,"options");f.set(null,new Hashtable());
         method(Options.class,"setDefaults").invoke(null);
+        check(Options.pingMissLimit()==3,"new profile does not default to 3 unanswered pings");
         int[] retired={5,7,17,18,34,68,69,75,83,92,96,97,102,103,158,159,161};
         Hashtable values=(Hashtable)f.get(null);
+        values.remove(new Integer(Options.OPTION_PING_MISS_LIMIT)); // a pre-1.14 profile
         for(int id:retired) values.put(new Integer(id),id<64?"old":id<128?new Integer(5):Boolean.TRUE);
         values.put(new Integer(83),new Integer(1)); // old HTTP transport
         Options.setInt(Options.OPTION_EXT_CLKEY1,14); // retired status request
@@ -252,6 +272,7 @@ public final class ClientUiTest {
         Options.setInt(Options.OPTION_MEDIA_VIDEO_KBPS,48);
         Options.save();f.set(null,new Hashtable());method(Options.class,"setDefaults").invoke(null);Options.load();
         values=(Hashtable)f.get(null);
+        check(Options.pingMissLimit()==3,"old RMS profile did not inherit the default ping threshold");
         for(int id:retired)check(!values.containsKey(new Integer(id)),"obsolete RMS option survived: "+id);
         check(Options.getInt(Options.OPTION_EXT_CLKEY1)==Options.HOTKEY_NONE,"retired hotkey survived");
         check(Options.getInt(Options.OPTION_EXT_CLKEY2)==Options.HOTKEY_UP,"other hotkey changed");

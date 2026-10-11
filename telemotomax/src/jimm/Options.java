@@ -97,6 +97,7 @@ public class Options
 	public static final int OPTION_VIBRA_UNLOCKED_MS = 195;
 	public static final int OPTION_VIBRA_LOCKED_MS = 196;
 	public static final int OPTION_AUTOLOCK_MINUTES = 197;
+	public static final int OPTION_PING_MISS_LIMIT = 198;
 	public static final int[] VIBRATION_DURATIONS = {0, 100, 200, 500, 1000, 1500, 2000};
 	public static final int OPTION_CURRENCY           = 6;
 	public static final int OPTION_PRX_SERV           = 8;
@@ -435,6 +436,7 @@ public class Options
 		setBoolean(Options.OPTION_RECONNECT, true);
 		setInt(Options.OPTION_RECONNECT_NUMBER, 10);
 		setString(Options.OPTION_CONN_ALIVE_INVTERV, "120");
+		setLong(OPTION_PING_MISS_LIMIT, 3);
 		setInt(Options.OPTION_CONN_PROP, 0);
 //#sijapp cond.if modules_PROXY is "true"#
 		setInt(Options.OPTION_CONN_TYPE, 0);
@@ -833,6 +835,12 @@ public class Options
 		return value >= 0 && value <= 999 ? (int) value : 2;
 	}
 
+	public static int pingMissLimit()
+	{
+		long value = getLong(OPTION_PING_MISS_LIMIT);
+		return value >= 1 && value <= 10 ? (int) value : 3;
+	}
+
 	public static int vibrationMillis(boolean locked)
 	{
 		long value = getLong(locked ? OPTION_VIBRA_LOCKED_MS : OPTION_VIBRA_UNLOCKED_MS);
@@ -1064,6 +1072,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private TextField encryptionPskTextField;
 	private ChoiceGroup keepConnAliveChoiceGroup;
 	private TextField connAliveIntervTextField;
+	private ChoiceGroup pingMissLimitChoice;
 	private ChoiceGroup connPropChoiceGroup;
 //#sijapp cond.if modules_PROXY is "true"#
 	private ChoiceGroup connTypeChoiceGroup;
@@ -1957,6 +1966,9 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				.getString("timeout_interv"), Options
 				.getString(Options.OPTION_CONN_ALIVE_INVTERV), 3,
 				TextField.NUMERIC);
+		pingMissLimitChoice = new ChoiceGroup(ResourceBundle.getString("ping_miss_limit"), Choice.POPUP);
+		for (int i = 1; i <= 10; i++) pingMissLimitChoice.append(String.valueOf(i), null);
+		pingMissLimitChoice.setSelectedIndex(Options.pingMissLimit() - 1, true);
 
 		connPropChoiceGroup = new ChoiceGroup(ResourceBundle
 				.getString("conn_prop"), Choice.MULTIPLE);
@@ -1994,6 +2006,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 //#sijapp cond.end#
 		optionsForm.append(keepConnAliveChoiceGroup);
 		optionsForm.append(connAliveIntervTextField);
+		optionsForm.append(pingMissLimitChoice);
 		optionsForm.append(autoConnectChoiceGroup);
 		optionsForm.append(connPropChoiceGroup);
 		optionsForm.append(reconnectNumberTextField);
@@ -2890,6 +2903,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				keepConnAliveChoiceGroup.isSelected(0));
 		Options.setString(Options.OPTION_CONN_ALIVE_INVTERV,
 				connAliveIntervTextField.getString());
+		Options.setLong(Options.OPTION_PING_MISS_LIMIT, pingMissLimitChoice.getSelectedIndex() + 1);
 		Options.setBoolean(Options.OPTION_AUTO_CONNECT,
 				autoConnectChoiceGroup.isSelected(0));
 		Options.setBoolean(Options.OPTION_MD5_LOGIN,
@@ -3154,6 +3168,7 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 	private void clearForm()
 	{
+		pingMissLimitChoice = null;
 		lockPinTextField = null;
 		autoLockTextField = null;
 		optionsForm.removeCommand(cmdAddNewAccount);

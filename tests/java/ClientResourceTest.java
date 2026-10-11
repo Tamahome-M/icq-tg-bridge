@@ -147,7 +147,7 @@ public final class ClientResourceTest {
     }
     static void forward(RequestBartAction r,byte[] data)throws Exception{
         Method f=RequestBartAction.class.getDeclaredMethod("forward",Packet.class);f.setAccessible(true);
-        f.invoke(r,new SnacPacket(0x10,7,1,new byte[0],data));
+        f.invoke(r,new SnacPacket(0x10,7,field(RequestBartAction.class,"requestId").getInt(r),new byte[0],data));
     }
     static void multipart() throws Exception {
         Sink sink=new Sink();RequestBartAction r=request(sink);

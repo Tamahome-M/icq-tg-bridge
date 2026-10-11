@@ -1752,7 +1752,13 @@ class Session:
             # Телефон просит вернуть чат в список: снимаем скрытие и шлём
             # последнее сообщение, чтобы в клиенте появилась переписка.
             wanted = struct.unpack(">I", token[:4])[0] if len(token) >= 4 else 0
-            ok = await self.server.open_chat(wanted)
+            try:
+                ok = await self.server.open_chat(wanted)
+            except Exception as exc:
+                log.warning("чат %s не открыт: %s", self.server.name_of(wanted), exc)
+                await self.send_error(C.SSBI, 0x0001, s.request_id,
+                                      self.server.history_error(exc))
+                return
             log.info("телефон просит открыть чат %s: %s",
                      self.server.name_of(wanted), "открыт" if ok else "не вышло")
             await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
@@ -2118,14 +2124,18 @@ class OscarServer:
             return await self.fetch_history(uin, count, offset)
         except Exception as exc:
             log.exception("история для %s не собралась", self.name_of(uin))
-            if getattr(exc, "error", None) == "too.many.requests":
-                message = "Слишком много запросов истории. Повторите позже."
-            elif isinstance(getattr(exc, "seconds", None), int) and exc.seconds > 0:
-                message = f"Слишком много запросов истории. Повторите через {exc.seconds} с."
-            else:
-                reason = getattr(exc, "localized_message", None) or getattr(exc, "title", None)
-                message = "Не получилось загрузить историю" + (f": {reason}" if reason else "")
-            raise HistoryLoadError(message) from exc
+            raise HistoryLoadError(self.history_error(exc)) from exc
+
+    @staticmethod
+    def history_error(exc: Exception) -> str:
+        if getattr(exc, "error", None) == "too.many.requests":
+            return "Слишком много запросов истории. Повторите позже."
+        if isinstance(getattr(exc, "seconds", None), int) and exc.seconds > 0:
+            return f"Слишком много запросов истории. Повторите через {exc.seconds} с."
+        if isinstance(exc, ConnectionError) and str(exc):
+            return str(exc)
+        reason = getattr(exc, "localized_message", None) or getattr(exc, "title", None)
+        return "Не получилось загрузить историю" + (f": {reason}" if reason else "")
 
     async def video(self, token: bytes, rotate: str = "auto", segment: int = 0) -> bytes | None:
         """Ролик по токену вложения — перекодированный под телефон, или None.

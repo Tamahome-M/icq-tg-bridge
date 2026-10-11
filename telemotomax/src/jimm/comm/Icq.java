@@ -96,18 +96,18 @@ public class Icq implements Runnable
 	static private int pingMisses;
 
 	/** Сколько пингов подряд остались без единого байта в ответ. */
-	static public int getPingMisses()
+	static public synchronized int getPingMisses()
 	{
 		return pingMisses;
 	}
 
-	static public void noteServerData()
+	static public synchronized void noteServerData()
 	{
 		lastServerData = System.currentTimeMillis();
 		pingMisses = 0;
 	}
 
-	static public void notePingSent()
+	static public synchronized void notePingSent()
 	{
 		long now = System.currentTimeMillis();
 		if (lastPingAt != 0 && lastServerData < lastPingAt) pingMisses++;
@@ -120,7 +120,14 @@ public class Icq implements Runnable
 		if (isCurrentConnection(owner, connection) && connected) notePingSent();
 	}
 
-	static public void resetPingWatch()
+	/** Вызывается перед следующим пингом, когда на предыдущий уже ждали интервал. */
+	static public synchronized int getUnansweredPings(Thread owner, Connection connection)
+	{
+		if (!isCurrentConnection(owner, connection) || !connected) return 0;
+		return lastPingAt != 0 && lastServerData < lastPingAt ? pingMisses + 1 : 0;
+	}
+
+	static public synchronized void resetPingWatch()
 	{
 		lastServerData = System.currentTimeMillis();
 		lastPingAt = 0;
@@ -510,9 +517,13 @@ public class Icq implements Runnable
 		return connected;
 	}
 
+	private static volatile int sessionId;
+	public static int getSessionId() { return sessionId; }
+
 	// Puts the comm. subsystem into STATE_CONNECTED
 	static protected synchronized void setConnected()
 	{
+		if (!connected) sessionId++;
 		SplashCanvas.setLastErrCode(null);
 		Icq.reconnect_attempts = (Options.getBoolean(Options.OPTION_RECONNECT))	?
 						Options.getInt(Options.OPTION_RECONNECT_NUMBER) : 0;

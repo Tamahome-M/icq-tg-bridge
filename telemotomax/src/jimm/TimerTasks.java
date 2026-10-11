@@ -108,13 +108,12 @@ public class TimerTasks extends TimerTask
 				if (Icq.isConnected()
 						&& Options.getBoolean(Options.OPTION_KEEP_CONN_ALIVE))
 				{
-					// Мост отвечает на keepalive. Если в ответ на два пинга
-					// подряд не пришло ни байта, канала больше нет — на
-					// GPRS такое соединение висит открытым, и телефон
-					// продолжал бы показывать «в сети», ничего не получая.
-					if (Icq.getPingMisses() >= 2)
+					// Даём каждому пингу целый интервал на ответ. Последний
+					// тоже входит в порог; любые данные моста сбрасывают счёт.
+					int pingLimit = Options.pingMissLimit();
+					if (Icq.getUnansweredPings(connectionThread, connection) >= pingLimit)
 					{
-						ConnLog.note("нет ответа на 2 пинга — обрыв");
+						ConnLog.note("нет ответа на " + pingLimit + " пингов — обрыв");
 						Icq.resetPingWatch();
 						JimmException.handleException(
 								new JimmException(120, 3, JimmException.ICQ_MAIN));

@@ -115,6 +115,11 @@ async def main():
             body = pstr8(str(uin).encode()) + b"\x01" + struct.pack(">H", C.BART_HISTORY) + b"\x01\x10" + token
             await session.on_icon_request(Snac(C.SSBI, C.SSBI_ICQ_REQ, 0, 77, body))
             return packets[-1]
+        async def request_open():
+            token = struct.pack(">I", uin) + bytes(12)
+            body = pstr8(str(uin).encode()) + b"\x01" + struct.pack(">H", C.BART_OPEN) + b"\x01\x10" + token
+            await session.on_icon_request(Snac(C.SSBI, C.SSBI_ICQ_REQ, 0, 88, body))
+            return packets[-1]
 
         # Opening a chat preloads one message; immediately opening history loads a full page.
         single = records(history_data(await request(1, paged=False)))
@@ -160,6 +165,28 @@ async def main():
         replies = []
         async def reply(contact, text, **kwargs): replies.append(text)
         bridge.reply = reply
+        with CHECK.assertLogs(level="WARNING"):
+            opened = await request_open()
+        assert opened[:2] == (C.SSBI, 1) and opened[3]["request_id"] == 88
+        assert Reader(opened[2][2:]).tlvs().get(C.TLV_TMM_ERROR_TEXT).decode() == reason
+        assert not replies, "failed opening invents a last/empty message"
+        transport.fail_interactive = False
+        opened = await request_open()
+        assert opened[:2] == (C.SSBI, C.SSBI_ICQ_REPLY) and opened[2][-3:] == b"\x00\x01\x00"
+        assert replies[-1].endswith("Сообщение 45"), "opening after failure lost the last message"
+        before = list(replies)
+        bridge._running = True
+        bridge._network_ready = {"telegram"}
+        with CHECK.assertLogs(level="WARNING"):
+            unavailable = await request(1, paged=False)
+            unopened = await request_open()
+        for packet in (unavailable, unopened):
+            assert packet[:2] == (C.SSBI, 1)
+            assert "Нет подключения к MAX" in Reader(packet[2][2:]).tlvs().get(C.TLV_TMM_ERROR_TEXT).decode()
+        assert replies == before, "unavailable network produces a fake preview"
+        bridge._running = False
+        transport.fail_interactive = True
+        print("PASS: open chat errors reply with request ID/reason, retry returns real last message; unavailable network stays distinct from empty history")
         with CHECK.assertLogs(level="WARNING"):
             assert await bridge.on_phone_message(uin, "!last 10") == -1
         assert replies[-1] == "Не получилось загрузить историю"

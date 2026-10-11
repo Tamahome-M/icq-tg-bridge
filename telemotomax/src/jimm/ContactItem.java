@@ -171,8 +171,7 @@ public class ContactItem implements ContactListItem, JimmScreen
 			case ContactList.STATUS_NA:         return 8;
 			case ContactList.STATUS_OCCUPIED:   return 9;
 			case ContactList.STATUS_DND:        return 10;
-			case ContactList.STATUS_INVISIBLE:  return 11;
-
+			case ContactList.STATUS_INVISIBLE:
 			case ContactList.STATUS_OFFLINE:
 				if (getBooleanValue(ContactItem.CONTACTITEM_IS_TEMP))
 					return 19;
@@ -204,7 +203,7 @@ public class ContactItem implements ContactListItem, JimmScreen
 			return;
 		case CONTACTITEM_STATUS:
 			status = value;
-			if (status == ContactList.STATUS_OFFLINE)
+			if (!ContactList.isOnlineStatus(status))
 			{
 				//#sijapp cond.if target isnot "DEFAULT"#
 				typing = false;
