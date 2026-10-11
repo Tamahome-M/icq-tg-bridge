@@ -127,7 +127,10 @@ class PhotoServer:
         # Сборки TeleMotoMax из Releases (локальный telemotomax/dist): раздел
         # «Загрузки» показывает их всегда, даже если [downloads] dir пуст —
         # клиент ставится на телефон именно отсюда, по ссылке на JAD.
-        self.client_dir = client_dir if client_dir and os.path.isdir(client_dir) else ""
+        # Каталог может появиться уже после запуска (первое скачивание из
+        # Releases). Не забываем его путь: список и файлы проверяются при
+        # каждом запросе, поэтому перезапуск для их появления не нужен.
+        self.client_dir = client_dir
         self._sessions: dict[str, float] = {}       # cookie -> срок
         self._server: asyncio.AbstractServer | None = None
         self._writers: set[asyncio.StreamWriter] = set()

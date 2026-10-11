@@ -331,8 +331,9 @@ class ReleaseTests(unittest.TestCase):
                    TEST_EVENTS=str(events), TEST_PYTHON=sys.executable)
         return install, events, env
 
-    def run_update(self, install, repo, env, *extra):
-        return subprocess.run(["sh", str(ROOT / "tools/update-from-github.sh"), "-d", str(install),
+    def run_update(self, install, repo, env, *extra, installed=False):
+        script = (install if installed else ROOT) / "tools/update-from-github.sh"
+        return subprocess.run(["sh", str(script), "-d", str(install),
                                "-r", repo, "-u", "tmm-test-nonexistent-user", *extra],
                               env=env, text=True, capture_output=True, timeout=30)
 
@@ -353,6 +354,26 @@ class ReleaseTests(unittest.TestCase):
         trace = events.read_text().splitlines()
         stop = trace.index("service stop")
         self.assertEqual(sum(line.startswith("get ") for line in trace[:stop]), 8)
+        self.assertEqual(trace[-1], "service start")
+
+    def test_installed_updater_restores_clients_removed_by_legacy_first_pass(self):
+        install, events, env = self.prepare_installed()
+        # The legacy script installs these sources, but removes dist because
+        # release binaries are absent from the source archive.
+        shutil.rmtree(install / "telemotomax/dist")
+        for name in ("update-from-github.sh", "telemotomax-release.py"):
+            shutil.copyfile(ROOT / "tools" / name, install / "tools" / name)
+        before = snapshot(install)
+        with serve(self.source, self.dist, events) as repo:
+            result = self.run_update(install, repo, env, installed=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name in release.FILES:
+            self.assertEqual((install / "telemotomax/dist" / name).read_bytes(),
+                             (self.dist / name).read_bytes())
+        self.assertEqual((install / "config.toml").read_bytes(), before["config.toml"])
+        self.assertEqual((install / "downloads/custom.jar").read_bytes(), before["downloads/custom.jar"])
+        trace = events.read_text().splitlines()
+        self.assertEqual(sum(line.startswith("get ") for line in trace[:trace.index("service stop")]), 8)
         self.assertEqual(trace[-1], "service start")
 
     def test_vps_dry_run_downloads_and_validates_without_changing_installation(self):
