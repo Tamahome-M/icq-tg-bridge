@@ -452,6 +452,8 @@ public class UpdateContactListAction extends Action
 	}
 
 	/* Returns true if an error has occured */
+	public long getDeadline() { return lastActivity + TIMEOUT; }
+
 	public boolean isError()
 	{
 		if (this.state == ConnectAction.STATE_ERROR)

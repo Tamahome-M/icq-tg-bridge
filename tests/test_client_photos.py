@@ -18,7 +18,7 @@ async def run(work,classes):
   directory=Path(temp);stubs=dict(STUBS);stubs['javax/microedition/io/Connector.java']=CONNECTOR
   stubs['jimm/MainThread.java']=stubs['jimm/MainThread.java'].replace('public class MainThread {',
    'public class MainThread {public static javax.microedition.lcdui.Image updatedIcon;'
-   ' public static void updateBuddyIcon(String uin,javax.microedition.lcdui.Image image,byte[] hash){updatedIcon=image;}')
+   ' public static void updateBuddyIcon(String uin,javax.microedition.lcdui.Image image,byte[] hash){updatedIcon=image;PhotoViewer.avatarCommitted();}')
   # Exercise real cache, contact card and text storage, including the card's
   # independent bitmap reference; UI-only stubs would hide this leak.
   for name in ['jimm/JimmUI.java','DrawControls/TextList.java','DrawControls/VirtualList.java','DrawControls/VirtualListCommands.java']:

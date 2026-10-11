@@ -156,7 +156,7 @@ public final class PacketMemoryTest {
             packets(args[0]);contacts(args[0]);textAndOptions();
         }finally{
             Jimm.getTimerRef().cancel();Object canvas=f(VirtualList.class,"virtualCanvas").get(null);((Timer)f(canvas.getClass(),"repeatTimer").get(canvas)).cancel();
-            for(String name:new String[]{"iconTimer","soundTimer"}){Timer timer=(Timer)f(ContactList.class,name).get(null);if(timer!=null)timer.cancel();}
+            for(String name:new String[]{"iconTimer","soundTimer"}){try{Timer timer=(Timer)f(ContactList.class,name).get(null);if(timer!=null)timer.cancel();}catch(NoSuchFieldException removed){}}
         }
     }
 }

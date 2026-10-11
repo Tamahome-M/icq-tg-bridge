@@ -74,7 +74,7 @@ public class SOCKETConnection extends Connection implements Runnable
 			javax.microedition.io.Connection pending = socket;
 			if (pending == null) return;
 			expired = true;
-			try { pending.close(); } catch (Exception ignore) {}
+			try { pending.close(); } catch (Throwable ignore) {}
 		}
 		public boolean cancel()
 		{
@@ -97,33 +97,44 @@ public class SOCKETConnection extends Connection implements Runnable
 	}
 
 	// Opens a connection to the specified host and starts the receiver thread
-	public synchronized void connect(String hostAndPort)
-			throws JimmException
+	private int connectGeneration;
+
+	public void connect(String hostAndPort) throws JimmException
 	{
+		final int generation;
+		synchronized (this)
+		{
+			if (typeNetwork == JimmException.ICQ_MAIN && !Icq.isConnectionOwner(this)) throw new JimmException(140, 0, false);
+			generation = ++connectGeneration;
+			state = false;
+			rcvThread = null;
+			setInputCloseFlag(false);
+		}
+		SocketConnection socket = null;
+		InputStream input = null;
+		OutputStream output = null;
+		boolean admitted = false;
 		try
 		{
-			state = false;
-			rcvThread = null; // retire the old receiver before replacing socket fields
-			//#sijapp cond.if target!="DEFAULT"#
-			sc = (SocketConnection) Connector.open("socket://"
-					+ hostAndPort, Connector.READ_WRITE);
-			//#sijapp cond.else#
-			//#				sc = (StreamConnection) Connector.open("socket://" + hostAndPort, Connector.READ_WRITE);
-			//#sijapp cond.end#
-			is = sc.openInputStream();
-			os = sc.openOutputStream();
-
-			clearPackets();
-			setInputCloseFlag(false);
+			// Connector.open/crypto can block for minutes. Cancellation must
+			// acquire neither this monitor nor a lock held during network I/O.
+			socket = (SocketConnection)Connector.open("socket://" + hostAndPort, Connector.READ_WRITE);
+			synchronized (this)
+			{
+				if (generation != connectGeneration || getInputCloseFlag()) throw new IOException();
+				sc = socket; // publish early so Cancel can interrupt the handshake
+			}
+			input = socket.openInputStream();
+			output = socket.openOutputStream();
 			if (Options.getBoolean(Options.OPTION_ENCRYPTION))
 			{
-				CryptoDeadline deadline = new CryptoDeadline(sc);
+				CryptoDeadline deadline = new CryptoDeadline(socket);
 				jimm.Jimm.getTimerRef().schedule(deadline, 45000);
 				try
 				{
-					SecureTransport secure = SecureTransport.open(is, os, Options.getString(Options.OPTION_ENCRYPTION_PSK));
-					is = secure.input;
-					os = secure.output;
+					SecureTransport secure = SecureTransport.open(input, output, Options.getString(Options.OPTION_ENCRYPTION_PSK));
+					input = secure.input;
+					output = secure.output;
 				}
 				catch (IOException e)
 				{
@@ -132,31 +143,38 @@ public class SOCKETConnection extends Connection implements Runnable
 				}
 				finally { deadline.cancel(); }
 			}
-			if (getInputCloseFlag()) throw new IOException();
-			rcvThread = new Thread(this);
-			rcvThread.start();
-			// Set starting point for seq numbers (not bigger then 0x8000)
-			flapSEQ = getSeqValue();
-			nextIcqSequence = 2;
-			state = true;
-		} catch (ConnectionNotFoundException e)
-		{
-			if (!getInputCloseFlag()) throw (new JimmException(121, 0));
-		} catch (IllegalArgumentException e)
-		{
-			throw (new JimmException(122, 0));
-		} catch (IOException e)
-		{
-			if (e instanceof SecureTransport.Failure)
-				throw new JimmException(((SecureTransport.Failure)e).code, 0, this.typeNetwork);
-			throw (new JimmException(120, 0));
-		} catch (SecurityException e)
-		{
-			throw (new JimmException(119, 0));
+			synchronized (this)
+			{
+				if (generation != connectGeneration || getInputCloseFlag()) throw new IOException();
+				is = input; os = output;
+				clearPackets();
+				flapSEQ = getSeqValue(); nextIcqSequence = 2;
+				rcvThread = new Thread(this);
+				state = true;
+				rcvThread.start();
+				admitted = true;
+			}
 		}
+		catch (ConnectionNotFoundException e) { throw new JimmException(121, 0, this.typeNetwork); }
+		catch (IllegalArgumentException e) { throw new JimmException(122, 0, this.typeNetwork); }
+		catch (IOException e)
+		{
+			if (e instanceof SecureTransport.Failure) throw new JimmException(((SecureTransport.Failure)e).code, 0, this.typeNetwork);
+			throw new JimmException(120, 0, this.typeNetwork);
+		}
+		catch (SecurityException e) { throw new JimmException(119, 0, this.typeNetwork); }
 		finally
 		{
-			if (!state) closeStreams();
+			if (!admitted)
+			{
+				try { if (input != null) input.close(); } catch (Throwable ignore) {}
+				try { if (output != null) output.close(); } catch (Throwable ignore) {}
+				try { if (socket != null) socket.close(); } catch (Throwable ignore) {}
+				synchronized (this)
+				{
+					if (generation == connectGeneration) { state = false; is = null; os = null; sc = null; }
+				}
+			}
 		}
 	}
 
@@ -268,7 +286,7 @@ public class SOCKETConnection extends Connection implements Runnable
 				if (channel == 2 && flapLen >= 10)
 				{
 					byte[] head = new byte[10];
-					if (!readFully(source, head, 0, 10)) break;
+					if (!readFully(source, head, 0, 10)) { bRead = -1; break; }
 					int family = Util.getWord(head, 0), command = Util.getWord(head, 2), flags = Util.getWord(head, 4);
 					long reference = Util.getDWord(head, 6);
 					if ((family == SnacPacket.CLI_TOICQSRV_FAMILY && command == SnacPacket.CLI_TOICQSRV_COMMAND)
@@ -278,7 +296,7 @@ public class SOCKETConnection extends Connection implements Runnable
 						rcvdPacket = new byte[6 + flapLen];
 						System.arraycopy(flapHeader, 0, rcvdPacket, 0, 6);
 						System.arraycopy(head, 0, rcvdPacket, 6, 10);
-						if (!readFully(source, rcvdPacket, 16, flapLen - 10)) break;
+						if (!readFully(source, rcvdPacket, 16, flapLen - 10)) { bRead = -1; break; }
 						ready = rcvdPacket;
 					}
 					else
@@ -289,15 +307,15 @@ public class SOCKETConnection extends Connection implements Runnable
 						{
 							byte[] lenBuf = new byte[2];
 							if (bodyLen < 2) throw new JimmException(133, 1);
-							if (!readFully(source, lenBuf, 0, 2)) break;
+							if (!readFully(source, lenBuf, 0, 2)) { bRead = -1; break; }
 							int extLen = Util.getWord(lenBuf, 0);
 							if (bodyLen < 2 + extLen) throw new JimmException(133, 2);
 							extData = new byte[extLen];
-							if (!readFully(source, extData, 0, extLen)) break;
+							if (!readFully(source, extData, 0, extLen)) { bRead = -1; break; }
 							bodyLen -= 2 + extLen;
 						}
 						byte[] data = new byte[bodyLen];
-						if (!readFully(source, data, 0, bodyLen)) break;
+						if (!readFully(source, data, 0, bodyLen)) { bRead = -1; break; }
 						ready = new SnacPacket(Util.getWord(flapHeader, 2), family, command, flags, reference, extData, data);
 					}
 				}
@@ -305,7 +323,7 @@ public class SOCKETConnection extends Connection implements Runnable
 				{
 					rcvdPacket = new byte[flapHeader.length + flapLen];
 					System.arraycopy(flapHeader, 0, rcvdPacket, 0, flapHeader.length);
-					if (!readFully(source, rcvdPacket, flapHeader.length, flapLen)) break;
+					if (!readFully(source, rcvdPacket, flapHeader.length, flapLen)) { bRead = -1; break; }
 					ready = rcvdPacket;
 				}
 				bReadSum = flapLen;
@@ -398,17 +416,20 @@ public class SOCKETConnection extends Connection implements Runnable
 	
 	private void closeStreams()
 	{
-		try { is.close(); } catch (Exception e) {} 
-		is = null;
-
-		try { os.close(); } catch (Exception e) {}
-		os = null;
-
-		try { sc.close(); } catch (Exception e) {}
-		sc = null;
-		
+		InputStream input;
+		OutputStream output;
+		SocketConnection socket;
+		synchronized (this)
+		{
+			++connectGeneration;
+			input = is; output = os; socket = sc;
+			is = null; os = null; sc = null; state = false;
+		}
+		try { if (input != null) input.close(); } catch (Throwable ignore) {}
+		try { if (output != null) output.close(); } catch (Throwable ignore) {}
+		try { if (socket != null) socket.close(); } catch (Throwable ignore) {}
 	}
-	
+
 	public void forceDisconnect()
 	{
 		notifyToDisconnect();

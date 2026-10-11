@@ -59,7 +59,9 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 	private String hint;
 	private String[] details;
 	private boolean recording;
-	private boolean sending;
+	private volatile boolean sending;
+	private Icq.Upload transfer;
+	private java.util.TimerTask answerTask, returnTask;
 	private boolean done;
 	private int sentPart;
 	private int sentTotal;
@@ -107,12 +109,13 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 					try { p.addPlayerListener(VoiceRecorder.this); } catch (Exception ignore) {}
 					p.start();
 					rc.startRecord();
+					if (current != VoiceRecorder.this || !recording) { try { rc.stopRecord(); p.close(); } catch (Throwable ignore) {} return; }
 					player = p;
 					record = rc;
 					startedAt = System.currentTimeMillis();
 					repaintLater();
 				}
-				catch (Exception e)
+				catch (Throwable e)
 				{
 					recording = false;
 					failed(e);
@@ -142,12 +145,13 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 				p.realize();
 				return p;
 			}
-			catch (Exception e)
+			catch (Throwable e)
 			{
 				// Создался, но не открылся — закрыть, иначе каждая попытка
 				// с очередным адресом оставляла плеер висеть.
 				if (p != null) { try { p.close(); } catch (Exception ig) {} }
-				last = e;
+				if (e instanceof Error) throw (Error)e;
+				last = (Exception)e;
 			}
 		}
 		throw last != null ? last : new Exception("no microphone");
@@ -208,6 +212,16 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 		recording = false;
 		sending = true;
 		final int secs = Math.max(1, seconds());
+		transfer = new Icq.Upload(uin) {
+			public boolean isActive() { return current == VoiceRecorder.this && sending && super.isActive(); }
+			public void onPart(int part, int total)
+			{
+				Jimm.wakeBacklight();
+				sentPart = part;
+				sentTotal = total;
+				repaint();
+			}
+		};
 		status = ResourceBundle.getString("voice_recorded") + time(secs);
 		hint = null;
 		repaint();
@@ -215,13 +229,13 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 			public void run()
 			{
 				byte[] data = null;
-				Exception err = null;
+				Throwable err = null;
 				try
 				{
 					record.commit();
 					data = sink.toByteArray();
 				}
-				catch (Exception e) { err = e; }
+				catch (Throwable e) { err = e; }
 				// Тип записи спрашиваем, пока плеер ещё жив.
 				String type = "";
 				try { if (player != null) type = String.valueOf(player.getContentType()); }
@@ -230,6 +244,7 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 				if (data == null || data.length == 0)
 				{
 					sending = false;
+					if (transfer != null) transfer.cancel();
 					failed(err);
 					return;
 				}
@@ -239,21 +254,15 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 				try
 				{
 					// Заливка идёт частями и не быстро — показываем, сколько ушло.
-					Icq.sendVoice(uin, data, secs, type, new Icq.UploadProgress() {
-						public void onPart(int part, int total)
-						{
-							Jimm.wakeBacklight();
-							sentPart = part;
-							sentTotal = total;
-							repaint();
-						}
-					});
+					Icq.sendVoice(uin, data, secs, type, transfer);
+					if (current != VoiceRecorder.this || !sending) return;
 					status = ResourceBundle.getString("voice_waiting");
 					waitForBridge();
 				}
-				catch (Exception e)
+				catch (Throwable e)
 				{
 					sending = false;
+					if (transfer != null) transfer.cancel();
 					failed(e);
 					return;
 				}
@@ -266,24 +275,28 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 	// последней части. Ждать вечно нельзя: экран должен сказать, чем кончилось.
 	private void waitForBridge()
 	{
-		new Thread() {
-			public void run()
-			{
-				try { Thread.sleep(ANSWER_WAIT); } catch (Exception ignore) {}
+		if (current != this || !sending) return;
+		if (answerTask != null) answerTask.cancel();
+		answerTask = new java.util.TimerTask() { public void run() {
+			try {
 				if (current != VoiceRecorder.this || !sending) return;
 				sending = false;
+				if (transfer != null) transfer.cancel();
 				status = ResourceBundle.getString("camera_not_sent");
 				stopReason = ResourceBundle.getString("voice_no_answer");
 				repaint();
-			}
-		}.start();
+			} catch (Throwable ignore) {}
+		} };
+		Jimm.getTimerRef().schedule(answerTask, ANSWER_WAIT);
 	}
 
 	// The bridge said whether the voice message reached the chat.
-	static public void voiceSent(String uin, boolean ok)
+	static public void voiceSent(String uin, boolean ok, long request)
 	{
 		final VoiceRecorder rec = current;
-		if (rec == null || !rec.uin.equals(uin)) return;
+		if (rec == null || !rec.sending || rec.transfer == null || !rec.transfer.matches(uin, request)) return;
+		if (rec.answerTask != null) rec.answerTask.cancel();
+		rec.transfer.cancel();
 		rec.sending = false;
 		if (ok)
 		{
@@ -291,20 +304,17 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 			rec.status = ResourceBundle.getString("voice_sent");
 			rec.hint = null;
 			rec.repaint();
-			new Thread() {
-				public void run()
-				{
-					try { Thread.sleep(1200); } catch (Exception ignore) {}
-					rec.close();
-				}
-			}.start();
+			rec.returnTask = new java.util.TimerTask() { public void run() {
+				try { MainThread.runSerially(new Runnable() { public void run() { if (current == rec && rec.done) rec.close(); } }); } catch (Throwable ignore) {}
+			} };
+			Jimm.getTimerRef().schedule(rec.returnTask, 1200);
 			return;
 		}
 		rec.status = ResourceBundle.getString("camera_not_sent");
 		rec.repaint();
 	}
 
-	private void failed(Exception e)
+	private void failed(Throwable e)
 	{
 		String name = "?";
 		if (e != null)
@@ -424,11 +434,14 @@ public class VoiceRecorder extends Canvas implements CommandListener, JimmScreen
 
 	private void close()
 	{
-		if (current == this) current = null;
+		boolean owned = current == this;
+		if (owned) current = null;
+		if (transfer != null) transfer.cancel();
+		if (answerTask != null) answerTask.cancel();
+		if (returnTask != null) returnTask.cancel();
 		recording = false;
 		stopRecorder();
-		if (back != null) back.activate();
-		else JimmUI.backToLastScreen();
+		if (owned) MainThread.activateScreenMT(back);
 	}
 
 	public void activate()

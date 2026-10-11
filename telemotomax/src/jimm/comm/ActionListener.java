@@ -159,11 +159,11 @@ public class ActionListener
 				int len = Util.getByte(p, 0);
 				String uin = Util.byteArrayToString(p, 1, len);
 				boolean ok = (p.length > 1 + len) && (Util.getByte(p, 1 + len) == 0);
-				jimm.VoiceRecorder.voiceSent(uin, ok);
+				jimm.VoiceRecorder.voiceSent(uin, ok, snacPacket.getReference());
 //#sijapp cond.if modules_CAMERA="true"#
-				jimm.CameraShot.photoSent(uin, ok);
-				jimm.VideoRecorder.videoSent(uin, ok);
-				jimm.FileSender.fileSent(uin, ok);
+				jimm.CameraShot.photoSent(uin, ok, snacPacket.getReference());
+				jimm.VideoRecorder.videoSent(uin, ok, snacPacket.getReference());
+				jimm.FileSender.fileSent(uin, ok, snacPacket.getReference());
 //#sijapp cond.end#
 				return;
 			}

@@ -162,7 +162,7 @@ public final class HistoryMemoryTest {
   render(viewer,page(1,4,2,true,true));metadata(viewer,1,8);viewer.commandAction(JimmUI.cmdBack,null);
   System.out.println("PASS: reply to inactive history is dropped without a stuck loading flag; returning and retrying preserves records");
  }
- static void cancel(Class type,String name)throws Exception{Timer timer=(Timer)f(type,name).get(null);if(timer!=null)timer.cancel();}
+ static void cancel(Class type,String name)throws Exception{try{Timer timer=(Timer)f(type,name).get(null);if(timer!=null)timer.cancel();}catch(NoSuchFieldException removed){}}
  public static void main(String[] args)throws Exception{
   baseline=args[0].equals("baseline");
   try{

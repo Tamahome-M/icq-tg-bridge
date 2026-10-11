@@ -67,6 +67,7 @@ public final class SecureTransportTest {
         Options.setBoolean(Options.OPTION_ENCRYPTION,true);
         Options.setString(Options.OPTION_ENCRYPTION_PSK,keyText);
         SOCKETConnection conn=new SOCKETConnection();
+        own(conn,Thread.currentThread());
         try {
             for(int attempt=0;attempt<2;attempt++){
                 conn.connect(address);check(waitPacket(conn) instanceof ConnectPacket,"protected OSCAR hello lost");
@@ -82,12 +83,17 @@ public final class SecureTransportTest {
         final SOCKETConnection conn=new SOCKETConnection();
         final boolean[] failed={false};javax.microedition.io.Connector.written=0;
         Thread worker=new Thread(){public void run(){try{conn.connect(address);}catch(Exception expected){failed[0]=true;}}};
+        own(conn,worker);
         worker.start();long until=System.currentTimeMillis()+5000;
         while(javax.microedition.io.Connector.written<44 && System.currentTimeMillis()<until)Thread.sleep(5);
         check(javax.microedition.io.Connector.written>=44,"handshake request not sent");
         conn.forceDisconnect();worker.join(2000);
         check(!worker.isAlive() && failed[0],"cancel did not stop pending handshake");
         System.out.println("PASS: cancellation closes socket while waiting for encryption handshake");
+    }
+    static void own(Connection conn,Thread owner)throws Exception {
+        Field f=Icq.class.getDeclaredField("c");f.setAccessible(true);f.set(null,conn);
+        f=Icq.class.getDeclaredField("thread");f.setAccessible(true);f.set(null,owner);
     }
     static final class DeadlineSocket implements javax.microedition.io.Connection {
         boolean closed;public void close(){closed=true;}

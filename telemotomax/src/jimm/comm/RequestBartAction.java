@@ -94,7 +94,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	private byte[] token;
 	private byte[] clicookie;
 	private Listener listener;
-	private int state;
+	private volatile int state;
 	private long lastActivity = System.currentTimeMillis();
 	private int nextPart = 1, expectedTotal;
 	private boolean active;
@@ -103,7 +103,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 	// phone does not hold the clip twice while the parts are being joined.
 	private byte[] parts;
 	private int filled;
-	private boolean notified;         // слушателю уже сказали, чем кончилось
+	private volatile boolean notified; // слушателю уже сказали, чем кончилось
 	private boolean streaming;        // части уходят слушателю по одной
 	private int extraFlags;           // свои биты во флагах приметы (0x40 — ссылку на файл)
 	private String failureReason;
@@ -133,6 +133,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 
 	protected void init() throws JimmException
 	{
+		if (notified || state == STATE_ERROR) return;
 		if (Icq.bartUsable())
 		{
 			this.sendRequest();
@@ -145,7 +146,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 			Util.putWord(rbuf, 0, 0x0010);
 			Packet reqp = new SnacPacket(SnacPacket.CLI_SERVICEREQUEST_FAMILY, SnacPacket.CLI_SERVICEREQUEST_COMMAND, 0x00010004, new byte[0], rbuf);
 			Icq.c.sendPacket(reqp);
-			this.state = STATE_INIT_DONE;
+			this.state = notified ? STATE_ERROR : STATE_INIT_DONE;
 		}
 		catch (JimmException je)
 		{
@@ -157,6 +158,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 
 	private void sendRequest() throws JimmException
 	{
+		if (notified || state == STATE_ERROR) return;
 		byte[] uinRaw = Util.stringToByteArray(this.uin);
 		int uinLength = uinRaw.length;
 		byte[] buf = new byte[1 + uinLength + 1 + 2 + 1 + 1 + 16];
@@ -182,20 +184,22 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 		SnacPacket request = new SnacPacket(0x0010, 0x0006, requestId, new byte[0], buf);
 		try
 		{
+			if (this.state == STATE_CLI_COOKIE_SENT) Icq.markBartReady();
 			Icq.bartC.sendPacket(request);
 			Icq.noteBartUse();
 		}
 		catch (JimmException je)
 		{
 			this.state = STATE_ERROR;
-			Icq.disconnectBart(true);
+			Icq.retireBartIfIdle(this);
 			throw (new JimmException(je.getErrCode(), 53, true));
 		}
-		this.state = STATE_CLI_REQ_SENT;
+		this.state = notified ? STATE_ERROR : STATE_CLI_REQ_SENT;
 	}
 
 	protected boolean forward(Packet packet) throws JimmException
 	{
+		if (notified || state == STATE_ERROR) return false;
 		this.active = true;
 		try
 		{
@@ -465,30 +469,31 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 
 	// Соединение со службой готово (из потока Icq.connectBart).
 	public void onBartConnected()
-	{
-		if (this.state != STATE_CONNECTING)
-		{
-			// Пока соединялись, запрос сочли пропавшим — сокет не нужен.
-			Icq.disconnectBart(true);
-			return;
-		}
-		this.lastActivity = System.currentTimeMillis();
-		this.state = STATE_CONNECTION_ESTB;
-	}
+    {
+        if (this.state != STATE_CONNECTING) return;
+        this.lastActivity = System.currentTimeMillis();
+        this.state = STATE_CONNECTION_ESTB;
+    }
 
-	// В ошибке — настоящая причина (#120 — ввод-вывод, #121 — сеть не
-	// даёт соединение), а не безликое #100.
-	public void onBartConnectFailed(JimmException e)
-	{
-		this.state = STATE_ERROR;
-		this.failureReason = e.getMessage();
-		Icq.disconnectBart(true);
-		int ext = (e.getErrCode() == 100) ? 52 : 51;
-		JimmException.handleException(new JimmException(e.getErrCode(), ext, true));
-	}
+    public void onBartConnectFailed(JimmException error)
+    {
+        if (this.state != STATE_CONNECTING) return;
+        this.state = STATE_ERROR;
+        this.failureReason = error.getMessage();
+    }
 
-	public boolean isError()
+    public boolean isBartPending() { return !notified && state != STATE_ERROR && state != STATE_ACTION_DONE; }
+
+    public long getDeadline() { return lastActivity + TIMEOUT; }
+
+    public boolean isError()
 	{
+		if (notified && state != STATE_ACTION_DONE) state = STATE_ERROR;
+        if ((state == STATE_INIT_DONE || state == STATE_CONNECTING || state == STATE_CONNECTION_ESTB || state == STATE_CLI_COOKIE_SENT) && Icq.bartUsable())
+        {
+            try { sendRequest(); } catch (JimmException failure) { state = STATE_ERROR; }
+        }
+
 		if ((this.state != STATE_ERROR) && !this.active
 				&& (this.lastActivity + this.TIMEOUT < System.currentTimeMillis()))
 		{
@@ -505,7 +510,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 			// Jimm рассчитывает на onEvent(ON_ERROR), но главный цикл его
 			// не вызывает — соединение, в котором запрос пропал, закрываем
 			// здесь, иначе следующий запрос уйдёт в тот же мёртвый сокет.
-			Icq.disconnectBart(true);
+			Icq.retireBartIfIdle(this);
 			if (streaming) ((PartSink) listener).onBartDone(false);
 			else if (listener instanceof ErrorListener) ((ErrorListener) listener).onBartError(failureReason);
 			else if (listener != null) listener.onBart(null);
@@ -526,6 +531,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 			break;
 		case ON_CANCEL:
 		case ON_ERROR:
+			state = STATE_ERROR;
 			DebugLog.addText("RequestBartAction ON_ERROR");
 			parts = null;
 			if (!notified)
@@ -535,7 +541,7 @@ public class RequestBartAction extends Action implements Icq.BartConnectListener
 				else if (listener instanceof ErrorListener) ((ErrorListener) listener).onBartError(failureReason);
 				else if (listener != null) listener.onBart(null);
 			}
-			Icq.disconnectBart(true);
+			Icq.retireBartIfIdle(this);
 			break;
 		}
 	}

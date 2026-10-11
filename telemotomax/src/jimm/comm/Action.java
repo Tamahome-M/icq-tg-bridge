@@ -85,6 +85,10 @@ public abstract class Action
 			return (0);
 	}
 
+	public boolean isBartPending() { return false; }
+
+	public long getDeadline() { return Long.MAX_VALUE; }
+
 	public void onEvent(int eventType)
 	{
 	}

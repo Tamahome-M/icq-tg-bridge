@@ -1477,6 +1477,8 @@ class Session:
             return
         if not target.isdigit():
             return
+        if not self._valid_upload_part(s, target, part, total, file=True):
+            return
         limit = int(self.profile.get("file_max_mb", self.server.cfg.tmm_file_max_mb)) * 1024 * 1024
         if part == 1:
             self._drop_file_upload()
@@ -1544,6 +1546,25 @@ class Session:
                 pass
         self.file_path = ""
 
+    def _valid_upload_part(self, s: Snac, target: str, part: int, total: int, *, file: bool = False) -> bool:
+        """Keep cancelled/interleaved uploads from splicing into another transfer.
+
+        The standard SNAC reference is echoed in ACKs; reference zero remains
+        valid for older TeleMotoMax clients.
+        """
+        if not 1 <= part <= total <= 65535:
+            return False
+        prefix = "_file_upload" if file else "_media_upload"
+        key = (target, s.subtype, s.request_id, total)
+        if part == 1:
+            setattr(self, prefix + "_key", key)
+            setattr(self, prefix + "_next", 2)
+            return True
+        if getattr(self, prefix + "_key", None) != key or getattr(self, prefix + "_next", 0) != part:
+            return False
+        setattr(self, prefix + "_next", part + 1)
+        return True
+
     async def on_photo_upload(self, s: Snac) -> None:
         """Снимок с камеры телефона: части 10/02, ответ 10/03.
 
@@ -1559,6 +1580,8 @@ class Session:
             log.warning("негодная часть снимка от телефона")
             return
         if not target.isdigit():
+            return
+        if not self._valid_upload_part(s, target, part, total):
             return
         uin = int(target)
         if part == 1:
@@ -1620,6 +1643,8 @@ class Session:
             log.warning("негодная часть: %s от телефона", what)
             return
         if not target.isdigit():
+            return
+        if not self._valid_upload_part(s, target, part, total):
             return
         if part == 1:
             self.upload = bytearray()
@@ -1743,7 +1768,13 @@ class Session:
             # Весь список чатов: и те, что в контакт-листе, и те, что в него
             # не влезли, — иначе написать давнему собеседнику не с чего.
             rows = await self.server.chat_list()
-            data = blocks.chat_records(rows, C.CHATS_MAX_BYTES)
+            if token[:2] == b"P1":
+                offset = int.from_bytes(token[2:4], "big")
+                count = max(1, min(token[4], 30))
+                page = rows[offset:offset + count]
+                data = b"CP1" + bytes([offset + count < len(rows)]) + blocks.chat_records(page, C.CHATS_MAX_BYTES)
+            else:
+                data = blocks.chat_records(rows, C.CHATS_MAX_BYTES)
             log.info("список чатов отдан телефону: %d чатов, %d байт",
                      len(rows), len(data))
             await self._send_bart_parts(int(target), token, data, C.BART_CHATS, s.request_id)

@@ -634,3 +634,5 @@
 
 "vibra_unlocked"		"Vibration: unlocked, s"
 "vibra_locked"		"Vibration: locked, s"
+
+"number_format"		"Enter a number in the range"

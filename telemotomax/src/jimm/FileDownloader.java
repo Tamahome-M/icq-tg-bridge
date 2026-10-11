@@ -53,6 +53,7 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 	private long got;
 	private volatile MediaBuffer partQueue;
 		private volatile boolean failed;
+	private static final Object commitLock = new Object();
 
 	private FileDownloader(String uin, JimmScreen back)
 	{
@@ -154,25 +155,37 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 	private void writeParts()
 	{
 		Throwable err = null;
-		boolean partsOk = false;
+		boolean partsOk = false, created = false, committed = false;
 		FileConnection fc = null;
 		OutputStream out = null;
-		final String path = filePath;
+		final String destination = filePath;
+		final String dir = destination.substring(0, destination.lastIndexOf('/') + 1);
+		final String path = dir + "tmm_" + String.valueOf(System.currentTimeMillis()) + "_" + Util.getCounter() + ".part";
 		try
 		{
 			fc = (FileConnection) Connector.open(path, Connector.READ_WRITE);
-			if (fc.exists()) fc.delete();
-			fc.create();
+			if (fc.exists()) throw new java.io.IOException("temporary file already exists");
+			fc.create(); created = true;
 			out = fc.openOutputStream();
 			partsOk = partQueue.writeTo(out);
-			out.flush();
+			out.flush(); out.close(); out = null;
+			if (current == this && partsOk)
+			{
+				synchronized (commitLock)
+				{
+					String ready = uniqueDestination(dir, fileName);
+					if (current != this) throw new java.io.IOException("cancelled");
+					fc.rename(ready.substring(ready.lastIndexOf('/') + 1));
+					filePath = ready; committed = true;
+				}
+			}
 		}
 		catch (Throwable e) { err = e; failed = true; partQueue.finish(false); }
 		try { if (out != null) out.close(); } catch (Exception ignore) {}
 		try { if (fc != null) fc.close(); } catch (Exception ignore) {}
 		if (current != this || err != null || !partsOk)
 		{
-			deleteFile(path);
+			if (created && !committed) deleteFile(path);
 			if (current == this)
 			{
 				status = ResourceBundle.getString("file_failed") + (err != null ? " " + shortName(err) : "");
@@ -180,7 +193,7 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 			}
 			return;
 		}
-		status = ResourceBundle.getString("file_saved") + "\n" + shown(path) + "\n" + (got / 1024) + " КБ";
+		status = ResourceBundle.getString("file_saved") + "\n" + shown(filePath) + "\n" + (got / 1024) + " КБ";
 		repaint();
 	}
 
@@ -217,7 +230,7 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 				String[] dirs = { "file:///" + root + "tmm/", "file:///" + root };
 				for (int i = 0; i < dirs.length; i++)
 				{
-					String url = dirs[i] + safe;
+					String url = dirs[i] + "tmm_probe_" + String.valueOf(System.currentTimeMillis()) + "_" + Util.getCounter() + ".tmp";
 					try
 					{
 						if (i == 0)
@@ -228,12 +241,13 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 						FileConnection fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
 						try
 						{
-							if (fc.exists()) fc.delete();
+							if (fc.exists()) throw new java.io.IOException("probe collision");
 							fc.create();
+							fc.delete();
 						}
 						finally { fc.close(); }
-						probeUrl = url;
-						return url;
+						probeUrl = null;
+						return dirs[i] + safe;
 					}
 					catch (Exception e)
 					{
@@ -244,6 +258,22 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 		}
 		catch (Exception e) { rootsError = shortName(e); }
 		return null;
+	}
+
+	private static String uniqueDestination(String dir, String name) throws java.io.IOException
+	{
+		String safe = name.replace('/', '_').replace('\\', '_');
+		if (safe.length() == 0 || safe.equals(".") || safe.equals("..")) safe = "file.bin";
+		int dot = safe.lastIndexOf('.');
+		String base = dot > 0 ? safe.substring(0, dot) : safe;
+		String extension = dot > 0 ? safe.substring(dot) : "";
+		for (int i = 0; i < 1000; i++)
+		{
+			String url = dir + (i == 0 ? safe : base + "-" + i + extension);
+			FileConnection file = (FileConnection)Connector.open(url, Connector.READ);
+			try { if (!file.exists()) return url; } finally { file.close(); }
+		}
+		throw new java.io.IOException("too many names");
 	}
 
 	private static void deleteFile(String url)
@@ -299,10 +329,10 @@ public class FileDownloader extends Canvas implements CommandListener, JimmScree
 
 	private void close()
 	{
-		if (current == this) current = null;
+		boolean owned = current == this;
+		if (owned) current = null;
 		if (partQueue != null) partQueue.finish(false);
-		if (back != null) back.activate();
-		else JimmUI.backToLastScreen();
+		if (owned) MainThread.activateScreenMT(back);
 	}
 
 	public void activate()

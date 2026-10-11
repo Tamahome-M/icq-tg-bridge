@@ -1109,7 +1109,7 @@ class Bridge:
         self._reload_roster()
         if self.avatars is not None:
             with_photo = sum(1 for c in self._roster if self.avatars.hash_of(c.uin))
-            log.info("аватарки: примета есть у %d из %d чатов в списке",
+            log.debug("аватарки: примета есть у %d из %d чатов в списке",
                      with_photo, len(self._roster))
         total = len(self.storage.contacts())
         if (self.cfg.roster_limit or self.cfg.max_roster_limit) and total > len(self._roster):
@@ -1127,7 +1127,7 @@ class Bridge:
                      if (c.peer_id in BOT_PEERS or not self._running
                          or self._network_key(c.peer_id) in self._network_ready)
                      and self.status_of(c.uin) != C.STATUS_OFFLINE)
-        log.info("контакт-лист: %d чатов, из них в сети %d", len(self._roster), online)
+        log.debug("контакт-лист: %d чатов, из них в сети %d", len(self._roster), online)
         # Статусы шлём после сборки списка: и настоящие обновления из Telegram,
         # и подмену для тех, от кого сообщения сейчас не доходят. Снятый на
         # десктопе мьют иначе доехал бы до телефона только со сменой статуса.

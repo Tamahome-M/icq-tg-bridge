@@ -152,15 +152,17 @@ public class PhotoLoadingTest {
   javax.microedition.lcdui.Image.proceed=new java.util.concurrent.CountDownLatch(1);
   PhotoViewer old=viewer();old.onBart(jpeg);
   check(javax.microedition.lcdui.Image.entered.await(2,java.util.concurrent.TimeUnit.SECONDS),"first decoder did not start");
-  PhotoViewer current=viewer();current.onBart(jpeg);
+  int workers=Thread.getAllStackTraces().size();PhotoViewer current=null;
+  for(int i=0;i<20;i++){current=viewer();current.onBart(jpeg);}
   Thread.sleep(100);
+  check(Thread.getAllStackTraces().size()-workers<=2,"rapid photo switching retained decoder threads and JPEG packets");
   check(javax.microedition.lcdui.Image.calls==1,"two photo decoders allocated bitmaps simultaneously");
   javax.microedition.lcdui.Image.proceed.countDown();decoded(current);
   check(f(PhotoViewer.class,"image").get(old)==null,"closed viewer retained its late bitmap");
   check(f(PhotoViewer.class,"image").get(current)!=null,"new viewer failed after prior decoder finished");
   check(javax.microedition.lcdui.Image.maxActive==1,"more than one native photo decoder active");
   javax.microedition.lcdui.Image.entered=null;javax.microedition.lcdui.Image.proceed=null;
-  System.out.println("PASS: rapid photo switching serializes native decoders and drops late bitmap");
+  System.out.println("PASS: 20 rapid photo switches retain one decoder and latest waiting JPEG, serialize native decode and drop late bitmap");
  }
  static void avatar(SnacPacket photo)throws Exception{
   byte[] body=(byte[])photo.getDataRef().clone();int marker=1+(body[0]&255);
@@ -178,14 +180,16 @@ public class PhotoLoadingTest {
   for(int i=0;i<incomplete.length;i++)
    check(!((Boolean)forward.invoke(action,new SnacPacket(0x10,7,6,new byte[0],incomplete[i]))).booleanValue(),"avatar accepted a truncated reply");
   SnacPacket reply=new SnacPacket(0x10,7,6,new byte[0],body);
-  MainThread.updatedIcon=null;
+  f(PhotoViewer.class,"current").set(null,null);MainThread.updatedIcon=null;
   check(((Boolean)forward.invoke(action,reply)).booleanValue() && action.isCompleted(),"matching avatar did not complete");
+  long end=System.currentTimeMillis()+2000;while(MainThread.updatedIcon==null&&System.currentTimeMillis()<end)Thread.sleep(5);
   check(MainThread.updatedIcon!=null,"avatar was not decoded");
   check(javax.microedition.lcdui.Image.lastSource==body && javax.microedition.lcdui.Image.lastOffset>0,"avatar copied the packet/JPEG");
   javax.microedition.lcdui.Image.mode=1;MainThread.updatedIcon=null;
   action=new RequestBuddyIconAction("1000001",hash);
   f(RequestBuddyIconAction.class,"state").setInt(action,RequestBuddyIconAction.STATE_CLI_REQBUDDYICON_SENT);
   forward.invoke(action,reply);
+  end=System.currentTimeMillis()+2000;while(f(PhotoViewer.class,"avatarBusy").getBoolean(null)&&System.currentTimeMillis()<end)Thread.sleep(5);
   check(action.isCompleted() && MainThread.updatedIcon==null,"avatar OOM escaped or killed the action");
   javax.microedition.lcdui.Image.mode=0;
   System.out.println("PASS: avatar uses the original JPEG range, ignores photo/hash/contact mismatches and truncated replies, and survives decoder OOM");
@@ -197,7 +201,7 @@ public class PhotoLoadingTest {
    Options.setBoolean(Options.OPTION_ENCRYPTION,Boolean.parseBoolean(args[4]));Options.setString(Options.OPTION_ENCRYPTION_PSK,"1234");
    conn.connect(args[0]);check(next(conn) instanceof ConnectPacket,"no BART hello");
    conn.sendPacket(new ConnectPacket(hex(args[1])));check(next(conn) instanceof SnacPacket,"no service ready");
-   f(Icq.class,"bartC").set(null,conn);Icq.noteBartUse();
+   f(Icq.class,"bartC").set(null,conn);Icq.markBartReady();
    final PhotoViewer viewer=viewer();
    final byte[][] data={null};final int[] notified={0};
    RequestBartAction.Listener listener=new RequestBartAction.Listener(){public void onBart(byte[] bytes){data[0]=bytes;notified[0]++;viewer.onBart(bytes);}};
@@ -226,7 +230,8 @@ public class PhotoLoadingTest {
    memory(expected);avatar(response);dimensions(expected);serial(expected);failures(expected);
   }finally{
    conn.forceDisconnect();Jimm.getTimerRef().cancel();
-   Timer timer=(Timer)f(ContactList.class,"iconTimer").get(null);if(timer!=null)timer.cancel();
+   Timer timer;
+   try { timer=(Timer)f(ContactList.class,"iconTimer").get(null);if(timer!=null)timer.cancel(); } catch(NoSuchFieldException removed){}
    timer=(Timer)f(ContactList.class,"soundTimer").get(null);if(timer!=null)timer.cancel();
    timer=(Timer)f(DrawControls.TextList.class,"aniTimer").get(null);if(timer!=null)timer.cancel();
    Object canvas=f(DrawControls.VirtualList.class,"virtualCanvas").get(null);

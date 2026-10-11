@@ -31,6 +31,8 @@ public class MainThread {
  public static void setMessageRef(String uin,int id,byte[] value){refUin=uin;refId=id;ref=value;}
  public static void nativeQuoteResult(jimm.NativeQuote action,String error){action.showResult(error);}
  public static void resetContactsOffline(){}
+ public static void runSerially(Runnable work){work.run();}
+ public static void activateScreenMT(JimmScreen screen){if(SplashCanvas.pinLocked())return;if(screen!=null)screen.activate();else JimmUI.backToLastScreen();}
 }
 """
 STUBS["jimm/Jimm.java"] = """

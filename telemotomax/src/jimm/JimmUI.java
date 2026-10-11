@@ -1985,8 +1985,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	
 	public static void showCreepingLine(Object control, String text, ContactItem cItem)
 	{
-		if ((text == null) || (control == null))
-		if (!Options.getBoolean(Options.OPTION_CREEPING_LINE)) return;
+		if (text == null || control == null || !Options.getBoolean(Options.OPTION_CREEPING_LINE)) return;
 		ChatTextList curChat = ChatHistory.getCurrent(); 
 		if ((curChat != null) && (curChat.getUIControl() == control) && (curChat.isVisible())) return;
 		String name = cItem.getStringValue(ContactItem.CONTACTITEM_NAME);
@@ -2017,9 +2016,10 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		{
 			public void run()
 			{
-				MainThread.showTime();
+				try { MainThread.showTime(); } catch (Throwable failure) { System.gc(); }
 			}
 		};
+		// Keep the UI/autolock tick independent of a blocked native GPRS write.
 		new Timer().schedule(task, 500, 10000);
 	}
 	

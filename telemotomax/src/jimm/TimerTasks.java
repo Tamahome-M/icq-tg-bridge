@@ -79,6 +79,21 @@ public class TimerTasks extends TimerTask
 
 	public void run()
 	{
+		try { runTask(); }
+		catch (Throwable failure)
+		{
+			cancel();
+			System.gc();
+			if (type == ICQ_KEEPALIVE && Icq.isCurrentConnection(connectionThread, connection))
+			{
+				try { JimmException.handleException(new JimmException(120, 5, JimmException.ICQ_MAIN)); }
+				catch (Throwable ignore) { try { Icq.disconnect(true); } catch (Throwable ignored) {} }
+			}
+		}
+	}
+
+	private void runTask()
+	{
 		if (wasError)
 			return;
 		if (type != -1)

@@ -86,7 +86,7 @@ public final class HistoryErrorTest {
     public static void main(String[] args)throws Exception {
         try{run(args[0]);}
         finally{
-            Timer iconTimer=(Timer)field(ContactList.class,"iconTimer").get(null);if(iconTimer!=null)iconTimer.cancel();
+            try { Timer iconTimer=(Timer)field(ContactList.class,"iconTimer").get(null);if(iconTimer!=null)iconTimer.cancel(); } catch(NoSuchFieldException removed){}
             Timer soundTimer=(Timer)field(ContactList.class,"soundTimer").get(null);if(soundTimer!=null)soundTimer.cancel();
         }
     }

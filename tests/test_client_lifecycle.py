@@ -28,6 +28,7 @@ public class Jimm extends javax.microedition.midlet.MIDlet {
     "jimm/Options.java": """
 package jimm;
 public class Options {
+    public static long keepAliveMillis(){return 3600000L;}
     public static int pingMissLimit() { return 3; }
     public static int[] mediaSize(int key) { return null; }
     public static int getInt(int key) { return 0; }
@@ -46,6 +47,7 @@ public class MainThread {
     "jimm/SplashCanvas.java": """
 package jimm;
 public class SplashCanvas {
+    public static void resetLastTask(){}
     public static void setLastErrCode(String text) { }
 }
 """,

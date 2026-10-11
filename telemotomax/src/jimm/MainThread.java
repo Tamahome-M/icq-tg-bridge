@@ -33,8 +33,15 @@ import jimm.ContactItem;
 
 public class MainThread implements Runnable
 {
-	private static Vector mainThreadTasks = new Vector();
+	private static Vector mainThreadTasks = new Vector(16);
 	private static MainThread _this;
+	private static boolean queueScheduled;
+	private static Thread uiThread;
+	private static final int MAX_QUEUED_EVENTS = 64;
+	private static final int MAX_QUEUED_BYTES = 16 * 1024;
+	private static int queuedBytes;
+	private static final Integer[] taskNumbers = new Integer[32];
+	private static long clockMinute = -1;
 
 	final static private int TYPE_ADD_MSG             = 1;
 	final static private int TYPE_USER_OFFLINE        = 4;
@@ -55,6 +62,8 @@ public class MainThread implements Runnable
 	final static private int TYPE_PRESENCE_ONLINE = 27;
 	final static private int TYPE_PRESENCE_OFFLINE = 28;
 	final static private int TYPE_MESS_READ = 29;
+	final static private int TYPE_RUN = 30;
+	final static private int TYPE_ACTIVATE_SCREEN = 31;
 
 //#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 	final static public int TYPE_UPDATE_BUDDYICON    = 24;
@@ -68,15 +77,82 @@ public class MainThread implements Runnable
 	
 	private static void addMainThreadTask(int taskId, Object[] data)
 	{
-		boolean schedule;
-		synchronized (mainThreadTasks)
+		int bytes = payloadBytes(data);
+		for (;;)
 		{
-			schedule = mainThreadTasks.isEmpty();
-			// Flat pairs avoid an extra array for every UI event.
-			mainThreadTasks.addElement(new Integer(taskId));
-			mainThreadTasks.addElement(data);
+			boolean schedule, accepted = false;
+			synchronized (mainThreadTasks)
+			{
+				// Clock/caption updates describe the latest state, not a history.
+				boolean duplicate = false;
+				if (taskId == TYPE_SHOW_TIME || taskId == TYPE_UPDATE_CL_CAPTION)
+					for (int i = 0; i + 1 < mainThreadTasks.size(); i += 2)
+						if (((Integer)mainThreadTasks.elementAt(i)).intValue() == taskId) duplicate = true;
+				if (duplicate) accepted = true;
+				else if (!queueFull(bytes))
+				{
+					int before = mainThreadTasks.size();
+					try
+					{
+						if (taskNumbers[taskId] == null) taskNumbers[taskId] = new Integer(taskId);
+						mainThreadTasks.ensureCapacity(before + 2);
+						mainThreadTasks.addElement(taskNumbers[taskId]);
+						mainThreadTasks.addElement(data);
+						queuedBytes += bytes;
+						accepted = true;
+					}
+					catch (Error failure)
+					{
+						while (mainThreadTasks.size() > before) mainThreadTasks.removeElementAt(before);
+						throw failure;
+					}
+				}
+				else if (Thread.currentThread() == uiThread) throw new OutOfMemoryError();
+				schedule = !queueScheduled;
+				if (schedule) queueScheduled = true;
+			}
+			if (schedule) scheduleQueue();
+			if (accepted) return;
+			// Retry scheduling even when a full queue followed callSerially OOM.
+			// Network producers wait; the UI never waits for itself.
+			synchronized (mainThreadTasks)
+			{
+				if (queueFull(bytes))
+					try { mainThreadTasks.wait(250); } catch (InterruptedException ignore) {}
+			}
 		}
-		if (schedule) Jimm.display.callSerially(_this);
+	}
+
+	private static boolean queueFull(int bytes)
+	{
+		return mainThreadTasks.size() >= MAX_QUEUED_EVENTS * 2
+				|| (bytes > 0 && !mainThreadTasks.isEmpty() && queuedBytes + bytes > MAX_QUEUED_BYTES);
+	}
+
+	private static int payloadBytes(Object[] data)
+	{
+		int bytes = 0;
+		if (data != null) for (int i = 0; i < data.length; i++)
+		{
+			Object item = data[i];
+			if (item instanceof byte[]) bytes += ((byte[])item).length;
+			else
+			{
+				String text = item instanceof Message ? ((Message)item).getText() : item instanceof String ? (String)item : null;
+				if (text != null) bytes += text.length() * 2;
+			}
+		}
+		return bytes;
+	}
+
+	private static void scheduleQueue()
+	{
+		try { Jimm.display.callSerially(_this); }
+		catch (Throwable failure)
+		{
+			synchronized (mainThreadTasks) { queueScheduled = false; }
+			// Leave accepted events intact; the next clock/network event retries.
+		}
 	}
 
 	
@@ -90,46 +166,50 @@ public class MainThread implements Runnable
 	
 	public void run()
 	{
-		Object[] tasksArray;
-		
-		synchronized (mainThreadTasks)
+		uiThread = Thread.currentThread();
+		// Small batches keep key events responsive; no burst-sized snapshot.
+		for (int i = 0; i < 16; i++)
 		{
-			tasksArray = new Object[mainThreadTasks.size()];
-			mainThreadTasks.copyInto(tasksArray);
-			mainThreadTasks.removeAllElements();
-			// A one-off roster burst must not leave a large reference array
-			// attached to this static queue for the rest of the session.
-			if (mainThreadTasks.capacity() > 64)
+			int mode;
+			Object[] taskData;
+			synchronized (mainThreadTasks)
 			{
-				mainThreadTasks.trimToSize();
-				mainThreadTasks.ensureCapacity(16);
+				if (mainThreadTasks.size() < 2) break;
+				mode = ((Integer)mainThreadTasks.elementAt(0)).intValue();
+				taskData = (Object[])mainThreadTasks.elementAt(1);
+				queuedBytes = Math.max(0, queuedBytes - payloadBytes(taskData));
+				mainThreadTasks.removeElementAt(1);
+				mainThreadTasks.removeElementAt(0);
+				mainThreadTasks.notifyAll();
 			}
-		}
-		
-		for (int i = 0; i < tasksArray.length; i += 2)
-		{
-			int mode = ((Integer)tasksArray[i]).intValue();
-			Object[] taskData = (Object[]) tasksArray[i + 1];
-			tasksArray[i] = tasksArray[i + 1] = null;
 			try
 			{
 				execureTask(mode, taskData);
 			}
-			catch (Exception e)
+			catch (OutOfMemoryError e) { System.gc(); }
+			catch (Throwable e)
 			{
 				e.printStackTrace();
 			}
 		}
+		boolean more;
+		synchronized (mainThreadTasks)
+		{
+			more = !mainThreadTasks.isEmpty();
+			queueScheduled = more;
+			mainThreadTasks.notifyAll();
+		}
+		if (more) scheduleQueue();
 	}
 	
 	private static void execureTask(int type, Object[] data) throws JimmException
 	{
 		// Connection completion, warnings and queued Back events must keep
 		// the locked screen until its PIN is entered.
-		if ((type == TYPE_BACK_TO_LAST_SCR || type == TYPE_ACTIVATE_CL || type == TYPE_ACTIVATE_MM)
+		if ((type == TYPE_BACK_TO_LAST_SCR || type == TYPE_ACTIVATE_CL || type == TYPE_ACTIVATE_MM || type == TYPE_ACTIVATE_SCREEN)
 				&& SplashCanvas.pinLocked())
 		{
-			SplashCanvas.showLockedAlert(type == TYPE_BACK_TO_LAST_SCR ? null : (Alert) data[0]);
+			SplashCanvas.showLockedAlert(type == TYPE_BACK_TO_LAST_SCR || type == TYPE_ACTIVATE_SCREEN ? null : (Alert) data[0]);
 			return;
 		}
 		switch (type)
@@ -184,11 +264,12 @@ public class MainThread implements Runnable
 
 		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
 		case TYPE_UPDATE_BUDDYICON:
-			ContactList.update((String) data[0], (Image) data[1], (byte[]) data[2]);
-			// TeleMotoMax: refresh the open card here, after the image is
-			// stored — the comm thread used to do it on ON_COMPLETE, racing
-			// this task and finding no image yet.
-			JimmUI.updateActiveUserInfo((String) data[0]);
+			try
+			{
+				ContactList.update((String)data[0], (Image)data[1], (byte[])data[2]);
+				JimmUI.updateActiveUserInfo((String)data[0]);
+			}
+			finally { PhotoViewer.avatarCommitted(); }
 			break;
 		//  #sijapp cond.end#
 
@@ -197,8 +278,20 @@ public class MainThread implements Runnable
 			break;
 			
 		case TYPE_SHOW_TIME:
-			VirtualList.setBottomText((String)data[0]);
+			long minute = System.currentTimeMillis() / 60000;
+			if (minute != clockMinute)
+			{
+				clockMinute = minute;
+				VirtualList.setBottomText(Util.getDateString(true));
+			}
 			JimmUI.checkAutoLock();
+			break;
+		case TYPE_RUN:
+			((Runnable)data[0]).run();
+			break;
+		case TYPE_ACTIVATE_SCREEN:
+			if (data[0] != null) ((JimmScreen)data[0]).activate();
+			else JimmUI.backToLastScreen();
 			break;
 			
 		case TYPE_ADD_CONTACT:
@@ -344,8 +437,11 @@ public class MainThread implements Runnable
 	
 	static public void showTime()
 	{
-		addMainThreadTask(TYPE_SHOW_TIME, Util.getDateString(true));
+		addMainThreadTask(TYPE_SHOW_TIME);
 	}
+
+	public static void runSerially(Runnable work) { addMainThreadTask(TYPE_RUN, work); }
+	public static void activateScreenMT(JimmScreen screen) { addMainThreadTask(TYPE_ACTIVATE_SCREEN, (Object)screen); }
 	
 	static public void addContact(ContactItem cItem)
 	{

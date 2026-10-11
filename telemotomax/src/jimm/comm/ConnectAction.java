@@ -108,12 +108,15 @@ public class ConnectAction extends Action
     private String srvPort;
 
     // Action state
-    private int state;
+    private volatile int state;
 
     // Last activity
     private long lastActivity;
     private boolean active;
     private boolean canceled_by_timeout;
+    private volatile boolean canceled;
+    private Thread owner;
+    private jimm.comm.connections.Connection connection;
 
     // Temporary variables
 	private String server;
@@ -171,6 +174,10 @@ public class ConnectAction extends Action
     // Init action
     protected void init() throws JimmException
     {
+        owner = Thread.currentThread();
+        connection = Icq.c;
+        if (canceled || !Icq.isCurrentConnection(owner, connection)) return;
+
         // #sijapp cond.if modules_PROXY is "true" #
         int retry = 1;
         try
@@ -201,7 +208,8 @@ public class ConnectAction extends Action
 
             try
             {
-            	Icq.connect(this.srvHost + ":" + this.srvPort);
+                connection.connect(this.srvHost + ":" + this.srvPort);
+                if (canceled || !Icq.isCurrentConnection(owner, connection)) return;
                 // #sijapp cond.if modules_PROXY is "true" #
                 break;
                 // #sijapp cond.end #
@@ -219,7 +227,7 @@ public class ConnectAction extends Action
                 else
                     if ((this.lastActivity + this.TIMEOUT) > System.currentTimeMillis())
                     {
-                    	Icq.c.notifyToDisconnect();
+                        connection.notifyToDisconnect();
                         try
                         {
                             // Wait the given time
@@ -264,6 +272,7 @@ public class ConnectAction extends Action
     // Forwards received packet, returns true if packet has been consumed
     protected boolean forward(Packet packet) throws JimmException
     {
+        if (canceled || (owner != null && !Icq.isCurrentConnection(owner, connection))) return false;
         // #sijapp cond.if modules_PROXY is "true" #
 
         int retry = 1;
@@ -297,17 +306,17 @@ public class ConnectAction extends Action
                     if (connectPacket.getType() == ConnectPacket.SRV_CLI_HELLO)
                     {
 						if (Options.getBoolean(Options.OPTION_MD5_LOGIN)) {
-							Icq.c.sendPacket(new ConnectPacket());
+							connection.sendPacket(new ConnectPacket());
 							byte[] buf = new byte[4 + this.uin.length()];
 							Util.putWord(buf, 0, 0x0001);
 							Util.putWord(buf, 2, this.uin.length());
 							byte[] uinRaw = Util.stringToByteArray(this.uin);
 							System.arraycopy(uinRaw, 0, buf, 4, uinRaw.length);
-							Icq.c.sendPacket(new SnacPacket(0x0017, 0x0006, 0, new byte[0], buf));
+							connection.sendPacket(new SnacPacket(0x0017, 0x0006, 0, new byte[0], buf));
 						} else {
 							// Send a CLI_IDENT packet as reply
 							ConnectPacket reply = new ConnectPacket(this.uin, this.password);
-							Icq.c.sendPacket(reply);
+							connection.sendPacket(reply);
 						}
 
                         // Move to next state
@@ -353,7 +362,7 @@ public class ConnectAction extends Action
 				    System.arraycopy(Util.AIM_MD5_STRING, 0, md5buf, md5marker, Util.AIM_MD5_STRING.length);
 				    byte[] hash = Util.calculateMD5(md5buf);
 				    System.arraycopy(hash, 0, buf, marker, 16);
-				    Icq.c.sendPacket(new SnacPacket(0x0017, 0x0002, 0, new byte[0], buf));
+				    connection.sendPacket(new SnacPacket(0x0017, 0x0002, 0, new byte[0], buf));
 				    state = STATE_CLI_IDENT_SENT;
 			    } else {
 				    int errcode = -1;
@@ -372,7 +381,7 @@ public class ConnectAction extends Action
 
 				    if (errcode != -1) {
 					    consumed = true;
-					    Icq.c.notifyToDisconnect();
+					    connection.notifyToDisconnect();
 					    this.state = ConnectAction.STATE_ERROR;
 					    int toThrow = getConnectionErrorCode (errcode);
 					    throw new JimmException(toThrow, errcode);
@@ -431,7 +440,7 @@ public class ConnectAction extends Action
 
 				if (errcode != -1) {
 				    consumed = true;
-				    Icq.c.notifyToDisconnect();
+				    connection.notifyToDisconnect();
 				    this.state = ConnectAction.STATE_ERROR;
 				    int toThrow = getConnectionErrorCode (errcode);
 				    throw new JimmException(toThrow, errcode);
@@ -439,7 +448,7 @@ public class ConnectAction extends Action
 
 				if (consumed & (this.server != null) & (this.cookie != null)) {
 					// Close the login socket before connecting to BOS.
-					Icq.c.forceDisconnect();
+					connection.forceDisconnect();
 					Thread.yield();
 					try { Thread.sleep(1000); } catch (Exception e) {}
 					// #sijapp cond.if target is "DEFAULT" | target is "MIDP2"#
@@ -457,7 +466,8 @@ public class ConnectAction extends Action
 						try
 						{
 							// #sijapp cond.end #
-							Icq.c.connect(server);
+							connection.connect(server);
+                            if (canceled || !Icq.isCurrentConnection(owner, connection)) return false;
 							// #sijapp cond.if modules_PROXY is "true" #
 							break;
 
@@ -471,7 +481,7 @@ public class ConnectAction extends Action
 							}
 							else if ((this.lastActivity + this.TIMEOUT) > System.currentTimeMillis())
 							{
-								Icq.c.notifyToDisconnect();
+								connection.notifyToDisconnect();
 								try
 								{
 									// Wait the given time
@@ -500,7 +510,7 @@ public class ConnectAction extends Action
 					{
 						// Send a CLI_COOKIE packet as reply
 						ConnectPacket reply = new ConnectPacket(this.cookie);
-						Icq.c.sendPacket(reply);
+						connection.sendPacket(reply);
 						
 						// Move to next state
 						this.state = ConnectAction.STATE_CLI_COOKIE_SENT;
@@ -519,7 +529,7 @@ public class ConnectAction extends Action
 				for (int i = 0; i < FAMILIES_AND_VER_LIST.length; i++) 
 					Util.writeWord(stream, FAMILIES_AND_VER_LIST[i], true);
 				
-				Icq.c.sendPacket
+				connection.sendPacket
 				(
 					new SnacPacket
 					(
@@ -544,14 +554,14 @@ public class ConnectAction extends Action
 
 				SnacPacket reqp = new SnacPacket(SnacPacket.CLI_REQINFO_FAMILY, SnacPacket.CLI_REQINFO_COMMAND,
 									SnacPacket.CLI_REQINFO_COMMAND, new byte[0], new byte[0]);
-				Icq.c.sendPacket(reqp);
+				connection.sendPacket(reqp);
 
 				byte[] rdata = new byte[6];
 				Util.putDWord(rdata, 0, 0x000B0002);
 				Util.putWord(rdata, 4, 0x000F);
 				reqp = new SnacPacket(SnacPacket.CLI_REQLISTS_FAMILY, SnacPacket.CLI_REQLISTS_COMMAND,
 							SnacPacket.CLI_REQLISTS_COMMAND, new byte[0], rdata);
-				Icq.c.sendPacket(reqp);
+				connection.sendPacket(reqp);
 				reqp = null;
 
 
@@ -562,7 +572,7 @@ public class ConnectAction extends Action
 				if (((versionId1 == -1) && (versionId2 == -1)) || (ContactList.getSize() == 0))
 				{
 					reqp = new SnacPacket(SnacPacket.CLI_REQROSTER_FAMILY, SnacPacket.CLI_REQROSTER_COMMAND, SnacPacket.CLI_REQROSTER_COMMAND, new byte[0], new byte[0]);
-					Icq.c.sendPacket(reqp);
+					connection.sendPacket(reqp);
 				}
 				else
 				{
@@ -570,13 +580,13 @@ public class ConnectAction extends Action
 					Util.putDWord(data, 0, versionId1);
 					Util.putWord(data, 4, versionId2);
 					reqp = new SnacPacket(SnacPacket.CLI_CHECKROSTER_FAMILY, SnacPacket.CLI_CHECKROSTER_COMMAND, SnacPacket.CLI_CHECKROSTER_COMMAND, new byte[0], data);
-					Icq.c.sendPacket(reqp);
+					connection.sendPacket(reqp);
 				}
 				reqp = null;
 
 				reqp = new SnacPacket(SnacPacket.CLI_REQLOCATION_FAMILY, SnacPacket.CLI_REQLOCATION_COMMAND,
 							SnacPacket.CLI_REQLOCATION_COMMAND, new byte[0], new byte[0]);
-				Icq.c.sendPacket(reqp);
+				connection.sendPacket(reqp);
 				reqp = null;
 
 				rdata = new byte[6];
@@ -584,17 +594,17 @@ public class ConnectAction extends Action
 				Util.putWord(rdata, 4, 0x0003);
 				reqp = new SnacPacket(SnacPacket.CLI_REQBUDDY_FAMILY, SnacPacket.CLI_REQBUDDY_COMMAND,
 							SnacPacket.CLI_REQBUDDY_COMMAND, new byte[0], rdata);
-				Icq.c.sendPacket(reqp);
+				connection.sendPacket(reqp);
 				reqp = null;
 
 				reqp = new SnacPacket(SnacPacket.CLI_REQICBM_FAMILY, SnacPacket.CLI_REQICBM_COMMAND,
 							SnacPacket.CLI_REQICBM_COMMAND, new byte[0], new byte[0]);
-				Icq.c.sendPacket(reqp);
+				connection.sendPacket(reqp);
 				reqp = null;
 
 				reqp = new SnacPacket(SnacPacket.CLI_REQBOS_FAMILY, SnacPacket.CLI_REQBOS_COMMAND,
 							SnacPacket.CLI_REQBOS_COMMAND, new byte[0], new byte[0]);
-				Icq.c.sendPacket(reqp);
+				connection.sendPacket(reqp);
 				reqp = null;
 
 				// Move to next state
@@ -825,7 +835,7 @@ public class ConnectAction extends Action
 					if (this.srvReplyRosterRcvd)
 					{
 						// Send a CLI_ROSTERACK packet
-						Icq.c.sendPacket(new SnacPacket(SnacPacket.CLI_ROSTERACK_FAMILY, SnacPacket.CLI_ROSTERACK_COMMAND, 0x00000007, new byte[0], new byte[0]));
+						connection.sendPacket(new SnacPacket(SnacPacket.CLI_ROSTERACK_FAMILY, SnacPacket.CLI_ROSTERACK_COMMAND, 0x00000007, new byte[0], new byte[0]));
 			
 						// Send CLI_SETUSERINFO packet
 						Icq.sendUserUnfoPacket();
@@ -850,7 +860,7 @@ public class ConnectAction extends Action
 							//#sijapp cond.if target isnot "DEFAULT"#
 						}
 						//#sijapp cond.end#
-						Icq.c.sendPacket(reply);
+						connection.sendPacket(reply);
 
 						// Send a client status packet
 						Icq.setOnlineStatus(
@@ -872,14 +882,18 @@ public class ConnectAction extends Action
 			{
 				// Send a CLI_READY packet
 				SnacPacket reply2 = new SnacPacket(SnacPacket.CLI_READY_FAMILY, SnacPacket.CLI_READY_COMMAND, 0x00000000, new byte[0], ConnectAction.CLI_READY_DATA);
-				Icq.c.sendPacket(reply2);
+				connection.sendPacket(reply2);
 
 				// Send a CLI_TOICQSRV/CLI_REQOFFLINEMSGS packet
 				ToIcqSrvPacket reply3 = new ToIcqSrvPacket(0x00000000, this.uin, ToIcqSrvPacket.CLI_REQOFFLINEMSGS_SUBCMD, new byte[0], new byte[0]);
-				Icq.c.sendPacket(reply3);
+				connection.sendPacket(reply3);
 				
 				// Move to STATE_CONNECTED
-				Icq.setConnected();
+				synchronized (Icq.class)
+				{
+					if (canceled || !Icq.isCurrentConnection(owner, connection)) return false;
+					Icq.setConnected();
+				}
 				this.state = ConnectAction.STATE_CONNECTED;
 			}
             
@@ -916,6 +930,8 @@ public class ConnectAction extends Action
     }
 
     // Returns true if an error has occured
+    public long getDeadline() { return lastActivity + TIMEOUT; }
+
     public boolean isError()
     {
     	if (
@@ -938,6 +954,7 @@ public class ConnectAction extends Action
     
     public void onEvent(int eventType)
 	{
+		if (eventType != ON_CANCEL && owner != null && !Icq.isCurrentConnection(owner, connection)) return;
 		switch (eventType)
 		{
 		case ON_COMPLETE:
@@ -952,8 +969,10 @@ public class ConnectAction extends Action
 		
 		case ON_CANCEL:
 			jimm.ConnLog.note("вход отменён");
-			Icq.disconnect(false);
+			canceled = true;
+			this.state = STATE_ERROR;
 			Icq.reconnect_attempts = 0;
+			Icq.disconnect(true);
 			MainThread.backToLastScreenMT();
 			break;
 			

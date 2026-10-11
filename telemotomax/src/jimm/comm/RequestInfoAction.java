@@ -229,6 +229,8 @@ public class RequestInfoAction extends Action
 	}
 
 	// Returns true if an error has occured
+	public long getDeadline() { return init.getTime() + TIMEOUT; }
+
 	public synchronized boolean isError()
 	{
 		return (this.init.getTime() + RequestInfoAction.TIMEOUT < System
