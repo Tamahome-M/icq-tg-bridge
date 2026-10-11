@@ -536,6 +536,7 @@ async def run_bridge() -> None:
     async def tg_stop(): tg_calls.append("stop")
     async def tg_connect(): tg_calls.append("connect")
     bridge.telegram.stop = tg_stop
+    bridge.telegram.start = tg_connect
     bridge.telegram.client = SimpleNamespace(connect=tg_connect, is_connected=lambda: True)
     bridge.oscar.session = SimpleNamespace(network_on={"telegram": False}, profile={}, media={},
                                            ready=False, closed=True)

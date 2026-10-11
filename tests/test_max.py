@@ -381,10 +381,11 @@ async def run_bridge() -> None:
 
 async def run_reconnect() -> None:
     """Обрыв связи не должен оставлять сторону MAX молчать навсегда."""
-    import bridge.max.client as max_module
     from bridge.max.client import MaxSide
 
-    cfg = Config(tg_api_id=1, tg_api_hash="x")
+    cfg = Config(tg_api_id=1, tg_api_hash="x", db=":memory:", photos_enabled=False,
+                 tg_session=os.path.join(tempfile.mkdtemp(), "test.session"),
+                 network_retry_minutes=0.05 / 60)
     cfg.max_enabled, cfg.max_phone = True, "+70000000000"
 
     async def nothing(*_args, **_kw):
@@ -412,10 +413,18 @@ async def run_reconnect() -> None:
     first = make()
     side = MaxSide(cfg, nothing, nothing, nothing, nothing, client=first)
     side._make_client = lambda interactive: make()
-    old_start, old_max = max_module.RETRY_START, max_module.RETRY_MAX
-    max_module.RETRY_START, max_module.RETRY_MAX = 0.05, 0.2
+    bridge = Bridge(cfg)
+    bridge.max = side
+    bridge._running = True
+    async def refresh(network=None): pass
+    async def catch_up(network=None): pass
+    bridge.refresh_roster, bridge.catch_up = refresh, catch_up
     try:
-        await side.start()
+        bridge._start_network("max")
+        for _ in range(40):
+            if side._started.is_set():
+                break
+            await asyncio.sleep(0.01)
         assert side.me_id == ME and len(made) == 1, made
 
         first.broken.set()                          # связь оборвалась
@@ -428,9 +437,8 @@ async def run_reconnect() -> None:
         assert side._started.is_set(), "повторный вход не состоялся"
         assert not side._task.done(), "задача MAX не должна завершаться из-за обрыва"
     finally:
-        max_module.RETRY_START, max_module.RETRY_MAX = old_start, old_max
-        await side.stop()
-    print("  обрыв связи: ок (сторона MAX входит заново сама)")
+        await bridge.close()
+    print("  обрыв связи: ок (мост поднимает MAX по общему интервалу)")
 
 
 async def main() -> None:
