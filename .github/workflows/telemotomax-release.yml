@@ -1,5 +1,3 @@
-# Шаблон: для включения сохраните как .github/workflows/telemotomax-release.yml.
-# GitHub требует у токена право workflow для отправки этого пути через Git.
 name: TeleMotoMax release
 
 on:

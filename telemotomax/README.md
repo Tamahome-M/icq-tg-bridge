@@ -1420,8 +1420,8 @@ rm -f /ezxlocal/download/java/.policy/._policy.txt \
 JAR/JAD в Git больше не хранятся. `TMM_DIST=1 telemotomax/build.sh` сохраняет
 локальную сборку в исключённый из Git `dist/`; `TMM_DIST_DIR=<каталог>` меняет
 каталог результата. При изменении клиента увеличивайте `VERSION`: после
-подготовки и проверки исходников опубликуйте релиз. Для публикации используется
-`GH_TOKEN` с правом `Contents: write`:
+попадания в `main` новая версия публикуется автоматически через Actions.
+Для ручной публикации используется `GH_TOKEN` с правом `Contents: write`:
 
 ```bash
 python3 tools/telemotomax-release.py publish --repo Tamahome-M/icq-tg-bridge
@@ -1435,16 +1435,10 @@ python3 tools/telemotomax-release.py publish --repo Tamahome-M/icq-tg-bridge
 завершаются с объяснением. Для загрузки уже проверенных сборок без пересборки
 используйте `publish --dist <каталог-с-шестью-файлами>`.
 
-**Автоматическая публикация через Actions пока не включена.** Готовый шаблон
-лежит в [contrib/telemotomax-release.yml](../contrib/telemotomax-release.yml).
-Сохраните его через веб-интерфейс GitHub как `.github/workflows/telemotomax-release.yml`
-в ветке `main`, либо отправьте через Git токеном с дополнительным правом
-`workflow`. Этот путь GitHub запрещает менять токеном без указанного права.
-После включения workflow проверяет PR, требует новой версии при изменении
-уже опубликованного клиента и собирает релизы автоматически после попадания
-в `main`. Повторить запуск можно через Actions → TeleMotoMax release →
-Run workflow (ветка `main`). До включения шаблона используется команда
-публикации выше.
+Workflow [.github/workflows/telemotomax-release.yml](../.github/workflows/telemotomax-release.yml)
+проверяет PR, требует новой версии при изменении уже опубликованного клиента
+и собирает релизы автоматически после попадания в `main`. Повторить запуск
+можно через Actions → TeleMotoMax release → Run workflow (ветка `main`).
 
 Проверка жизненного цикла клиента на JDK 8 после сборки:
 `python3 tests/test_client_lifecycle.py /tmp/telemotomax-build` (из корня
