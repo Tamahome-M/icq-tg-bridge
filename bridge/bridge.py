@@ -49,8 +49,9 @@ NET_TITLES = {"telegram": "Telegram", "max": "MAX", "express": "eXpress"}
 NET_CODES = {"Telegram": 0, "MAX": 1, "eXpress": 2}     # сеть в списке чатов TeleMotoMax
 MAX_ROSTER_SLOTS = 100_000       # чаты MAX стоят в списке раньше любого чата Telegram
 SEARCH_LIMIT = 10                # столько результатов отдаём телефону
-TG_RETRY_START = 5               # через сколько поднимать связь с Telegram
-TG_RETRY_MAX = 300               # и когда сдаваться, чтобы мост перезапустила служба
+NETWORK_START_TIMEOUT = 180      # общий предел одной попытки запуска стороны
+NETWORK_ROSTER_TIMEOUT = 120     # зависший список одной сети не держит остальные
+NETWORK_STOP_TIMEOUT = 35        # закрыть также частично запущенный браузер/сокет
 SEARCH_ALL_LIMIT = 50            # а столько — на поиск без запроса, «покажи всё»
 CATCH_UP_AT_ONCE = 6             # столько чатов разом догружаем при старте
 # Telegram повторяет «печатает» каждые несколько секунд, а Jimm сам индикатор
@@ -75,26 +76,11 @@ class Bridge:
         # ходят через те же обработчики — по номеру видно, чьё сообщение.
         self.max: MaxSide | None = None
         if cfg.max_enabled:
-            try:
-                import pymax  # noqa: F401
-            except ImportError as exc:
-                raise RuntimeError(
-                    "Для MAX нужна библиотека maxapi-python: "
-                    ".venv/bin/python -m pip install -r requirements.txt") from exc
-            if not cfg.max_phone:
-                raise RuntimeError("Для MAX укажите phone в секции [max]")
             self.max = MaxSide(cfg, self.on_telegram_message, self.on_telegram_status,
                                self.on_telegram_typing, self.on_telegram_read)
         # Третья сеть: eXpress, тем же способом — свои номера, общие обработчики.
         self.express: ExpressSide | None = None
         if cfg.express_enabled:
-            try:
-                import playwright  # noqa: F401
-            except ImportError as exc:
-                raise RuntimeError(
-                    "Для eXpress нужны playwright и Chromium: "
-                    ".venv/bin/python -m pip install playwright && "
-                    ".venv/bin/playwright install chromium") from exc
             self.express = ExpressSide(cfg, self.on_telegram_message, self.on_telegram_status,
                                        self.on_telegram_typing, self.on_telegram_read)
         self.oscar = OscarServer(cfg, self.storage, self.on_phone_message,
@@ -120,10 +106,13 @@ class Bridge:
             and self.storage.get_meta("network_on:express",
                                       self.storage.get_meta("express_on", "1")) == "1",
         }
-        self._switch = asyncio.Lock()
-        self._telegram_wanted = asyncio.Event()
-        if self.active["telegram"]:
-            self._telegram_wanted.set()
+        self._switches = {name: asyncio.Lock() for name in self.active}
+        self._roster_lock = asyncio.Lock()
+        self._network_tasks: dict[str, asyncio.Task] = {}
+        self._network_ready: set[str] = set()
+        self._running = False
+        self._closed = asyncio.Event()
+        self._close_lock = asyncio.Lock()
         self._roster: list[Contact] = []
         self._statuses: dict[int, int] = {}   # реальные статусы из Telegram
         self._shown: dict[int, int] = {}      # что сейчас показано на телефоне
@@ -245,44 +234,60 @@ class Bridge:
             self.videos.update_spec(self.browser_video_spec())
         wanted = getattr(session, "network_on", None) if session is not None else None
         for name, on in (wanted or {}).items():
-            if on != self.active.get(name):
-                asyncio.create_task(self.set_network_active(name, on))
+            if not self._stopping and on != self.active.get(name):
+                task = asyncio.create_task(self.set_network_active(name, on))
+                self._background.add(task)
+                task.add_done_callback(self._background.discard)
 
     async def set_network_active(self, name: str, on: bool) -> None:
         """Включить или выключить сеть на ходу: выключенная перестаёт
         принимать и отдавать, её чаты уходят из контакт-листа до включения.
-        eXpress закрывает браузер, MAX — соединение, Telegram — тоже, но
-        его цикл связи остаётся ждать включения."""
-        side = {"telegram": self.telegram, "max": self.max, "express": self.express}.get(name)
+        eXpress закрывает браузер, MAX и Telegram — соединение."""
+        side = self._sides().get(name)
         if side is None:
             return
-        async with self._switch:
-            if on == self.active[name]:
+        async with self._switches[name]:
+            if self._stopping:
                 return
-            try:
-                if name == "telegram":
-                    if on:
-                        self._telegram_wanted.set()
-                        await self.telegram.client.connect()
-                    else:
-                        self._telegram_wanted.clear()
-                        await self.telegram.stop()
-                elif on:
-                    if name == "max":
-                        side.client = None          # прежнее соединение закрыто
-                    await side.start()
-                else:
-                    await side.stop()
-            except Exception as exc:
-                log.error("%s не %s: %s", NET_TITLES[name], "включился" if on else "выключился", exc)
+            if on == self.active[name]:
                 return
             self.active[name] = on
             self.storage.set_meta(f"network_on:{name}", "1" if on else "0")
+            if self._running:
+                if on:
+                    self._start_network(name)
+                else:
+                    task = self._network_tasks.pop(name, None)
+                    if task is not None:
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+            else:
+                # Сторона может использоваться отдельно от основного run().
+                try:
+                    if on:
+                        await side.start()
+                    else:
+                        await side.stop()
+                except Exception:
+                    log.exception("%s не %s", NET_TITLES[name], "включился" if on else "выключился")
             log.info("%s %s с телефона", NET_TITLES[name], "включён" if on else "выключен")
             try:
-                await self.refresh_roster()
+                await self.refresh_roster(name)
             except Exception:
                 log.exception("контакт-лист после переключения %s не обновился", NET_TITLES[name])
+
+    def _sides(self) -> dict:
+        return {name: side for name, side in
+                (("telegram", self.telegram), ("max", self.max), ("express", self.express))
+                if side is not None}
+
+    @staticmethod
+    def _network_key(peer_id: int) -> str:
+        if is_max_peer(peer_id):
+            return "max"
+        if is_express_peer(peer_id):
+            return "express"
+        return "telegram"
 
     def side_for(self, peer_id: int):
         """Сеть, которой принадлежит чат: по номеру видно, чей он."""
@@ -298,11 +303,16 @@ class Bridge:
         return self.assistant if peer_id == ASSISTANT_PEER else None
 
     def network_of(self, peer_id: int) -> str:
-        if self.max is not None and is_max_peer(peer_id):
-            return "MAX"
-        if self.express is not None and is_express_peer(peer_id):
-            return "eXpress"
-        return "Telegram"
+        return NET_TITLES[self._network_key(peer_id)]
+
+    def network_error(self, peer_id: int) -> str:
+        name = self._network_key(peer_id)
+        if not self.active[name]:
+            return f"{NET_TITLES[name]} выключен. Включите сеть в настройках."
+        if self._running and name not in self._network_ready:
+            return (f"Нет подключения к {NET_TITLES[name]}. "
+                    f"Повтор подключения — раз в {self.cfg.network_retry_minutes:g} мин.")
+        return ""
 
     def _net_mark(self, peer_id: int) -> str:
         """Пометка сети перед названием: [T] — Telegram, [M] — MAX, [E] — eXpress."""
@@ -336,7 +346,8 @@ class Bridge:
         since = 0
         if self.cfg.background_groups and self.cfg.background_hours > 0:
             since = int(time.time()) - self.cfg.background_hours * 3600
-        everyone = self.storage.contacts()
+        everyone = [c for c in self.storage.contacts()
+                    if c.peer_id in BOT_PEERS or self.active[self._network_key(c.peer_id)]]
         bots = [c for c in everyone if c.peer_id in BOT_PEERS]
         # У каждой сети своё ограничение: чатов в MAX и eXpress обычно мало,
         # и общий потолок с Telegram их бы просто вытеснил.
@@ -359,11 +370,17 @@ class Bridge:
         статусе владельца: «не беспокоить» — от этого чата не придёт ничего,
         «недоступен» — сообщения копятся и приедут после смены статуса.
         """
+        contact = self._by_uin.get(uin)
+        if self._running and contact is None:
+            # Уже открытый/найденный чат может быть за пределами roster_limit.
+            contact = self.storage.contact_by_uin(uin)
+        if (self._running and contact is not None and contact.peer_id not in BOT_PEERS
+                and self._network_key(contact.peer_id) not in self._network_ready):
+            return policy.STATUS_INVISIBLE
         real = self._statuses.get(uin, C.STATUS_ONLINE)
         if real == C.STATUS_OFFLINE:
             return real          # собеседника нет — это важнее любой подмены
 
-        contact = self._by_uin.get(uin)
         if contact is not None and not policy.allows(self.mode, contact.kind,
                                                      bool(contact.favourite),
                                                      bool(contact.muted)):
@@ -933,6 +950,9 @@ class Bridge:
         contact = self.storage.contact_by_uin(uin)
         if contact is None or contact.peer_id in BOT_PEERS:
             return None
+        unavailable = self.network_error(contact.peer_id)
+        if unavailable:
+            raise ConnectionError(unavailable)
         count = min(count or 20, self.cfg.history_limit)
         cap = max(self.cfg.history_limit, self.tmm("history_max"))
         # На одно сообщение больше, чем нужно: по нему и видно, осталось ли
@@ -999,34 +1019,52 @@ class Bridge:
             log.info("аватарка чата %r готова: %d байт", contact.title, len(got[1]))
         return got
 
-    async def refresh_roster(self) -> None:
-        dialogs = await self.telegram.dialogs() if self.active["telegram"] else []
-        keep_max = False
-        if self.max is not None and self.active["max"]:
+    async def refresh_roster(self, network: str | None = None) -> None:
+        """Каждая сеть обновляет свой список; отказ не удаляет её чаты."""
+        sides = self._sides()
+        names = [network] if network is not None else list(self.active)
+
+        async def fetch(name):
+            owner = self._network_tasks.get(name)
+            if not self.active[name] or name not in sides:
+                return name, owner, []
+            if self._running and name not in self._network_ready:
+                return name, owner, None
             try:
-                extra = await self.max.dialogs()
+                rows = await asyncio.wait_for(sides[name].dialogs(), NETWORK_ROSTER_TIMEOUT)
             except Exception:
-                log.exception("список чатов MAX не получен — оставляю прежний")
-                extra, keep_max = [], True
-            # Чаты MAX — перед чатами Telegram: их немного, и roster_limit
-            # не должен их отрезать; свой порядок по свежести у них остаётся.
-            for d in extra:
-                d.position -= MAX_ROSTER_SLOTS
-            dialogs += extra
-        keep_express = False
-        if self.express is not None and self.active["express"]:
-            try:
-                extra = await self.express.dialogs()
-            except Exception:
-                log.exception("список чатов eXpress не получен — оставляю прежний")
-                extra, keep_express = [], True
-            for d in extra:
-                d.position -= 2 * MAX_ROSTER_SLOTS
-            dialogs += extra
+                log.warning("список чатов %s не получен — оставляю прежний", NET_TITLES[name],
+                            exc_info=True)
+                rows = None
+            return name, owner, rows
+
+        async def update(name):
+            name, owner, rows = await fetch(name)
+            async with self._roster_lock:
+                if self._stopping:
+                    return
+                if not self.active[name]:
+                    rows = []
+                elif self._running and (name not in self._network_ready
+                                        or owner is not self._network_tasks.get(name)):
+                    rows = None
+                await self._apply_roster({name: rows})
+
+        # Данные каждой сети применяются, как только она ответила: даже
+        # зависший Telegram не задерживает новые чаты и статусы MAX/eXpress.
+        await asyncio.gather(*(update(name) for name in names))
+
+    async def _apply_roster(self, snapshots: dict) -> None:
+        dialogs = []
+        for name, rows in snapshots.items():
+            if rows is None:
+                continue
+            dialogs.extend(rows)
         for d in dialogs:
             favourite = int(d.pinned or d.title.strip().lower() in self.cfg.favourites)
             uin = self.storage.uin_for_peer(d.peer_id, kind=d.kind, title=d.title,
-                                            group_name=d.group_name, position=d.position,
+                                            group_name=d.group_name,
+                                            position=d.position - NET_CODES[self.network_of(d.peer_id)] * MAX_ROSTER_SLOTS,
                                             favourite=favourite, topic_id=d.topic_id,
                                             muted=int(d.muted))
             self._unread[(d.peer_id, d.topic_id)] = d.unread
@@ -1034,12 +1072,10 @@ class Bridge:
                 self.avatars.remember(uin, d.photo_id)
             self._statuses[uin] = STATUS_CODES.get(d.status, C.STATUS_ONLINE)
         present = [d.peer_id for d in dialogs]
-        if keep_max:
-            # MAX не ответил — его чаты не пропали, просто не проверены.
-            present += [c.peer_id for c in self.storage.contacts_all() if is_max_peer(c.peer_id)]
-        if keep_express:
-            present += [c.peer_id for c in self.storage.contacts_all()
-                        if is_express_peer(c.peer_id)]
+        # Не запрошенные и недоступные сети сохраняют уже известные чаты.
+        present += [c.peer_id for c in self.storage.contacts_all()
+                    if c.peer_id not in BOT_PEERS
+                    and snapshots.get(self._network_key(c.peer_id)) is None]
         if self.assistant is not None:
             # Контакт Claude — не из Telegram, но в списке наравне со всеми:
             # избранный, чтобы roster_limit его не вытеснил.
@@ -1088,7 +1124,9 @@ class Bridge:
                 log.debug("из фоновых групп отложено %d чатов — появятся, когда напишут",
                          left)
         online = sum(1 for c in self._roster
-                     if self._statuses.get(c.uin, C.STATUS_ONLINE) != C.STATUS_OFFLINE)
+                     if (c.peer_id in BOT_PEERS or not self._running
+                         or self._network_key(c.peer_id) in self._network_ready)
+                     and self.status_of(c.uin) != C.STATUS_OFFLINE)
         log.info("контакт-лист: %d чатов, из них в сети %d", len(self._roster), online)
         # Статусы шлём после сборки списка: и настоящие обновления из Telegram,
         # и подмену для тех, от кого сообщения сейчас не доходят. Снятый на
@@ -1389,6 +1427,9 @@ class Bridge:
         if (source_side is None or target_side is None or
                 not self.active.get(source_network, False) or not self.active.get(target_network, False)):
             return "Сеть выключена. Включите её в настройках."
+        unavailable = self.network_error(source.peer_id) or self.network_error(target.peer_id)
+        if unavailable:
+            return unavailable
         try:
             if source_network == "express":
                 message_id = self.storage.quote_source(source_uin, message_id)
@@ -1471,6 +1512,10 @@ class Bridge:
         if command is not None:
             await self.run_command(contact, command)
             return -1          # команда обработана, номера сообщения нет
+        unavailable = self.network_error(contact.peer_id)
+        if unavailable:
+            await self.reply(contact, unavailable)
+            return None
         if self.cfg.text_to_emoji:
             text = emoji.to_emoji(text)
         try:
@@ -1533,7 +1578,7 @@ class Bridge:
             await self.oscar.deliver(contact.uin, f"[фото] {os.path.splitext(filename)[0]}",
                                      forced=True, attach=f"photo:{number}")
 
-    async def catch_up(self) -> None:
+    async def catch_up(self, network: str | None = None) -> None:
         """Догружает в очередь то, что пришло, пока мост не работал.
 
         Берём только чаты с непрочитанным. Граничную секунду читаем целиком:
@@ -1544,7 +1589,11 @@ class Bridge:
             return
         self._reload_roster()          # отметки «доставлено» берём свежими
         wanted = [c for c in self._roster
-                  if c.last_ts > 0 and self._unread.get((c.peer_id, c.topic_id), 0) > 0]
+                  if c.last_ts > 0 and self._unread.get((c.peer_id, c.topic_id), 0) > 0
+                  and c.peer_id not in BOT_PEERS
+                  and self.active[self._network_key(c.peer_id)]
+                  and (network is None or self._network_key(c.peer_id) == network)
+                  and (not self._running or self._network_key(c.peer_id) in self._network_ready)]
         if not wanted:
             return
         # Чаты опрашиваются разом, по нескольку за раз: по одному это
@@ -1785,25 +1834,10 @@ class Bridge:
     # --- запуск ---------------------------------------------------------
 
     async def run(self) -> None:
-        await self.telegram.start()
-        if not self.active["telegram"]:
-            # Вошли (нужны свои данные), но сеть выключена с телефона —
-            # отключаемся и ждём, пока телефон включит.
-            log.info("Telegram выключен с телефона — отключаюсь до включения")
-            await self.telegram.stop()
-        if self.max is not None and self.active["max"]:
-            await self.max.start()
-        elif self.max is not None:
-            log.info("MAX выключен с телефона — не запускаю, пока телефон не включит")
-        if self.express is not None and self.active["express"]:
-            await self.express.start()
-        elif self.express is not None:
-            log.info("eXpress выключен с телефона — не запускаю, пока телефон не включит")
+        self._running = True
+        # Пока сети подключаются, отдаём сохранённые чаты с отметкой сбоя.
+        # Порт OSCAR и HTTP не ждут ни Telegram, ни загрузки страницы eXpress.
         await self.refresh_roster()
-        # Догрузка пропущенного идёт в своём потоке: она ходит в Telegram и
-        # MAX за каждым непрочитанным чатом, и телефону незачем ждать её,
-        # чтобы подключиться — накопленное он получит очередью, как обычно.
-        catch_up = asyncio.create_task(self.catch_up())
         await self.oscar.start()
         if self.photo_server is not None:
             await self.photo_server.start()
@@ -1814,82 +1848,99 @@ class Bridge:
         if self.render is not None:
             self.render.cleanup()
         self._refresh_task = asyncio.create_task(self._refresh_loop())
-        self._catch_up_task = catch_up          # держим ссылку: иначе задачу соберёт сборщик
+        for name in self._sides():
+            if self.active[name]:
+                self._start_network(name)
+            else:
+                log.info("%s выключен с телефона — не запускаю до включения", NET_TITLES[name])
         log.info("мост готов, ждём подключения Jimm")
+        await self._closed.wait()
+
+    def _start_network(self, name: str) -> None:
+        task = self._network_tasks.get(name)
+        if self._stopping or (task is not None and not task.done()):
+            return
+        self._network_tasks[name] = asyncio.create_task(self._keep_network(name),
+                                                       name=f"bridge-{name}")
+
+    async def _stop_network(self, name: str, side) -> None:
         try:
-            await self._keep_telegram()
-        except DEAD_SESSION as exc:
-            raise RuntimeError(
-                f"Telegram аннулировал сессию ({type(exc).__name__}). "
-                f"Войдите заново: ./run.py login\n"
-                f"Если это повторяется через минуту после каждого входа — дело в чужих "
-                f"публично известных ключах (например, api_id 2899 из telegram-cli): "
-                f"Telegram гасит созданные с ними сессии. "
-                f"Получите свои api_id/api_hash на my.telegram.org и впишите в config.toml."
-            ) from exc
+            await asyncio.wait_for(side.stop(), NETWORK_STOP_TIMEOUT)
+        except Exception:
+            log.warning("%s: не удалось полностью закрыть сторону", NET_TITLES[name], exc_info=True)
 
-    async def _keep_telegram(self) -> None:
-        """Держит связь с Telegram, пока мост работает.
-
-        Telethon переподключается сам, но когда сдаётся окончательно,
-        `run_until_disconnected` просто возвращается — и мост раньше тихо
-        заканчивал работу, будто его попросили. Поднимаем связь сами, а
-        если не выходит совсем долго — выходим с ошибкой, чтобы служба
-        подняла мост заново.
-        """
-        delay = TG_RETRY_START
-        while not self._stopping:
-            await self.telegram.client.run_until_disconnected()
-            if self._stopping:
-                return
-            if not self.active["telegram"]:
-                # Выключили с телефона: это не обрыв, ждём включения.
-                await self._telegram_wanted.wait()
-                if self._stopping:
-                    return
-                if self.telegram.client.is_connected():
-                    continue
-            log.warning("Telegram отключился — пробую подключиться снова через %.0f с", delay)
-            await asyncio.sleep(delay)
+    async def _keep_network(self, name: str) -> None:
+        """У каждой сети свой запуск, остановка и срок повторной попытки."""
+        side = self._sides()[name]
+        minutes = self.cfg.network_retry_minutes
+        while not self._stopping and self.active[name]:
+            catch_up = None
             try:
-                await self.telegram.client.connect()
+                await asyncio.wait_for(side.start(), NETWORK_START_TIMEOUT)
+                self._network_ready.add(name)
+                log.info("%s подключён — обновляю его чаты и догружаю пропущенное", NET_TITLES[name])
+                await self.refresh_roster(name)
+                catch_up = asyncio.create_task(self._catch_up_network(name), name=f"catch-up-{name}")
+                await side.wait_disconnected()
+                if not self._stopping and self.active[name]:
+                    raise ConnectionError("соединение завершилось")
+            except asyncio.CancelledError:
+                if asyncio.current_task().cancelling() or self._stopping or not self.active[name]:
+                    raise
+                # Отменился внутренний клиент, а не цикл/остановка моста.
+                log.warning("%s: задача клиента завершилась — повтор подключения через %g мин",
+                            NET_TITLES[name], minutes)
+            except DEAD_SESSION as exc:
+                log.error("Telegram аннулировал сессию (%s); войдите заново: ./run.py login. "
+                          "Остальные сети продолжают работать; повтор через %g мин",
+                          type(exc).__name__, minutes)
             except Exception as exc:
-                log.warning("Telegram не отвечает: %s: %s", type(exc).__name__, exc)
-            if self.telegram.client.is_connected():
-                log.info("связь с Telegram восстановлена — догоняю пропущенное")
-                delay = TG_RETRY_START
-                try:
-                    await self.refresh_roster()
-                    await self.catch_up()
-                except Exception:
-                    log.exception("после обрыва не получилось обновить список и очередь")
-                continue
-            delay = min(delay * 2, TG_RETRY_MAX)
-            if delay >= TG_RETRY_MAX:
-                raise RuntimeError(
-                    "Telegram не отвечает уже долго — выхожу, пусть служба поднимет мост заново")
+                detail = (str(exc).splitlines() or [type(exc).__name__])[0][:400]
+                log.warning("%s недоступен: %s — повтор подключения через %g мин",
+                            NET_TITLES[name], detail, minutes)
+            finally:
+                self._network_ready.discard(name)
+                if not self._stopping:
+                    try:
+                        await self.refresh_shown_statuses()
+                    except Exception:
+                        log.exception("не удалось показать отключение %s", NET_TITLES[name])
+                if catch_up is not None:
+                    catch_up.cancel()
+                    await asyncio.gather(catch_up, return_exceptions=True)
+                # Не оставляем браузер с заблокированным профилем или старый
+                # клиент/задачи MAX после неудачной попытки запуска.
+                await self._stop_network(name, side)
+            if not self._stopping and self.active[name]:
+                await asyncio.sleep(minutes * 60)
+
+    async def _catch_up_network(self, name: str) -> None:
+        try:
+            await self.catch_up(name)
+        except Exception:
+            log.exception("%s: не удалось догрузить пропущенное", NET_TITLES[name])
 
     async def close(self) -> None:
-        self._stopping = True
-        # Порядок важен: сначала перестаём принимать и отдавать, и только
-        # потом закрываем базу — иначе уходящая сессия обратится к ней уже
-        # закрытой.
-        if self._refresh_task is not None:
-            self._refresh_task.cancel()
-        background = list(self._background)
-        for task in background:
-            task.cancel()
-        await asyncio.gather(*background, return_exceptions=True)
-        for task in self._typing.values():
-            task.cancel()
-        self._typing.clear()
-        if self.photo_server is not None:
-            await self.photo_server.stop()
-        await self.oscar.stop()
-        self._telegram_wanted.set()         # разбудить цикл связи, чтобы он вышел
-        if self.max is not None and self.active["max"]:
-            await self.max.stop()
-        if self.express is not None and self.active["express"]:
-            await self.express.stop()
-        await self.telegram.stop()
-        self.storage.close()
+        async with self._close_lock:
+            if self._closed.is_set():
+                return
+            self._stopping = True
+            # Все задачи, в том числе старт, ожидание повтора и догрузка,
+            # заканчиваются до закрытия сетей и базы.
+            tasks = set(self._network_tasks.values()) | self._background | set(self._typing.values())
+            if self._refresh_task is not None:
+                tasks.add(self._refresh_task)
+            tasks.discard(asyncio.current_task())
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._network_tasks.clear()
+            self._network_ready.clear()
+            self._typing.clear()
+            if self.photo_server is not None:
+                await self.photo_server.stop()
+            await self.oscar.stop()
+            await asyncio.gather(*(self._stop_network(name, side)
+                                   for name, side in self._sides().items()))
+            self.storage.close()
+            self._closed.set()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -64,6 +65,7 @@ class Config:
     ack_on: str = "read"
     ack_timeout: int = 30
     catch_up: bool = True
+    network_retry_minutes: float = 30
     allow_delete: bool = True
     allow_delete_revoke: bool = True
     roster_limit: int = 0
@@ -229,6 +231,7 @@ class Config:
             ack_on=str(br.get("ack_on", cls.ack_on)),
             ack_timeout=int(br.get("ack_timeout", cls.ack_timeout)),
             catch_up=bool(br.get("catch_up", True)),
+            network_retry_minutes=float(br.get("network_retry_minutes", cls.network_retry_minutes)),
             allow_delete=bool(br.get("allow_delete", True)),
             allow_delete_revoke=bool(br.get("allow_delete_revoke", True)),
             roster_limit=int(br.get("roster_limit", cls.roster_limit)),
@@ -338,6 +341,8 @@ class Config:
                              f"начинаются UIN чатов Telegram")
         if not cfg.tg_api_id or not cfg.tg_api_hash:
             raise ValueError("Заполните telegram.api_id и telegram.api_hash (my.telegram.org)")
+        if not math.isfinite(cfg.network_retry_minutes) or cfg.network_retry_minutes <= 0:
+            raise ValueError("bridge.network_retry_minutes должен быть больше нуля")
         return cfg
 
 
@@ -373,6 +378,8 @@ def describe(cfg: "Config") -> list[str]:
         "eXpress: " + (f"включён, профиль {cfg.express_session}, группа «{cfg.express_group}», "
                        f"roster_limit {cfg.express_roster_limit or 'без ограничения'}"
                        if cfg.express_enabled else "выключен ([express] enabled = false)"),
+        f"недоступные сети: повтор подключения через {cfg.network_retry_minutes:g} мин; "
+        "остальные сети продолжают работать",
         f"контакт-лист: roster_limit {cfg.roster_limit or 'без ограничения'}, "
         + (f"фоновые группы: {', '.join(cfg.background_groups)} (давность {cfg.background_hours} ч)"
            if cfg.background_groups else "фоновых групп нет")

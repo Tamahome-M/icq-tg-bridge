@@ -380,10 +380,8 @@ async def main() -> None:
     print("  все чаты: ок (список целиком, пометки сети, возвращение убранного)")
 
     # --- обрыв Telegram: мост не должен тихо заканчивать работу ------------
-    import bridge.bridge as bridge_module
     bridge = make_bridge()
-    bridge_module.TG_RETRY_START = 0.05
-    bridge_module.TG_RETRY_MAX = 0.2
+    bridge.cfg.network_retry_minutes = 0.05 / 60
 
     class FlakyTelegram:
         """Отваливается дважды, на третий раз соединение возвращается."""
@@ -392,41 +390,43 @@ async def main() -> None:
             self.drops = 0
             self.connected = False
 
-        async def run_until_disconnected(self):
+        async def start(self):
             self.drops += 1
-            self.connected = False
-
-        async def connect(self):
             self.connected = self.drops >= 2      # со второго раза получилось
+            if not self.connected:
+                raise ConnectionError("нет связи")
+
+        async def wait_disconnected(self):
+            await asyncio.Event().wait()
+
+        async def stop(self):
+            self.connected = False
 
         def is_connected(self):
             return self.connected
 
     flaky = FlakyTelegram()
-    bridge.telegram.client = flaky
+    bridge.telegram.client.session.close()
+    bridge.telegram = flaky
+    bridge._running = True
     caught: list[str] = []
 
-    async def refresh_roster():
+    async def refresh_roster(network=None):
         caught.append("список")
 
-    async def catch_up():
+    async def catch_up(network=None):
         caught.append("очередь")
 
     bridge.refresh_roster = refresh_roster
     bridge.catch_up = catch_up
-    task = asyncio.create_task(bridge._keep_telegram())
+    bridge._start_network("telegram")
+    task = bridge._network_tasks["telegram"]
     await asyncio.sleep(0.4)
     assert flaky.drops >= 2, f"мост должен был подключаться заново: {flaky.drops}"
     assert caught[:2] == ["список", "очередь"], \
         f"после восстановления связи надо догнать пропущенное: {caught}"
     assert not task.done(), "мост не должен заканчивать работу из-за обрыва"
-    bridge._stopping = True
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-    bridge.storage.close()
+    await bridge.close()
     print("  обрыв Telegram: ок (мост подключается заново и догоняет пропущенное)")
     print("ПРИДЕРЖАНИЕ ПРОВЕРЕНО")
 

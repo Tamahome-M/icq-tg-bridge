@@ -72,6 +72,7 @@ class TelegramSide:
             system_lang_code=cfg.tg_lang_code,
         )
         self.me: types.User | None = None
+        self._handlers_bound = False
         # Что отправлено самим мостом: такие исходящие телефону не возвращаем.
         self._own_ids: dict[tuple[int, int], float] = {}
         self._sending: dict[int, int] = {}
@@ -85,6 +86,8 @@ class TelegramSide:
                 "Аккаунт Telegram не авторизован. Выполните: python3 run.py login")
         self.me = await self.client.get_me()
         log.info("вошли как %s (id=%s)", utils.get_display_name(self.me), self.me.id)
+        if self._handlers_bound:
+            return
         self.client.add_event_handler(self._on_new_message, events.NewMessage(incoming=True))
         if self.cfg.mirror_outgoing:
             # Написанное с других устройств — тоже часть разговора на телефоне.
@@ -94,6 +97,10 @@ class TelegramSide:
             self.client.add_event_handler(self._on_user_update, events.UserUpdate)
         if self.on_read is not None:
             self.client.add_event_handler(self._on_read, events.MessageRead(inbox=False))
+        self._handlers_bound = True
+
+    async def wait_disconnected(self) -> None:
+        await self.client.run_until_disconnected()
 
     async def login(self) -> None:
         """Интерактивный вход: телефон, код из Telegram, при необходимости пароль."""

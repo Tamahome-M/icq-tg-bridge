@@ -405,12 +405,22 @@ class ExpressClient:
         self._watchdog: asyncio.Task | None = None
         self._typing: asyncio.Task | None = None
         self._tasks: set[asyncio.Task] = set()
+        self._stopping = False
 
     # --- запуск и остановка ---
 
     async def start(self) -> None:
-        await self._launch()
-        self._watchdog = asyncio.create_task(self._watch())
+        self._stopping = False
+        try:
+            await self._launch()
+        except (asyncio.CancelledError, Exception):
+            await self.stop()
+            raise
+        self._watchdog = asyncio.create_task(self._watch(), name="express-watchdog")
+
+    async def wait_disconnected(self) -> None:
+        if self._watchdog is not None:
+            await self._watchdog
 
     async def _launch(self) -> None:
         prepare()
@@ -435,12 +445,24 @@ class ExpressClient:
         self._ctx = self._pw = self._page = None
 
     async def stop(self) -> None:
+        self._stopping = True
+        tasks = set(self._tasks)
+        if self._typing is not None:
+            tasks.add(self._typing)
+        watchdog, self._watchdog = self._watchdog, None
+        if watchdog is not None:
+            tasks.add(watchdog)
+        tasks.discard(asyncio.current_task())
         self._stop_typing()
-        if self._watchdog:
-            self._watchdog.cancel()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
         await self._shutdown()
 
     def _drop_download(self, download) -> None:
+        if self._stopping:
+            return
         task = asyncio.create_task(download.cancel())
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
@@ -455,7 +477,7 @@ class ExpressClient:
             await page.wait_for_function("() => window.__store.getState().ui.isConnectionAlive",
                                          timeout=READY_TIMEOUT * 1000)
         except PlaywrightError:
-            log.warning("нет связи с сервером eXpress, продолжаю ждать в фоне")
+            raise ConnectionError("нет связи с сервером eXpress") from None
         # Список чатов досинхронизируется после соединения: дать ему улечься,
         # чтобы старые последние сообщения не пришли как новые.
         await page.wait_for_timeout(3000)
@@ -468,36 +490,15 @@ class ExpressClient:
         log.info("eXpress: вошли как %s (%s)", self.name, self.huid)
 
     async def _watch(self) -> None:
-        """Страница могла перезагрузиться или упасть — поднять и перевесить слежение."""
+        """Перевесить слежение после перезагрузки; сбой отдаём циклу моста."""
         while True:
             await asyncio.sleep(WATCHDOG_SECONDS)
-            try:
-                async with self._lock:
-                    if not await self._page.evaluate("() => !!window.__exWatching"):
-                        log.warning("страница eXpress перезагрузилась, подключаюсь заново")
-                        await self._load()
-            except NotLoggedIn:
-                log.error("сессия eXpress разлогинена")
-                return
-            except Exception as exc:
-                log.warning("страница eXpress не отвечает (%s), открываю заново",
-                            str(exc).splitlines()[0] if str(exc) else type(exc).__name__)
-                try:
-                    async with self._lock:
-                        try:
-                            await self._load()
-                        except NotLoggedIn:
-                            raise
-                        except Exception:
-                            # Упала не страница, а сам браузер — поднимаем его целиком.
-                            log.warning("браузер eXpress не отвечает, запускаю заново")
-                            await self._shutdown()
-                            await self._launch()
-                except NotLoggedIn:
-                    log.error("сессия eXpress разлогинена")
-                    return
-                except Exception:
-                    log.exception("не удалось переоткрыть eXpress, попробую ещё раз")
+            async with self._lock:
+                if not await self._page.evaluate("() => !!window.__exWatching"):
+                    log.warning("страница eXpress перезагрузилась, подключаюсь заново")
+                    await self._load()
+                if not await self.connected():
+                    raise ConnectionError("нет связи с сервером eXpress")
 
     # --- события ---
 
@@ -585,6 +586,8 @@ class ExpressClient:
         )
 
     def _on_emit(self, _source, data: str) -> None:
+        if self._stopping:
+            return
         raw = json.loads(data)
         watch = raw.get("watch")
         if watch == "typing":

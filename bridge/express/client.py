@@ -135,7 +135,12 @@ class ExpressSide:
     # --- запуск ---------------------------------------------------------
 
     def _make_client(self):
-        from .web import ExpressClient
+        try:
+            from .web import ExpressClient
+        except ImportError as exc:
+            raise RuntimeError("Для eXpress нужны playwright и Chromium: "
+                               ".venv/bin/python -m pip install playwright; "
+                               ".venv/bin/playwright install chromium") from exc
         return ExpressClient(self.cfg.express_session, self._on_new_message,
                              on_typing=self._on_typing, on_presence=self._on_presence,
                              on_read=self._on_read, executable=self.cfg.express_browser,
@@ -147,11 +152,20 @@ class ExpressSide:
             self.client = self._make_client()
         try:
             await asyncio.wait_for(self.client.start(), START_TIMEOUT)
+        except asyncio.CancelledError:
+            await self.stop()
+            raise
         except asyncio.TimeoutError:
+            await self.stop()
             raise RuntimeError(f"eXpress не ответил за {START_TIMEOUT} с") from None
         except Exception as exc:
+            await self.stop()
             raise RuntimeError(f"eXpress не запустился: {exc}") from exc
         log.info("вошли в eXpress как %s", self.client.name or "?")
+
+    async def wait_disconnected(self) -> None:
+        if self.client is not None:
+            await self.client.wait_disconnected()
 
     async def login(self) -> None:
         """Интерактивный вход: телефон, текст с капчи, код из SMS."""

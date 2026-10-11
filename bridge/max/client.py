@@ -64,8 +64,6 @@ CHAT_FRAMES = (OP_LOGIN2, OP_LOGIN, OP_SYNC, OP_CONFIG, OP_CHAT_INFO, OP_CHATS_L
 MUTE_KEY = "dontDisturbUntil"
 MUTE_FOREVER = -1
 START_TIMEOUT = 60
-RETRY_START = 5                  # через сколько поднимать сторону MAX заново
-RETRY_MAX = 300                  # и не реже, чем раз в пять минут
 
 TAGS = {
     "PHOTO": "[фото]",
@@ -221,7 +219,13 @@ class MaxSide:
     # --- запуск ---------------------------------------------------------
 
     def _make_client(self, interactive: bool):
-        from pymax import Client
+        if not self.cfg.max_phone:
+            raise RuntimeError("Для MAX укажите phone в секции [max]")
+        try:
+            from pymax import Client
+        except ImportError as exc:
+            raise RuntimeError("Для MAX нужна библиотека maxapi-python: "
+                               ".venv/bin/python -m pip install -r requirements.txt") from exc
         from pymax.config import ExtraConfig
         kwargs = {}
         if not interactive:
@@ -364,56 +368,29 @@ class MaxSide:
     async def start(self) -> None:
         if self.client is None:
             self.client = self._make_client(interactive=False)
+        self._started.clear()
         self._bind_handlers()
-        self._task = asyncio.create_task(self._run(), name="max-client")
+        self._task = asyncio.create_task(self.client.start(), name="max-client")
         waiter = asyncio.create_task(self._started.wait())
-        done, _ = await asyncio.wait({waiter, self._task}, timeout=START_TIMEOUT,
-                                     return_when=asyncio.FIRST_COMPLETED)
-        if self._task in done:
+        try:
+            done, _ = await asyncio.wait({waiter, self._task}, timeout=START_TIMEOUT,
+                                         return_when=asyncio.FIRST_COMPLETED)
+            if self._task in done:
+                exc = self._task.exception()
+                raise RuntimeError(f"MAX не запустился: {exc}") if exc else \
+                    RuntimeError("MAX не запустился: клиент завершился сразу")
+            if waiter not in done:
+                raise RuntimeError(f"MAX не ответил за {START_TIMEOUT} с")
+        except (asyncio.CancelledError, Exception):
+            await self.stop()
+            raise
+        finally:
             waiter.cancel()
-            exc = self._task.exception()
-            raise RuntimeError(f"MAX не запустился: {exc}") if exc else \
-                RuntimeError("MAX не запустился: клиент завершился сразу")
-        if waiter not in done:
-            waiter.cancel()
-            raise RuntimeError(f"MAX не ответил за {START_TIMEOUT} с")
+            await asyncio.gather(waiter, return_exceptions=True)
 
-    async def _run(self) -> None:
-        """Держит сторону MAX живой, пока мост работает.
-
-        PyMax сам переподключается при сетевых обрывах, но на всём
-        остальном — ошибке разбора, отказе сервера, закрытии сессии —
-        `start()` просто возвращается или бросает, и MAX молча замолкает
-        до перезапуска моста. Поэтому поднимаем заново сами, отступая всё
-        дальше, чтобы не долбить сервер.
-        """
-        delay = RETRY_START
-        while True:
-            began = time.time()
-            try:
-                await self.client.start()
-                log.warning("клиент MAX завершился сам — поднимаю заново через %.0f с", delay)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                log.error("клиент MAX остановился: %s: %s — пробую снова через %.0f с",
-                          type(exc).__name__, exc, delay)
-            if time.time() - began > RETRY_MAX:
-                delay = RETRY_START     # сторона долго работала — это не круговерть
-            if not self._started.is_set():
-                # Ни разу не вошли: пусть start() расскажет об этом мосту,
-                # а тот — пользователю. Вслепую долбиться смысла нет.
-                raise RuntimeError("вход в MAX не состоялся")
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, RETRY_MAX)
-            try:
-                await self.client.close()
-            except Exception:
-                pass
-            self._started.clear()
-            self.client = self._make_client(interactive=False)
-            self._bind_handlers()
-            log.info("поднимаю сторону MAX заново")
+    async def wait_disconnected(self) -> None:
+        if self._task is not None:
+            await self._task
 
     async def login(self) -> None:
         """Интерактивный вход: телефон из настроек, код из SMS, при необходимости пароль."""
@@ -425,14 +402,20 @@ class MaxSide:
         await self.client.close()
 
     async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        client, self.client = self.client, None
+        if client is not None:
             try:
-                await self._task
-            except (asyncio.CancelledError, Exception):
-                pass
-        if self._http is not None:
-            await self._http.close()
+                await client.close()
+            except Exception:
+                log.debug("MAX: клиент закрылся с ошибкой", exc_info=True)
+        self._started.clear()
+        http, self._http = self._http, None
+        if http is not None:
+            await http.close()
 
     # --- контакт-лист ---------------------------------------------------
 
