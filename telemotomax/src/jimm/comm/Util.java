@@ -1671,71 +1671,89 @@ public class Util
 	private static final String wwwStr = "www.";
 	private static final String ftpStr = "ftp.";
 	private static final String httpProtoStr = "http://";
-	private static final String urlString[] = {httpProtoStr, wwwStr, ftpStr, "mailto:"}; 
+	private static final String urlString[] = {httpProtoStr, "https://", "ftp://", wwwStr, ftpStr, "mailto:"};
 	
-	private static boolean isURLChar(char chr, boolean before)
+	private static boolean isURLChar(char chr)
 	{
-		if (before)
-			return ((chr >= 'A') && (chr <= 'Z'))
-					|| ((chr >= 'a') && (chr <= 'z'))
-					|| ((chr >= '0') && (chr <= '9'))
-					|| (chr == '-');
-		if ((chr <= ' ') || (chr == '\"') || (chr == ',')
-				|| (chr == 10) || (chr == 13))
+		if ((chr <= ' ') || (chr == '\"') || (chr == ','))
 			return false;
 		return ((chr & 0xFF00) == 0);
 	}
-	
-	public static Vector parseMessageForURL(String msg)
+
+	private static int urlPrefix(String msg, int start)
 	{
-		Vector result = null;
-		int startPos = 0, len = msg.length();
-		int urlStartPos;
-		String findedString = null;
-		
-		for (;;)
+		for (int i = 0; i < urlString.length; i++)
+			if (msg.startsWith(urlString[i], start)) return i;
+		return -1;
+	}
+
+	private static int urlEnd(String msg, int start, int limit)
+	{
+		while (start < limit && isURLChar(msg.charAt(start))) start++;
+		return start;
+	}
+
+	private static int findURL(String msg, int start, int limit)
+	{
+		while (start < limit)
 		{
-			if (startPos >= len) break;
 			int pos = -1;
 			for (int i = 0; i < urlString.length; i++)
 			{
-				pos = msg.indexOf(urlString[i], startPos);
-				if (pos != -1) { findedString = urlString[i]; break; }
+				int candidate = msg.indexOf(urlString[i], start);
+				if (candidate >= 0 && candidate < limit && (pos < 0 || candidate < pos)) pos = candidate;
 			}
-			if (pos == -1) break;
-			urlStartPos = pos; 
-			pos += findedString.length();
-			if (pos >= len) break; 
-			
-			for (;pos < len; pos++)
-			{
-				if (!isURLChar(msg.charAt(pos), pos==urlStartPos) || (pos == len-1))
-				{
-					if (pos == len-1) pos++;
-					int urlLen = pos-urlStartPos-findedString.length();
-					if (urlLen >= 3)
-					{
-						String url = msg.substring(urlStartPos, pos);
-						if (findedString == wwwStr || findedString == ftpStr)
-							url = httpProtoStr+url;
-						if (result == null) result = new Vector();
-						boolean alreadAdded = false;
-						for (int i = result.size()-1; i >= 0; i--)
-						{
-							if (result.elementAt(i).equals(url))
-							{
-								alreadAdded = true;
-								break;
-							}
-						}
-						if (!alreadAdded) result.addElement(url);
-					}
-					break;
-				}
-			}
-			startPos = pos; 
+			if (pos < 0) return -1;
+			int afterPrefix = pos + urlString[urlPrefix(msg, pos)].length();
+			if (urlEnd(msg, afterPrefix, limit) - afterPrefix >= 3) return pos;
+			start = afterPrefix;
 		}
-		
+		return -1;
+	}
+
+	/** Presence checks do not build a discarded URL list or copy its strings. */
+	public static boolean hasURL(String msg)
+	{
+		return msg != null && hasURL(msg, 0, msg.length());
+	}
+
+	public static boolean hasURL(String msg, int start, int limit)
+	{
+		// Presence has no ordering requirement: stop at the first valid family.
+		// "http" covers both HTTP and HTTPS, "ftp" both supported FTP forms.
+		return hasURL(msg, "http", start, limit) || hasURL(msg, wwwStr, start, limit)
+				|| hasURL(msg, "ftp", start, limit) || hasURL(msg, "mailto:", start, limit);
+	}
+
+	private static boolean hasURL(String msg, String hint, int start, int limit)
+	{
+		for (int pos = msg.indexOf(hint, start); pos >= 0 && pos < limit;
+				pos = msg.indexOf(hint, pos + hint.length()))
+		{
+			int prefix = urlPrefix(msg, pos);
+			if (prefix >= 0)
+			{
+				int afterPrefix = pos + urlString[prefix].length();
+				if (urlEnd(msg, afterPrefix, limit) - afterPrefix >= 3) return true;
+			}
+		}
+		return false;
+	}
+
+	public static Vector parseMessageForURL(String msg)
+	{
+		if (msg == null) return null;
+		Vector result = null;
+		int start = 0, limit = msg.length();
+		for (int pos; (pos = findURL(msg, start, limit)) >= 0;)
+		{
+			int prefix = urlPrefix(msg, pos);
+			start = urlEnd(msg, pos + urlString[prefix].length(), limit);
+			String url = msg.substring(pos, start);
+			if (urlString[prefix] == wwwStr || urlString[prefix] == ftpStr) url = httpProtoStr + url;
+			if (result == null) result = new Vector(1);
+			if (!result.contains(url)) result.addElement(url);
+		}
 		return result;
 	}
 	

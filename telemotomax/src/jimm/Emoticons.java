@@ -43,14 +43,14 @@ public class Emoticons implements VirtualListCommands, CommandListener
 	private static Emoticons _this;
 	private static Vector imagesData = new Vector();
 	private static Vector timeData = new Vector();
-	private static Vector findedEmotions = new Vector();
 	private static boolean used;
 	private static boolean animated;
 	private static int[] selEmotionsIndexes, textCorrIndexes;
 	private static String[] selEmotionsWord;
 	private static String[] selEmotionsSmileNames;
 	private static String[] textCorrWords;
-	private static boolean[] emoFinded;
+	private static String textCorrFirstChars;
+	private static int[] textCorrStarts;
 	private static String setName;
 
 	public Emoticons()
@@ -64,8 +64,8 @@ public class Emoticons implements VirtualListCommands, CommandListener
 	{
 		int iconsSize = -1;
 		animated = false;
-		String lang = Options.getString(Options.OPTION_UI_LANGUAGE).toLowerCase();
-		if (lang == null || lang.length() == 0) lang = "en";
+		String lang = Options.getString(Options.OPTION_UI_LANGUAGE);
+		lang = (lang == null || lang.length() == 0) ? "en" : lang.toLowerCase();
 		ImageList imageList = new ImageList(); 
 		Vector textCorr = new Vector();
 		Vector selEmotions = new Vector();
@@ -222,6 +222,45 @@ public class Emoticons implements VirtualListCommands, CommandListener
 				timeData.setSize(imagesData.size());
 			}
 			
+			// Keep each first-character group contiguous, longest alias first.
+			// No per-message lower-case copy, candidate Vector or match arrays.
+			int size = selEmotions.size();
+			selEmotionsIndexes = new int[size];
+			selEmotionsWord = new String[size];
+			selEmotionsSmileNames = new String[size];
+			Object[] data;
+			for (int i = 0; i < size; i++)
+			{
+				data = (Object[]) selEmotions.elementAt(i);
+				selEmotionsIndexes[i] = ((Integer) data[0]).intValue();
+				selEmotionsWord[i] = (String) data[1];
+				selEmotionsSmileNames[i] = (String) data[2];
+			}
+			size = textCorr.size();
+			textCorrWords = new String[size];
+			textCorrIndexes = new int[size];
+			int groups = 0;
+			for (int i = 0; i < size; i++)
+			{
+				data = (Object[]) textCorr.elementAt(i);
+				textCorrWords[i] = (String) data[0];
+				textCorrIndexes[i] = ((Integer) data[1]).intValue();
+				if (i == 0 || textCorrWords[i].charAt(0) != textCorrWords[i - 1].charAt(0)) groups++;
+			}
+			char[] firstChars = new char[groups];
+			textCorrStarts = new int[groups + 1];
+			groups = 0;
+			for (int i = 0; i < size; i++)
+			{
+				char ch = textCorrWords[i].charAt(0);
+				if (i == 0 || ch != textCorrWords[i - 1].charAt(0))
+				{
+					firstChars[groups] = ch;
+					textCorrStarts[groups++] = i;
+				}
+			}
+			textCorrStarts[groups] = size;
+			textCorrFirstChars = new String(firstChars);
 			used = true;
 		}
 		catch (OutOfMemoryError e)
@@ -229,18 +268,17 @@ public class Emoticons implements VirtualListCommands, CommandListener
 			imageList.removeAllElements();
 			imagesData.removeAllElements();
 			timeData.removeAllElements();
-			findedEmotions.removeAllElements();
 			
 			imageList = null;
 			imagesData = null;
 			timeData = null;
-			findedEmotions = null;
 			selEmotionsIndexes = null;
 			textCorrIndexes = null;
 			selEmotionsWord = null;
 			selEmotionsSmileNames = null;
 			textCorrWords = null;
-			emoFinded = null;
+			textCorrFirstChars = null;
+			textCorrStarts = null;
 			
 			System.gc();
 			
@@ -254,32 +292,6 @@ public class Emoticons implements VirtualListCommands, CommandListener
 			return;
 		}
 		
-		// Write emotions data from vectors to arrays
-		int size = selEmotions.size();
-		selEmotionsIndexes = new int[size];
-		selEmotionsWord = new String[size];
-		selEmotionsSmileNames = new String[size];
-		Object[] data;
-		for (int i = 0; i < size; i++)
-		{
-			data = (Object[]) selEmotions.elementAt(i);
-			selEmotionsIndexes[i] = ((Integer) data[0]).intValue();
-			selEmotionsWord[i] = (String) data[1];
-			selEmotionsSmileNames[i] = (String) data[2];
-		}
-
-		size = textCorr.size();
-		textCorrWords = new String[size];
-		textCorrIndexes = new int[size];
-		emoFinded = new boolean[size];
-		for (int i = 0; i < size; i++)
-		{
-			data = (Object[]) textCorr.elementAt(i);
-			textCorrWords[i] = (String) data[0];
-			textCorrIndexes[i] = ((Integer) data[1]).intValue();
-		}
-		data = null;
-
 		//#sijapp cond.if modules_DEBUGLOG is "true"#
 		selEmotions.removeAllElements();
 		selEmotions = null;
@@ -315,11 +327,13 @@ public class Emoticons implements VirtualListCommands, CommandListener
 		stream.close();
 	}
 
-	// Add smile text and index to textCorr in decreasing order of text length 
+	// Group by first character, then decrease length. Equal aliases retain
+	// the former precedence: the last resource definition wins.
 	static void insertTextCorr(Vector textCorr, String word, Integer index)
 	{
 		Object[] data = new Object[] { word, index };
 		int wordLen = word.length();
+		char firstChar = word.charAt(0);
 		int size = textCorr.size();
 		int insIndex = 0;
 		Object[] cvtData;
@@ -327,8 +341,10 @@ public class Emoticons implements VirtualListCommands, CommandListener
 		for (; insIndex < size; insIndex++)
 		{
 			cvtData = (Object[]) textCorr.elementAt(insIndex);
-			cvlDataWordLen = ((String) cvtData[0]).length();
-			if (cvlDataWordLen <= wordLen)
+			String current = (String) cvtData[0];
+			cvlDataWordLen = current.length();
+			if (current.charAt(0) > firstChar ||
+					(current.charAt(0) == firstChar && cvlDataWordLen <= wordLen))
 			{
 				textCorr.insertElementAt(data, insIndex);
 				return;
@@ -359,20 +375,6 @@ public class Emoticons implements VirtualListCommands, CommandListener
 		return wasRead ? Util.byteArrayToString(bytes.toByteArray(), true) : null;
 	}
 
-	static private void findEmotionInText(String text, String emotion,
-			int index, int startIndex, int recIndex)
-	{
-		if (!emoFinded[recIndex]) return;
-		int findedIndex, len = emotion.length();
-		findedIndex = text.indexOf(emotion, startIndex);
-		if (findedIndex == -1)
-		{
-			emoFinded[recIndex] = false;
-			return;
-		}
-		findedEmotions.addElement(new int[] { findedIndex, len, index });
-	}
-
 	static public void addTextWithEmotions(TextList textList, String text,
 			int fontStyle, int textColor, int bigTextIndex)
 	{
@@ -382,57 +384,40 @@ public class Emoticons implements VirtualListCommands, CommandListener
 			return;
 		}
 		
-		String loweredText = text.toLowerCase();
-
-		for (int i = emoFinded.length - 1; i >= 0; i--)
-			emoFinded[i] = true;
-
 		int startIndex = 0;
-		int size;
-		int count;
-		int imgIndex;
-		Image[] imgSeq;
-		byte[] timeSeq;
-		for (;;)
+		int textLength = text.length();
+		for (int pos = 0; pos < textLength; pos++)
 		{
-			findedEmotions.removeAllElements();
-
-			size = textCorrWords.length;
-			for (int i = 0; i < size; i++)
-				findEmotionInText(loweredText, textCorrWords[i], textCorrIndexes[i], startIndex, i);
-			
-			if (findedEmotions.isEmpty()) break;
-			
-			count = findedEmotions.size();
-			int minIndex = 100000, data[] = null, minArray[] = null;
-			for (int i = 0; i < count; i++)
+			int group = textCorrFirstChars.indexOf(Character.toLowerCase(text.charAt(pos)));
+			if (group < 0) continue;
+			int remaining = textLength - pos;
+			char second = remaining > 1 ? Character.toLowerCase(text.charAt(pos + 1)) : 0;
+			char third = remaining > 2 ? Character.toLowerCase(text.charAt(pos + 2)) : 0;
+			int found = -1;
+			for (int i = textCorrStarts[group]; i < textCorrStarts[group + 1]; i++)
 			{
-				data = (int[]) findedEmotions.elementAt(i);
-				if (data[0] < minIndex)
+				String word = textCorrWords[i];
+				int length = word.length();
+				if (length > remaining || (length > 1 && word.charAt(1) != second)
+						|| (length > 2 && word.charAt(2) != third)) continue;
+				if (length <= 3 || text.regionMatches(true, pos + 3, word, 3, length - 3))
 				{
-					minIndex = data[0];
-					minArray = data;
+					found = i;
+					break;
 				}
 			}
-			
-			if (startIndex != minIndex)
-				textList.addBigText(text.substring(startIndex, minIndex), textColor, fontStyle, bigTextIndex);
-
-			imgIndex = minArray[2];
-			imgSeq = (Image[])imagesData.elementAt(imgIndex);
-			timeSeq = (byte[])timeData.elementAt(imgIndex);
-			
-			textList.addAniImage(imgSeq, timeSeq, text.substring(minIndex, minIndex + minArray[1]), bigTextIndex);
-
-			startIndex = minIndex + minArray[1];
+			if (found < 0) continue;
+			if (startIndex != pos)
+				textList.addBigText(text.substring(startIndex, pos), textColor, fontStyle, bigTextIndex);
+			int end = pos + textCorrWords[found].length();
+			int image = textCorrIndexes[found];
+			textList.addAniImage((Image[])imagesData.elementAt(image), (byte[])timeData.elementAt(image),
+					text.substring(pos, end), bigTextIndex);
+			startIndex = end;
+			pos = end - 1;
 		}
-		imgSeq = null;
-		timeSeq = null;
-
-		int lastIndex = text.length();
-
-		if (lastIndex != startIndex)
-			textList.addBigText(text.substring(startIndex, lastIndex), textColor, fontStyle, bigTextIndex);
+		if (textLength != startIndex)
+			textList.addBigText(startIndex == 0 ? text : text.substring(startIndex), textColor, fontStyle, bigTextIndex);
 	}
 
 	///////////////////////////////////

@@ -864,10 +864,7 @@ public class HistoryStorage
 			result.text = dis.readUTF();
 			result.date = dis.readUTF();
 //#sijapp cond.if target != "DEFAULT"#
-			if (Util.parseMessageForURL(result.text) != null)
-				result.contains_url = true;
-			else
-				result.contains_url = false;
+			result.contains_url = Util.hasURL(result.text);
 //#sijapp cond.end#
 		} 
 		catch (Exception e)
