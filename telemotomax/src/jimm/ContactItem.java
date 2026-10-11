@@ -420,12 +420,9 @@ public class ContactItem implements ContactListItem, JimmScreen
 		}
 	}
 
-	// TeleMotoMax: всё, что не хранится в записи контакта, — статус,
-	// приметы аватарки, адреса, клиент. Раньше это ставил только init() для
-	// контактов из полного списка; контакт, загруженный из памяти телефона
-	// (сервер ответил «список не менялся»), оставался с null вместо примет —
-	// и «Информация» о нём падала с NullPointerException, молча, в потоке
-	// интерфейса: пункт меню просто не срабатывал.
+	// Runtime values are reset for both new and RMS-loaded contacts. Avatar
+	// hashes arrive with presence later; null means no advertised/downloaded
+	// hash and is checked by iconReady() and the contact card before a request.
 	private void resetRuntime()
 	{
 		setIntValue_(ContactItem.CONTACTITEM_STATUS,
@@ -433,8 +430,11 @@ public class ContactItem implements ContactListItem, JimmScreen
 		setIntValue_(ContactItem.CONTACTITEM_CAPABILITIES,
 				Icq.CAPF_NO_INTERNAL);
 		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
-		setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH, new byte[16]);
-		setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH_READY, new byte[16]);
+		// Unknown and not-yet-downloaded hashes need no arrays. Requests and
+		// the contact card already check for null before using the hash.
+		biHash = null;
+		biHashDone = null;
+		buddyIcon = null;
 		//#sijapp cond.end#
 
 
@@ -714,6 +714,9 @@ public class ContactItem implements ContactListItem, JimmScreen
 
 	public void setStatusImage()
 	{
+		// The contact-list row draws its status itself. With no chat and no
+		// lock-screen notification there is no caption image to update.
+		if (!SplashCanvas.locked() && !getBooleanValue(CONTACTITEM_HAS_CHAT)) return;
 		Image image = null;
 
 //#sijapp cond.if target isnot "DEFAULT"#

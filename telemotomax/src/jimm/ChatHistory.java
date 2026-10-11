@@ -757,7 +757,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		int textColor = Options.getBoolean(Options.OPTION_MESS_COLORED_TEXT) ? getInOutColor(red) : textList.getTextColor(); 
 		JimmUI.addMessageText(textList, message, textColor, messTotalCounter);
 
-		boolean contains_url = false;
+		boolean contains_url = url.length() > 0 && Util.parseMessageForURL(url) != null;
 		//#sijapp cond.if target is "MIDP2" | target is "SIEMENS2" | target is "MOTOROLA"#
 		if (Util.parseMessageForURL(VideoLink.visibleText(message)) != null)
 		{
@@ -771,6 +771,7 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		md.attachKind = attachKind;
 		md.thread = thread;
 		md.videoUrl = VideoLink.url(message);
+		if (md.videoUrl == null && attachKind == 2 && url.length() > 0) md.videoUrl = url;
 		md.messageRef = messageRef;
 		getMessData().addElement(md);
 		messTotalCounter++;
@@ -895,7 +896,7 @@ public class ChatHistory
 				addTextToForm(uin, contact
 						.getStringValue(ContactItem.CONTACTITEM_NAME),
 						urlMsg.getText(), urlMsg.getUrl(), urlMsg.getNewDate(),
-						false, offline, -1, null, 0, urlMsg.getMessageRef());
+						true, offline, -1, urlMsg.getAttachToken(), urlMsg.getAttachKind(), urlMsg.getMessageRef());
 			} 
 			else if (message instanceof SystemNotice)
 			{

@@ -592,7 +592,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			ssiNumberOfItems += versionId2_;
 			
 			// Privacy data
-			if (privData != null)
+			if (privData != null && !privData.isEmpty())
 			{
 				Hashtable list = new Hashtable();
 				
@@ -1225,7 +1225,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			ContactItem victim = getItembyUIN(old);
 			if (victim == null) continue;
 			victim.setImage(ContactItem.CONTACTITEM_BUDDYICON, null);
-			victim.setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH_READY, new byte[16]);
+			victim.setBytesArray(ContactItem.CONTACTITEM_BUDDYICON_HASH_READY, null);
 		}
 	}
 	//#sijapp cond.end#

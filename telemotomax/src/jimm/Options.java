@@ -884,7 +884,7 @@ public class Options
 			System.out.println("Identical keys: " + key);
 		//#sijapp cond.end#
 
-		options.put(key(key), new Boolean(value));
+		options.put(key(key), value ? Boolean.TRUE : Boolean.FALSE);
 	}
 
 	static public synchronized void setLong(int key, long value)

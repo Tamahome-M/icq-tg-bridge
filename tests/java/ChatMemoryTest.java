@@ -6,6 +6,7 @@ import java.util.*;
 import javax.microedition.lcdui.*;
 import DrawControls.*;
 import jimm.comm.Util;
+import jimm.comm.UrlMessage;
 
 /** Tests the actual chat queue/layout and portable text conversion. */
 public final class ChatMemoryTest {
@@ -113,6 +114,16 @@ public final class ChatMemoryTest {
             check(hasImage(chat.textList, 0, JimmUI.eventPlainMessageImg), "outgoing acknowledgement changed an incoming message");
         }
         chats.remove("1000001");
+        if (!baseline) {
+            chat = chat(); chats.put("1000001", chat); new ChatHistory();
+            UrlMessage url = new UrlMessage("1000001", "100500", 120123, "http://host/v/token", "[видео]");
+            url.setAttach(tokens[1], 2); url.setMessageRef(refs[1]);
+            ChatHistory.addMessage(chat.contact, url); flush(chat);
+            MessData md = (MessData)chat.getMessData().firstElement();
+            check(md.getIncoming() && md.attach == tokens[1] && md.messageRef == refs[1], "incoming URL message lost direction, media or quote reference");
+            check(md.isURL() && "http://host/v/token".equals(md.videoUrl), "video URL message lost browser action");
+            chats.remove("1000001");
+        }
         System.out.println("PASS: background photo/video/voice/file metadata, quote references, timestamps and delivery acknowledgements");
     }
     static void compactRows() throws Exception {
@@ -205,6 +216,7 @@ public final class ChatMemoryTest {
         baseline = args.length > 0 && args[0].equals("baseline");
         try {
             field(Options.class, "options").set(null, new Hashtable()); method(Options.class, "setDefaults").invoke(null);
+            Constructor main = MainThread.class.getDeclaredConstructor(); main.setAccessible(true); main.newInstance();
             Options.setBoolean(Options.OPTION_USE_SMILES, false); Options.setInt(Options.OPTION_CHAT_MESSAGES, 15);
             boundsAndOrder(); metadataAndDelivery(); compactRows(); utf8(); allocations();
         } finally {

@@ -304,28 +304,31 @@ public class ActionListener
 				marker += 2;
 				for (int i = 0; i < tlvCount; i++)
 				{
-					byte[] tlvData = Util.getTlv(buf, marker);
-					if (tlvData == null)
+					int length = Util.getTlvLength(buf, marker, buf.length);
+					if (length < 0)
 					{
 						throw (new JimmException(150, 2, false));
 					}
-					marker += 4 + tlvData.length;
+					marker += 4 + length;
 				}
 
 				// Get message data and initialize marker
-				byte[] msgBuf;
+				byte[] msgBuf = buf;
+				int msgStart, msgEnd;
 				int tlvType;
 				do
 				{
-					msgBuf = Util.getTlv(buf, marker);
-					if (msgBuf == null)
+					int length = Util.getTlvLength(buf, marker, buf.length);
+					if (length < 0)
 					{
 						throw (new JimmException(150, 3, false));
 					}
 					tlvType = Util.getWord(buf, marker);
-					marker += 4 + msgBuf.length;
+					msgStart = marker + 4;
+					msgEnd = msgStart + length;
+					marker = msgEnd;
 				} while ((tlvType != 0x0002) && (tlvType != 0x0005));
-				int msgMarker = 0;
+				int msgMarker = msgStart;
 
 				// TeleMotoMax: the bridge may append TLV 0x9001 after the
 				// body — kind (1 byte) and a 16-byte token of an attached
@@ -338,18 +341,22 @@ public class ActionListener
 				while (extMarker + 4 <= buf.length)
 				{
 					int extType = Util.getWord(buf, extMarker);
-					byte[] extData = Util.getTlv(buf, extMarker);
-					if (extData == null) break;
-					if (extType == 0x9002 && extData.length == 8) messageRef = extData;
+					int extLength = Util.getTlvLength(buf, extMarker, buf.length);
+					if (extLength < 0) break;
+					if (extType == 0x9002 && extLength == 8)
+					{
+						messageRef = new byte[8];
+						System.arraycopy(buf, extMarker + 4, messageRef, 0, 8);
+					}
 					// kind 1 = photo, 2 = video preview, 3 = voice message, 4 = file
-					if ((extType == 0x9001) && (extData.length == 17)
-							&& (extData[0] >= 1) && (extData[0] <= 4))
+					if ((extType == 0x9001) && (extLength == 17)
+							&& (buf[extMarker + 4] >= 1) && (buf[extMarker + 4] <= 4))
 					{
 						attachToken = new byte[16];
-						System.arraycopy(extData, 1, attachToken, 0, 16);
-						attachKind = extData[0];
+						System.arraycopy(buf, extMarker + 5, attachToken, 0, 16);
+						attachKind = buf[extMarker + 4];
 					}
-					extMarker += 4 + extData.length;
+					extMarker += 4 + extLength;
 				}
 
 				//////////////////////
@@ -360,15 +367,15 @@ public class ActionListener
 
 					// Variables for all possible TLVs
 					// byte[] capabilities = null;
-					byte[] message = null;
+					int messageStart = -1, messageLength = 0;
 
 					// Read all TLVs
-					while (msgMarker < msgBuf.length)
+					while (msgMarker < msgEnd)
 					{
 
 						// Get next TLV
-						byte[] tlvValue = Util.getTlv(msgBuf, msgMarker);
-						if (tlvValue == null)
+						int length = Util.getTlvLength(msgBuf, msgMarker, msgEnd);
+						if (length < 0)
 						{
 							throw (new JimmException(151, 0, false));
 						}
@@ -377,7 +384,8 @@ public class ActionListener
 						tlvType = Util.getWord(msgBuf, msgMarker);
 
 						// Update markers
-						msgMarker += 4 + tlvValue.length;
+						int valueStart = msgMarker + 4;
+						msgMarker = valueStart + length;
 
 						// Save value
 						switch (tlvType)
@@ -388,7 +396,8 @@ public class ActionListener
 							break;
 						case 0x0101:
 							// message
-							message = tlvValue;
+							messageStart = valueStart;
+							messageLength = length;
 							break;
 						default:
 							throw (new JimmException(151, 1, false));
@@ -397,25 +406,25 @@ public class ActionListener
 					}
 
 					// Process packet if at least the message TLV was present
-					if (message != null)
+					if (messageStart >= 0)
 					{
 
 						// Check length of message
-						if (message.length < 4)
+						if (messageLength < 4)
 						{
 							throw (new JimmException(151, 2, false));
 						}
 
 						// Get message text
 						String text;
-						if (Util.getWord(message, 0) == 0x0002)
+						if (Util.getWord(buf, messageStart) == 0x0002)
 						{
 							text = Util.removeCr(Util.ucs2beByteArrayToString(
-									message, 4, message.length - 4));
+									buf, messageStart + 4, messageLength - 4));
 						} else
 						{
 							text = Util.removeCr(Util.byteArrayToString(
-									message, 4, message.length - 4));
+									buf, messageStart + 4, messageLength - 4));
 						}
 
 						// Construct object which encapsulates the received
@@ -440,7 +449,7 @@ public class ActionListener
 					//                 0x0002 - file ack
 
 					// Check length
-					if (msgBuf.length < 10)
+					if (msgEnd - msgStart < 10)
 					{
 						throw (new JimmException(152, 0, false));
 					}
@@ -456,7 +465,7 @@ public class ActionListener
 					msgMarker += 4 + 4;
 
 					// Check length
-					if (msgBuf.length < msgMarker + 16)
+					if (msgEnd - msgMarker < 16)
 					{
 						throw (new JimmException(152, 1, false));
 					}
@@ -465,23 +474,26 @@ public class ActionListener
 					msgMarker += 16;
 
 					// Get message data and initialize marker
-					byte[] msg2Buf;
+					byte[] msg2Buf = buf;
+					int msg2Start, msg2End;
 
 					do
 					{
-						msg2Buf = Util.getTlv(msgBuf, msgMarker);
-						if (msg2Buf == null)
+						int length = Util.getTlvLength(msgBuf, msgMarker, msgEnd);
+						if (length < 0)
 						{
 							throw (new JimmException(152, 2, false));
 						}
 						tlvType = Util.getWord(msgBuf, msgMarker);
-						msgMarker += 4 + msg2Buf.length;
+						msg2Start = msgMarker + 4;
+						msg2End = msg2Start + length;
+						msgMarker = msg2End;
 					} while (tlvType != 0x2711);
 
-					int msg2Marker = 0;
+					int msg2Marker = msg2Start;
 
 					// Check length
-					if (msg2Buf.length < 2 + 2 + 16 + 3 + 4 + 2 + 2 + 2 + 12
+					if (msg2End - msg2Start < 2 + 2 + 16 + 3 + 4 + 2 + 2 + 2 + 12
 							+ 2 + 2 + 2 + 2)
 					{
 						throw (new JimmException(152, 3, false));
@@ -508,20 +520,20 @@ public class ActionListener
 					msg2Marker += 2;
 
 					// Check length
-					if (msg2Buf.length < msg2Marker + textLen + 4 + 4)
+					if (textLen > msg2End - msg2Marker - 8)
 					{
 						throw (new JimmException(152, 4, false));
 					}
 
-					// Get raw text
-					byte[] rawText = new byte[textLen];
-					System.arraycopy(msg2Buf, msg2Marker, rawText, 0, textLen);
+					// Decode from the original packet; do not copy the body,
+					// its nested TLV and then the text into three new arrays.
+					int rawTextStart = msg2Marker;
 					msg2Marker += textLen;
 					// Plain message or URL message
 					// TeleMotoMax: > 0, а не > 1 — у Jimm сообщение из одного
 					// символа без завершающего нуля молча пропадало.
 					if (((msgType == 0x0001) || (msgType == 0x0004))
-							&& (rawText.length > 0))
+							&& (textLen > 0))
 					{
 
 						// Skip FOREGROUND and BACKGROUND
@@ -532,21 +544,16 @@ public class ActionListener
 
 						// Check encoding (by checking GUID)
 						boolean isUtf8 = false;
-						if (msg2Buf.length >= msg2Marker + 4)
+						if (msg2End - msg2Marker >= 4)
 						{
 							int guidLen = (int) Util.getDWord(msg2Buf,
 									msg2Marker, false);
-							if (guidLen == 38)
+							if (guidLen < 0 || guidLen > msg2End - msg2Marker - 4)
 							{
-								if (Util
-										.byteArrayToString(msg2Buf,
-												msg2Marker + 4, guidLen)
-										.equals(
-												"{0946134E-4C7F-11D1-8222-444553540000}"))
-								{
-									isUtf8 = true;
-								}
+								throw new JimmException(152, 4, false);
 							}
+							isUtf8 = guidLen == Icq.CAP_UTF8_GUID.length
+								&& Util.byteArrayEquals(msg2Buf, msg2Marker + 4, Icq.CAP_UTF8_GUID, 0, guidLen);
 							msg2Marker += 4 + guidLen;
 						}
 
@@ -557,7 +564,7 @@ public class ActionListener
 
 							// Decode text
 							String text = Util.removeCr(Util.byteArrayToString(
-									rawText, isUtf8));
+									buf, rawTextStart, textLen, isUtf8));
 
 							// Instantiate message object
 							message = new PlainMessage(uin, Options
@@ -569,9 +576,9 @@ public class ActionListener
 
 							// Search for delimited
 							int delim = -1;
-							for (int i = 0; i < rawText.length; i++)
+							for (int i = 0; i < textLen; i++)
 							{
-								if (rawText[i] == (byte)0xFE)
+								if (buf[rawTextStart + i] == (byte)0xFE)
 								{
 									delim = i;
 									break;
@@ -584,14 +591,14 @@ public class ActionListener
 							if (delim != -1)
 							{
 								urlText = Util.removeCr(Util.byteArrayToString(
-										rawText, 0, delim, isUtf8));
+										buf, rawTextStart, delim, isUtf8));
 								url = Util.removeCr(Util.byteArrayToString(
-										rawText, delim + 1, rawText.length
+										buf, rawTextStart + delim + 1, textLen
 												- delim - 1, isUtf8));
 							} else
 							{
 								urlText = Util.removeCr(Util.byteArrayToString(
-										rawText, isUtf8));
+										buf, rawTextStart, textLen, isUtf8));
 								url = "";
 							}
 
@@ -602,7 +609,7 @@ public class ActionListener
 						}
 
 						// Forward message object to contact list
-						if (message instanceof PlainMessage) ((PlainMessage) message).setAttach(attachToken, attachKind);
+						message.setAttach(attachToken, attachKind);
 						message.setMessageRef(messageRef);
 						MainThread.addMessageSerially(message);
 
@@ -619,7 +626,7 @@ public class ActionListener
 						ackMarker += uinRaw.length;
 						Util.putWord(ackBuf, ackMarker, 0x0003);
 						ackMarker += 2;
-						System.arraycopy(msg2Buf, 0, ackBuf, ackMarker, 51);
+						System.arraycopy(msg2Buf, msg2Start, ackBuf, ackMarker, 51);
 						ackMarker += 51;
 						Util.putWord(ackBuf, ackMarker, 0x0001, false);
 						ackMarker += 2;
@@ -637,7 +644,7 @@ public class ActionListener
 					{
 
 						// Check length
-						if (msg2Buf.length < msg2Marker + 2 + 18 + 4)
+						if (msg2End - msg2Marker < 2 + 18 + 4)
 						{
 							throw (new JimmException(152, 5, false));
 						}
@@ -654,8 +661,7 @@ public class ActionListener
 						msg2Marker += 4;
 
 						// Check length
-						if (msg2Buf.length < msg2Marker + pluginLen + 15 + 4
-								+ 4)
+						if (pluginLen < 0 || pluginLen > msg2End - msg2Marker - 23)
 						{
 							throw (new JimmException(152, 6, false));
 						}
@@ -674,7 +680,7 @@ public class ActionListener
 						msg2Marker += 4;
 
 						// Check length
-						if (msg2Buf.length < msg2Marker + textLen)
+						if (textLen < 0 || textLen > msg2End - msg2Marker)
 						{
 							throw (new JimmException(152, 7, false));
 						}
@@ -725,7 +731,7 @@ public class ActionListener
 							ackMarker += uinRaw.length;
 							Util.putWord(ackBuf, ackMarker, 0x0003);
 							ackMarker += 2;
-							System.arraycopy(msgBuf, 0, ackBuf, ackMarker, 51);
+							System.arraycopy(msgBuf, msgStart, ackBuf, ackMarker, 51);
 							ackMarker += 51;
 							Util.putWord(ackBuf, ackMarker, 0x0001, false);
 							ackMarker += 2;
@@ -757,7 +763,7 @@ public class ActionListener
 				{
 
 					// Check length
-					if (msgBuf.length < 8)
+					if (msgEnd - msgStart < 8)
 					{
 						throw (new JimmException(153, 0, false));
 					}
@@ -778,7 +784,7 @@ public class ActionListener
 					msgMarker += 2;
 
 					// Check length (exact match required)
-					if (msgBuf.length != 8 + textLen)
+					if (msgEnd - msgStart != 8 + textLen)
 					{
 						throw (new JimmException(153, 1, false));
 					}
