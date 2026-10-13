@@ -150,10 +150,15 @@ public class MainThread implements Runnable
 
 	private static void scheduleQueue()
 	{
-		try { Jimm.display.callSerially(_this); }
+		try
+		{
+			FlipWatch.expectUI();
+			Jimm.display.callSerially(_this);
+		}
 		catch (Throwable failure)
 		{
 			synchronized (mainThreadTasks) { queueScheduled = false; }
+			FlipWatch.queueFailed();
 			// Leave accepted events intact; the next clock/network event retries.
 		}
 	}
@@ -169,6 +174,7 @@ public class MainThread implements Runnable
 	
 	public void run()
 	{
+		FlipWatch.serialAlive();
 		uiThread = Thread.currentThread();
 		try { SplashCanvas.applyAutoLock(); }
 		catch (OutOfMemoryError failure) { System.gc(); }
