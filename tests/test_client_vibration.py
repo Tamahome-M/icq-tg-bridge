@@ -22,8 +22,8 @@ def run(work, classes):
     # queued delivery use the real MainThread, Options and SplashCanvas.
     stubs['jimm/ContactList.java'] = '''package jimm;
 public class ContactList {
- public static boolean accepted=true,reading=false,lastAlertAllowed=true;
- public static boolean addMessage(jimm.comm.Message m){return accepted;}
+ public static boolean accepted=true,reading=false,lastAlertAllowed=true;public static int received;
+ public static boolean addMessage(jimm.comm.Message m){received++;return accepted;}
  public static boolean readingChat(String uin){return reading;}
 }'''
     stubs['javax/microedition/lcdui/Display.java'] = stubs['javax/microedition/lcdui/Display.java'].replace(
