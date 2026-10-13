@@ -7,6 +7,7 @@ on:
       - 'telemotomax/**'
       - '!telemotomax/README.md'
       - 'tools/telemotomax-release.py'
+      - 'tools/motorola_flip_probe/**'
       - 'tools/update-from-github.sh'
       - 'tests/test_client_release.py'
       - '.github/workflows/telemotomax-release.yml'
@@ -16,6 +17,7 @@ on:
       - 'telemotomax/**'
       - '!telemotomax/README.md'
       - 'tools/telemotomax-release.py'
+      - 'tools/motorola_flip_probe/**'
       - 'tools/update-from-github.sh'
       - 'tests/test_client_release.py'
       - '.github/workflows/telemotomax-release.yml'
@@ -47,7 +49,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Build, sign and publish all three variants
+      - name: Build, sign and publish clients and flip probe
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-

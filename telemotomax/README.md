@@ -603,6 +603,15 @@ python3 tools/motorola_flip_probe/inspect_firmware.py /path/to/firmware.sbf
 Отсутствие API или ошибка записываются явно. По задержкам положение крышки
 не вычисляется.
 
+Начиная с релиза моста с TeleMotoMax **1.22**, workflow собирает диагностику
+в отдельную пару `TmmFlipProbe.jar/.jad` и публикует её в том же GitHub
+Release. Обычный `tools/update-from-github.sh` скачивает и проверяет эти
+файлы вместе с клиентами, кладёт в `telemotomax/dist`; мост показывает их
+в `/d/`. Для установки открыть **`/d/TmmFlipProbe.jad`**. Настройки моста
+менять не нужно. Версия самой диагностической программы — `0.1.0`.
+
+Для ручной сборки:
+
 ```sh
 # Использует JDK 8, MIDP/CLDC и ProGuard 4.11 из существующего каталога сборки.
 # Если каталога ещё нет: sh telemotomax/build.sh /tmp/tmm-build

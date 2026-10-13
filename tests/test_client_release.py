@@ -66,6 +66,29 @@ def fixture(root: Path) -> tuple[Path, Path, dict]:
     return source, dist, manifest
 
 
+def add_probe(source: Path, dist: Path) -> dict:
+    folder = source / release.PROBE_DIR
+    folder.mkdir(parents=True)
+    for name in release.PROBE_INPUTS:
+        if name == "stubs":
+            (folder / name).mkdir()
+            (folder / name / "Api.java").write_text("// compile-only fixture\n")
+        else:
+            (folder / name).write_text("0.1.0\n" if name == "VERSION" else "// probe fixture\n")
+    jar = dist / "TmmFlipProbe.jar"
+    attrs = ("MIDlet-Name: TMM Flip Probe\nMIDlet-Vendor: TeleMotoMax\n"
+             "MIDlet-Version: 0.1.0\nMIDlet-1: TMM Flip Probe,,FlipProbe\n"
+             "Background: True\nFlipInsensitive: True\n")
+    with zipfile.ZipFile(jar, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n" + attrs)
+        archive.writestr("FlipProbe.class", b"test-probe-class")
+    (dist / "TmmFlipProbe.jad").write_text(
+        attrs + f"MIDlet-Jar-URL: {jar.name}\nMIDlet-Jar-Size: {jar.stat().st_size}\n")
+    manifest = release.make_manifest(source, dist)
+    (dist / release.MANIFEST).write_text(json.dumps(manifest))
+    return manifest
+
+
 @contextmanager
 def serve(source: Path, dist: Path, events: Path | None = None):
     archive = io.BytesIO()
@@ -130,6 +153,62 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(set(snapshot(destination)), set(release.FILES))
         for name in release.FILES:
             self.assertEqual((destination / name).read_bytes(), (self.dist / name).read_bytes())
+
+    def test_download_carries_separate_probe_with_its_own_version(self):
+        self.manifest = add_probe(self.source, self.dist)
+        destination = self.root / "installed"
+        with serve(self.source, self.dist) as repo:
+            release.download(self.source, repo, destination)
+        self.assertEqual(set(snapshot(destination)), set(release.FILES) | {
+            "TmmFlipProbe.jar", "TmmFlipProbe.jad"})
+        for name in release.release_files(self.source):
+            self.assertEqual((destination / name).read_bytes(), (self.dist / name).read_bytes())
+        self.assertIn("MIDlet-Version: 0.1.0", (destination / "TmmFlipProbe.jad").read_text())
+
+    def test_missing_or_corrupt_probe_keeps_all_installed_pairs(self):
+        self.manifest = add_probe(self.source, self.dist)
+        destination = self.root / "installed"
+        destination.mkdir()
+        for name in release.release_files(self.source):
+            (destination / name).write_bytes(b"previous-" + name.encode())
+        before = snapshot(destination)
+        jad = self.dist / "TmmFlipProbe.jad"
+        original = jad.read_bytes()
+        jad.write_bytes(b"corrupt")
+        with serve(self.source, self.dist) as repo:
+            with self.assertRaisesRegex(ValueError, "SHA-256"):
+                release.download(self.source, repo, destination)
+        self.assertEqual(snapshot(destination), before)
+        jad.unlink()
+        with serve(self.source, self.dist) as repo:
+            with self.assertRaises(urllib.error.HTTPError) as failure:
+                release.download(self.source, repo, destination)
+            failure.exception.close()
+        self.assertEqual(snapshot(destination), before)
+        jad.write_bytes(original)
+
+    def test_probe_sources_are_part_of_release_identity(self):
+        self.manifest = add_probe(self.source, self.dist)
+        release.validate_manifest(self.source, self.manifest)
+        (self.source / release.PROBE_DIR / "VodafoneFlip.java").write_text("// changed\n")
+        with self.assertRaisesRegex(ValueError, "VERSION"):
+            release.validate_manifest(self.source, self.manifest)
+
+    def test_probe_pair_is_required_and_background_attributes_are_validated(self):
+        self.manifest = add_probe(self.source, self.dist)
+        incomplete = json.loads(json.dumps(self.manifest))
+        incomplete["files"].pop("TmmFlipProbe.jar")
+        with self.assertRaises(ValueError):
+            release.validate_manifest(self.source, incomplete)
+        path = self.dist / "TmmFlipProbe.jad"
+        original = path.read_text()
+        for old, new in (("MIDlet-Version: 0.1.0", "MIDlet-Version: 1.15"),
+                         ("FlipInsensitive: True", "FlipInsensitive: False"),
+                         ("MIDlet-Jar-URL: TmmFlipProbe.jar", "MIDlet-Jar-URL: Other.jar")):
+            path.write_text(original.replace(old, new))
+            with self.assertRaises(ValueError):
+                release.make_manifest(self.source, self.dist)
+        path.write_text(original)
 
     def test_corrupt_last_asset_does_not_change_installed_files(self):
         destination = self.root / "installed"
@@ -273,6 +352,40 @@ class ReleaseTests(unittest.TestCase):
             release.publish(self.source, "owner/repo", None, self.root / "work", "main")
         self.assertEqual(modules, ["v3", "v3light", "v8"])
 
+    def test_ci_builds_probe_after_clients_and_uploads_nine_assets(self):
+        self.manifest = add_probe(self.source, self.dist)
+        draft = {"id": 7, "draft": True, "assets": [], "html_url": "test",
+                 "upload_url": "https://uploads.github.com/repos/owner/repo/releases/7/assets{?name,label}"}
+        modules = []
+
+        def builder(command, **kwargs):
+            if "env" in kwargs:
+                modules.append(kwargs["env"]["TMM_MODULES"])
+                destination = Path(kwargs["env"]["TMM_DIST_DIR"])
+                for name in release.FILES:
+                    shutil.copyfile(self.dist / name, destination / name)
+            else:
+                self.assertEqual(modules, ["v3", "v3light", "v8"])
+                self.assertEqual(Path(command[1]), self.source / release.PROBE_DIR / "build.py")
+                self.assertEqual(Path(command[command.index("--toolchain") + 1]), self.root / "work/build")
+                destination = Path(command[command.index("--output") + 1])
+                for name in ("TmmFlipProbe.jar", "TmmFlipProbe.jad"):
+                    shutil.copyfile(self.dist / name, destination / name)
+                modules.append("probe")
+
+        with patch.dict(os.environ, {"GH_TOKEN": "test-token"}), \
+                patch.object(release, "api", return_value=draft) as api, \
+                patch.object(release, "download"), \
+                patch.object(release.subprocess, "run", side_effect=builder):
+            release.publish(self.source, "owner/repo", None, self.root / "work", "main")
+        self.assertEqual(modules, ["v3", "v3light", "v8", "probe"])
+        uploads = [call for call in api.call_args_list if call.args[1].startswith("https://uploads.")]
+        self.assertEqual(len(uploads), 9)
+        self.assertTrue(any("TmmFlipProbe.jar" in call.args[1] for call in uploads))
+        self.assertTrue(any("TmmFlipProbe.jad" in call.args[1] for call in uploads))
+        self.assertEqual(set(json.loads((self.root / "work/release" / release.MANIFEST).read_text())["files"]),
+                         set(release.release_files(self.source)))
+
     def test_interrupted_draft_upload_can_resume(self):
         calls = []
         first = (self.dist / release.FILES[0]).read_bytes()
@@ -355,6 +468,34 @@ class ReleaseTests(unittest.TestCase):
         stop = trace.index("service stop")
         self.assertEqual(sum(line.startswith("get ") for line in trace[:stop]), 8)
         self.assertEqual(trace[-1], "service start")
+
+    def test_ordinary_vps_update_installs_probe_on_every_pass(self):
+        self.manifest = add_probe(self.source, self.dist)
+        install, events, env = self.prepare_installed()
+        with serve(self.source, self.dist, events) as repo:
+            first = self.run_update(install, repo, env)
+            second = self.run_update(install, repo, env, installed=True)
+        for result in (first, second):
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name in release.release_files(self.source):
+            self.assertEqual((install / "telemotomax/dist" / name).read_bytes(),
+                             (self.dist / name).read_bytes())
+        trace = events.read_text().splitlines()
+        stop = trace.index("service stop")
+        self.assertEqual(sum(line.startswith("get ") for line in trace[:stop]), 10)
+        self.assertEqual(trace.count("service start"), 2)
+
+    def test_failed_probe_download_does_not_stop_or_update_bridge(self):
+        self.manifest = add_probe(self.source, self.dist)
+        install, events, env = self.prepare_installed()
+        before = snapshot(install)
+        (self.dist / "TmmFlipProbe.jar").write_bytes(b"corrupt")
+        with serve(self.source, self.dist, events) as repo:
+            result = self.run_update(install, repo, env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(snapshot(install), before)
+        self.assertNotIn("service ", events.read_text())
+        self.assertIn("TmmFlipProbe.jar", result.stderr)
 
     def test_installed_updater_restores_clients_removed_by_legacy_first_pass(self):
         install, events, env = self.prepare_installed()

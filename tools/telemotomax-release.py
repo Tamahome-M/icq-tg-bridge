@@ -22,6 +22,10 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 BASES = ("TeleMotoMax", "TeleMotoMax-Light", "TeleMotoMax-V8")
 FILES = tuple(f"{base}.{ext}" for base in BASES for ext in ("jar", "jad"))
+PROBE_BASE = "TmmFlipProbe"
+PROBE_DIR = Path("tools/motorola_flip_probe")
+PROBE_INPUTS = ("VERSION", "build.py", "FlipProbe.java", "FlipReader.java",
+                "VodafoneFlip.java", "stubs")
 MANIFEST = "telemotomax-release.json"
 MAX_FILE = 16 * 1024 * 1024
 MAX_JSON = 128 * 1024
@@ -38,6 +42,23 @@ def version(source: Path) -> str:
     return value
 
 
+def probe_version(source: Path) -> str | None:
+    path = source / PROBE_DIR / "VERSION"
+    if not path.is_file():
+        return None
+    value = path.read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?", value):
+        raise ValueError("некорректный motorola_flip_probe/VERSION")
+    return value
+
+
+def release_files(source: Path) -> tuple[str, ...]:
+    """Older releases have three client pairs; new ones also carry the separate probe."""
+    if probe_version(source) is None:
+        return FILES
+    return FILES + (f"{PROBE_BASE}.jar", f"{PROBE_BASE}.jad")
+
+
 def source_hash(source: Path) -> str:
     """Stable for Git checkouts and source ZIPs, irrespective of mode/mtime."""
     client = source / "telemotomax"
@@ -49,6 +70,14 @@ def source_hash(source: Path) -> str:
     for path in sorted(p for p in files if p.is_file()):
         digest.update(path.relative_to(client).as_posix().encode("utf-8") + b"\0")
         digest.update(hashlib.sha256(path.read_bytes()).digest())
+    if probe_version(source) is not None:
+        files = []
+        for name in PROBE_INPUTS:
+            path = source / PROBE_DIR / name
+            files.extend(path.rglob("*") if path.is_dir() else [path])
+        for path in sorted(p for p in files if p.is_file()):
+            digest.update(path.relative_to(source).as_posix().encode("utf-8") + b"\0")
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()
 
 
@@ -70,10 +99,12 @@ def attributes(data: bytes, *, folded: bool = False) -> dict[str, str]:
 
 def validate_pairs(source: Path, dist: Path) -> None:
     expected = version(source)
-    for base in BASES:
+    probe = probe_version(source)
+    bases = BASES + (PROBE_BASE,) if probe is not None else BASES
+    for base in bases:
         jar = dist / f"{base}.jar"
         jad = attributes((dist / f"{base}.jad").read_bytes())
-        if (jad.get("MIDlet-Version") != expected
+        if (jad.get("MIDlet-Version") != (probe if base == PROBE_BASE else expected)
                 or jad.get("MIDlet-Jar-URL") != jar.name
                 or jad.get("MIDlet-Jar-Size") != str(jar.stat().st_size)):
             raise ValueError(f"{base}: версия, ссылка или размер JAR не совпадают с JAD")
@@ -85,6 +116,11 @@ def validate_pairs(source: Path, dist: Path) -> None:
                     "MIDlet-Permissions", "MIDlet-Permissions-Opt"):
             if manifest.get(key) != jad.get(key):
                 raise ValueError(f"{base}: атрибут {key} различается в JAR и JAD")
+        if base == PROBE_BASE:
+            for key, value in (("MIDlet-1", "TMM Flip Probe,,FlipProbe"),
+                               ("Background", "True"), ("FlipInsensitive", "True")):
+                if jad.get(key) != value or manifest.get(key) != value:
+                    raise ValueError(f"{base}: некорректный атрибут {key}")
         if base == "TeleMotoMax-V8":
             keys = source / "telemotomax/sign-keys"
             for number, name in ((1, "signer.der"), (2, "ca.der")):
@@ -98,7 +134,7 @@ def validate_pairs(source: Path, dist: Path) -> None:
 def make_manifest(source: Path, dist: Path) -> dict:
     validate_pairs(source, dist)
     assets = {}
-    for name in FILES:
+    for name in release_files(source):
         data = (dist / name).read_bytes()
         if not 0 < len(data) <= MAX_FILE:
             raise ValueError(f"некорректный размер {name}")
@@ -114,8 +150,8 @@ def validate_manifest(source: Path, manifest: dict) -> None:
     if manifest.get("source_sha256") != source_hash(source):
         raise ValueError("исходники клиента отличаются от релиза; увеличьте VERSION и опубликуйте сборку")
     assets = manifest.get("files")
-    if not isinstance(assets, dict) or set(assets) != set(FILES):
-        raise ValueError("релиз должен содержать три пары JAR/JAD")
+    if not isinstance(assets, dict) or set(assets) != set(release_files(source)):
+        raise ValueError("релиз должен содержать все ожидаемые пары JAR/JAD")
     for name, record in assets.items():
         if (not isinstance(record, dict) or type(record.get("size")) is not int
                 or not 0 < record["size"] <= MAX_FILE
@@ -148,7 +184,7 @@ def read_url(url: str, limit: int = MAX_JSON) -> bytes:
 
 
 def download(source: Path, repo: str, dest: Path) -> None:
-    """Stage and check all six files before replacing an installed directory."""
+    """Stage and check every pair before replacing an installed directory."""
     url = release_url(source, repo)
     try:
         manifest = json.loads(read_url(url + MANIFEST))
@@ -163,7 +199,7 @@ def download(source: Path, repo: str, dest: Path) -> None:
     with tempfile.TemporaryDirectory(prefix=".telemotomax-", dir=dest.parent) as work:
         staged = Path(work) / "dist"
         staged.mkdir()
-        for name in FILES:
+        for name in release_files(source):
             record = manifest["files"][name]
             data = read_url(url + name, record["size"])
             if (len(data) != record["size"]
@@ -182,7 +218,8 @@ def download(source: Path, repo: str, dest: Path) -> None:
             if backup.exists():
                 backup.rename(dest)
             raise
-    print(f"TeleMotoMax {version(source)}: V3, Light и подписанная V8 → {dest}")
+    note = " и отдельная диагностика флипа" if probe_version(source) is not None else ""
+    print(f"TeleMotoMax {version(source)}: V3, Light и подписанная V8{note} → {dest}")
 
 
 def check_version(source: Path, repo: str) -> None:
@@ -242,6 +279,10 @@ def publish(source: Path, repo: str, dist: Path | None, work: Path, target: str)
             env.pop("TMM_SIGN_V3", None)
             subprocess.run([str(source / "telemotomax/build.sh"), str((work / "build").absolute())],
                            env=env, check=True)
+        if probe_version(source) is not None:
+            subprocess.run([sys.executable, str(source / PROBE_DIR / "build.py"),
+                            "--toolchain", str((work / "build").absolute()),
+                            "--output", str(dist.absolute())], check=True)
     manifest = make_manifest(source, dist)
     data = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     (dist / MANIFEST).write_bytes(data)
@@ -251,6 +292,8 @@ def publish(source: Path, repo: str, dist: Path | None, work: Path, target: str)
         payload = {"tag_name": tag, "target_commitish": target,
                    "name": f"TeleMotoMax {version(source)}", "draft": True,
                    "body": "Сборки для Motorola: V3, Light и подписанная V8.\n\n"
+                           + ("TmmFlipProbe.jar/.jad — отдельная диагностика крышки V3r.\n\n"
+                              if probe_version(source) is not None else "") +
                            "Для установки скачайте JAR и JAD одного варианта. "
                            "На телефоне откройте JAD через раздел /d/ сервера моста.\n\n"
                            "telemotomax-release.json содержит версию, SHA-256 исходников и файлов."}
@@ -258,7 +301,7 @@ def publish(source: Path, repo: str, dist: Path | None, work: Path, target: str)
     upload = release["upload_url"].split("{", 1)[0]
     # A failed upload leaves a draft; the next invocation can finish it.
     existing = {asset["name"]: asset for asset in release["assets"]}
-    for name in (*FILES, MANIFEST):
+    for name in (*release_files(source), MANIFEST):
         blob = (dist / name).read_bytes()
         if name in existing:
             asset = existing[name]
