@@ -14,7 +14,7 @@ sys.path.insert(0, str(root))
 from tests.test_client_performance import make_stubs
 
 
-def run(work, classes):
+def make_lock_stubs():
     stubs = make_stubs()
     stubs['jimm/Jimm.java'] = stubs['jimm/Jimm.java'].replace(
         'public Clock(){super(true);}', 'public static int scheduled;public Clock(){super(true);}').replace(
@@ -47,7 +47,10 @@ def run(work, classes):
     stubs['javax/microedition/lcdui/Displayable.java'] = stubs['javax/microedition/lcdui/Displayable.java'].replace(
         'jimm.Jimm.display.getCurrent()==this', 'jimm.Jimm.display.getCurrent()==this && Display.foreground')
     stubs['javax/microedition/lcdui/TextBox.java'] = '''package javax.microedition.lcdui;
-public class TextBox extends Displayable {public TextBox(String title,String text,int max,int constraints){}}
+public class TextBox extends Displayable {
+ private String text;public TextBox(String title,String text,int max,int constraints){this.text=text;}
+ public String getString(){return text;}public void setString(String value){text=value;}
+}
 '''
     stubs['javax/microedition/lcdui/Form.java'] = stubs['javax/microedition/lcdui/Form.java'].replace(
         'public void setItemStateListener',
@@ -69,6 +72,11 @@ public class Graphics {
  public void drawImage(Image i,int x,int y,int flags){}public void fillRect(int x,int y,int w,int h){}
  public void drawRect(int x,int y,int w,int h){}public void drawLine(int x,int y,int xx,int yy){}
 }'''
+    return stubs
+
+
+def run(work, classes):
+    stubs = make_lock_stubs()
     cp = os.pathsep.join(str(p) for p in [classes, *sorted((work/'wtk/lib').glob('*.jar'))])
     with tempfile.TemporaryDirectory(prefix='tmm-pin-') as temp:
         directory = Path(temp); resources = directory/'resources'; resources.mkdir()

@@ -112,12 +112,25 @@ public final class ClientVibrationTest {
         System.out.println("PASS: queued MainThread sends all six durations in both lock states; off makes no motor call; profiles independent, reading/burst/message gates preserved");
     }
     public static void main(String[] args)throws Exception {
-        try{migration();preferences();delivery();}
+        try{migration();preferences();delivery();coverDelivery();}
         finally{
             Jimm.getTimerRef().cancel();
             TimerTask hint=(TimerTask)field(SplashCanvas.class,"t1").get(null);if(hint!=null)hint.cancel();
             Timer timer=(Timer)field(SplashCanvas.class,"t2").get(null);if(timer!=null)timer.cancel();
             Object canvas=field(DrawControls.VirtualList.class,"virtualCanvas").get(null);((Timer)field(canvas.getClass(),"repeatTimer").get(canvas)).cancel();
         }
+    }
+
+    static void coverDelivery()throws Exception {
+        defaults();Options.setLong(Options.OPTION_AUTOLOCK_MINUTES,0);
+        Options.setLong(Options.OPTION_VIBRA_UNLOCKED_MS,100);
+        Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,1500);
+        ContactList.reading=false;ContactList.lastAlertAllowed=true;ContactList.accepted=true;
+        com.vodafone.system.DeviceControl.state=0;FlipState.poll();expect(100);
+        com.vodafone.system.DeviceControl.state=1;FlipState.poll();
+        check(!SplashCanvas.locked(),"closed vibration required keylock");expect(1500);
+        Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,0);quiet();
+        com.vodafone.system.DeviceControl.state=0;FlipState.poll();expect(100);
+        System.out.println("PASS: closed cover immediately uses locked vibration before keylock, including off; open restores unlocked duration");
     }
 }

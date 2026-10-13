@@ -357,6 +357,7 @@ public class Jimm extends MIDlet
 	public void destroyApp(boolean unconditional)
 			throws MIDletStateChangeException
 	{
+		JimmUI.stopTaskForTimeString();
 		// Disconnect
 		Icq.disconnect(false);
 

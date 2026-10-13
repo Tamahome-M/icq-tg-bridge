@@ -60,6 +60,13 @@ fi
 
 
 say "Настройки сборки"
+# Vendor API signatures are a library, never application classes. Loading the
+# small adapter is optional at runtime, so phones without Vodafone still start.
+rm -rf vendor-stubs && mkdir -p vendor-stubs
+javac -encoding UTF-8 -source 1.3 -target 1.1 -Xlint:-options \
+    -bootclasspath "$WORK/wtk/lib/cldcapi11.jar" -d vendor-stubs \
+    "$HERE/stubs/com/vodafone/system/DeviceControl.java"
+jar cf wtk/lib/tmm-vendor-stubs.jar -C vendor-stubs .
 rm -rf src && mkdir src && cp -r "$HERE/src" "$HERE/res" "$HERE/util" "$HERE/build.xml" "$HERE/COPYING" src/
 # Версия одна на всё: номер из VERSION и дата сборки. Номер идёт в
 # MIDlet-Version (телефон различает сборки по нему), «номер.дата» — в

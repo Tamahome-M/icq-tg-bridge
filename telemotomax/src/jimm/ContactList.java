@@ -1498,7 +1498,8 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	// require recent key activity as well.
 	static public boolean readingChat(String uin)
 	{
-		return ChatHistory.chatHistoryShown(uin) && VirtualList.idleMillis() < READING_IDLE_MS;
+		return !FlipState.notificationLocked() && ChatHistory.chatHistoryShown(uin)
+				&& VirtualList.idleMillis() < READING_IDLE_MS;
 	}
 	private static final long READING_IDLE_MS = 20 * 1000L;
 
@@ -1786,7 +1787,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			if (notType == SOUND_TYPE_MESSAGE)
 			{
 				// Take one lock-state snapshot so mode, file and volume agree.
-				boolean locked = SplashCanvas.locked();
+				boolean locked = FlipState.notificationLocked();
 				mode = locked ? Options.getInt(Options.OPTION_MESS_NOTIF_MODE)
 						: (int) Options.getLong(Options.OPTION_MESS_UNLOCKED_MODE);
 				volume = locked ? Options.getInt(Options.OPTION_MESS_NOTIF_VOL)

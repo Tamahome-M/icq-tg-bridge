@@ -109,7 +109,7 @@ public final class NotificationProfilesTest {
         System.out.println("PASS: real MP3 resource selection, lock profiles, captured queued volume, silence/beep and typing volume");
     }
     public static void main(String[] args) throws Exception {
-        try{migration();menu();playback(args[0]);burst(args[0]);}
+        try{migration();menu();playback(args[0]);burst(args[0]);coverPlayback(args[0]);}
         finally{Jimm.getTimerRef().cancel();Timer timer=(Timer)field(ContactList.class,"soundTimer").get(null);if(timer!=null)timer.cancel();}
     }
 
@@ -130,5 +130,29 @@ public final class NotificationProfilesTest {
         check(!field(ContactList.class,"playerFree").getBoolean(null),"stale player event released the new sound");
         active.finish();check(field(ContactList.class,"playerFree").getBoolean(null),"finished alert remains busy");
         System.out.println("PASS: 300-message alert burst stays bounded, captures latest locked profile, watchdog advances queue; old player events ignored");
+    }
+
+    static void coverPlayback(String dir) throws Exception {
+        defaults();SplashCanvas.unlock(false);Options.setBoolean(Options.OPTION_DISPLAY_DATE,false);
+        Options.setInt(Options.OPTION_MESS_NOTIF_VOL,80);Options.setLong(Options.OPTION_MESS_UNLOCKED_VOL,20);
+        Options.setLong(Options.OPTION_AUTOLOCK_MINUTES,0);
+        com.vodafone.system.DeviceControl.state=0;FlipState.poll();
+        ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);sound(dir,"msg_low.mp3",20);last().finish();
+        com.vodafone.system.DeviceControl.state=1;FlipState.poll();
+        check(!SplashCanvas.locked() && FlipState.notificationLocked(),"closed alerts require actual keylock");
+        ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);sound(dir,"message.mp3",80);last().finish();
+        check(!ContactList.readingChat("123456"),"closed chat suppresses alert as being read");
+        int count=Manager.started.size();Options.setInt(Options.OPTION_MESS_NOTIF_MODE,0);
+        ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);check(count==Manager.started.size(),"closed profile silence ignored");
+        Options.setInt(Options.OPTION_MESS_NOTIF_MODE,1);ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);
+        check(Manager.toneVolume==80,"closed beep uses unlocked volume");
+        Options.setInt(Options.OPTION_MESS_NOTIF_MODE,2);com.vodafone.system.DeviceControl.state=0;FlipState.poll();
+        ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);sound(dir,"msg_low.mp3",20);last().finish();
+        com.vodafone.system.DeviceControl.state=1;FlipState.poll();Options.setBoolean(Options.OPTION_SILENT_MODE,true);
+        count=Manager.started.size();int tones=Manager.toneCount;
+        ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);
+        check(count==Manager.started.size() && tones==Manager.toneCount,"closed cover bypasses global silence");
+        com.vodafone.system.DeviceControl.state=0;FlipState.poll();
+        System.out.println("PASS: physical cover uses locked MP3/mode/volume immediately, including keylock disabled; open restores quiet profile; silence/beep/global mute and closed reading gate");
     }
 }

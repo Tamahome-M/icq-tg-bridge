@@ -12,10 +12,12 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root))
 from tests.test_client_performance import make_stubs
+from tests.test_client_flip import VENDOR_STUB
 
 
 def run(work, classes):
     stubs = make_stubs()
+    stubs['com/vodafone/system/DeviceControl.java'] = VENDOR_STUB
     # Isolate the existing roster/message gates. Vibration decisions and
     # queued delivery use the real MainThread, Options and SplashCanvas.
     stubs['jimm/ContactList.java'] = '''package jimm;

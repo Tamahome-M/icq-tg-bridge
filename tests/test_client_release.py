@@ -253,6 +253,13 @@ class ReleaseTests(unittest.TestCase):
         (self.source / "telemotomax/dist/TeleMotoMax.jar").write_bytes(b"local build")
         release.validate_manifest(self.source, self.manifest)
 
+    def test_vendor_stub_signatures_are_build_inputs(self):
+        folder = self.source / "telemotomax/stubs/com/vodafone/system"
+        folder.mkdir(parents=True)
+        (folder / "DeviceControl.java").write_text("// changed vendor signatures\n")
+        with self.assertRaises(ValueError):
+            release.validate_manifest(self.source, self.manifest)
+
     def test_wrong_version_missing_pair_and_invalid_sizes(self):
         for mutation in (
             lambda data: data.update(version="1.16"),

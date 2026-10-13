@@ -46,6 +46,26 @@ import DrawControls.device.Device;
 
 public class SplashCanvas extends Canvas implements CommandListener
 {
+	private static Object flipReturnScreen;
+	private static boolean flipLocked;
+
+	public static synchronized void deferFlipScreen(JimmScreen screen)
+	{
+		// A hidden media download can finish while keylocked. Return to its
+		// actual next screen rather than retaining a closed media canvas.
+		if (flipReturnScreen != null) flipReturnScreen = screen;
+	}
+
+	/** Remember native editors/forms and media when the cover timeout locks. */
+	public static synchronized void lockAfterFlip()
+	{
+		if (isLocked) return;
+		Displayable previous = Jimm.display.getCurrent();
+		flipReturnScreen = previous != _this && !(previous instanceof Alert)
+				&& !VirtualList.isListScreen(previous) ? previous : null;
+		flipLocked = true;
+		lock();
+	}
 	static private SplashCanvas _this;
 
 	public final static Command 
@@ -272,13 +292,16 @@ public class SplashCanvas extends Canvas implements CommandListener
 	// Disable keylock
 	static public synchronized void unlock(boolean showContactList)
 	{
-		if (!isLocked || pinLocked())
+		if (!isLocked || pinLocked() || flipLocked)
 			return;
 		finishUnlock();
 	}
 
 	private static void finishUnlock()
 	{
+		Object previous = flipReturnScreen;
+		flipReturnScreen = null;
+		flipLocked = false;
 		clearPinInput();
 		poundPressTime = 0;
 		clearKeylockHint();
@@ -297,7 +320,12 @@ public class SplashCanvas extends Canvas implements CommandListener
 			t2 = null;
 		}
 
-		if (_this.isShown()) JimmUI.backToLastScreen();
+		if (_this.isShown())
+		{
+			if (previous instanceof JimmScreen) ((JimmScreen)previous).activate();
+			else if (previous != null) Jimm.display.setCurrent((Displayable)previous);
+			else JimmUI.backToLastScreen();
+		}
 	}
 
 	// Is the screen locked?
@@ -477,7 +505,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 		if ((poundPressTime != 0)
 				&& ((System.currentTimeMillis() - poundPressTime) > 900))
 		{
-			unlock(true);
+			finishUnlock();
 			poundPressTime = 0;
 		}
 	}
@@ -738,10 +766,9 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 		resetLastTask();
 
-		// Reconnecting while PIN-locked must not bypass authentication.
-		if (!pinLocked())
+		// Reconnection progress must retain PIN and cover keylocks.
+		if (!isLocked)
 		{
-			isLocked = false;
 			clearPinInput();
 		}
 

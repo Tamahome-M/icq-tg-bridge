@@ -31,7 +31,7 @@ MAX_FILE = 16 * 1024 * 1024
 MAX_JSON = 128 * 1024
 # These are the inputs copied by build.sh and the existing signing identity.
 # Build output, documentation and publication scripts do not change the client.
-INPUTS = ("src", "res", "util", "build.xml", "build.properties", "COPYING",
+INPUTS = ("src", "res", "stubs", "util", "build.xml", "build.properties", "COPYING",
           "VERSION", "preverify", "sign.sh", "sign-keys")
 
 
