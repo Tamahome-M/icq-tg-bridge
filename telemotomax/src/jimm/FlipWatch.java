@@ -1,8 +1,6 @@
 /* TeleMotoMax: experimental flip inference, journal only. */
 package jimm;
 
-import javax.microedition.lcdui.Displayable;
-
 public final class FlipWatch
 {
 	private static final int UNKNOWN = 0, OPEN = 1, CLOSED = 2,
@@ -10,22 +8,31 @@ public final class FlipWatch
 	private static int state;
 	private static long lastTick, waitingSince;
 	private static boolean expected;
+	private static boolean reportPending;
+	private static String pendingReason;
+	private static long pendingSilence;
 	private static final long SILENCE = 30000, MAX_TICK_GAP = 25000;
 
 	// The existing ten-second timer must actually keep running. A long
 	// pause of the whole VM is insufficient evidence of a closed flip.
-	public static synchronized void tick(long now)
+	public static void tick(long now)
 	{
-		if (state == BACKGROUND) return;
-		if (lastTick == 0) waitingSince = expected ? now : 0;
-		else if (now < lastTick || now - lastTick > MAX_TICK_GAP)
+		synchronized (FlipWatch.class)
 		{
-			change(TIMER_GAP, "задержка таймера", Math.max(0, now - lastTick));
-			waitingSince = expected ? now : 0;
+			if (state != BACKGROUND)
+			{
+				if (lastTick == 0) waitingSince = expected ? now : 0;
+				else if (now < lastTick || now - lastTick > MAX_TICK_GAP)
+				{
+					change(TIMER_GAP, "задержка таймера", Math.max(0, now - lastTick));
+					waitingSince = expected ? now : 0;
+				}
+				lastTick = now;
+				if (expected && state != CLOSED && now - waitingSince >= SILENCE)
+					change(CLOSED, null, now - waitingSince);
+			}
 		}
-		lastTick = now;
-		if (expected && state != CLOSED && now - waitingSince >= SILENCE)
-			change(CLOSED, null, now - waitingSince);
+		report();
 	}
 
 	public static void expectUI() { expectUI(System.currentTimeMillis()); }
@@ -74,8 +81,30 @@ public final class FlipWatch
 	{
 		if (state == next) return;
 		state = next;
-		// Logging is optional: even an OOM here must not interrupt keys,
-		// queued messages or the timer. Normal ticks/callbacks allocate nothing.
+		// Callbacks also run during cold startup, under native UI locks.
+		// Only record evidence here; no journal, settings or display calls.
+		pendingReason = reason;
+		pendingSilence = silence;
+		reportPending = true;
+	}
+
+	// The existing timer starts after initialization. Coalesce transitions
+	// between its ticks and never hold our monitor while writing the journal.
+	static void report()
+	{
+		int next;
+		String reason;
+		long silence;
+		synchronized (FlipWatch.class)
+		{
+			if (!reportPending) return;
+			next = state;
+			reason = pendingReason;
+			silence = pendingSilence;
+			pendingReason = null;
+			reportPending = false;
+		}
+		// Optional logging must not interrupt the timer even after an OOM.
 		try
 		{
 			String message;
@@ -86,8 +115,6 @@ public final class FlipWatch
 				message = (next == OPEN ? "флип? открыт: " : "флип? неизвестно: ") + reason;
 				if (silence > 0) message += " (" + (silence / 1000) + " с)";
 			}
-			Displayable screen = Jimm.display == null ? null : Jimm.display.getCurrent();
-			message += screen == null ? "; экрана нет" : screen.isShown() ? "; isShown=да" : "; isShown=нет";
 			ConnLog.note(message);
 		}
 		catch (Throwable ignore) {}
