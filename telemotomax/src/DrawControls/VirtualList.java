@@ -71,16 +71,12 @@ class VirtualCanvas extends Canvas implements Runnable
 	
 	protected void paint(Graphics g)
 	{
-		jimm.FlipWatch.uiAlive("отрисовка списка");
-		if (jimm.SplashCanvas.locked()) { jimm.SplashCanvas.applyAutoLock(); return; }
 		if (currentControl != null) currentControl.paint(g);
 	}
 	
 	protected void showNotify()
 	{
-		jimm.FlipWatch.uiAlive("showNotify списка");
 		cancelKeyRepeatTask();
-		if (jimm.SplashCanvas.locked()) { jimm.SplashCanvas.applyAutoLock(); return; }
 		//#sijapp cond.if target="MIDP2" | target="MOTOROLA" | target="SIEMENS2"#
 		setFullScreenMode(true);
 		//#sijapp cond.elseif target="RIM"#
@@ -108,16 +104,13 @@ class VirtualCanvas extends Canvas implements Runnable
 	{
 		repeatPending = false;
 		if (timerTask == null) return;
-		if (jimm.SplashCanvas.locked()) { jimm.SplashCanvas.applyAutoLock(); cancelKeyRepeatTask(); return; }
-		VirtualList.touch();
+		lastKeyTime = System.currentTimeMillis();
 		currentControl.keyRepeated(lastKeyKode);
 	}
 
 	protected void keyPressed(int keyCode)
 	{
-		jimm.FlipWatch.uiAlive("клавиша");
-		if (jimm.SplashCanvas.dispatchLockedKey(keyCode, true)) { cancelKeyRepeatTask(); return; }
-		VirtualList.touch();
+		lastKeyTime = System.currentTimeMillis();
 		cancelKeyRepeatTask();
 		if (currentControl != null) currentControl.keyPressed(keyCode);
 		lastKeyKode = keyCode;
@@ -135,8 +128,7 @@ class VirtualCanvas extends Canvas implements Runnable
 
 	protected void keyReleased(int keyCode)
 	{
-		if (jimm.SplashCanvas.dispatchLockedKey(keyCode, false)) { cancelKeyRepeatTask(); return; }
-		VirtualList.touch();
+		lastKeyTime = System.currentTimeMillis();
 		if (currentControl != null) currentControl.keyReleased(keyCode);
 		cancelKeyRepeatTask();
 	}
@@ -156,9 +148,7 @@ class VirtualCanvas extends Canvas implements Runnable
 	
 	protected void pointerPressed(int x, int y)
 	{
-		jimm.FlipWatch.uiAlive("касание");
-		if (jimm.SplashCanvas.locked()) { jimm.SplashCanvas.applyAutoLock(); return; }
-		VirtualList.touch();
+		lastKeyTime = System.currentTimeMillis();
 		if (currentControl != null) currentControl.pointerPressed(x, y); 
 	}
 	
@@ -182,13 +172,13 @@ public abstract class VirtualList
 
 	/*! Constant for medium sized font of caption and item text */
 	// Bridge build: a key was pressed on a screen that is not a VirtualCanvas.
-	public static synchronized void touch()
+	public static void touch()
 	{
 		VirtualCanvas.lastKeyTime = System.currentTimeMillis();
 	}
 
 	// Bridge build: milliseconds since the user last pressed a key in Jimm.
-	public static synchronized long idleMillis()
+	public static long idleMillis()
 	{
 		return System.currentTimeMillis() - VirtualCanvas.lastKeyTime;
 	}

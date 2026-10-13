@@ -22,8 +22,7 @@ def run(work, classes):
         'public void schedule(java.util.TimerTask task,long delay,long period){scheduled++;}'
         'public void schedule(java.util.TimerTask task,long delay){scheduled++;}')
     stubs['javax/microedition/lcdui/Display.java'] = stubs['javax/microedition/lcdui/Display.java'].replace(
-        'private Displayable current;', 'public static boolean foreground=true,deferScreens,failScreen;public static int screenChanges;public Displayable pendingScreen;private Displayable current;').replace(
-        'current=d;', 'if(failScreen){failScreen=false;throw new OutOfMemoryError("screen transition");}screenChanges++;if(deferScreens)pendingScreen=d;else current=d;')
+        'private Displayable current;', 'public static boolean foreground=true;private Displayable current;')
     stubs['javax/microedition/lcdui/Canvas.java'] = stubs['javax/microedition/lcdui/Canvas.java'].replace(
         'public void repaint(){}', '''public static boolean threadedRepaint,suspendRepaint;
  public static int repaints,repaintWaits;public static volatile Throwable paintFailure;
@@ -39,10 +38,10 @@ def run(work, classes):
  }
  public void awaitPaint() throws InterruptedException{if(painter!=null){painter.join(1000);if(painter.isAlive())throw new AssertionError("paint never finishes");}}
 ''').replace(
-        'public void serviceRepaints(){}', '''public static boolean forbidRepaintWait;
+        'public void serviceRepaints(){}', '''
  public void serviceRepaints(){
   repaintWaits++;
-  if(forbidRepaintWait||suspendRepaint)throw new AssertionError("wait for suspended repaint");
+  if(suspendRepaint)throw new AssertionError("wait for suspended repaint");
   try{awaitPaint();}catch(InterruptedException failure){throw new AssertionError(failure);}
  }''')
     stubs['javax/microedition/lcdui/Displayable.java'] = stubs['javax/microedition/lcdui/Displayable.java'].replace(

@@ -161,7 +161,6 @@ public class Jimm extends MIDlet
 		// Return if MIDlet has already been initialized
 		if (Jimm.jimm != null)
 		{
-			FlipWatch.resume();
 			ConnLog.note("развёрнуто");
 			// При ошибке возврата из фона открываем главное меню.
 			try { showWorkScreen(); }
@@ -351,7 +350,6 @@ public class Jimm extends MIDlet
 	// журнале «Связь», чтобы было видно, зовёт ли телефон pauseApp вообще.
 	public void pauseApp()
 	{
-		FlipWatch.background();
 		ConnLog.note("pauseApp: в фоне");
 	}
 
@@ -469,7 +467,6 @@ public class Jimm extends MIDlet
 	{
 		if (mini)
 		{
-			FlipWatch.background();
 			// Два способа уйти в фон — какой из них понимает телефон, тот и
 			// сработает: MIDP-овский setCurrent(null) (Sony Ericsson) и
 			// notifyPaused() — «мидлет приостановлен» для системы, при
@@ -488,7 +485,6 @@ public class Jimm extends MIDlet
 			try { if (jimm != null) jimm.notifyPaused(); } catch (Exception ignore) {}
 		} else
 		{
-			FlipWatch.resume();
 			Displayable disp = Jimm.display.getCurrent();
 			// После setCurrent(null) экрана нет вовсе — disp == null.
 			if (disp == null || !disp.isShown()) showWorkScreen();
