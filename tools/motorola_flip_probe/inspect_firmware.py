@@ -89,6 +89,18 @@ def inspect(data):
     result = {"sha256": SNAPSHOT_SHA256, "utf_entries": len(utf), "classes": len(classes),
               "secondary_display_classes": [name for name in classes.values()
                                             if "secondarydisplay" in name.lower()], "targets": []}
+    # Native windows used in the manual ARM/Thumb disassembly of this exact image.
+    # The Vodafone trampoline reaches the same low-level query as SynerJ's getter.
+    result["native_evidence"] = {
+        "synerj_getter_address": "0x1029419c",
+        "vodafone_state_handler_address": "0x1021258c",
+        "vodafone_query_trampoline_target": hex(u32(flash_offset(0x100A6F58))),
+        "windows": {
+            hex(address): data[flash_offset(address):flash_offset(address) + size].hex(" ")
+            for address, size in ((0x1029419C, 42), (0x1021258C, 98),
+                                  (0x100A6F4C, 16))
+        },
+    }
     for offset, name in classes.items():
         if name not in targets:
             continue
