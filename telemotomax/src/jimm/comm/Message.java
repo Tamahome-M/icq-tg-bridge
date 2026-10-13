@@ -70,6 +70,11 @@ public abstract class Message
 	public byte[] getMessageRef() { return messageRef; }
 	public void setMessageRef(byte[] value) { messageRef = value; }
 
+	// Only held until the UI applies it to an unnamed temporary contact.
+	private String senderName;
+	public String getSenderName() { return senderName; }
+	public void setSenderName(String value) { senderName = value; }
+
 	protected boolean offline;
 
 	// Senders UIN (set for both incoming and outgoing messages)

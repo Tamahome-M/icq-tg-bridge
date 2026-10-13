@@ -1527,6 +1527,21 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			 do we have a new temp contact */
 			if (cItem == null)
 				cItem = createTempContact(uin);
+			if (cItem == null) return false;
+
+			// Apply the bridge's name before creating the chat and its first
+			// message header. Keep explicit local/roster aliases; no profile,
+			// server rename or RMS write is needed for a temporary contact.
+			String senderName = message.getSenderName();
+			message.setSenderName(null);
+			String oldName = cItem.getStringValue(ContactItem.CONTACTITEM_NAME);
+			boolean renamed = senderName != null && senderName.length() != 0
+					&& (oldName == null || oldName.length() == 0 || uin.equals(oldName));
+			if (renamed)
+			{
+				cItem.setStringValue(ContactItem.CONTACTITEM_NAME, senderName);
+				ChatHistory.contactRenamed(uin, senderName);
+			}
 
 			/* Add message to chat */
 			boolean wasUnread = cItem.isContainingUnreadMessages();
@@ -1552,7 +1567,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 				gItem.changeMessCount(cItem.isContainingUnreadMessages() ? 1 : -1);
 
 			/* Update tree */
-			contactChanged(cItem, true, false);
+			contactChanged(cItem, true, renamed);
 		}
 		return true;
 	}

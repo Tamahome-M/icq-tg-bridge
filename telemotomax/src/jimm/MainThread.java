@@ -143,6 +143,11 @@ public class MainThread implements Runnable
 			{
 				String text = item instanceof Message ? ((Message)item).getText() : item instanceof String ? (String)item : null;
 				if (text != null) bytes += text.length() * 2;
+				if (item instanceof Message)
+				{
+					String name = ((Message)item).getSenderName();
+					if (name != null) bytes += name.length() * 2;
+				}
 			}
 		}
 		return bytes;
