@@ -48,7 +48,6 @@ public abstract class FlipState
 		if (next == state) return false;
 		closedAt = next == 1 ? System.currentTimeMillis() : 0;
 		state = next;
-		ConnLog.note(next == 1 ? "Крышка: закрыта" : "Крышка: открыта");
 		return true;
 	}
 

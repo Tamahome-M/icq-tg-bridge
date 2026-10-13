@@ -97,6 +97,8 @@ public class Options
 	public static final int OPTION_VIBRA_LOCKED_MS = 196;
 	public static final int OPTION_AUTOLOCK_MINUTES = 197;
 	public static final int OPTION_PING_MISS_LIMIT = 198;
+	public static final int OPTION_DISCONNECT_SOUND = 199;
+	public static final int OPTION_DISCONNECT_VOL = 200;
 	public static final int[] VIBRATION_DURATIONS = {0, 100, 200, 500, 1000, 1500, 2000};
 	public static final int OPTION_CURRENCY           = 6;
 	public static final int OPTION_PRX_SERV           = 8;
@@ -469,6 +471,8 @@ public class Options
 		setString(OPTION_MESS_UNLOCKED_FILE, "msg_low.mp3");
 		setLong(OPTION_MESS_UNLOCKED_MODE, 2);
 		setLong(OPTION_MESS_UNLOCKED_VOL, 50);
+		setLong(OPTION_DISCONNECT_SOUND, 1);
+		setLong(OPTION_DISCONNECT_VOL, 50);
 		setInt(Options.OPTION_TYPING_MODE, 2);
 //#sijapp cond.end#		
 
@@ -1142,6 +1146,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private ChoiceGroup typingNotificationSoundChoice;
 	private Gauge unlockedNotificationSoundVolume;
 	private Gauge typingNotificationSoundVolume;
+	private ChoiceGroup disconnectSoundChoice;
+	private Gauge disconnectSoundVolume;
 	private ChoiceGroup backImgGroup;
 	private ChoiceGroup backImgModeGroup;
 //#sijapp cond.end#
@@ -2372,6 +2378,11 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				.getInt(Options.OPTION_TYPING_VOL) / 10);
 		typingNotificationSoundChoice = createSoundSelector("typing_notify",
 				Options.OPTION_TYPING_FILE, Options.getInt(Options.OPTION_TYPING_MODE), 3);
+		disconnectSoundChoice = new ChoiceGroup(ResourceBundle.getString("disconnect_notification"), Choice.POPUP);
+		addStr(disconnectSoundChoice, "no|disconnect_tone");
+		disconnectSoundChoice.setSelectedIndex(Options.getLong(Options.OPTION_DISCONNECT_SOUND) == 0 ? 0 : 1, true);
+		disconnectSoundVolume = new Gauge(ResourceBundle.getString("volume"), true, 10,
+				(int)Math.max(0, Math.min(100, Options.getLong(Options.OPTION_DISCONNECT_VOL))) / 10);
 
 		unlockedVibrationDuration = createVibrationDuration("vibra_unlocked", Options.OPTION_VIBRA_UNLOCKED_MS);
 		lockedVibrationDuration = createVibrationDuration("vibra_locked", Options.OPTION_VIBRA_LOCKED_MS);
@@ -2387,6 +2398,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		optionsForm.append(lockedVibrationDuration);
 		optionsForm.append(typingNotificationSoundChoice);
 		optionsForm.append(typingNotificationSoundVolume);
+		optionsForm.append(disconnectSoundChoice);
+		optionsForm.append(disconnectSoundVolume);
 		//#sijapp cond.end#
 		
 		//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA" | target is "SIEMENS2"#
@@ -2612,6 +2625,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				unlockedNotificationSoundVolume.getValue() * 10);
 		Options.setInt(Options.OPTION_TYPING_VOL,
 				typingNotificationSoundVolume.getValue() * 10);
+		Options.setLong(Options.OPTION_DISCONNECT_SOUND, disconnectSoundChoice.getSelectedIndex());
+		Options.setLong(Options.OPTION_DISCONNECT_VOL, disconnectSoundVolume.getValue() * 10);
 		//#sijapp cond.end# <===
 
 		//#sijapp cond.if target is "MIDP2" | target is "MOTOROLA" | target is "SIEMENS2"#
@@ -3261,6 +3276,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		typingNotificationSoundChoice = null;
 		unlockedNotificationSoundVolume = null;
 		typingNotificationSoundVolume = null;
+		disconnectSoundChoice = null;
+		disconnectSoundVolume = null;
 		backImgGroup = null;
 		backImgModeGroup = null;
 //#sijapp cond.end#

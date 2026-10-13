@@ -34,8 +34,17 @@ public class Gauge extends Item {
 import java.io.*;
 import java.util.*;
 import javax.microedition.media.control.VolumeControl;
+import javax.microedition.media.control.ToneControl;
 public class Manager {
+ public static final String TONE_DEVICE_LOCATOR="device://tone";
+ public static boolean failToneCreate,noToneControl,failToneSequence;
+ public static Vector tonePlayers=new Vector();
  public static Vector started=new Vector(); public static int toneCount,toneVolume,toneNote,created;
+ public static Player createPlayer(String locator) {
+  created++;if(!TONE_DEVICE_LOCATOR.equals(locator))throw new IllegalArgumentException(locator);
+  if(failToneCreate)throw new OutOfMemoryError("native tone player");
+  Sound p=new Sound(new byte[0],"audio/x-tone-seq");tonePlayers.addElement(p);return p;
+ }
  public static Player createPlayer(InputStream in,String type) throws IOException {
   created++;
   if(in==null)throw new IOException("missing packaged sound");
@@ -43,7 +52,8 @@ public class Manager {
   while((n=in.read(buf))>=0)out.write(buf,0,n);in.close();return new Sound(out.toByteArray(),type);
  }
  public static void playTone(int note,int duration,int volume){toneCount++;toneVolume=volume;toneNote=note;}
- public static class Sound implements Player,VolumeControl {
+ public static class Sound implements Player,VolumeControl,ToneControl {
+  public byte[] sequence;
   public byte[] bytes;public String type;public int volume,state=UNREALIZED;private PlayerListener listener;
   Sound(byte[] bytes,String type){this.bytes=bytes;this.type=type;}
   public void realize(){state=REALIZED;}public void prefetch(){state=PREFETCHED;}
@@ -54,8 +64,12 @@ public class Manager {
   public int getState(){return state;}public long getDuration(){return 1000000;}
   public String getContentType(){return type;}public void setLoopCount(int n){}
   public void addPlayerListener(PlayerListener l){listener=l;}public void removePlayerListener(PlayerListener l){listener=null;}
-  public Control getControl(String name){return name.equals("VolumeControl")?this:null;}
+  public Control getControl(String name){return name.equals("VolumeControl") || (name.equals("ToneControl") && type.equals("audio/x-tone-seq") && !noToneControl)?this:null;}
   public Control[] getControls(){return new Control[]{this};}
+  public void setSequence(byte[] value){
+   if(state!=REALIZED)throw new IllegalStateException("sequence set after prefetch");
+   if(failToneSequence)throw new IllegalArgumentException("native tone sequence");sequence=value;
+  }
   public void setMute(boolean b){}public boolean isMuted(){return false;}
   public int setLevel(int n){volume=n;return n;}public int getLevel(){return volume;}
  }

@@ -96,6 +96,7 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	/* Sound notification typs */
 	public static final int SOUND_TYPE_MESSAGE = 1;
 	public static final int SOUND_TYPE_TYPING = 3;
+	public static final int SOUND_TYPE_DISCONNECT = 4;
 
 	
 	private static long lastLoginTime;
@@ -1688,7 +1689,14 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			playerFree = true;
 //#sijapp cond.end#
 			Player p = createPlayer(fileName);
-			if (p == null) { finishSound(null); return; }
+			if (p == null)
+			{
+				finishSound(null);
+				// Some MIDP runtimes provide single beeps without a tone sequencer.
+				if (Manager.TONE_DEVICE_LOCATOR.equals(fileName))
+					try { Manager.playTone(ToneControl.C4, 500, volume); } catch (Throwable ignore) {}
+				return;
+			}
 			setVolume(p, volume);
 			startPlayer (p);
 		}
@@ -1701,6 +1709,8 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 		{
 			if (!playerFree)
 			{
+				// An incoming message must not replace a pending connection warning.
+				if (!soundQueue.isEmpty() && Manager.TONE_DEVICE_LOCATOR.equals(soundQueue.elementAt(0))) return;
 				// Keep one follow-up alert with the latest profile, not every beep.
 				Integer level;
 				try { level = new Integer(volume); } catch (OutOfMemoryError failure) { return; }
@@ -1724,12 +1734,24 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	/* Creates player for file 'source' */
 	static private Player createPlayer(String source)
 	{
-		Player p = Util.createPlayer(source);
-		if (p == null) return null;
-	
+		Player p = null;
 		try
 		{
+			boolean tones = Manager.TONE_DEVICE_LOCATOR.equals(source);
+			p = tones ? Manager.createPlayer(Manager.TONE_DEVICE_LOCATOR) : Util.createPlayer(source);
+			if (p == null) return null;
 			p.realize();
+			if (tones)
+			{
+				ToneControl control = (ToneControl)p.getControl("ToneControl");
+				if (control == null) throw new MediaException("ToneControl unavailable");
+				// One second: C5, G4, C4. No recording, decoder or extra thread.
+				control.setSequence(new byte[] {
+					ToneControl.VERSION, 1, ToneControl.TEMPO, 30, ToneControl.RESOLUTION, 64,
+					ToneControl.C4 + 12, 8, ToneControl.SILENCE, 2,
+					ToneControl.C4 + 7, 8, ToneControl.SILENCE, 2, ToneControl.C4, 12
+				});
+			}
 			p.prefetch();
 			updateStopTime(p);
 			soundPlayer = p;
@@ -1804,6 +1826,16 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 				volume = Options.getInt(Options.OPTION_TYPING_VOL);
 				file = mode == 2 ? Options.getString(Options.OPTION_TYPING_FILE) : null;
 				tone = ToneControl.C4 + 7;
+			}
+			else if (notType == SOUND_TYPE_DISCONNECT)
+			{
+				if (Options.getLong(Options.OPTION_DISCONNECT_SOUND) == 0) return;
+				long level = Options.getLong(Options.OPTION_DISCONNECT_VOL);
+				if (level <= 0) return;
+				volume = level > 100 ? 100 : (int)level;
+				mode = 2;
+				file = Manager.TONE_DEVICE_LOCATOR;
+				tone = ToneControl.C4;
 			}
 			else return;
 			if (mode == 1)

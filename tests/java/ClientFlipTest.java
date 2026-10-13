@@ -37,6 +37,7 @@ public final class ClientFlipTest {
     static void nativeCover()throws Exception{
         setup();ClientLockTest.ListScreen owner=new ClientLockTest.ListScreen();owner.activate();
         cover(0);check(FlipState.supported() && !FlipState.closed(),"open physical state not detected");
+        check(events()==0,"initial cover state still writes a debug event");
         ClientLockTest.idle(86400000);ClientLockTest.tick();
         check(!SplashCanvas.locked(),"open cover still locks from key inactivity");
         Class f=Class.forName("jimm.OptionsForm");Constructor ctor=f.getDeclaredConstructor();ctor.setAccessible(true);
@@ -44,6 +45,7 @@ public final class ClientFlipTest {
         TextField timeout=(TextField)field(f,"autoLockTextField").get(form);
         check(timeout.getLabel().indexOf("после закрытия")>=0 && timeout.getString().equals("2"),"physical timeout label/default wrong");
         cover(1);check(FlipState.notificationLocked() && !SplashCanvas.locked(),"close does not switch alerts before keylock");
+        check(events()==0,"cover transition still writes a debug event");
         age(119000);ClientLockTest.tick();check(!SplashCanvas.locked(),"closed timer fired early");
         int records=events();int instances=field(vendor(),"instances").getInt(null);
         for(int i=0;i<1000;i++)FlipState.poll();
