@@ -20,6 +20,7 @@ public final class NotificationProfilesTest {
     static void migration() throws Exception {
         javax.microedition.rms.RecordStore.stores.clear();defaults();
         check(Options.getString(Options.OPTION_MESS_UNLOCKED_FILE).equals("msg_low.mp3"),"active default is not quiet");
+        check(Options.getLong(Options.OPTION_DISCONNECT_SOUND)==1 && Options.getLong(Options.OPTION_DISCONNECT_VOL)==50,"disconnect defaults missing");
         for(int mode=0;mode<=2;mode++){
             defaults();Hashtable values=(Hashtable)field(Options.class,"options").get(null);
             for(int id:new int[]{36,193,194})values.remove(new Integer(id));
@@ -56,7 +57,15 @@ public final class NotificationProfilesTest {
         }
         Form screen=(Form)field(c,"optionsForm").get(form);
         int dropdowns=0;for(Object item:screen.items)if(item instanceof ChoiceGroup && ((ChoiceGroup)item).getType()==Choice.POPUP)dropdowns++;
-        check(dropdowns==5,"expected three sound dropdowns and two independent vibration dropdowns");
+        check(dropdowns==6,"expected three message/typing sound dropdowns, disconnect sound and two vibration dropdowns");
+        ChoiceGroup disconnect=choice(form,"disconnectSoundChoice");
+        Gauge disconnectVolume=(Gauge)field(c,"disconnectSoundVolume").get(form);
+        check(disconnect.getType()==Choice.POPUP && disconnect.size()==2 && disconnect.getSelectedIndex()==1 && disconnectVolume.getValue()==5,"disconnect menu/defaults wrong");
+        disconnect.setSelectedIndex(0,true);disconnectVolume.setValue(3);
+        method(c,"readSignalingOptions").invoke(form);Options.save();reload();
+        check(Options.getLong(Options.OPTION_DISCONNECT_SOUND)==0 && Options.getLong(Options.OPTION_DISCONNECT_VOL)==30,"disconnect off/volume not saved");
+        disconnect.setSelectedIndex(1,true);method(c,"readSignalingOptions").invoke(form);Options.save();reload();
+        check(Options.getLong(Options.OPTION_DISCONNECT_SOUND)==1 && Options.getLong(Options.OPTION_DISCONNECT_VOL)==30,"disconnect enabled choice resets volume");
         check(active.getSelectedIndex()==3,"active default selection wrong");
         check(locked.getString(locked.getSelectedIndex()).equals("legacy.wav"),"legacy file discarded by menu");
         for(int activeMode=0;activeMode<2;activeMode++){

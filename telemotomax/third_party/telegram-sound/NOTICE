@@ -7,8 +7,11 @@ https://github.com/telegramdesktop/tdesktop/blob/fd24aff6b15915310e3d38ddacf8e4e
 
 Modified for TeleMotoMax on 2026-10-09: converted to mono MP3,
 22050 Hz, 32 kbit/s, without ID3 or Xing headers.
+Modified on 2026-10-13 for version 1.26: re-encoded from the unmodified
+original with volume=1/20 (amplitude reduced 20 times), keeping the same
+format and filename.
 Output: res/MOTOROLA/sounds/tg.mp3 and res/MIDP2/sounds/tg.mp3.
 Command (run from telemotomax/):
 ffmpeg -i third_party/telegram-sound/msg_incoming.mp3 -map 0:a:0 \
-  -ar 22050 -ac 1 -c:a libmp3lame -b:a 32k -map_metadata -1 \
+  -af volume=1/20 -ar 22050 -ac 1 -c:a libmp3lame -b:a 32k -map_metadata -1 \
   -write_xing 0 -id3v2_version 0 res/MOTOROLA/sounds/tg.mp3

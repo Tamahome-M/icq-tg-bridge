@@ -155,11 +155,21 @@ public class JimmException extends Exception
 		{
 			// Reset comm. subsystem
 
-			boolean diconnFlag = Icq.isDisconnected(); 
-			Icq.disconnect(true);
-			Icq.setDisconnected(diconnFlag);
+			boolean diconnFlag, wasConnected;
+			synchronized (Icq.class)
+			{
+				diconnFlag = Icq.isDisconnected();
+				wasConnected = Icq.isConnected();
+				Icq.disconnect(true);
+				Icq.setDisconnected(diconnFlag);
+				Icq.resetServerCon();
+			}
 
-			Icq.resetServerCon();
+//#sijapp cond.if target isnot "DEFAULT"#
+			// One warning per lost established session, never for login retries.
+			if (wasConnected && !diconnFlag)
+				ContactList.playSoundNotification(ContactList.SOUND_TYPE_DISCONNECT);
+//#sijapp cond.end#
 
 			// Set offline status for all contacts and reset online counters 
 			ContactList.setStatusesOffline();

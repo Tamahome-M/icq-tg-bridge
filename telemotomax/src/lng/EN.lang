@@ -179,6 +179,8 @@
 "mess_format"				"Message format"
 "message_notification"	"Messages: unlocked"
 "message_notification_locked"	"Messages: locked"
+"disconnect_notification"	"Connection lost"
+"disconnect_tone"	"Three notes"
 "message"					"Message"
 "midp_info"					"MIDP info"
 "minimize"					"Minimize"

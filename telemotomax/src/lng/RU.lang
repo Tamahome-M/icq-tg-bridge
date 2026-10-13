@@ -263,6 +263,8 @@
 "mess_format"				"Формат сообщения"
 "message_notification"	"Сообщения: обычный режим"
 "message_notification_locked"	"Сообщения: при блокировке"
+"disconnect_notification"	"Обрыв связи"
+"disconnect_tone"	"Три ноты"
 "message"					"Сообщение"
 "mess_colored_text"			"Раскрашивать текст"
 "midp_info"					"MIDP инфо"
