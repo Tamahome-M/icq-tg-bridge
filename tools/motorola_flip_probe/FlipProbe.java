@@ -35,9 +35,18 @@ public final class FlipProbe extends MIDlet implements CommandListener, Runnable
     private FlipReader reader;
     private boolean pollFlip;
     private int marks;
+    private TextBox logView;
+    private String logText;
+    private String logTitle;
+    private int logOffset;
+    private int logEnd;
+    private boolean copying;
     private final Command mark = new Command("Метка", Command.SCREEN, 1);
     private final Command finish = new Command("Закончить", Command.SCREEN, 2);
     private final Command saved = new Command("Прошлый журнал", Command.SCREEN, 3);
+    private final Command copy = new Command("Копировать", Command.SCREEN, 1);
+    private final Command previous = new Command("Предыдущая часть", Command.SCREEN, 2);
+    private final Command next = new Command("Следующая часть", Command.SCREEN, 3);
     private final Command back = new Command("Назад", Command.BACK, 1);
     private final Command exit = new Command("Выход", Command.EXIT, 9);
     private final Runnable serial = new Runnable() {
@@ -179,11 +188,37 @@ public final class FlipProbe extends MIDlet implements CommandListener, Runnable
     }
 
     private void showLog(String title, String text) {
-        TextBox view = new TextBox(title, text, 12000, TextField.UNEDITABLE);
-        view.addCommand(back);
-        view.addCommand(exit);
-        view.setCommandListener(this);
-        display.setCurrent(view);
+        logText = text;
+        logTitle = title;
+        logOffset = 0;
+        copying = false;
+        // Some phones grant less than the requested capacity. Set text only
+        // after querying it, so neither viewing nor copying silently truncates.
+        logView = new TextBox(title, null, 12000, TextField.UNEDITABLE);
+        logView.addCommand(back);
+        logView.addCommand(exit);
+        logView.setCommandListener(this);
+        showLogPart();
+        display.setCurrent(logView);
+    }
+
+    private void showLogPart() {
+        int capacity = logView.getMaxSize();
+        logEnd = Math.min(logText.length(), logOffset + capacity);
+        String title = copying ? "Копировать: меню" : logTitle;
+        if (logText.length() > capacity)
+            title += " " + (logOffset / capacity + 1) + "/"
+                    + ((logText.length() - 1) / capacity + 1);
+        logView.setTitle(title);
+        // The immutable original stays separate from edits in the native box.
+        logView.setString(logOffset == 0 && logEnd == logText.length()
+                ? logText : logText.substring(logOffset, logEnd));
+        logView.removeCommand(copy);
+        logView.removeCommand(previous);
+        logView.removeCommand(next);
+        if (!copying) logView.addCommand(copy);
+        if (logOffset > 0) logView.addCommand(previous);
+        if (logEnd < logText.length()) logView.addCommand(next);
     }
 
     public void commandAction(Command command, Displayable source) {
@@ -222,8 +257,29 @@ public final class FlipProbe extends MIDlet implements CommandListener, Runnable
             } finally {
                 if (store != null) try { store.closeRecordStore(); } catch (Exception ignored) { }
             }
+        } else if (command == copy && source == logView) {
+            // MIDP has no system clipboard API. An editable native TextBox
+            // exposes the phone's own selection/copy menu, when supported.
+            copying = true;
+            logView.setConstraints(TextField.ANY | TextField.NON_PREDICTIVE);
+            showLogPart();
+        } else if (command == next && source == logView) {
+            logOffset = logEnd;
+            showLogPart();
+        } else if (command == previous && source == logView) {
+            logOffset = Math.max(0, logOffset - logView.getMaxSize());
+            showLogPart();
         } else if (command == back) {
-            display.setCurrent(canvas);
+            if (copying && source == logView) {
+                copying = false;
+                logView.setConstraints(TextField.UNEDITABLE);
+                showLogPart();
+            } else {
+                display.setCurrent(canvas);
+                logView = null;
+                logText = null;
+                logTitle = null;
+            }
         }
     }
 
@@ -235,7 +291,7 @@ public final class FlipProbe extends MIDlet implements CommandListener, Runnable
             graphics.setColor(0xffffff);
             graphics.fillRect(0, 0, getWidth(), getHeight());
             graphics.setColor(0);
-            graphics.drawString("FlipProbe 0.1", 2, 2, Graphics.TOP | Graphics.LEFT);
+            graphics.drawString("FlipProbe 0.1.1", 2, 2, Graphics.TOP | Graphics.LEFT);
             graphics.drawString("Открыто: 30 с", 2, 22, Graphics.TOP | Graphics.LEFT);
             graphics.drawString("Закрыто: 60 с", 2, 42, Graphics.TOP | Graphics.LEFT);
             graphics.drawString("Открыть: 10 с", 2, 62, Graphics.TOP | Graphics.LEFT);
