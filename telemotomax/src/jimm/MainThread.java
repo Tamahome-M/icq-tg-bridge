@@ -233,7 +233,7 @@ public class MainThread implements Runnable
 		case TYPE_ADD_MSG:
 			boolean isChecked = ContactList.addMessage((Message) data[0]);
 //#sijapp cond.if target isnot "DEFAULT"#
-			if (isChecked && !ContactList.readingChat(((Message) data[0]).getSndrUin())
+			if (isChecked && MessageAlerts.allowed() && !ContactList.readingChat(((Message) data[0]).getSndrUin())
 					&& ContactList.lastAlertAllowed) {
 				int duration = Options.vibrationMillis(FlipState.notificationLocked());
 				if (duration > 0) Jimm.display.vibrate(duration);

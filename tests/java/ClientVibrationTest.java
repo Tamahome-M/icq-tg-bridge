@@ -112,7 +112,7 @@ public final class ClientVibrationTest {
         System.out.println("PASS: queued MainThread sends all six durations in both lock states; off makes no motor call; profiles independent, reading/burst/message gates preserved");
     }
     public static void main(String[] args)throws Exception {
-        try{migration();preferences();delivery();coverDelivery();}
+        try{migration();preferences();delivery();coverDelivery();startupQuiet();}
         finally{
             Jimm.getTimerRef().cancel();
             TimerTask hint=(TimerTask)field(SplashCanvas.class,"t1").get(null);if(hint!=null)hint.cancel();
@@ -132,5 +132,18 @@ public final class ClientVibrationTest {
         Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,0);quiet();
         com.vodafone.system.DeviceControl.state=0;FlipState.poll();expect(100);
         System.out.println("PASS: closed cover immediately uses locked vibration before keylock, including off; open restores unlocked duration");
+    }
+
+    static void startupQuiet()throws Exception {
+        defaults();Options.setLong(Options.OPTION_VIBRA_UNLOCKED_MS,100);Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,1500);
+        MessageAlerts.start();int before=ContactList.received;
+        for(int i=0;i<100;i++)quiet();SplashCanvas.lock();quiet();SplashCanvas.unlock(false);
+        com.vodafone.system.DeviceControl.state=1;FlipState.poll();quiet();
+        com.vodafone.system.DeviceControl.state=0;FlipState.poll();
+        check(ContactList.received==before+102,"silent startup drops message dispatch");
+        field(MessageAlerts.class,"quietUntil").setLong(null,System.currentTimeMillis()-1);
+        expect(100);MessageAlerts.start();expect(100);
+        check(Display.queued.isEmpty(),"silenced vibrations replay after expiry");
+        System.out.println("PASS: startup preserves 102 message dispatches without vibration in open/locked/closed states; expiry resumes vibration and repeated start never remutes");
     }
 }

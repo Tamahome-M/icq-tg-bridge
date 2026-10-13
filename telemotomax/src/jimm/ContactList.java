@@ -1552,8 +1552,8 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			SplashCanvas.messageAvailable();
 
 			/* Notify user */
-			lastAlertAllowed = messageAlertGate();
-			if (!treeBuilt) needPlayMessNotif |= true;
+			lastAlertAllowed = MessageAlerts.allowed() && messageAlertGate();
+			if (!treeBuilt && lastAlertAllowed) needPlayMessNotif = true;
 //#sijapp cond.if target isnot "DEFAULT" #
 			else if (!readingChat(uin) && lastAlertAllowed) playSoundNotification(SOUND_TYPE_MESSAGE);
 //#sijapp cond.end #
@@ -1778,6 +1778,8 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	// Play a sound notification
 	static public void playSoundNotification(int notType)
 	{
+		// Drop suppressed notifications before a beep, player, or queue entry.
+		if (notType == SOUND_TYPE_MESSAGE && !MessageAlerts.allowed()) return;
 		synchronized (_this)
 		{
 			if (Options.getBoolean(Options.OPTION_SILENT_MODE)) return;

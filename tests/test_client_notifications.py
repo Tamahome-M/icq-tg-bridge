@@ -35,8 +35,9 @@ import java.io.*;
 import java.util.*;
 import javax.microedition.media.control.VolumeControl;
 public class Manager {
- public static Vector started=new Vector(); public static int toneCount,toneVolume,toneNote;
+ public static Vector started=new Vector(); public static int toneCount,toneVolume,toneNote,created;
  public static Player createPlayer(InputStream in,String type) throws IOException {
+  created++;
   if(in==null)throw new IOException("missing packaged sound");
   ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] buf=new byte[1024];int n;
   while((n=in.read(buf))>=0)out.write(buf,0,n);in.close();return new Sound(out.toByteArray(),type);

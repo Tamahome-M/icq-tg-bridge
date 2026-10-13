@@ -176,6 +176,9 @@ public class Jimm extends MIDlet
 		ImageList.setUseAlpha(Display.getDisplay(this).numAlphaLevels() > 2);
 //#sijapp cond.end#		
 
+		// Silence accumulated incoming messages during the first startup minute.
+		MessageAlerts.start();
+
 		// Save MIDlet reference
 		Jimm.jimm = this;
 		

@@ -109,7 +109,7 @@ public final class NotificationProfilesTest {
         System.out.println("PASS: real MP3 resource selection, lock profiles, captured queued volume, silence/beep and typing volume");
     }
     public static void main(String[] args) throws Exception {
-        try{migration();menu();playback(args[0]);burst(args[0]);coverPlayback(args[0]);}
+        try{migration();menu();playback(args[0]);burst(args[0]);coverPlayback(args[0]);startupQuiet(args[0]);}
         finally{Jimm.getTimerRef().cancel();Timer timer=(Timer)field(ContactList.class,"soundTimer").get(null);if(timer!=null)timer.cancel();}
     }
 
@@ -154,5 +154,34 @@ public final class NotificationProfilesTest {
         check(count==Manager.started.size() && tones==Manager.toneCount,"closed cover bypasses global silence");
         com.vodafone.system.DeviceControl.state=0;FlipState.poll();
         System.out.println("PASS: physical cover uses locked MP3/mode/volume immediately, including keylock disabled; open restores quiet profile; silence/beep/global mute and closed reading gate");
+    }
+
+    static void startupQuiet(String dir) throws Exception {
+        defaults();Options.setBoolean(Options.OPTION_DISPLAY_DATE,false);
+        long before=System.currentTimeMillis();MessageAlerts.start();
+        Field deadline=field(MessageAlerts.class,"quietUntil");long until=deadline.getLong(null);
+        check(until>=before+60000 && until<=System.currentTimeMillis()+60000,"quiet period is not 60 seconds from start");
+        check(!MessageAlerts.allowed(),"startup quiet period not active");MessageAlerts.start();
+        check(until==deadline.getLong(null),"second start/resume restarts quiet period");
+        int players=Manager.created,count=Manager.started.size(),tones=Manager.toneCount;
+        Vector pending=(Vector)field(ContactList.class,"soundQueue").get(null);
+        check(pending.isEmpty(),"previous sound fixture retained queue");
+        for(int mode:new int[]{1,2}){
+            Options.setLong(Options.OPTION_MESS_UNLOCKED_MODE,mode);Options.setInt(Options.OPTION_MESS_NOTIF_MODE,mode);
+            for(int i=0;i<300;i++)ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);
+            SplashCanvas.lock();ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);SplashCanvas.unlock(false);
+            com.vodafone.system.DeviceControl.state=1;FlipState.poll();ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);
+            com.vodafone.system.DeviceControl.state=0;FlipState.poll();
+        }
+        check(players==Manager.created && count==Manager.started.size() && tones==Manager.toneCount && pending.isEmpty(),"startup alerts create/queue/play MP3 or beep");
+        Options.setInt(Options.OPTION_TYPING_MODE,2);ContactList.playSoundNotification(ContactList.SOUND_TYPE_TYPING);
+        check(Manager.toneCount==tones+1,"startup message quiet period also suppressed typing");
+        deadline.setLong(null,System.currentTimeMillis()-1);
+        check(MessageAlerts.allowed(),"alerts remain muted after deadline");MessageAlerts.start();
+        check(MessageAlerts.allowed(),"resume/reconnect restarts expired mute");
+        Options.setLong(Options.OPTION_MESS_UNLOCKED_MODE,2);
+        ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);sound(dir,"msg_low.mp3",50);last().finish();
+        check(count+1==Manager.started.size() && pending.isEmpty(),"silenced burst replays after expiry");
+        System.out.println("PASS: one 60-second startup window; 600+ quiet message alerts allocate/queue no player/beep across open/locked/closed states; typing preserved; expiry restores sound without replay or resume reset");
     }
 }
