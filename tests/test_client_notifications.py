@@ -14,10 +14,12 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root))
 from tests.test_client_ui import STUBS
+from tests.test_client_flip import VENDOR_STUB
 
 
 def run(work, classes):
     stubs = dict(STUBS)
+    stubs['com/vodafone/system/DeviceControl.java'] = VENDOR_STUB
     stubs.pop('jimm/util/ResourceBundle.java')
     stubs['DrawControls/device/Device.java'] = stubs['DrawControls/device/Device.java'].replace(
         'void setBackLightOnTime', 'boolean featureSupported(int n); void setBackLightOnTime')

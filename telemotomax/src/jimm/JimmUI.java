@@ -75,7 +75,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	
 	public static void backToLastScreen()
 	{
-		if (SplashCanvas.pinLocked()) { SplashCanvas.show(); return; }
+		if (SplashCanvas.locked()) { SplashCanvas.show(); return; }
 		synchronized (lastScreens)
 		{
 			if (lastScreens.size() == 0) MainMenu.activateMenu();
@@ -1995,10 +1995,20 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	
 	///////////////////////////////////////////////////////////////////////////
 	
-	// Called in the UI queue by the existing ten-second clock tick.
+	// Called in the UI queue; verify the physical state again before locking.
 	public static void checkAutoLock()
 	{
+		FlipState.poll();
 		if (SplashCanvas.locked()) return;
+		if (FlipState.supported())
+		{
+			if (FlipState.lockDue())
+			{
+				SplashCanvas.lockAfterFlip();
+				ConnLog.note("Крышка: автоблокировка");
+			}
+			return;
+		}
 		int minutes = Options.autoLockMinutes();
 		if (minutes == 0) return;
 		// Native editors/forms, media screens and connection progress are exempt.
@@ -2010,17 +2020,40 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		if (VirtualList.idleMillis() >= minutes * 60000L) SplashCanvas.lock();
 	}
 
-	public static void startTaskForTimeString()
+	private static Timer uiClock;
+
+	private static final class ClockTask extends TimerTask
 	{
-		TimerTask task = new TimerTask() 
+		private long nextClock;
+		public void run()
 		{
-			public void run()
+			try
 			{
-				try { MainThread.showTime(); } catch (Throwable failure) { System.gc(); }
+				boolean changed = FlipState.poll();
+				long now = System.currentTimeMillis();
+				if (changed || now >= nextClock || (!SplashCanvas.locked() && FlipState.lockDue()))
+				{
+					if (now >= nextClock) nextClock = now + 10000L;
+					MainThread.showTime();
+				}
 			}
-		};
-		// Keep the UI/autolock tick independent of a blocked native GPRS write.
-		new Timer().schedule(task, 500, 10000);
+			catch (Throwable failure) { System.gc(); }
+		}
+	}
+
+	public static synchronized void startTaskForTimeString()
+	{
+		stopTaskForTimeString();
+		// Reuse the independent clock timer, without an extra thread. Physical
+		// polling is once a second; ordinary clock/reconnect work stays at 10 s.
+		uiClock = new Timer();
+		uiClock.schedule(new ClockTask(), 500, 1000);
+	}
+
+	public static synchronized void stopTaskForTimeString()
+	{
+		if (uiClock != null) uiClock.cancel();
+		uiClock = null;
 	}
 	
 	///////////////////////////////////////////////////////////////////////////

@@ -238,7 +238,7 @@ Author(s): Manuel Linsmayer, Andreas Rossbacher
 	<target name="compile" depends="preprocess-source">
 		<ant dir="${util/jlft}" inheritAll="false" />
 		<mkdir dir="${build}/compile/classes" />
-		<javac srcdir="${build}/init/src" destdir="${build}/compile/classes" bootclasspath="${midp/lib}" encoding="utf-8" target="1.1" source="1.2" debug="off" />
+		<javac srcdir="${build}/init/src" destdir="${build}/compile/classes" bootclasspath="${midp/lib}${:}${midp}/lib/tmm-vendor-stubs.jar" encoding="utf-8" target="1.1" source="1.2" debug="off" />
 	</target>
 	
 	<!--  Internal target: obfuscate -->
@@ -251,7 +251,12 @@ Author(s): Manuel Linsmayer, Andreas Rossbacher
 			<injar name="${build}/compile/classes" />
 			<outjar name="${build}/obfuscate/classes" />
 			<keep access="public" type="class" extends="javax.microedition.midlet.MIDlet" />
+			<!-- Optional adapter is instantiated by name; retain its constructor. -->
+			<keep access="public" type="class" name="jimm.VodafoneFlipState">
+				<constructor access="public" parameters="" />
+			</keep>
 			<libraryjar path="${midp/lib}" />
+			<libraryjar name="${midp}/lib/tmm-vendor-stubs.jar" />
 		</proguard>
 	</target>
 	

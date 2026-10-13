@@ -625,6 +625,7 @@
 
 "lock_pin"		"Lock PIN (empty: disabled)"
 "auto_lock_minutes"	"Auto lock, min (0: disabled)"
+"flip_lock_minutes"	"Lock after closing cover, min (0: disabled)"
 "auto_lock_format"	"Auto lock: 0–999 minutes. 0 disables it."
 "pin_format"		"Use 4 to 8 digits, or leave empty to disable PIN."
 "pin_enter"		"Enter PIN"

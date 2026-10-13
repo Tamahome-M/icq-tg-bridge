@@ -2244,7 +2244,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 				Options.getString(Options.OPTION_LOCK_PIN), Options.LOCK_PIN_MAX,
 				TextField.NUMERIC | TextField.PASSWORD);
 		optionsForm.append(lockPinTextField);
-		autoLockTextField = new TextField(ResourceBundle.getString("auto_lock_minutes"),
+		autoLockTextField = new TextField(ResourceBundle.getString(FlipState.supported()
+				? "flip_lock_minutes" : "auto_lock_minutes"),
 				String.valueOf(Options.autoLockMinutes()), 3, TextField.NUMERIC);
 		optionsForm.append(autoLockTextField);
 		if (ResourceBundle.langAvailable.length > 1)

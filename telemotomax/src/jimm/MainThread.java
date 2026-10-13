@@ -210,10 +210,11 @@ public class MainThread implements Runnable
 	private static void execureTask(int type, Object[] data) throws JimmException
 	{
 		// Connection completion, warnings and queued Back events must keep
-		// the locked screen until its PIN is entered.
+		// the locked screen until the user unlocks it (PIN or legacy #).
 		if ((type == TYPE_BACK_TO_LAST_SCR || type == TYPE_ACTIVATE_CL || type == TYPE_ACTIVATE_MM || type == TYPE_ACTIVATE_SCREEN)
-				&& SplashCanvas.pinLocked())
+				&& SplashCanvas.locked())
 		{
+			if (type == TYPE_ACTIVATE_SCREEN) SplashCanvas.deferFlipScreen((JimmScreen)data[0]);
 			SplashCanvas.showLockedAlert(type == TYPE_BACK_TO_LAST_SCR || type == TYPE_ACTIVATE_SCREEN ? null : (Alert) data[0]);
 			return;
 		}
@@ -234,7 +235,7 @@ public class MainThread implements Runnable
 //#sijapp cond.if target isnot "DEFAULT"#
 			if (isChecked && !ContactList.readingChat(((Message) data[0]).getSndrUin())
 					&& ContactList.lastAlertAllowed) {
-				int duration = Options.vibrationMillis(SplashCanvas.locked());
+				int duration = Options.vibrationMillis(FlipState.notificationLocked());
 				if (duration > 0) Jimm.display.vibrate(duration);
 			}
 //#sijapp cond.end#			
