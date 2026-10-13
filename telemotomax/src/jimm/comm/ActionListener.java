@@ -40,6 +40,28 @@ import jimm.SplashCanvas;
 
 public class ActionListener
 {
+	// Optional UTF-8 sender name in live/offline message TLVs. Ignore bad
+	// metadata without losing the message, and bound allocations on V3.
+	private static String readSenderName(byte[] buf, int marker)
+	{
+		while (marker + 4 <= buf.length)
+		{
+			int length = Util.getTlvLength(buf, marker, buf.length);
+			if (length < 0) break;
+			if (Util.getWord(buf, marker) == 0x9004 && length > 0 && length <= 256)
+			{
+				String name = Utf8.decode(buf, marker + 4, length);
+				if (name == null) return null;
+				name = name.trim();
+				if (name.length() == 0) return null;
+				for (int i = 0; i < name.length(); i++)
+					if (name.charAt(i) < 32 || name.charAt(i) == 127) return null;
+				return name;
+			}
+			marker += 4 + length;
+		}
+		return null;
+	}
 	/** ************************************************************************* */
 
 	// Forwards received packet
@@ -95,26 +117,20 @@ public class ActionListener
 
 							// Get text length
 							int textLen = Util.getWord(buf, 12, false);
+							if (textLen > buf.length - 14) throw new JimmException(116, 1);
+							String senderName = readSenderName(buf, 14 + textLen);
 
 							// Get text
 							String text = Util.removeCr(Util.byteArrayToString(buf, 14, textLen, Util.isDataUTF8(buf, 14, textLen)));
 
 							// Normal message
 							if (type == 0x0001) {
-								// Check length
-								if (buf.length != 14 + textLen) {
-									throw (new JimmException(116, 1));
-								}
-
 								// Forward message to contact list
 								PlainMessage message = new PlainMessage(uin, Options.getString(Options.OPTION_UIN), Util.gmtTimeToLocalTime(date), text, true);
+								message.setSenderName(senderName);
 								MainThread.addMessageSerially(message);
 							} // URL message
 							else if (type == 0x0004) {
-								if (buf.length != 14 + textLen) {
-									throw (new JimmException(116, 1));
-								}
-
 								// Search for delimiter
 								int delim = text.indexOf(0xFE);
 
@@ -131,6 +147,7 @@ public class ActionListener
 
 								// Forward message message to contact list
 								UrlMessage message = new UrlMessage(uin, Options.getString(Options.OPTION_UIN), Util.gmtTimeToLocalTime(date), url, urlText);
+								message.setSenderName(senderName);
 								MainThread.addMessageSerially(message);
 							}
 						}
@@ -349,6 +366,7 @@ public class ActionListener
 				// body — kind (1 byte) and a 16-byte token of an attached
 				// picture. Plain Jimm never looks past the body, so it is
 				// harmless for it.
+				String senderName = readSenderName(buf, marker);
 				byte[] messageRef = null;
 				byte[] attachToken = null;
 				int attachKind = 0;
@@ -450,6 +468,7 @@ public class ActionListener
 								.createCurrentDate(false), text, false);
 						plainMsg.setAttach(attachToken, attachKind);
 						plainMsg.setMessageRef(messageRef);
+						plainMsg.setSenderName(senderName);
 						MainThread.addMessageSerially(plainMsg);
 					}
 
@@ -626,6 +645,7 @@ public class ActionListener
 						// Forward message object to contact list
 						message.setAttach(attachToken, attachKind);
 						message.setMessageRef(messageRef);
+						message.setSenderName(senderName);
 						MainThread.addMessageSerially(message);
 
 						// Acknowledge message

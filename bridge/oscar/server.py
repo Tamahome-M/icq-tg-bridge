@@ -1120,9 +1120,11 @@ class Session:
                 # Офлайн-сообщение вложение не несёт — такое пусть уйдёт
                 # обычным потоком после пачки, со всеми расширениями.
                 continue
-            for part in _split_text(text, self.server.max_message_chars):
+            sender_name = self.sender_name_tlv(sender)
+            for index, part in enumerate(_split_text(text, self.server.max_message_chars)):
                 await self.send_icq_reply(uin, C.ICQ_OFFLINE_MSG, seq,
-                                          blocks.offline_message(sender, ts, part))
+                                          blocks.offline_message(sender, ts, part)
+                                          + (sender_name if index == 0 else b""))
                 count += 1
             self.server.storage.mark_sent(row_id)
             self.offline_ids.append(row_id)
@@ -1342,6 +1344,23 @@ class Session:
             return text
         return link_text(text, url) if url else text
 
+    def sender_name_tlv(self, uin: int) -> bytes:
+        """Имя временного контакта вместе с сообщением, без запроса профиля.
+
+        item_to_uin — список, выданный именно этому телефону при входе,
+        включая случай повторного использования списка из RMS.
+        """
+        if (self.tmm_version or (0, 0)) < (1, 20) or uin in self.item_to_uin.values():
+            return b""
+        contact = self.server.storage.contact_by_uin(uin)
+        if contact is None:
+            return b""
+        # The client accepts at most 256 UTF-8 bytes. 64 Unicode characters
+        # fit even for four-byte code points; ordinary aliases keep their limit.
+        name = contact.title.replace("\x00", "").replace("\r", " ").replace("\n", " ").strip()
+        name = name[:max(0, min(self.server.alias_max_chars, 64))].strip()
+        return tlv(C.TLV_TMM_SENDER_NAME, name.encode("utf-8")) if name else b""
+
     async def deliver(self, uin: int, text: str, wait_ack: bool = False,
                       row_id: int | None = None, url: str = "", attach: str = "",
                       message_id: int | str = 0) -> bool:
@@ -1367,6 +1386,7 @@ class Session:
         # ничего не добавляем — он получит пометку [фото] в тексте, как и было.
         ref = self.server.message_ref(uin, message_id or (self.server.storage.pending_message_id(row_id) if row_id else 0)) if self.quote_enabled(uin) else b""
         ref_tlv = tlv(C.TLV_TMM_MESSAGE_REF, ref) if ref else b""
+        sender_name = self.sender_name_tlv(uin)
         extra = b""
         if attach and self.extended:
             token = self.server.register_attachment(uin, attach)
@@ -1395,11 +1415,12 @@ class Session:
                 part_url = url if index == len(parts) - 1 else ""
                 body = (cookie + struct.pack(">H", 2) + sender
                         + tlv(0x0005, blocks.channel2_message(cookie, part, part_url))
-                        + tail + ref_tlv)
+                        + tail + ref_tlv + (sender_name if index == 0 else b""))
             else:
                 body = (cookie + struct.pack(">H", 1) + sender
                         + tlv(0x0002, blocks.message_fragments(part))
-                        + tlv(0x0006, b"") + tail + ref_tlv)
+                        + tlv(0x0006, b"") + tail + ref_tlv
+                        + (sender_name if index == 0 else b""))
 
             # Запись считаем доставленной по подтверждению последней части.
             if wait_ack and row_id is not None and index == len(parts) - 1:
