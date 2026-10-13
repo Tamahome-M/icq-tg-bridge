@@ -18,7 +18,8 @@ def run(work, classes):
     stubs = make_stubs()
     stubs['javax/microedition/lcdui/Display.java'] = stubs['javax/microedition/lcdui/Display.java'].replace(
         'queued.addElement(r);', 'if(fail)throw new OutOfMemoryError("UI scheduling");queued.addElement(r);').replace(
-        'public static java.util.Vector queued=', 'public static boolean fail;public static java.util.Vector queued=')
+        'public static java.util.Vector queued=', 'public static boolean fail;public static java.util.Vector queued=').replace(
+        'public Displayable getCurrent()', 'public synchronized Displayable getCurrent()')
     cp = os.pathsep.join(str(p) for p in [classes, *sorted((work/'wtk/lib').glob('*.jar'))])
     with tempfile.TemporaryDirectory(prefix='tmm-flip-test-') as temp:
         directory = Path(temp)

@@ -237,7 +237,8 @@ public class SplashCanvas extends Canvas implements CommandListener
 		VirtualList.setMpbPercent(progress);
 		SplashCanvas.progress = progress;
 		_this.repaint();
-		_this.serviceRepaints();
+		// paint() needs this monitor for pinLocked(). Never wait for it here:
+		// the loading thread and a concurrent MIDP paint would deadlock.
 	}
 
 	// Enable keylock
