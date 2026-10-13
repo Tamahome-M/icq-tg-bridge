@@ -71,18 +71,24 @@ class Bridge:
         self.cfg = cfg
         self.storage = Storage(cfg.db)
         self.telegram = TelegramSide(cfg, self.on_telegram_message, self.on_telegram_status,
-                                     self.on_telegram_typing, self.on_telegram_read)
+                                     self.on_telegram_typing, self.on_telegram_read,
+                                     on_inbox_read=self.on_inbox_read,
+                                     phone_online=lambda: self.oscar.online)
         # Вторая сеть: чаты MAX живут в той же базе под своими номерами и
         # ходят через те же обработчики — по номеру видно, чьё сообщение.
         self.max: MaxSide | None = None
         if cfg.max_enabled:
             self.max = MaxSide(cfg, self.on_telegram_message, self.on_telegram_status,
-                               self.on_telegram_typing, self.on_telegram_read)
+                               self.on_telegram_typing, self.on_telegram_read,
+                               on_inbox_read=self.on_inbox_read,
+                               phone_online=lambda: self.oscar.online)
         # Третья сеть: eXpress, тем же способом — свои номера, общие обработчики.
         self.express: ExpressSide | None = None
         if cfg.express_enabled:
             self.express = ExpressSide(cfg, self.on_telegram_message, self.on_telegram_status,
-                                       self.on_telegram_typing, self.on_telegram_read)
+                                       self.on_telegram_typing, self.on_telegram_read,
+                                       on_inbox_read=self.on_inbox_read,
+                                       phone_online=lambda: self.oscar.online)
         self.oscar = OscarServer(cfg, self.storage, self.on_phone_message,
                                  self.roster, self.status_of, self.chat_info,
                                  self.search_chats, self.verdict_for,
@@ -559,15 +565,16 @@ class Bridge:
 
         cutoff = time.time() - self.cfg.busy_hold_minutes * 60
         delivered = 0
-        for uin, text, ts, message_id, attach in rows:
+        for uin, text, ts, message_id, attach, source_ts in rows:
             if ts < cutoff:
                 continue
             contact = self.storage.contact_by_uin(uin)
             if (self.mode != policy.ALL and contact is not None
                     and contact.muted):
                 continue
-            await self.oscar.deliver(uin, text, ts=ts, source_message_id=message_id, attach=attach)
-            delivered += 1
+            if await self.oscar.deliver(uin, text, ts=ts, source_message_id=message_id,
+                                        attach=attach, source_ts=source_ts):
+                delivered += 1
         log.info("после «занят» доставлено %d из %d придержанных (свежее %d минут)",
                  delivered, len(rows), self.cfg.busy_hold_minutes)
 
@@ -1068,6 +1075,8 @@ class Bridge:
                                             favourite=favourite, topic_id=d.topic_id,
                                             muted=int(d.muted))
             self._unread[(d.peer_id, d.topic_id)] = d.unread
+            if getattr(d, "read_inbox", 0):
+                await self.on_inbox_read(d.peer_id, d.read_inbox, d.topic_id)
             if self.avatars is not None:
                 self.avatars.remember(uin, d.photo_id)
             self._statuses[uin] = STATUS_CODES.get(d.status, C.STATUS_ONLINE)
@@ -1152,7 +1161,7 @@ class Bridge:
     async def on_telegram_message(self, peer_id: int, sender: str, text: str,
                                   ts: int = 0, topic_id: int = 0, attach: str = "",
                                   mention: bool = False, always: bool = False,
-                                  message_id: int | str = 0) -> bool:
+                                  message_id: int | str = 0, source_ts: int = 0) -> bool:
         """Возвращает True, если сообщение ушло телефону (или встало в очередь).
 
         По этому Telegram-сторона решает, помечать ли его прочитанным:
@@ -1217,7 +1226,7 @@ class Bridge:
             level = logging.INFO if self.cfg.log_filtered else logging.DEBUG
             if policy.holds(self.mode):
                 self.storage.hold(uin, text, ts or int(time.time()),
-                                  self.cfg.offline_queue_per_chat, message_id, attach)
+                                  self.cfg.offline_queue_per_chat, message_id, attach, source_ts)
                 log.log(level, "из %s: %s — придержано до смены статуса (%s)", net, name, why)
             else:
                 log.log(level, "из %s: %s — не доставляю (%s)", net, name, why)
@@ -1225,12 +1234,13 @@ class Bridge:
             if ts:
                 self.storage.note_delivered(peer_id, ts, topic_id, message_id)
             return False
-        log.info("из %s: %s → в очередь телефону, %d симв.%s%s", net, name, len(text),
-                 ", звонок" if always else ", упоминание" if mention else "",
-                 "" if self.oscar.online else " (телефон не в сети)")
-        log.debug("из %s: %s: %s", net, name, text[:300])
         accepted = await self.oscar.deliver(uin, text, forced=always, ts=ts, attach=attach,
-                                           mention=mention, message_id=message_id)
+                                           mention=mention, message_id=message_id, source_ts=source_ts)
+        if accepted:
+            log.info("из %s: %s → в очередь телефону, %d симв.%s%s", net, name, len(text),
+                     ", звонок" if always else ", упоминание" if mention else "",
+                     "" if self.oscar.online else " (телефон не в сети)")
+            log.debug("из %s: %s: %s", net, name, text[:300])
         # Отмечаем даже то, что легло в очередь: оно уже сохранено в базе,
         # и при следующем запуске догружать его повторно не нужно.
         if accepted and ts:
@@ -1320,6 +1330,18 @@ class Bridge:
             log.debug("%s: в чате %s прочитано до %d", self.network_of(peer_id),
                       self.oscar.name_of(uin), max_id)
             await self.oscar.confirm_read(uin, max_id)
+
+    async def on_inbox_read(self, peer_id: int, mark: int,
+                            topic_id: int | None = None) -> None:
+        """Our incoming messages were read elsewhere while the phone was offline."""
+        if self.oscar.online:
+            return
+        pending, held = self.storage.drop_read_inbox(
+            peer_id, mark, by_id=self._network_key(peer_id) == "telegram", topic_id=topic_id)
+        if pending or held:
+            log.info("%s: прочитано на другом устройстве — убрано из очереди %d, "
+                     "из придержанных %d (чат %s%s)", self.network_of(peer_id),
+                     pending, held, peer_id, f", тема {topic_id}" if topic_id else "")
 
     async def on_phone_privacy(self, uin: int, muted: bool) -> None:
         """Списки видимости в клиенте управляют уведомлениями Telegram.
@@ -1625,7 +1647,7 @@ class Bridge:
                         contact.uin, text, self.cfg.offline_queue_per_chat,
                         forced=message.always, ts=ts, attach=message.attach,
                         mention=message.mention and self.cfg.mentions_through,
-                        message_id=message.message_id):
+                        message_id=message.message_id, source_ts=message.source_ts):
                     continue
                 self.storage.note_delivered(contact.peer_id, ts, contact.topic_id)
                 total += 1

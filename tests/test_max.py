@@ -187,7 +187,8 @@ async def run_side() -> None:
     typing: list = []
     reads: list = []
 
-    async def on_message(peer, sender, text, ts, topic, attach="", message_id=0, mention=False):
+    async def on_message(peer, sender, text, ts, topic, attach="", message_id=0, mention=False,
+                         source_ts=0):
         got.append((peer, sender, text, ts, topic))
         return True
 
@@ -337,14 +338,14 @@ async def run_bridge() -> None:
     queued: list = []
 
     async def deliver(uin, text, forced=False, url="", ts=0, attach="", mention=False,
-                      message_id=0):
+                      message_id=0, source_ts=0):
         queued.append((uin, text))
         return True
 
     bridge.oscar.deliver = deliver
     await fake.handlers["message"](message(60, DIALOG_ID, MOM, "ужин в семь"), fake)
     assert queued == [(titles["Мама Петровна"].uin, "ужин в семь")], queued
-    assert fake.read == [(DIALOG_ID, 60)]
+    assert fake.read == [], "оффлайн-очередь не должна помечаться прочитанной самим мостом"
 
     # Новый чат MAX, которого не было в списке, заводится в группе MAX.
     fake.chats.append(NS(id=4242, type="CHANNEL", participants={}, title="Новости MAX",

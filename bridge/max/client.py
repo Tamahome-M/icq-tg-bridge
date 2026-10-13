@@ -198,12 +198,15 @@ class MaxSide:
                  on_status: Callable[[int, str], Awaitable[None]] | None = None,
                  on_typing: Callable[[int, bool], Awaitable[None]] | None = None,
                  on_read: Callable[[int, int], Awaitable[None]] | None = None,
-                 client=None):
+                 client=None, *, on_inbox_read: Callable[..., Awaitable[None]] | None = None,
+                 phone_online: Callable[[], bool] | None = None):
         self.cfg = cfg
         self.on_message = on_message
         self.on_status = on_status
         self.on_typing = on_typing
         self.on_read = on_read
+        self.on_inbox_read = on_inbox_read
+        self.phone_online = phone_online
         self.client = client              # подмена для проверок
         self.me_id: int = 0
         self._task: asyncio.Task | None = None
@@ -443,7 +446,8 @@ class MaxSide:
                 self.cfg.max_group, position,
                 status=status, unread=int(_attr(chat, "new_messages", 0) or 0),
                 pinned=False, muted=self.is_muted(chat.id),
-                photo_id=zlib.crc32(photo.encode()) if photo else 0))
+                photo_id=zlib.crc32(photo.encode()) if photo else 0,
+                read_inbox=int((_attr(chat, "participants", {}) or {}).get(self.me_id, 0) or 0)))
         log.debug("MAX: получено %d чатов", len(out))
         return out
 
@@ -622,8 +626,10 @@ class MaxSide:
                       if kind in ("photo", "video", "voice", "file") else "")
             shown = await self.on_message(to_peer(chat_id), sender, text, ts, 0, attach=attach,
                                           message_id=_attr(message, "id", 0),
+                                          source_ts=int(_attr(message, "time", 0) or 0),
                                           mention=not mine and self.mentions_me(message))
-            if self.cfg.mark_read and shown and not mine:
+            if (self.cfg.mark_read and shown and not mine
+                    and (self.phone_online is None or self.phone_online())):
                 try:
                     await self.client.read_message(int(message.id), chat_id)
                 except Exception:
@@ -653,15 +659,19 @@ class MaxSide:
         await self.on_status(to_peer(chat_id), presence_name(presence))
 
     async def _on_read(self, event) -> None:
-        if self.on_read is None:
-            return
         chat_id = int(_attr(event, "chat_id", 0) or 0)
         user_id = int(_attr(event, "user_id", 0) or 0)
-        if not chat_id or user_id == self.me_id or _attr(event, "set_as_unread", False):
+        if not chat_id or not user_id or _attr(event, "set_as_unread", False):
+            return
+        mark = int(_attr(event, "mark", 0) or 0)
+        if self.me_id and user_id == self.me_id:
+            if self.on_inbox_read is not None:
+                await self.on_inbox_read(to_peer(chat_id), mark)
             return
         # Отметка прочтения в MAX — время, а не номер сообщения; отправка
         # возвращает время сообщения тем же счётом, так что сравнение сходится.
-        await self.on_read(to_peer(chat_id), int(_attr(event, "mark", 0) or 0))
+        if self.on_read is not None:
+            await self.on_read(to_peer(chat_id), mark)
 
     # --- сообщения ------------------------------------------------------
 
@@ -932,7 +942,8 @@ class MaxSide:
             message_id = _attr(msg, "id", 0)
             kind = media_kind(msg)
             attach = f"{kind}:{message_id}" if kind in ("photo", "video", "voice", "file") else ""
-            out.append(MissedMessage(ts, sender, text, message_id, attach, self.mentions_me(msg)))
+            out.append(MissedMessage(ts, sender, text, message_id, attach, self.mentions_me(msg),
+                                     source_ts=int(_attr(msg, "time", 0) or 0)))
         out.reverse()
         return out
 

@@ -118,12 +118,15 @@ class ExpressSide:
                  on_status: Callable[[int, str], Awaitable[None]] | None = None,
                  on_typing: Callable[[int, bool], Awaitable[None]] | None = None,
                  on_read: Callable[[int, int], Awaitable[None]] | None = None,
-                 client=None):
+                 client=None, *, on_inbox_read: Callable[..., Awaitable[None]] | None = None,
+                 phone_online: Callable[[], bool] | None = None):
         self.cfg = cfg
         self.on_message = on_message
         self.on_status = on_status
         self.on_typing = on_typing
         self.on_read = on_read
+        self.on_inbox_read = on_inbox_read
+        self.phone_online = phone_online
         self.client = client              # подмена для проверок
         self._chats: dict[int, object] = {}        # peer_id -> Chat
         self._threads: dict[tuple[int, int], object] = {}   # (peer_id, topic_id) -> Chat обсуждения
@@ -143,7 +146,8 @@ class ExpressSide:
                                ".venv/bin/playwright install chromium") from exc
         return ExpressClient(self.cfg.express_session, self._on_new_message,
                              on_typing=self._on_typing, on_presence=self._on_presence,
-                             on_read=self._on_read, executable=self.cfg.express_browser,
+                             on_read=self._on_read, on_inbox_read=self._on_inbox_read,
+                             executable=self.cfg.express_browser,
                              trust_ca=list(self.cfg.express_trust_ca),
                              devtools_port=self.cfg.express_devtools_port)
 
@@ -272,7 +276,8 @@ class ExpressSide:
                 status=(presence_name(chat.status, chat.status_changed)
                         if self._kind(chat) == "user" else "online"),
                 unread=chat.unread, pinned=chat.pinned, muted=chat.muted,
-                photo_id=zlib.crc32(chat.avatar.encode()) if chat.avatar else 0))
+                photo_id=zlib.crc32(chat.avatar.encode()) if chat.avatar else 0,
+                read_inbox=chat.inbox_read_at))
         # Обсуждения — отдельными собеседниками в группе с названием чата,
         # как темы форума; мьют берут у чата.
         position = len(out)
@@ -285,7 +290,8 @@ class ExpressSide:
                 self._title(parent)[:self.cfg.alias_max_chars], position,
                 status="online", unread=thread.unread, pinned=False,
                 muted=parent.muted or thread.muted, topic_id=topic,
-                photo_id=zlib.crc32(parent.avatar.encode()) if parent.avatar else 0))
+                photo_id=zlib.crc32(parent.avatar.encode()) if parent.avatar else 0,
+                read_inbox=thread.inbox_read_at))
             position += 1
         log.debug("eXpress: получено %d чатов и %d обсуждений", len(self._chats), len(self._threads))
         return out
@@ -399,8 +405,10 @@ class ExpressSide:
             shown = await self.on_message(peer, sender, text, int(message.ts), topic,
                                           attach=f"{kind}:{number}" if kind else "",
                                           mention=message.mentions_me, always=bool(message.call),
-                                          message_id=message.id)
-            if self.cfg.mark_read and shown and not message.outgoing:
+                                          message_id=message.id,
+                                          source_ts=message.sent_mark or int(message.ts * 1000))
+            if (self.cfg.mark_read and shown and not message.outgoing
+                    and (self.phone_online is None or self.phone_online())):
                 await self.client.mark_read(message.chat_id)
         except Exception:
             log.exception("ошибка обработки входящего сообщения eXpress")
@@ -415,6 +423,17 @@ class ExpressSide:
         возвращает время сообщения тем же счётом, так что сравнение сходится."""
         if self.on_read is not None and chat_peer(chat_id) in self._chats:
             await self.on_read(chat_peer(chat_id), at)
+
+    async def _on_inbox_read(self, chat_id: str, at: int) -> None:
+        if self.on_inbox_read is None:
+            return
+        where = self._locate(chat_id)
+        if where is None:
+            await self._all_chats()
+            where = self._locate(chat_id)
+        if where is not None:
+            peer, topic = where
+            await self.on_inbox_read(peer, at, topic)
 
     async def _on_presence(self, huid: str, status: str, changed: float) -> None:
         """Присутствие приходит по человеку, а контакт у нас — личный чат с ним."""
@@ -621,7 +640,8 @@ class ExpressSide:
             out.append(MissedMessage(
                 int(message.ts), "" if private else (message.sender_name or "?"), text,
                 message.id, f"{kind}:{number}" if kind else "",
-                message.mentions_me, bool(message.call)))
+                message.mentions_me, bool(message.call),
+                message.sent_mark or int(message.ts * 1000)))
         out.reverse()
         return out
 

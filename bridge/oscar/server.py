@@ -2343,7 +2343,8 @@ class OscarServer:
 
     async def deliver(self, uin: int, text: str, forced: bool = False,
                       url: str = "", ts: int = 0, attach: str = "", mention: bool = False,
-                      message_id: int | str = 0, source_message_id: int | str | None = None) -> bool:
+                      message_id: int | str = 0, source_message_id: int | str | None = None,
+                      source_ts: int = 0) -> bool:
         """Принимает сообщение к доставке.
 
         Пишем в очередь и будим отправителя. Ждать подтверждения прямо здесь
@@ -2354,7 +2355,7 @@ class OscarServer:
         текущего статуса и избранного.
         """
         if not self.storage.queue(uin, text, self.cfg.offline_queue_per_chat,
-                                  forced, url, ts, attach, mention, message_id, source_message_id):
+                                  forced, url, ts, attach, mention, message_id, source_message_id, source_ts):
             return False
         self.wake_sender()
         return True
@@ -2561,10 +2562,11 @@ class OscarServer:
         for row_id, uin, text, ts, forced, url, attach, mention in self.storage.peek_pending():
             verdict = "send" if forced else self.verdict_for(uin, mention)
             if verdict != "send":
-                message_id = self.storage.pending_message_id(row_id)
+                message_id, source_ts = self.storage.pending_source(row_id)
                 self.storage.drop_pending(row_id)
                 if verdict == "hold":
-                    self.storage.hold(uin, text, ts, self.cfg.offline_queue_per_chat, message_id, attach)
+                    self.storage.hold(uin, text, ts, self.cfg.offline_queue_per_chat,
+                                      message_id, attach, source_ts)
                 skipped += 1
                 continue
             keep.append((row_id, uin, text, ts, url, attach))

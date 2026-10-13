@@ -107,6 +107,13 @@ class Storage:
                 k TEXT PRIMARY KEY,
                 v TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS inbox_reads (
+                peer_id  INTEGER NOT NULL,
+                topic_id INTEGER NOT NULL,
+                mark     INTEGER NOT NULL,
+                by_id    INTEGER NOT NULL,
+                PRIMARY KEY (peer_id, topic_id)
+            );
             CREATE TABLE IF NOT EXISTS quote_sources (
                 uin INTEGER NOT NULL,
                 ref INTEGER NOT NULL,
@@ -193,6 +200,9 @@ class Storage:
             columns = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}
             if "message_id" not in columns:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN message_id TEXT NOT NULL DEFAULT ''")
+            if "source_ts" not in columns:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN source_ts INTEGER NOT NULL DEFAULT 0")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS held_uin ON held(uin)")
         held_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(held)")}
         if "attach" not in held_columns:
             self.conn.execute("ALTER TABLE held ADD COLUMN attach TEXT NOT NULL DEFAULT ''")
@@ -426,7 +436,8 @@ class Storage:
 
     def queue(self, uin: int, text: str, limit_per_chat: int, forced: bool = False,
               url: str = "", ts: int = 0, attach: str = "", mention: bool = False,
-              message_id: int | str = 0, source_message_id: int | str | None = None) -> bool:
+              message_id: int | str = 0, source_message_id: int | str | None = None,
+              source_ts: int = 0) -> bool:
         """forced — ответ на команду или звонок: доставляем при любом статусе.
 
         mention — обращение ко мне: обходит мьют, сохраняя ограничения
@@ -435,26 +446,84 @@ class Storage:
         url — ссылка, которую стоит отдать URL-сообщением, а не простым текстом.
         ts — когда сообщение было написано на самом деле: по нему ставится
         метка времени и время в офлайн-пачке. Без него — сейчас.
-        message_id — ID в исходной сети; False в ответе означает повтор.
+        message_id — ID в исходной сети; False означает повтор или уже прочитанное.
+        source_ts — точное время исходного сообщения в миллисекундах для MAX/eXpress.
         """
         ts = int(ts or time.time())
+        source_id = str((message_id if source_message_id is None else source_message_id) or "")
         with self._message_transaction():
             if not self._remember_message(uin, message_id):
                 return False
+            if message_id:
+                self.conn.execute(
+                    "UPDATE contacts SET last_ts = MAX(last_ts, ?) WHERE uin = ?", (ts, uin))
+            if not forced and self._inbox_read(uin, source_id, ts, source_ts):
+                return False
             self.conn.execute(
-                "INSERT INTO pending (uin, text, ts, forced, url, attach, mention, message_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (uin, text, ts, int(forced), url, attach, int(mention), str((message_id if source_message_id is None else source_message_id) or "")),
+                "INSERT INTO pending (uin, text, ts, forced, url, attach, mention, message_id, source_ts) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (uin, text, ts, int(forced), url, attach, int(mention), source_id, source_ts),
             )
             self.conn.execute(
                 "DELETE FROM pending WHERE uin = ? AND id NOT IN ("
                 "  SELECT id FROM pending WHERE uin = ? ORDER BY id DESC LIMIT ?)",
                 (uin, uin, limit_per_chat),
             )
-            if message_id:
-                self.conn.execute(
-                    "UPDATE contacts SET last_ts = MAX(last_ts, ?) WHERE uin = ?", (ts, uin))
         return True
+
+    def _inbox_read(self, uin: int, message_id: str, ts: int, source_ts: int) -> bool:
+        """An offline read may precede a slow incoming event or catch-up result."""
+        if not message_id:
+            return False
+        rows = self.conn.execute(
+            "SELECT r.mark, r.by_id FROM inbox_reads r JOIN contacts c ON c.peer_id=r.peer_id "
+            "WHERE c.uin=? AND (r.topic_id=-1 OR r.topic_id=c.topic_id)", (uin,))
+        for row in rows:
+            if row["by_id"]:
+                if message_id.isascii() and message_id.isdecimal() and 0 < int(message_id) <= row["mark"]:
+                    return True
+            elif (source_ts or ts * 1000 + 999) <= row["mark"]:
+                return True
+        return False
+
+    def drop_read_inbox(self, peer_id: int, mark: int, *, by_id: bool,
+                        topic_id: int | None = None) -> tuple[int, int]:
+        """Drop read source messages, retaining newer entries and forced replies.
+
+        None means the whole peer; a topic marker applies only to that topic.
+        Persist the marker so delayed events and restart catch-up cannot requeue
+        the removed messages. Legacy timestamps have only second precision:
+        the boundary second is retained unless its end is known to be read.
+        """
+        if mark <= 0:
+            return 0, 0
+        topic = -1 if topic_id is None else topic_id
+        with self._message_transaction():
+            self.conn.execute(
+                "INSERT INTO inbox_reads (peer_id, topic_id, mark, by_id) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(peer_id, topic_id) DO UPDATE SET mark=MAX(mark, excluded.mark)",
+                (peer_id, topic, mark, int(by_id)))
+            mark = self.conn.execute(
+                "SELECT mark FROM inbox_reads WHERE peer_id=? AND topic_id=?", (peer_id, topic)).fetchone()[0]
+            recipients = "SELECT uin FROM contacts WHERE peer_id=?"
+            args = [peer_id]
+            if topic_id is not None:
+                recipients += " AND topic_id=?"
+                args.append(topic_id)
+            if by_id:
+                predicate = ("message_id<>'' AND message_id NOT GLOB '*[^0-9]*' "
+                             "AND CAST(message_id AS INTEGER)>0 AND CAST(message_id AS INTEGER)<=?")
+            else:
+                predicate = ("message_id<>'' AND CASE WHEN source_ts>0 THEN source_ts "
+                             "ELSE ts*1000+999 END<=?")
+            removed = []
+            for table in ("pending", "held"):
+                guard = " AND forced=0" if table == "pending" else ""
+                cur = self.conn.execute(
+                    f"DELETE FROM {table} WHERE uin IN ({recipients}){guard} AND {predicate}",
+                    (*args, mark))
+                removed.append(cur.rowcount)
+        return tuple(removed)
 
     def peek_pending(self) -> list[tuple[int, int, str, int, bool, str, str, bool]]:
         """Записи, ожидающие отправки. Уже отправленные, но ещё не
@@ -467,8 +536,11 @@ class Storage:
                  r["attach"], bool(r["mention"])) for r in rows]
 
     def pending_message_id(self, row_id: int) -> str:
-        row = self.conn.execute("SELECT message_id FROM pending WHERE id = ?", (row_id,)).fetchone()
-        return row["message_id"] if row else ""
+        return self.pending_source(row_id)[0]
+
+    def pending_source(self, row_id: int) -> tuple[str, int]:
+        row = self.conn.execute("SELECT message_id, source_ts FROM pending WHERE id = ?", (row_id,)).fetchone()
+        return (row["message_id"], row["source_ts"]) if row else ("", 0)
 
     def mark_sent(self, row_id: int) -> None:
         self.conn.execute("UPDATE pending SET sent_at = ? WHERE id = ?",
@@ -501,9 +573,12 @@ class Storage:
     # --- придержанное на время «занят» ----------------------------------
 
     def hold(self, uin: int, text: str, ts: int, limit_per_chat: int,
-             message_id: int | str = 0, attach: str = "") -> None:
-        self.conn.execute("INSERT INTO held (uin, text, ts, message_id, attach) VALUES (?, ?, ?, ?, ?)",
-                          (uin, text, ts, str(message_id or ""), attach))
+             message_id: int | str = 0, attach: str = "", source_ts: int = 0) -> None:
+        source_id = str(message_id or "")
+        if self._inbox_read(uin, source_id, ts, source_ts):
+            return
+        self.conn.execute("INSERT INTO held (uin, text, ts, message_id, attach, source_ts) VALUES (?, ?, ?, ?, ?, ?)",
+                          (uin, text, ts, source_id, attach, source_ts))
         self.conn.execute(
             "DELETE FROM held WHERE uin = ? AND id NOT IN ("
             "  SELECT id FROM held WHERE uin = ? ORDER BY id DESC LIMIT ?)",
@@ -512,10 +587,10 @@ class Storage:
 
     def take_held(self, with_source: bool = False) -> list[tuple]:
         """Забирает придержанное целиком: что доставить, решает мост."""
-        rows = self.conn.execute("SELECT uin, text, ts, message_id, attach FROM held ORDER BY id").fetchall()
+        rows = self.conn.execute("SELECT uin, text, ts, message_id, attach, source_ts FROM held ORDER BY id").fetchall()
         if rows:
             self.conn.execute("DELETE FROM held")
-        return [(r["uin"], r["text"], r["ts"], r["message_id"], r["attach"]) if with_source
+        return [(r["uin"], r["text"], r["ts"], r["message_id"], r["attach"], r["source_ts"]) if with_source
                 else (r["uin"], r["text"], r["ts"]) for r in rows]
 
     def held_count(self) -> int:

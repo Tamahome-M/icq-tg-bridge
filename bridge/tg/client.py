@@ -51,18 +51,23 @@ class Dialog:
     topic_id: int = 0          # тема форума; 0 — обычный чат
     muted: bool = False        # чат заглушён в Telegram
     photo_id: int = 0          # какая сейчас аватарка; 0 — фото нет
+    read_inbox: int = 0        # own read position: TG message ID, other networks native ms
 
 
 class TelegramSide:
     def __init__(self, cfg, on_message: Callable[[int, str, str, int, int], Awaitable[None]],
                  on_status: Callable[[int, str], Awaitable[None]] | None = None,
                  on_typing: Callable[[int, bool], Awaitable[None]] | None = None,
-                 on_read: Callable[[int, int], Awaitable[None]] | None = None):
+                 on_read: Callable[[int, int], Awaitable[None]] | None = None,
+                 on_inbox_read: Callable[..., Awaitable[None]] | None = None,
+                 phone_online: Callable[[], bool] | None = None):
         self.cfg = cfg
         self.on_message = on_message
         self.on_status = on_status
         self.on_typing = on_typing
         self.on_read = on_read
+        self.on_inbox_read = on_inbox_read
+        self.phone_online = phone_online
         self.client = TelegramClient(
             cfg.tg_session, cfg.tg_api_id, cfg.tg_api_hash,
             device_model=cfg.tg_device_model,
@@ -97,6 +102,9 @@ class TelegramSide:
             self.client.add_event_handler(self._on_user_update, events.UserUpdate)
         if self.on_read is not None:
             self.client.add_event_handler(self._on_read, events.MessageRead(inbox=False))
+        if self.on_inbox_read is not None:
+            self.client.add_event_handler(self._on_inbox_read, events.MessageRead(inbox=True))
+            self.client.add_event_handler(self._on_topic_read, events.Raw(types=types.UpdateReadChannelDiscussionInbox))
         self._handlers_bound = True
 
     async def wait_disconnected(self) -> None:
@@ -158,13 +166,15 @@ class TelegramSide:
                     out.append(Dialog(peer_id, "chat", topic.title or f"Тема {topic.id}",
                                       title[:self.cfg.alias_max_chars], position,
                                       status, topic.unread_count or 0, pinned,
-                                      topic.id, muted, photo_id))
+                                      topic.id, muted, photo_id,
+                                      read_inbox=getattr(topic, "read_inbox_max_id", 0)))
                     position += 1
                 continue
 
             out.append(Dialog(peer_id, kind, title, group, position,
                               status, dialog.unread_count or 0, pinned,
-                              muted=muted, photo_id=photo_id))
+                              muted=muted, photo_id=photo_id,
+                              read_inbox=getattr(getattr(dialog, "dialog", None), "read_inbox_max_id", 0)))
             by_peer.setdefault(peer_id, []).append(out[-1])
             position += 1
         await self._inherit_from_channels(channels, by_peer, own_folder)
@@ -316,6 +326,22 @@ class TelegramSide:
         except Exception:
             log.exception("ошибка обработки отметки о прочтении")
 
+    async def _on_inbox_read(self, event) -> None:
+        if event.contents or self.on_inbox_read is None:
+            # A played voice note is a single content receipt, not a read prefix.
+            return
+        try:
+            await self.on_inbox_read(utils.get_peer_id(event.chat_id), event.max_id)
+        except Exception:
+            log.exception("ошибка обработки собственного прочтения Telegram")
+
+    async def _on_topic_read(self, update) -> None:
+        try:
+            await self.on_inbox_read(utils.get_peer_id(types.PeerChannel(update.channel_id)),
+                                     update.read_max_id, update.top_msg_id)
+        except Exception:
+            log.exception("ошибка обработки прочтения темы Telegram")
+
     async def set_typing(self, peer_id: int, active: bool) -> None:
         """Показывает собеседнику, что владелец набирает сообщение."""
         action = (types.SendMessageTypingAction() if active
@@ -409,7 +435,7 @@ class TelegramSide:
                                           int(event.message.date.timestamp()), topic_id,
                                           attach=attach, message_id=getattr(event.message, "id", 0),
                                           mention=self.mentions_me(event.message))
-            if self.cfg.mark_read and shown:
+            if self.cfg.mark_read and shown and (self.phone_online is None or self.phone_online()):
                 await event.message.mark_read()
         except Exception:
             log.exception("ошибка обработки входящего сообщения")

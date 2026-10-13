@@ -245,7 +245,7 @@ async def run_side() -> None:
     got: list = []
 
     async def on_message(peer, sender, text, ts=0, topic=0, attach="", mention=False,
-                         always=False, message_id=0):
+                         always=False, message_id=0, source_ts=0):
         got.append((peer, sender, text, attach, mention))
         got_topics.append(topic)
         if always:
@@ -463,9 +463,10 @@ async def run_bridge() -> None:
     queue_message = bridge.oscar.deliver
 
     async def deliver(uin, text, forced=False, url="", ts=0, attach="", mention=False,
-                      message_id=0):
+                      message_id=0, source_ts=0):
         queued.append((uin, text))
-        return await queue_message(uin, text, forced, url, ts, attach, mention, message_id)
+        return await queue_message(uin, text, forced, url, ts, attach, mention, message_id,
+                                   source_ts=source_ts)
 
     bridge.oscar.deliver = deliver
     # Заглушённая группа молчит, но упоминание из неё доходит.
