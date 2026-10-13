@@ -116,6 +116,8 @@ public class SplashCanvas extends Canvas implements CommandListener
 
 	// True if keylock has been enabled
 	static private boolean isLocked;
+	// Logical timeout may expire while Motorola holds the UI event queue.
+	static private boolean autoLockPending;
 	// The PIN prompt is always ready; allocate input only for the first digit.
 	static private char[] pinInput;
 	static private int pinLength;
@@ -197,8 +199,9 @@ public class SplashCanvas extends Canvas implements CommandListener
 		return (progress);
 	}
 
-	static public void show()
+	static public synchronized void show()
 	{
+		if (applyAutoLock()) return;
 		if (t2 != null)
 		{
 			t2.cancel();
@@ -241,19 +244,22 @@ public class SplashCanvas extends Canvas implements CommandListener
 	static public synchronized void lock()
 	{
 		SplashCanvas._this.removeCommand(SplashCanvas.cancelCommand);
-		if (isLocked) return;
+		if (isLocked && !autoLockPending) return;
 
 		clearPinInput();
 		poundPressTime = 0;
 		clearKeylockHint();
 		isLocked = true;
 		Jimm.setBkltOn(false);
-		setProgress(0);
+		// Never wait for a repaint with the flip closed (serviceRepaints).
+		progress = 0;
+		VirtualList.setMpbPercent(0);
 		setMessage(ResourceBundle.getString("keylock_enabled"));
 
 		setStatusToDraw(null);
 		
 		Jimm.display.setCurrent(_this);
+		autoLockPending = false;
 		Jimm.setBkltOff();
 
 		if (Options.getBoolean(Options.OPTION_DISPLAY_DATE))
@@ -268,6 +274,31 @@ public class SplashCanvas extends Canvas implements CommandListener
 		
 	}
 
+	static synchronized void deferAutoLock()
+	{
+		if (isLocked) return;
+		isLocked = true;
+		autoLockPending = true;
+	}
+
+	// UI callbacks/resume use this once, before exposing the previous screen.
+	public static synchronized boolean applyAutoLock()
+	{
+		if (!autoLockPending) return false;
+		lock();
+		return true;
+	}
+
+	// setCurrent is asynchronous: old-canvas keys still belong to the lock.
+	public static synchronized boolean dispatchLockedKey(int keyCode, boolean pressed)
+	{
+		if (!isLocked) return false;
+		applyAutoLock();
+		if (pressed) _this.keyPressed(keyCode);
+		else _this.keyReleased(keyCode);
+		return true;
+	}
+
 	// Disable keylock
 	static public synchronized void unlock(boolean showContactList)
 	{
@@ -276,12 +307,13 @@ public class SplashCanvas extends Canvas implements CommandListener
 		finishUnlock();
 	}
 
-	private static void finishUnlock()
+	private static synchronized void finishUnlock()
 	{
 		clearPinInput();
 		poundPressTime = 0;
 		clearKeylockHint();
 		isLocked = false;
+		autoLockPending = false;
 		VirtualList.touch();
 		availableMessages = 0;
 		//#sijapp cond.if target is "RIM"#
@@ -300,12 +332,12 @@ public class SplashCanvas extends Canvas implements CommandListener
 	}
 
 	// Is the screen locked?
-	static public boolean locked()
+	static public synchronized boolean locked()
 	{
 		return (isLocked);
 	}
 
-	public static boolean pinLocked()
+	public static synchronized boolean pinLocked()
 	{
 		String pin = Options.getString(Options.OPTION_LOCK_PIN);
 		return isLocked && pin != null && pin.length() != 0;
@@ -738,10 +770,14 @@ public class SplashCanvas extends Canvas implements CommandListener
 		resetLastTask();
 
 		// Reconnecting while PIN-locked must not bypass authentication.
-		if (!pinLocked())
+		synchronized (SplashCanvas.class)
 		{
-			isLocked = false;
-			clearPinInput();
+			if (!pinLocked())
+			{
+				isLocked = false;
+				autoLockPending = false;
+				clearPinInput();
+			}
 		}
 
 		TimerTasks timerTask = new TimerTasks(action);

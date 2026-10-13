@@ -22,7 +22,11 @@ def run(work, classes):
         'public void schedule(java.util.TimerTask task,long delay,long period){scheduled++;}'
         'public void schedule(java.util.TimerTask task,long delay){scheduled++;}')
     stubs['javax/microedition/lcdui/Display.java'] = stubs['javax/microedition/lcdui/Display.java'].replace(
-        'private Displayable current;', 'public static boolean foreground=true;private Displayable current;')
+        'private Displayable current;', 'public static boolean foreground=true,deferScreens,failScreen;public static int screenChanges;public Displayable pendingScreen;private Displayable current;').replace(
+        'current=d;', 'if(failScreen){failScreen=false;throw new OutOfMemoryError("screen transition");}screenChanges++;if(deferScreens)pendingScreen=d;else current=d;')
+    stubs['javax/microedition/lcdui/Canvas.java'] = stubs['javax/microedition/lcdui/Canvas.java'].replace(
+        'public void serviceRepaints(){}',
+        'public static boolean forbidRepaintWait;public void serviceRepaints(){if(forbidRepaintWait)throw new AssertionError("wait for suspended repaint");}')
     stubs['javax/microedition/lcdui/Displayable.java'] = stubs['javax/microedition/lcdui/Displayable.java'].replace(
         'jimm.Jimm.display.getCurrent()==this', 'jimm.Jimm.display.getCurrent()==this && Display.foreground')
     stubs['javax/microedition/lcdui/TextBox.java'] = '''package javax.microedition.lcdui;
