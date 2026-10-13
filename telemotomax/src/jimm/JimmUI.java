@@ -1995,19 +1995,28 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	
 	///////////////////////////////////////////////////////////////////////////
 	
-	// Called in the UI queue by the existing ten-second clock tick.
+	// Called by the existing ten-second timer, before queuing a UI update.
 	public static void checkAutoLock()
 	{
-		if (SplashCanvas.locked()) return;
-		int minutes = Options.autoLockMinutes();
-		if (minutes == 0) return;
-		// Native editors/forms, media screens and connection progress are exempt.
-		if (!VirtualList.isListScreen(Jimm.display.getCurrent()))
+		synchronized (SplashCanvas.class)
 		{
-			VirtualList.touch();
-			return;
+			if (SplashCanvas.locked()) return;
+			int minutes = Options.autoLockMinutes();
+			if (minutes == 0) return;
+			// Native editors/forms, media screens and connection progress are exempt.
+			if (!VirtualList.isListScreen(Jimm.display.getCurrent()))
+			{
+				VirtualList.touch();
+				return;
+			}
+			synchronized (VirtualList.class)
+			{
+				if (VirtualList.idleMillis() < minutes * 60000L) return;
+				// Set the logical lock now; leave drawing/backlight to the UI.
+				SplashCanvas.deferAutoLock();
+			}
+			ConnLog.note("автоблокировка: простой " + minutes + " мин");
 		}
-		if (VirtualList.idleMillis() >= minutes * 60000L) SplashCanvas.lock();
 	}
 
 	public static void startTaskForTimeString()

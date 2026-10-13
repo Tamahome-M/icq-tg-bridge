@@ -107,6 +107,9 @@ public class MainThread implements Runnable
 						throw failure;
 					}
 				}
+				// A clock tick is replaceable. Never park its timer behind a full
+				// UI queue while the flip is closed; the next tick retries.
+				else if (taskId == TYPE_SHOW_TIME) accepted = true;
 				else if (Thread.currentThread() == uiThread) throw new OutOfMemoryError();
 				schedule = !queueScheduled;
 				if (schedule) queueScheduled = true;
@@ -167,6 +170,9 @@ public class MainThread implements Runnable
 	public void run()
 	{
 		uiThread = Thread.currentThread();
+		try { SplashCanvas.applyAutoLock(); }
+		catch (OutOfMemoryError failure) { System.gc(); }
+		catch (Throwable failure) { failure.printStackTrace(); }
 		// Small batches keep key events responsive; no burst-sized snapshot.
 		for (int i = 0; i < 16; i++)
 		{
@@ -284,7 +290,6 @@ public class MainThread implements Runnable
 				clockMinute = minute;
 				VirtualList.setBottomText(Util.getDateString(true));
 			}
-			JimmUI.checkAutoLock();
 			Threads.checkReconnect();
 			break;
 		case TYPE_RUN:
@@ -438,6 +443,8 @@ public class MainThread implements Runnable
 	
 	static public void showTime()
 	{
+		// The timer keeps running even if Motorola stops UI callbacks.
+		JimmUI.checkAutoLock();
 		addMainThreadTask(TYPE_SHOW_TIME);
 	}
 

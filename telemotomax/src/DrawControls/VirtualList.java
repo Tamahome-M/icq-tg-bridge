@@ -71,12 +71,14 @@ class VirtualCanvas extends Canvas implements Runnable
 	
 	protected void paint(Graphics g)
 	{
+		if (jimm.SplashCanvas.locked()) { jimm.SplashCanvas.applyAutoLock(); return; }
 		if (currentControl != null) currentControl.paint(g);
 	}
 	
 	protected void showNotify()
 	{
 		cancelKeyRepeatTask();
+		if (jimm.SplashCanvas.locked()) { jimm.SplashCanvas.applyAutoLock(); return; }
 		//#sijapp cond.if target="MIDP2" | target="MOTOROLA" | target="SIEMENS2"#
 		setFullScreenMode(true);
 		//#sijapp cond.elseif target="RIM"#
@@ -104,13 +106,15 @@ class VirtualCanvas extends Canvas implements Runnable
 	{
 		repeatPending = false;
 		if (timerTask == null) return;
-		lastKeyTime = System.currentTimeMillis();
+		if (jimm.SplashCanvas.locked()) { jimm.SplashCanvas.applyAutoLock(); cancelKeyRepeatTask(); return; }
+		VirtualList.touch();
 		currentControl.keyRepeated(lastKeyKode);
 	}
 
 	protected void keyPressed(int keyCode)
 	{
-		lastKeyTime = System.currentTimeMillis();
+		if (jimm.SplashCanvas.dispatchLockedKey(keyCode, true)) { cancelKeyRepeatTask(); return; }
+		VirtualList.touch();
 		cancelKeyRepeatTask();
 		if (currentControl != null) currentControl.keyPressed(keyCode);
 		lastKeyKode = keyCode;
@@ -128,7 +132,8 @@ class VirtualCanvas extends Canvas implements Runnable
 
 	protected void keyReleased(int keyCode)
 	{
-		lastKeyTime = System.currentTimeMillis();
+		if (jimm.SplashCanvas.dispatchLockedKey(keyCode, false)) { cancelKeyRepeatTask(); return; }
+		VirtualList.touch();
 		if (currentControl != null) currentControl.keyReleased(keyCode);
 		cancelKeyRepeatTask();
 	}
@@ -148,7 +153,8 @@ class VirtualCanvas extends Canvas implements Runnable
 	
 	protected void pointerPressed(int x, int y)
 	{
-		lastKeyTime = System.currentTimeMillis();
+		if (jimm.SplashCanvas.locked()) { jimm.SplashCanvas.applyAutoLock(); return; }
+		VirtualList.touch();
 		if (currentControl != null) currentControl.pointerPressed(x, y); 
 	}
 	
@@ -172,13 +178,13 @@ public abstract class VirtualList
 
 	/*! Constant for medium sized font of caption and item text */
 	// Bridge build: a key was pressed on a screen that is not a VirtualCanvas.
-	public static void touch()
+	public static synchronized void touch()
 	{
 		VirtualCanvas.lastKeyTime = System.currentTimeMillis();
 	}
 
 	// Bridge build: milliseconds since the user last pressed a key in Jimm.
-	public static long idleMillis()
+	public static synchronized long idleMillis()
 	{
 		return System.currentTimeMillis() - VirtualCanvas.lastKeyTime;
 	}
