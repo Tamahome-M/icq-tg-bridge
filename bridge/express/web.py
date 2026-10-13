@@ -190,6 +190,8 @@ JS_HELPERS = """() => {
     presence: c.opponent ? window.__exPresence(c.opponent.userHuid) : null,
     avatar: c.avatar || c.avatarPreview || (c.opponent ? window.__exAvatar(c.opponent.userHuid) : '') || '',
     readAt: c.readPositionAt || 0,
+    inboxReadAt: window.__exInboxReads ? (window.__exInboxReads.get(c.groupChatId) || 0)
+                                     : (c.positionEventInsertedAt || 0),
     // Обсуждение (тред) — чат с родителем; его номер равен номеру сообщения,
     // под которым оно начато, а само сообщение лежит в starterMessage.
     parent: c.parentChatId || null,
@@ -206,13 +208,19 @@ JS_WATCH = """() => {
   window.__exWatching = true;
   const store = window.__store;
   const key = (e) => e ? [e.syncId, e.editedAt || '', e.deletedAt || ''].join('|') : '';
-  const last = new Map(), read = new Map();
+  const last = new Map(), read = new Map(), inbox = new Map();
+  // Own read position is separate from readPositionAt (other participants).
+  // Keep the last external position for snapshots, too: opening a chat for
+  // bridge history/media itself reads it in the web client.
+  window.__exInboxReads = new Map();
   let prev = store.getState().chats;
   // Список чатов может досинхронизироваться уже после нас: событие старее
   // самого свежего из известных на старте — это история, а не новость.
   let floor = 0;
   for (const c of prev) {
     last.set(c.groupChatId, key(c.lastEvent)); read.set(c.groupChatId, c.readPositionAt || 0);
+    inbox.set(c.groupChatId, c.positionEventInsertedAt || 0);
+    window.__exInboxReads.set(c.groupChatId, c.positionEventInsertedAt || 0);
     floor = Math.max(floor, (c.lastEvent && c.lastEvent.insertedAt) || 0);
   }
   store.subscribe(() => {
@@ -225,6 +233,15 @@ JS_WATCH = """() => {
       if (at > (read.get(c.groupChatId) || 0)) {
         if (read.has(c.groupChatId)) window.__expressEmit(JSON.stringify({watch: 'read', chat: c.groupChatId, at}));
         read.set(c.groupChatId, at);
+      }
+      const ownAt = c.positionEventInsertedAt || 0;
+      if (ownAt > (inbox.get(c.groupChatId) || 0)) {
+        inbox.set(c.groupChatId, ownAt);
+        // The bridge's own open chat must not cancel its offline delivery.
+        if (location.hash !== '#/chats/' + c.groupChatId) {
+          window.__exInboxReads.set(c.groupChatId, ownAt);
+          window.__expressEmit(JSON.stringify({watch: 'inbox-read', chat: c.groupChatId, at: ownAt}));
+        }
       }
       const k = key(c.lastEvent);
       if (last.get(c.groupChatId) === k) continue;
@@ -365,6 +382,7 @@ class Chat:
     starter_sender: str = ""    # и кто его написал
     avatar: str = ""            # ссылка на аватарку как её знает страница; пусто — нет
     read_at: int = 0            # до какого времени (мс) чат прочитан собеседниками
+    inbox_read_at: int = 0      # own read position, excluding bridge UI reads this session
     status: str = ""            # online / offline собеседника личного чата; пусто — неизвестно
     status_changed: float = 0   # когда статус сменился, секунды Unix
     members_count: int = 0
@@ -384,7 +402,8 @@ class ExpressClient:
                  on_presence: Callable[[str, str, float], Awaitable[None]] | None = None,
                  on_read: Callable[[str, int], Awaitable[None]] | None = None,
                  executable: str = "", devtools_port: int = 0,
-                 trust_ca: list[str] | None = None):
+                 trust_ca: list[str] | None = None,
+                 on_inbox_read: Callable[[str, int], Awaitable[None]] | None = None):
         self.profile_dir = profile_dir
         self.trust_ca = list(trust_ca or [])  # сертификаты УЦ, которым верить сверх встроенных
         self.executable = executable        # системный Chromium; пусто — скачанный Playwright
@@ -395,6 +414,7 @@ class ExpressClient:
         # (чат, время в мс): собеседники прочитали всё до этого времени. Счёт
         # тот же, что у Message.sent_mark отправленного сообщения.
         self.on_read = on_read
+        self.on_inbox_read = on_inbox_read
         self.headless = headless
         self.huid = ""
         self.name = ""
@@ -599,6 +619,8 @@ class ExpressClient:
                 "sender": raw.get("sender") or "", "insertedAt": int(time.time() * 1000), "payload": {}})
         elif watch == "read":
             job = self.on_read and self.on_read(raw["chat"], int(raw["at"]))
+        elif watch == "inbox-read":
+            job = self.on_inbox_read and self.on_inbox_read(raw["chat"], int(raw["at"]))
         elif watch == "presence":
             job = self.on_presence and self.on_presence(raw["huid"], raw.get("status") or "",
                                                         (raw.get("changed") or 0) / 1000)
@@ -641,6 +663,7 @@ class ExpressClient:
                                left=row["left"], parent=row["parent"], starter=row["starter"],
                                starter_sender=row["starterSender"],
                                avatar=row["avatar"], read_at=int(row["readAt"]),
+                               inbox_read_at=int(row.get("inboxReadAt") or 0),
                                status=(row["presence"] or {}).get("status") or "",
                                status_changed=((row["presence"] or {}).get("changed") or 0) / 1000,
                                members_count=row["membersCount"], updated=(row["updatedAt"] or 0) / 1000, last=last))

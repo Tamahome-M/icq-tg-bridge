@@ -62,6 +62,7 @@ class MissedMessage(NamedTuple):
     attach: str = ""
     mention: bool = False
     always: bool = False
+    source_ts: int = 0       # exact native milliseconds (MAX/eXpress read position)
 
 
 def parse(text: str) -> Command | None:
