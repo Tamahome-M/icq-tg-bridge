@@ -71,12 +71,14 @@ class VirtualCanvas extends Canvas implements Runnable
 	
 	protected void paint(Graphics g)
 	{
+		jimm.FlipWatch.uiAlive("отрисовка списка");
 		if (jimm.SplashCanvas.locked()) { jimm.SplashCanvas.applyAutoLock(); return; }
 		if (currentControl != null) currentControl.paint(g);
 	}
 	
 	protected void showNotify()
 	{
+		jimm.FlipWatch.uiAlive("showNotify списка");
 		cancelKeyRepeatTask();
 		if (jimm.SplashCanvas.locked()) { jimm.SplashCanvas.applyAutoLock(); return; }
 		//#sijapp cond.if target="MIDP2" | target="MOTOROLA" | target="SIEMENS2"#
@@ -113,6 +115,7 @@ class VirtualCanvas extends Canvas implements Runnable
 
 	protected void keyPressed(int keyCode)
 	{
+		jimm.FlipWatch.uiAlive("клавиша");
 		if (jimm.SplashCanvas.dispatchLockedKey(keyCode, true)) { cancelKeyRepeatTask(); return; }
 		VirtualList.touch();
 		cancelKeyRepeatTask();
@@ -153,6 +156,7 @@ class VirtualCanvas extends Canvas implements Runnable
 	
 	protected void pointerPressed(int x, int y)
 	{
+		jimm.FlipWatch.uiAlive("касание");
 		if (jimm.SplashCanvas.locked()) { jimm.SplashCanvas.applyAutoLock(); return; }
 		VirtualList.touch();
 		if (currentControl != null) currentControl.pointerPressed(x, y); 

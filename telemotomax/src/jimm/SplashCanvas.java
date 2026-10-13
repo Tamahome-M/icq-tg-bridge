@@ -422,6 +422,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 	// Called when a key is pressed
 	protected void keyPressed(int keyCode)
 	{
+		FlipWatch.uiAlive("клавиша");
 		VirtualList.touch();
 //#sijapp cond.if target="MOTOROLA"#
 		Jimm.display.flashBacklight(1000*Options.getInt(Options.OPTION_LIGHT_TIMEOUT));
@@ -527,6 +528,7 @@ public class SplashCanvas extends Canvas implements CommandListener
 	// Render the splash image
 	protected void paint(Graphics g)
 	{
+		FlipWatch.uiAlive("отрисовка блокировки/подключения");
 		// Do we need to draw the splash image?
 		if (g.getClipY() >= this.getHeight() - SplashCanvas.fontHeight - 2) return;
 		

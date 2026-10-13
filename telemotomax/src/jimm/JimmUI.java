@@ -2025,6 +2025,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		{
 			public void run()
 			{
+				FlipWatch.tick(System.currentTimeMillis());
 				try { MainThread.showTime(); } catch (Throwable failure) { System.gc(); }
 			}
 		};
