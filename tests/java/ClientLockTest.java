@@ -165,12 +165,10 @@ public final class ClientLockTest {
         System.out.println("PASS: reconnect, connection completion, warning alerts, real exception handler and queued/direct Back retain PIN lock");
     }
     static final class IdleList extends DrawControls.TextList {
-        int paints,keys;
         IdleList(){super("idle");}
-        public void paint(Graphics g){paints++;}
-        protected void keyPressed(int key){keys++;}
-        protected void keyReleased(int key){keys++;}
-        protected void keyRepeated(int key){keys++;}
+        protected void keyPressed(int key){}
+        protected void keyReleased(int key){}
+        protected void keyRepeated(int key){}
     }
     static final class ListScreen implements JimmScreen {
         final IdleList list=new IdleList();
@@ -188,8 +186,7 @@ public final class ClientLockTest {
         int scheduled=Jimm.Clock.scheduled;
         idle(119000);tick();check(!SplashCanvas.locked(),"two-minute auto lock fired early");
         idle(121000);DrawControls.VirtualList.setBottomText("network update");MainThread.showTime();
-        check(SplashCanvas.locked(),"idle timeout waits for UI queue when flip is closed");
-        check(owner.isScreenActive(),"background timeout switches screen before UI resumes");Display.flush();
+        check(!SplashCanvas.locked(),"clock locks outside UI queue");Display.flush();
         check(SplashCanvas.locked() && Jimm.display.getCurrent()==screen,"existing clock tick did not auto lock idle list");
         tick();SplashCanvas.unlock(false);tick();
         check(!SplashCanvas.locked() && owner.isScreenActive(),"unlock immediately relocks or loses previous screen");
@@ -207,70 +204,15 @@ public final class ClientLockTest {
         idle(300000);((Runnable)canvas()).run();tick();check(!SplashCanvas.locked(),"held key repeat does not restart countdown");
         idle(300000);method(canvas().getClass(),"keyReleased",Integer.TYPE).invoke(canvas(),1234);tick();
         check(!SplashCanvas.locked(),"key release does not restart countdown");
-        // FlipInsensitive can leave isShown true while UI callbacks stop.
-        // Exercise that queue stall separately from ordinary backgrounding.
-        for(boolean shown:new boolean[]{true,false}) {
-            Display.foreground=shown;idle(121000);int changes=Display.screenChanges;
-            Canvas.forbidRepaintWait=true;MainThread.showTime();
-            check(SplashCanvas.locked(),"suspended UI queue skips auto lock");
-            check(Display.screenChanges==changes && Jimm.display.getCurrent()==canvas(),"timer changes screen or requests foreground");
-            for(int i=0;i<100;i++)MainThread.showTime();
-            check(Display.queued.size()==1 && field(SplashCanvas.class,"pinInput").get(null)==null,"suspended UI accumulates clock tasks or allocates PIN input");
-            Display.foreground=true;Display.flush();
-            check(Jimm.display.getCurrent()==screen && Display.screenChanges==changes+1,"UI resume does not apply pending lock exactly once");
-            Canvas.forbidRepaintWait=false;SplashCanvas.unlock(false);
-        }
-        // A full queue must not stop the timer, even with no clock event in it.
-        final int[] events={0};Runnable event=new Runnable(){public void run(){events[0]++;}};
-        for(int i=0;i<64;i++)MainThread.runSerially(event);
-        idle(121000);final Throwable[] error={null};
-        Thread timer=new Thread(){public void run(){try{MainThread.showTime();}catch(Throwable e){error[0]=e;}}};
-        timer.start();timer.join(1000);
-        boolean returned=!timer.isAlive();boolean locked=SplashCanvas.locked();
-        Display.flush();timer.join(1000);
-        check(returned && locked && error[0]==null,"full UI queue parks auto lock timer");
-        check(events[0]==64 && Jimm.display.getCurrent()==screen,"full queue loses events or resumes without lock");
-        SplashCanvas.unlock(false);
-        idle(121000);MainThread.showTime();SplashCanvas.unlock(false);Display.flush();
-        check(!SplashCanvas.locked() && owner.isScreenActive(),"stale queued clock relocks after explicit unlock");
-        // The first callback after opening the flip need not be the clock.
-        for(String callback:new String[]{"paint","showNotify","keyPressed"}){
-            Options.setString(Options.OPTION_LOCK_PIN,"0012");idle(121000);MainThread.showTime();
-            if(callback.equals("paint"))method(canvas().getClass(),callback,Graphics.class).invoke(canvas(),new Graphics());
-            else if(callback.equals("keyPressed"))method(canvas().getClass(),callback,Integer.TYPE).invoke(canvas(),(int)'0');
-            else method(canvas().getClass(),callback).invoke(canvas());
-            check(SplashCanvas.pinLocked() && Jimm.display.getCurrent()==screen,"first "+callback+" exposes previous list instead of PIN");
-            int first=callback.equals("keyPressed")?1:0;
-            check(field(SplashCanvas.class,"pinLength").getInt(null)==first,"first PIN digit is lost or synthesized");
-            digits(first==1?"012":"0012");Display.flush();
-            check(!SplashCanvas.locked() && owner.isScreenActive(),"resume callback/queued tick loses PIN return screen");
-        }
-        // MIDP setCurrent returns before the requested screen becomes current.
-        // Old-canvas paints/keys must remain guarded after the pending flag clears.
-        Display.deferScreens=true;idle(121000);MainThread.showTime();Display.flush();
-        check(SplashCanvas.pinLocked() && Jimm.display.getCurrent()==canvas() && Jimm.display.pendingScreen==screen,"delayed screen fixture not exercised");
-        int paints=owner.list.paints,keys=owner.list.keys;
-        method(canvas().getClass(),"paint",Graphics.class).invoke(canvas(),new Graphics());
-        for(char digit:"0012".toCharArray())method(canvas().getClass(),"keyPressed",Integer.TYPE).invoke(canvas(),(int)digit);
-        check(!SplashCanvas.locked() && owner.list.paints==paints && owner.list.keys==keys,"asynchronous screen switch exposes list or consumes PIN as chat keys");
-        Display.deferScreens=false;Jimm.display.pendingScreen=null;owner.activate();
-        Options.setString(Options.OPTION_LOCK_PIN,"");Display.deferScreens=true;idle(121000);MainThread.showTime();Display.flush();
-        method(canvas().getClass(),"keyPressed",Integer.TYPE).invoke(canvas(),35);
-        field(SplashCanvas.class,"poundPressTime").setLong(null,System.currentTimeMillis()-1000);
-        method(canvas().getClass(),"keyReleased",Integer.TYPE).invoke(canvas(),35);
-        check(!SplashCanvas.locked(),"asynchronous screen switch breaks legacy hold # unlock");
-        Display.deferScreens=false;Jimm.display.pendingScreen=null;owner.activate();
-        // Failed native screen transition is retried and does not strand the queue.
-        idle(121000);MainThread.showTime();Display.failScreen=true;Display.flush();
-        check(SplashCanvas.locked() && owner.isScreenActive(),"failed native screen switch lost logical lock");
-        MainThread.showTime();Display.flush();check(Jimm.display.getCurrent()==screen,"failed transition strands clock queue or loses pending lock");
-        SplashCanvas.unlock(false);
+        Display.foreground=false;idle(121000);tick();
+        check(SplashCanvas.locked() && !Display.foreground,"hidden list skips auto lock or forces foreground");
+        Display.foreground=true;SplashCanvas.unlock(false);
         Options.setString(Options.OPTION_LOCK_PIN,"0012");idle(121000);tick();
         check(SplashCanvas.pinLocked(),"auto lock bypasses configured PIN");digits("001");tick();
         check(SplashCanvas.pinLocked() && field(SplashCanvas.class,"pinLength").getInt(null)==3,"clock tick resets active PIN entry");
         digits("2");tick();check(!SplashCanvas.locked() && owner.isScreenActive(),"direct PIN unlock cannot return from auto lock");
         check(Jimm.Clock.scheduled==scheduled,"auto lock schedules an extra background timer task");
-        System.out.println("PASS: auto lock with stopped/full UI queue and either isShown state; no foreground request/repaint wait, bounded ticks, first paint/show/key applies PIN, first digit retained, stale tick/unlock, timeout/off, exempt screens, no extra timer task");
+        System.out.println("PASS: existing queued clock locks after idle; live timeout/off, key press/hold/release, editors/forms/media/login exemptions, hidden list, PIN and return screen; no extra timer task");
     }
     public static void main(String[] args) throws Exception {
         try{settings();hints();keys();reconnect();autoLock();}

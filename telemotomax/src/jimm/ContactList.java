@@ -1494,8 +1494,8 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 	// Bridge build: the user is reading this very chat right now - it is on
 	// screen and the keys were touched within the last 20 seconds. No point in
 	// a sound or a buzz for a message that is being read as it arrives.
-	// (Screen alone is not enough: with the flip closed the chat stays
-	// "shown", so the idle check tells the two cases apart.)
+	// Screen visibility alone does not show that the user is reading;
+	// require recent key activity as well.
 	static public boolean readingChat(String uin)
 	{
 		return ChatHistory.chatHistoryShown(uin) && VirtualList.idleMillis() < READING_IDLE_MS;

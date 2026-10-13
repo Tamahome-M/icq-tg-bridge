@@ -32,7 +32,7 @@ public class FaultUiTest {
   Display.fail=true;Runnable nothing=new Runnable(){public void run(){}};
   for(int i=0;i<64;i++)MainThread.runSerially(nothing);
   final CountDownLatch finished=new CountDownLatch(1);
-  Thread producer=new Thread(){public void run(){MainThread.runSerially(new Runnable(){public void run(){}});finished.countDown();}};
+  Thread producer=new Thread(){public void run(){MainThread.showTime();finished.countDown();}};
   producer.start();Thread.sleep(30);check(finished.getCount()==1,"queue cap not enforced");
   Display.fail=false;
   long limit=System.currentTimeMillis()+2000;
