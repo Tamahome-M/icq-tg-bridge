@@ -23,9 +23,10 @@ def main():
         if not path.is_file():
             parser.error(f"Missing {path}; first run telemotomax/build.sh with this toolchain directory")
     output.mkdir(parents=True, exist_ok=True)
+    probe_version = Path(__file__).with_name("VERSION").read_text(encoding="utf-8").strip()
     attributes = {
         "MIDlet-Name": "TMM Flip Probe",
-        "MIDlet-Version": "0.1.0",
+        "MIDlet-Version": probe_version,
         "MIDlet-Vendor": "TeleMotoMax",
         "MIDlet-1": "TMM Flip Probe,,FlipProbe",
         "MicroEdition-Configuration": "CLDC-1.1",
