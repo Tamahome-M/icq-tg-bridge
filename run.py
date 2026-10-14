@@ -4,6 +4,7 @@
   python3 run.py login       — один раз войти в аккаунт Telegram
   python3 run.py login max   — один раз войти в аккаунт MAX (если включён)
   python3 run.py login express — один раз войти в аккаунт eXpress (если включён)
+  python3 run.py login taxi  — войти в личный Яндекс Go (если включён)
   python3 run.py             — запустить мост
 """
 
@@ -116,7 +117,8 @@ async def main() -> int:
     from bridge.config import warn_about_permissions
     loose = warn_about_permissions([CONFIG, cfg.tg_session, cfg.db]
                                    + ([cfg.max_session] if cfg.max_enabled else [])
-                                   + ([cfg.express_session] if cfg.express_enabled else []))
+                                   + ([cfg.express_session] if cfg.express_enabled else [])
+                                   + ([cfg.taxi_session] if cfg.taxi_enabled else []))
     for path in loose:
         logging.getLogger("bridge").warning(
             "файл %s доступен другим пользователям — сделайте chmod 600", path)
@@ -126,6 +128,19 @@ async def main() -> int:
     from bridge.config import describe
     for line in describe(cfg):
         logging.getLogger("bridge").info("настройки: %s", line)
+
+    if sys.argv[1:3] == ["login", "taxi"]:
+        if not cfg.taxi_enabled:
+            print("Яндекс Такси выключен: включите [taxi] enabled = true", file=sys.stderr)
+            return 1
+        from bridge.taxi.login import main as taxi_login
+        try:
+            return await taxi_login(cfg)
+        except Exception as exc:
+            # В исключении браузера могут оказаться авторизационные URL.
+            print(f"Вход в Яндекс Go не удался ({type(exc).__name__}). "
+                  "Проверьте Chromium и попробуйте login taxi снова.", file=sys.stderr)
+            return 1
 
     bridge = Bridge(cfg)
 

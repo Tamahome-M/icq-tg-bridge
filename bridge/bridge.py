@@ -14,6 +14,7 @@ from telethon import errors
 from . import avatars as avatar_lib
 from .assistant import ASSISTANT_PEER, Assistant, AssistantError
 from .codex import CODEX_PEER, CodexAssistant
+from .taxi import TAXI_PEER
 from . import emoji, history, policy
 from .access import AccessControl
 from . import photos
@@ -32,7 +33,7 @@ from .max.client import MaxSide, is_max_peer
 from .express.client import ExpressSide, is_express_peer
 
 log = logging.getLogger("bridge")
-BOT_PEERS = (ASSISTANT_PEER, CODEX_PEER)
+BOT_PEERS = (ASSISTANT_PEER, CODEX_PEER, TAXI_PEER)
 
 # Ошибки, после которых сессия Telegram больше не оживёт — нужен новый вход.
 DEAD_SESSION = (
@@ -140,6 +141,11 @@ class Bridge:
         self.videos: VideoStore | None = None
         self.assistant: Assistant | None = None
         self.codex: CodexAssistant | None = None
+        self.taxi = None
+        if cfg.taxi_enabled:
+            from .taxi.browser import TaxiBrowser
+            from .taxi.chat import TaxiChat
+            self.taxi = TaxiChat(cfg, self.storage, TaxiBrowser(cfg), self._taxi_reply)
         if cfg.codex_enabled:
             os.makedirs(cfg.codex_workdir, exist_ok=True)
             self.codex = CodexAssistant(
@@ -583,6 +589,12 @@ class Bridge:
         contact = self.storage.contact_by_uin(uin)
         if contact is None:
             return None
+        if contact.peer_id == TAXI_PEER:
+            return {"title": contact.title, "kind": "Бот", "username": "", "phone": "",
+                    "members": "", "marks": "", "network": "Яндекс Go",
+                    "about": "Личный аккаунт Яндекс Go. Сначала ./run.py login taxi на сервере. "
+                             "В чате: поездка, откуда, куда, тарифы, цена, статус, !help. "
+                             "Заказ и бесплатная отмена требуют кода подтверждения."}
         if contact.peer_id in BOT_PEERS:
             product = "Codex CLI" if contact.peer_id == CODEX_PEER else "Claude Code"
             return {"title": contact.title, "kind": "Бот", "username": "", "phone": "",
@@ -1100,6 +1112,12 @@ class Bridge:
                                            position=-2, favourite=1)
             self._statuses[uin] = C.STATUS_ONLINE
             present.append(CODEX_PEER)
+        if self.taxi is not None:
+            uin = self.storage.uin_for_peer(TAXI_PEER, kind="bot",
+                                           title=self.cfg.taxi_title, group_name=self.cfg.taxi_group,
+                                           position=-3, favourite=1)
+            self._statuses[uin] = C.STATUS_ONLINE
+            present.append(TAXI_PEER)
         # Чаты, которых больше нет в Telegram, убираем из контакт-листа.
         gone = self.storage.mark_missing(present)
         # Форум разложен на темы — отдельный контакт «всего форума» лишний.
@@ -1525,7 +1543,8 @@ class Bridge:
         if contact.peer_id in BOT_PEERS:
             # Галочку телефону — сразу, ответ придёт отдельным сообщением,
             # когда бот закончит думать.
-            task = asyncio.create_task(self.ask_assistant(contact, text))
+            task = asyncio.create_task(self.ask_taxi(contact, text) if contact.peer_id == TAXI_PEER
+                                       else self.ask_assistant(contact, text))
             self._background.add(task)
             task.add_done_callback(self._background.discard)
             return -1
@@ -1553,6 +1572,22 @@ class Bridge:
             log.exception("не удалось отправить в чат %r", contact.title)
             await self.reply(contact, f"Не отправлено в {self.network_of(contact.peer_id)}: {type(exc).__name__}")
             return None
+
+    async def _taxi_reply(self, text: str) -> None:
+        contact = self.storage.contact_by_peer(TAXI_PEER)
+        if contact is not None:
+            await self.reply(contact, text)
+
+    async def ask_taxi(self, contact: Contact, text: str) -> None:
+        if self.taxi is None:
+            await self.reply(contact, "Яндекс Такси выключен в настройках моста")
+            return
+        await self.oscar.notify_typing(contact.uin, True)
+        try:
+            answer = await self.taxi.handle(text)
+            await self.reply(contact, answer)
+        finally:
+            await self.oscar.notify_typing(contact.uin, False)
 
     async def ask_assistant(self, contact: Contact, text: str) -> None:
         """Вопрос одному из ботов: пока он думает, на телефоне «печатает»."""
@@ -1870,6 +1905,8 @@ class Bridge:
         if self.render is not None:
             self.render.cleanup()
         self._refresh_task = asyncio.create_task(self._refresh_loop())
+        if self.taxi is not None:
+            self.taxi.start()
         for name in self._sides():
             if self.active[name]:
                 self._start_network(name)
@@ -1959,6 +1996,11 @@ class Bridge:
             self._network_tasks.clear()
             self._network_ready.clear()
             self._typing.clear()
+            if self.taxi is not None:
+                try:
+                    await asyncio.wait_for(self.taxi.close(), NETWORK_STOP_TIMEOUT)
+                except Exception as exc:
+                    log.warning("Яндекс Go: браузер не закрыт полностью (%s)", type(exc).__name__)
             if self.photo_server is not None:
                 await self.photo_server.stop()
             await self.oscar.stop()
