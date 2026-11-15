@@ -2,12 +2,16 @@ package jimm;
 
 import DrawControls.VirtualList;
 
-/** Physical cover state. No MIDP visibility or timing heuristic is used. */
+/** V3 physical cover, or the explicitly selected V8 pause/resume convention. */
 public abstract class FlipState
 {
+//#sijapp cond.if modules_MOTOMAGX="true"#
+	private static volatile int state;
+//#sijapp cond.else#
 	private static FlipState reader;
 	private static boolean attempted;
 	private static volatile int state = -1;
+//#sijapp cond.end#
 	private static long closedAt;
 
 	protected abstract int readState();
@@ -15,6 +19,10 @@ public abstract class FlipState
 	/** Called by the existing UI clock, even while the cover is closed. */
 	public static synchronized boolean poll()
 	{
+//#sijapp cond.if modules_MOTOMAGX="true"#
+		// V8 supplies lifecycle callbacks, not the V3 Vodafone API.
+		return false;
+//#sijapp cond.else#
 		if (!attempted)
 		{
 			attempted = true;
@@ -49,7 +57,25 @@ public abstract class FlipState
 		closedAt = next == 1 ? System.currentTimeMillis() : 0;
 		state = next;
 		return true;
+//#sijapp cond.end#
 	}
+
+//#sijapp cond.if modules_MOTOMAGX="true"#
+	/** Real AMS pause only; repeated pauses must not postpone the deadline. */
+	public static synchronized void paused()
+	{
+		if (state == 1) return;
+		closedAt = System.currentTimeMillis();
+		state = 1;
+	}
+
+	/** Called after startApp has applied any expired deadline. */
+	public static synchronized void resumed()
+	{
+		state = 0;
+		closedAt = 0;
+	}
+//#sijapp cond.end#
 
 	public static boolean supported() { return state >= 0; }
 	public static boolean closed() { return state == 1; }

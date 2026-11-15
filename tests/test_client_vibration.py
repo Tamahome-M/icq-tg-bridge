@@ -17,7 +17,8 @@ from tests.test_client_flip import VENDOR_STUB
 
 def run(work, classes):
     stubs = make_stubs()
-    stubs['com/vodafone/system/DeviceControl.java'] = VENDOR_STUB
+    if (classes/'jimm/VodafoneFlipState.class').exists():
+        stubs['com/vodafone/system/DeviceControl.java'] = VENDOR_STUB
     # Isolate the existing roster/message gates. Vibration decisions and
     # queued delivery use the real MainThread, Options and SplashCanvas.
     stubs['jimm/ContactList.java'] = '''package jimm;
@@ -35,7 +36,7 @@ public class Gauge extends Item {
  private int value;public Gauge(String label,boolean interactive,int max,int initial){this.label=label;value=initial;}
  public int getValue(){return value;}public void setValue(int v){value=v;}
 }'''
-    cp = os.pathsep.join(str(p) for p in [classes, *sorted((work/'wtk/lib').glob('*.jar'))])
+    cp = os.pathsep.join(str(p) for p in [classes, *[p for p in sorted((work/'wtk/lib').glob('*.jar')) if p.name != 'tmm-vendor-stubs.jar']])
     with tempfile.TemporaryDirectory(prefix='tmm-vibration-') as temp:
         directory = Path(temp); resources = directory/'resources'; resources.mkdir()
         for name in ['RU.lng', 'langlist.lng']:

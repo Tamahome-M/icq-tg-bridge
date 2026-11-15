@@ -5,6 +5,14 @@ import jimm.*;
 import jimm.comm.PlainMessage;
 
 public final class ClientVibrationTest {
+    // V3 has a physical getter; V8 uses the explicitly selected AMS convention.
+    static void cover(int state)throws Exception{
+        try{FlipState.class.getMethod(state==1?"paused":"resumed").invoke(null);}
+        catch(NoSuchMethodException physical){
+            Class api=Class.forName("com.vodafone.system.DeviceControl");
+            api.getField("state").setInt(null,state);FlipState.poll();
+        }
+    }
     static void check(boolean ok,String why){if(!ok)throw new AssertionError(why);}
     static Field field(Class c,String name)throws Exception{Field f=c.getDeclaredField(name);f.setAccessible(true);return f;}
     static Method method(Class c,String name,Class... args)throws Exception{Method m=c.getDeclaredMethod(name,args);m.setAccessible(true);return m;}
@@ -126,11 +134,11 @@ public final class ClientVibrationTest {
         Options.setLong(Options.OPTION_VIBRA_UNLOCKED_MS,100);
         Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,1500);
         ContactList.reading=false;ContactList.lastAlertAllowed=true;ContactList.accepted=true;
-        com.vodafone.system.DeviceControl.state=0;FlipState.poll();expect(100);
-        com.vodafone.system.DeviceControl.state=1;FlipState.poll();
+        cover(0);expect(100);
+        cover(1);
         check(!SplashCanvas.locked(),"closed vibration required keylock");expect(1500);
         Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,0);quiet();
-        com.vodafone.system.DeviceControl.state=0;FlipState.poll();expect(100);
+        cover(0);expect(100);
         System.out.println("PASS: closed cover immediately uses locked vibration before keylock, including off; open restores unlocked duration");
     }
 
@@ -138,8 +146,8 @@ public final class ClientVibrationTest {
         defaults();Options.setLong(Options.OPTION_VIBRA_UNLOCKED_MS,100);Options.setLong(Options.OPTION_VIBRA_LOCKED_MS,1500);
         MessageAlerts.start();int before=ContactList.received;
         for(int i=0;i<100;i++)quiet();SplashCanvas.lock();quiet();SplashCanvas.unlock(false);
-        com.vodafone.system.DeviceControl.state=1;FlipState.poll();quiet();
-        com.vodafone.system.DeviceControl.state=0;FlipState.poll();
+        cover(1);quiet();
+        cover(0);
         check(ContactList.received==before+102,"silent startup drops message dispatch");
         field(MessageAlerts.class,"quietUntil").setLong(null,System.currentTimeMillis()-1);
         expect(100);MessageAlerts.start();expect(100);

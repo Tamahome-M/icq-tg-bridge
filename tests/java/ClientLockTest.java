@@ -184,6 +184,27 @@ public final class ClientLockTest {
         DrawControls.VirtualList.setDisplay(Jimm.display);
         ((Vector)field(JimmUI.class,"lastScreens").get(null)).clear();ListScreen owner=new ListScreen();owner.activate();
         int scheduled=Jimm.Clock.scheduled;
+        boolean backgroundLifecycle;
+        try{FlipState.class.getMethod("paused");backgroundLifecycle=true;}
+        catch(NoSuchMethodException physical){backgroundLifecycle=false;}
+        if(backgroundLifecycle){
+            // V8 measures actual AMS pause/resume, not foreground key inactivity.
+            // Full callback/deadline/PIN scenarios live in ClientV8PauseTest.
+            for(long minutes:new long[]{0,1,2,999}){
+                Options.setLong(Options.OPTION_AUTOLOCK_MINUTES,minutes);
+                idle(86400000);tick();
+                check(!SplashCanvas.locked() && owner.isScreenActive(),"V8 still locks an active screen after key inactivity");
+            }
+            Display.foreground=false;idle(86400000);tick();
+            check(!SplashCanvas.locked() && !FlipState.closed(),"V8 mistakes visibility loss for an AMS pause");
+            Display.foreground=true;Options.setLong(Options.OPTION_AUTOLOCK_MINUTES,2);
+            Options.setString(Options.OPTION_LOCK_PIN,"0012");idle(86400000);tick();
+            check(!SplashCanvas.locked() && owner.isScreenActive(),"configured PIN restores retired foreground-idle locking");
+            Options.setString(Options.OPTION_LOCK_PIN,"");
+            check(Jimm.Clock.scheduled==scheduled,"V8 idle checks schedule extra timer tasks");
+            System.out.println("PASS: V8 foreground inactivity and visibility alone do not trigger background keylock; real lifecycle deadlines are tested separately");
+            return;
+        }
         idle(119000);tick();check(!SplashCanvas.locked(),"two-minute auto lock fired early");
         idle(121000);DrawControls.VirtualList.setBottomText("network update");MainThread.showTime();
         check(!SplashCanvas.locked(),"clock locks outside UI queue");Display.flush();

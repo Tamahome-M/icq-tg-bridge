@@ -19,7 +19,8 @@ from tests.test_client_flip import VENDOR_STUB
 
 def run(work, classes):
     stubs = dict(STUBS)
-    stubs['com/vodafone/system/DeviceControl.java'] = VENDOR_STUB
+    if (classes/'jimm/VodafoneFlipState.class').exists():
+        stubs['com/vodafone/system/DeviceControl.java'] = VENDOR_STUB
     stubs.pop('jimm/util/ResourceBundle.java')
     stubs['DrawControls/device/Device.java'] = stubs['DrawControls/device/Device.java'].replace(
         'void setBackLightOnTime', 'boolean featureSupported(int n); void setBackLightOnTime')
@@ -74,7 +75,7 @@ public class Manager {
   public int setLevel(int n){volume=n;return n;}public int getLevel(){return volume;}
  }
 }'''
-    cp = os.pathsep.join(str(p) for p in [classes, *sorted((work/'wtk/lib').glob('*.jar'))])
+    cp = os.pathsep.join(str(p) for p in [classes, *[p for p in sorted((work/'wtk/lib').glob('*.jar')) if p.name != 'tmm-vendor-stubs.jar']])
     with tempfile.TemporaryDirectory(prefix='tmm-notifications-') as temp:
         directory = Path(temp)
         resources = directory/'resources'; resources.mkdir()

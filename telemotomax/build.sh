@@ -88,7 +88,7 @@ MODULES=${TMM_MODULES:-v3}
 case "$MODULES" in
 	v3)      MODULES="SMILES_STD,AVATARS" ;;
 	v3light) MODULES="AVATARS" ;;
-	v8)      MODULES="SMILES_STD,AVATARS,CAMERA" ;;
+	v8)      MODULES="SMILES_STD,AVATARS,CAMERA,MOTOMAGX" ;;
 esac
 sed "s|###WTK###|$WORK/wtk|g; s|###PROGUARD###|$WORK/proguard|; s|###TMM-VERSION###|$STAMP|; \
      s|###TMM-VERSION-JAVA###|$VERSION|; s|###TMM-NAME###|$NAME|; \
