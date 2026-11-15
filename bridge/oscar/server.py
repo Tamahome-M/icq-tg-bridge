@@ -34,6 +34,7 @@ BUDDY_BURST = 20                 # по столько уведомлений о
 BUDDY_BATCH_BYTES = 4096         # bounded plaintext frame for small J2ME heaps
 SENDER_IDLE_POLL = 10            # как часто отправитель просыпается сам, секунды
 AUTH_TIMEOUT = 60               # общий срок входа, включая неполные кадры и пинги
+COOKIE_TTL = 120                 # одноразовый переход от авторизации к BOS/BART
 SERVICE_IDLE_TIMEOUT = 180       # столько молчит соединение за аватарками — и хватит
 SEND_TIMEOUT = 120               # столько телефон может не забирать отправленное
 CLOSE_TIMEOUT = 5                # столько ждём вежливого закрытия, дальше — обрыв
@@ -202,6 +203,8 @@ class Session:
             return False
         failure = ""
         async with self._lock:
+            if self.closed:
+                return False  # it may have closed while this sender waited for the lock
             self.seq = (self.seq + 1) & 0xFFFF
             try:
                 self.writer.write(flap(channel, self.seq, payload))
@@ -223,6 +226,8 @@ class Session:
             # возвращает неподтверждённое в очередь и отменяет её задачи.
             # Замок отправки к этому моменту уже отпущен.
             await self.close(failure)
+            return False
+        if self.closed:
             return False
         self.last_sent = time.time()
         return True
@@ -1050,11 +1055,11 @@ class Session:
         await self.send_icq_reply(uin, C.ICQ_META_RESP_TYPE, seq,
                                   struct.pack("<H", part) + bytes([C.ICQ_INFO_OK]) + data)
 
-    async def send_icq_reply(self, uin: int, resp_type: int, seq: int, data: bytes) -> None:
+    async def send_icq_reply(self, uin: int, resp_type: int, seq: int, data: bytes) -> bool:
         """Ответ семейства 0x15: всё внутри — little-endian, как принято в ICQ."""
         inner = struct.pack("<IHH", uin, resp_type, seq) + data
         body = struct.pack("<H", len(inner)) + inner
-        await self.send_snac(C.ICQ, C.ICQ_FROM_SERVER, tlv(0x0001, body))
+        return await self.send_snac(C.ICQ, C.ICQ_FROM_SERVER, tlv(0x0001, body))
 
     # Настройки «Медиа» с телефона (TeleMotoMax 0.47+): после сведений о
     # телефоне в 01/F2 идут пары u16 ключ / u16 значение — что владелец
@@ -1179,9 +1184,11 @@ class Session:
                 continue
             sender_name = self.sender_name_tlv(sender)
             for index, part in enumerate(_split_text(text, self.server.max_message_chars)):
-                await self.send_icq_reply(uin, C.ICQ_OFFLINE_MSG, seq,
-                                          blocks.offline_message(sender, ts, part)
-                                          + (sender_name if index == 0 else b""))
+                sent = await self.send_icq_reply(uin, C.ICQ_OFFLINE_MSG, seq,
+                                                 blocks.offline_message(sender, ts, part)
+                                                 + (sender_name if index == 0 else b""))
+                if sent is False or self.closed or self.server.session is not self:
+                    return  # disconnect/replacement already returned these rows to the queue
                 count += 1
             self.server.storage.mark_sent(row_id)
             self.offline_ids.append(row_id)
@@ -2296,15 +2303,15 @@ class OscarServer:
 
     def new_cookie(self, kind: str = "bos", client: str = "") -> bytes:
         cookie = os.urandom(16)
-        now = time.time()
-        self._cookies = {c: v for c, v in self._cookies.items() if now - v[0] < 120}
+        now = time.monotonic()
+        self._cookies = {c: v for c, v in self._cookies.items() if now - v[0] < COOKIE_TTL}
         self._cookies[cookie] = (now, kind, client)
         return cookie
 
     def consume_cookie(self, cookie: bytes) -> tuple[str, str] | None:
         """Род cookie («bos» — обычный вход, «bart» — за аватарками) и имя клиента."""
         got = self._cookies.pop(cookie, None)
-        return (got[1], got[2]) if got else None
+        return (got[1], got[2]) if got and time.monotonic() - got[0] < COOKIE_TTL else None
 
     def name_of(self, uin) -> str:
         """Название чата для журнала: «Мама» (100001), а не голый номер."""
@@ -2386,15 +2393,16 @@ class OscarServer:
         if not self.online:
             return False
 
+        session = self.session
         with_ack = self.use_ack and self.ack_works is not False
-        if getattr(self.session, "quiet_delivery", False):
-            sent = await self.session.deliver(uin, text, wait_ack=with_ack, row_id=row_id,
-                                              url=url, attach=attach,
-                                              silent=self.session.silent_for(uin, row_id))
+        if getattr(session, "quiet_delivery", False):
+            sent = await session.deliver(uin, text, wait_ack=with_ack, row_id=row_id,
+                                         url=url, attach=attach,
+                                         silent=session.silent_for(uin, row_id))
         else:
-            sent = await self.session.deliver(uin, text, wait_ack=with_ack, row_id=row_id,
-                                              url=url, attach=attach)
-        if not sent:
+            sent = await session.deliver(uin, text, wait_ack=with_ack, row_id=row_id,
+                                         url=url, attach=attach)
+        if not sent or self.session is not session or session.closed:
             return False
 
         if row_id is not None:
@@ -2523,9 +2531,12 @@ class OscarServer:
         элементов. Метка меняется только когда меняется состав списка —
         контакты, их имена, группы, «не беспокоить», — а не порядок."""
         digest = hashlib.sha1(repr(key).encode("utf-8")).hexdigest()
+        previous = int(self.storage.get_meta("ssi_stamp", "0") or 0)
         if self.storage.get_meta("ssi_hash") == digest:
-            return int(self.storage.get_meta("ssi_stamp", "0") or 0), count
-        stamp = int(time.time())
+            return previous, count
+        # Two edits in one second (or a corrected system clock) must not
+        # validate a cached roster with old names/groups and the same count.
+        stamp = max(int(time.time()), previous + 1)
         self.storage.set_meta("ssi_hash", digest)
         self.storage.set_meta("ssi_stamp", str(stamp))
         log.info("контакт-лист изменился, новая версия %d", stamp)

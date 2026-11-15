@@ -469,10 +469,15 @@ async def run_bridge() -> None:
                                    source_ts=source_ts)
 
     bridge.oscar.deliver = deliver
-    # Заглушённая группа молчит, но упоминание из неё доходит.
+    # Offline the phone's quiet list is unknown, so a muted message is a
+    # candidate. Without a quiet selection the actual queue filter drops it;
+    # mentions still bypass mute on both admission and delivery.
     body = "ответь @{mention:%s}" % MENTION
     await fake.on_message(fake.message(raw_event(30, GROUP, BOSS, "болтовня")))
-    assert queued == [], queued
+    uin = titles["Работа"].uin
+    assert queued == [(uin, "Шеф: болтовня")], queued
+    assert bridge.oscar.sift_pending() == [], "muted candidate must not pass without quiet selection"
+    queued.clear()
     await fake.on_message(fake.message(raw_event(31, GROUP, BOSS, body,
                                                  **mention("user", ME, "Вася"))))
     await fake.on_message(fake.message(raw_event(32, GROUP, BOSS, "все сюда @{mention:%s}" % MENTION,
@@ -496,7 +501,9 @@ async def run_bridge() -> None:
     cfg.mentions_through = False
     await fake.on_message(fake.message(raw_event(34, GROUP, BOSS, body,
                                                  **mention("user", ME, "Вася"))))
-    assert len(queued) == 2, queued
+    assert queued[2:] == [(uin, "Шеф: ответь @Шеф"), (uin, "Шеф: ответь @Вася")], queued
+    assert [row[2] for row in bridge.oscar.sift_pending()] == ["Шеф: [входящий звонок]"], \
+        "offline candidates with someone else's/disabled mentions must still obey mute"
 
     # Мост был выключен: при старте догружается всё непрочитанное, в том
     # числе из заглушённой группы — и упоминание вместе с остальным.

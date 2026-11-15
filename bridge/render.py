@@ -569,14 +569,25 @@ class RenderStore:
     def alive(self, made: float) -> bool:
         return self.ttl <= 0 or time.time() - made < self.ttl
 
-    def put_asset(self, data: bytes, ext: str) -> Asset:
+    def put_asset(self, data: bytes, ext: str, assets: list[str] | None = None) -> Asset:
         token = _token()
         path = os.path.join(self.directory, f"{token}.{ext}")
         with open(path, "wb") as fh:
             fh.write(data)
         asset = Asset(token, path, ext, len(data))
         self._assets[token] = asset
+        if assets is not None:
+            assets.append(token)  # register ownership before the next cancellable operation
         return asset
+
+    def _discard_assets(self, tokens: list[str]) -> None:
+        for token in tokens:
+            asset = self._assets.pop(token, None)
+            if asset is not None:
+                try:
+                    os.unlink(asset.path)
+                except OSError:
+                    pass
 
     def asset_for(self, token: str) -> Asset | None:
         """Файл по токену из ссылки — если срок ещё не вышел."""
@@ -702,36 +713,41 @@ class RenderStore:
         rows: list[str] = []
         total = sum(1 for item in items if item.kind)
         done = 0
-        for item in items:
-            row, used = await self._row(item)
-            rows.append(row)
-            assets.extend(used)
-            if item.kind:
-                done += 1
-                if progress is not None:
-                    await progress(done, total)
+        try:
+            for item in items:
+                row, _ = await self._row(item, assets)
+                rows.append(row)
+                if item.kind:
+                    done += 1
+                    if progress is not None:
+                        await progress(done, total)
 
-        chunks = self._split(title, rows)
-        path = self.make_path(title, token)
-        made = time.time()
-        first: Page | None = None
-        for index, chunk in enumerate(chunks, start=1):
-            part_token = token if index == 1 else _token()
-            part_path = path if index == 1 else f"{path.rstrip('/')}/{index}"
-            nav = self._nav(path, index, len(chunks))
-            body = self._document(title, chunk + [nav]).encode(self.encoding,
-                                                              "xmlcharrefreplace")
-            page = Page(part_token, body, made, assets if index == 1 else [],
-                        part_path, title, len(items), index, len(chunks))
-            self._pages[part_token] = page
-            self._paths[part_path.rstrip("/") or "/"] = part_token
-            first = first or page
+            chunks = self._split(title, rows)
+            path = self.make_path(title, token)
+            made = time.time()
+            pages = []
+            for index, chunk in enumerate(chunks, start=1):
+                part_token = token if index == 1 else _token()
+                part_path = path if index == 1 else f"{path.rstrip('/')}/{index}"
+                nav = self._nav(path, index, len(chunks))
+                body = self._document(title, chunk + [nav]).encode(self.encoding,
+                                                                  "xmlcharrefreplace")
+                pages.append(Page(part_token, body, made, assets if index == 1 else [],
+                                  part_path, title, len(items), index, len(chunks)))
+        except BaseException:
+            # Includes cancellation between a video thumbnail and ffmpeg, or
+            # after a previous row. Unpublished assets have no page TTL owner.
+            self._discard_assets(assets)
+            raise
+        for page in pages:
+            self._pages[page.token] = page
+            self._paths[page.path.rstrip("/") or "/"] = page.token
         log.info("страница %s (%s): %d сообщений, %d вложений, %d КБ%s",
                  path, token, len(items), len(assets),
                  sum(len(self._pages[t].body) for t in self._pages
                      if self._pages[t].made == made) // 1024,
                  f" в {len(chunks)} частях" if len(chunks) > 1 else "")
-        return first
+        return pages[0]
 
     def _split(self, title: str, rows: list[str]) -> list[list[str]]:
         """Режет сообщения на части, чтобы каждая страница влезла в потолок."""
@@ -765,7 +781,7 @@ class RenderStore:
             links.append(f'<a href="{html.escape(base)}/{index + 1}">далее &#187;</a>')
         return '<div class="txt" align="center">' + " &#160;|&#160; ".join(links) + "</div>"
 
-    async def _row(self, item: Item) -> tuple[str, list[str]]:
+    async def _row(self, item: Item, assets: list[str] | None = None) -> tuple[str, list[str]]:
         """Одно сообщение: пузырь с именем, временем, текстом и вложением."""
         used: list[str] = []
         inner: list[str] = []
@@ -773,7 +789,7 @@ class RenderStore:
         if item.who:
             inner.append(f'<div class="who">{html.escape(item.who)}</div>')
 
-        media, tokens = await self._media(item)
+        media, tokens = await self._media(item, assets)
         used.extend(tokens)
         if media:
             inner.append(media)
@@ -807,17 +823,17 @@ class RenderStore:
             log.warning("не смог скачать вложение: %s", exc)
             return b""
 
-    def _picture(self, raw: bytes, alt: str) -> tuple[str, str]:
+    def _picture(self, raw: bytes, alt: str, assets: list[str] | None = None) -> tuple[str, str]:
         """Картинка прямо в странице: разметка и токен файла."""
         got = photos.shrink(raw, self.width, self.height, self.photo_max_bytes)
         if got is None:
             return "", ""
         data, width, height = got
-        asset = self.put_asset(data, "jpg")
+        asset = self.put_asset(data, "jpg", assets)
         return (f'<div><img src="/m/{asset.token}.jpg" width="{width}" '
                 f'height="{height}" alt="{alt}"/></div>'), asset.token
 
-    async def _media(self, item: Item) -> tuple[str, list[str]]:
+    async def _media(self, item: Item, assets: list[str] | None = None) -> tuple[str, list[str]]:
         """Вложение: фото — картинкой, видео — превью и ссылкой, звук — ссылкой."""
         if not item.kind:
             return "", []
@@ -825,7 +841,7 @@ class RenderStore:
         tokens: list[str] = []
 
         if item.kind == "photo":
-            markup, token = self._picture(await self._raw(item), "фото")
+            markup, token = self._picture(await self._raw(item), "фото", assets)
             if not token:
                 return '<div class="txt">[фото не открылось]</div>', []
             return markup, [token]
@@ -839,7 +855,7 @@ class RenderStore:
                 log.warning("не смог скачать превью видео: %s", exc)
                 thumb = b""
             if thumb:
-                markup, token = self._picture(thumb, "видео")
+                markup, token = self._picture(thumb, "видео", assets)
                 if token:
                     parts.append(markup)
                     tokens.append(token)
@@ -855,7 +871,7 @@ class RenderStore:
                              f'не вышло]</div>'.replace("  ", " "))
                 return "".join(parts), tokens
             ext = "3gp" if item.kind == "video" else "amr"
-            asset = self.put_asset(data, ext)
+            asset = self.put_asset(data, ext, assets)
             tokens.append(asset.token)
             note = f"{label} {length}".strip()
             size = f"{asset.size // 1024 or 1} КБ"

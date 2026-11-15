@@ -63,6 +63,7 @@ public abstract class Connection implements Runnable
 	}
 	private static int packetBytes(Object packet)
 	{
+		if (packet instanceof JimmException) return 0;
 		return packet instanceof jimm.comm.SnacPacket
 				? ((jimm.comm.SnacPacket)packet).getWireLength()
 				: ((byte[])packet).length;
@@ -161,6 +162,8 @@ public abstract class Connection implements Runnable
 		}
 		// Сокет кладёт SNAC уже разобранным (тело читалось сразу в свой
 		// массив); сырой кадр — от других соединений и для семейства 0x15.
+		// A terminal read error follows all complete frames from that stream.
+		if (packet instanceof JimmException) throw (JimmException)packet;
 		if (packet instanceof Packet) return (Packet) packet;
 		return (Packet.parse((byte[]) packet));
 

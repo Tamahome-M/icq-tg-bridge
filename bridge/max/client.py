@@ -598,9 +598,10 @@ class MaxSide:
 
     async def _on_new_message(self, message) -> None:
         try:
-            chat_id = int(_attr(message, "chat_id", 0) or 0)
-            if not chat_id:
+            raw_chat_id = _attr(message, "chat_id")
+            if raw_chat_id is None:
                 return
+            chat_id = int(raw_chat_id)  # zero is the valid Saved Messages chat
             sender_id = int(_attr(message, "sender", 0) or 0)
             ts = _seconds(_attr(message, "time", 0))
             mine = bool(self.me_id and sender_id == self.me_id)
@@ -659,10 +660,11 @@ class MaxSide:
         await self.on_status(to_peer(chat_id), presence_name(presence))
 
     async def _on_read(self, event) -> None:
-        chat_id = int(_attr(event, "chat_id", 0) or 0)
+        raw_chat_id = _attr(event, "chat_id")
         user_id = int(_attr(event, "user_id", 0) or 0)
-        if not chat_id or not user_id or _attr(event, "set_as_unread", False):
+        if raw_chat_id is None or not user_id or _attr(event, "set_as_unread", False):
             return
+        chat_id = int(raw_chat_id)
         mark = int(_attr(event, "mark", 0) or 0)
         if self.me_id and user_id == self.me_id:
             if self.on_inbox_read is not None:
