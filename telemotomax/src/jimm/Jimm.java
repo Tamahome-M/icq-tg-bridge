@@ -162,12 +162,42 @@ public class Jimm extends MIDlet
 		if (Jimm.jimm != null)
 		{
 			ConnLog.note("развёрнуто");
-			// При ошибке возврата из фона открываем главное меню.
-			try { showWorkScreen(); }
+			// Restore the screen without bypassing an existing keylock on errors.
+//#sijapp cond.if modules_MOTOMAGX="true"#
+			boolean resumeLockDue = FlipState.lockDue();
+//#sijapp cond.end#
+			try
+			{
+//#sijapp cond.if modules_MOTOMAGX="true"#
+				// Apply an expired background deadline before exposing the old UI.
+				// No UI timer/callSerially is required to run while paused.
+				if (resumeLockDue) SplashCanvas.lockAfterFlip();
+				FlipState.resumed();
+				// AMS restores focus itself. Keep the chat, form or unsent editor.
+				if (SplashCanvas.locked() || display.getCurrent() == null) showWorkScreen();
+//#sijapp cond.else#
+				showWorkScreen();
+//#sijapp cond.end#
+			}
 			catch (Throwable t)
 			{
 				ConnLog.note("возврат из фона: " + t.getClass().getName());
-				try { MainMenu.activateMenu(); } catch (Throwable ignore) {}
+				try
+				{
+//#sijapp cond.if modules_MOTOMAGX="true"#
+					if (resumeLockDue)
+					{
+						// Remembering the old native screen may fail. Still enforce
+						// the overdue lock; never fall through to an unlocked menu.
+						SplashCanvas.lock();
+						FlipState.resumed();
+						SplashCanvas.show();
+					}
+					else
+//#sijapp cond.end#
+					if (SplashCanvas.locked()) SplashCanvas.show();
+					else MainMenu.activateMenu();
+				} catch (Throwable ignore) {}
 			}
 			return;
 		}
@@ -353,6 +383,9 @@ public class Jimm extends MIDlet
 	// журнале «Связь», чтобы было видно, зовёт ли телефон pauseApp вообще.
 	public void pauseApp()
 	{
+//#sijapp cond.if modules_MOTOMAGX="true"#
+		FlipState.paused();
+//#sijapp cond.end#
 		ConnLog.note("pauseApp: в фоне");
 	}
 
@@ -471,14 +504,12 @@ public class Jimm extends MIDlet
 	{
 		if (mini)
 		{
-			// Два способа уйти в фон — какой из них понимает телефон, тот и
-			// сработает: MIDP-овский setCurrent(null) (Sony Ericsson) и
-			// notifyPaused() — «мидлет приостановлен» для системы, при
-			// котором потоки и соединение живут (Motorola, Nokia S40).
-			// Возврат — через список приложений: startApp() покажет экран.
-			ConnLog.note("свёрнуто");
+			// These requests need not hide the native window. In SAedition V8
+			// the user must use END/native menu. Only real pauseApp callbacks
+			// select the V8 background alert profile and keylock countdown.
+			ConnLog.note("запрошено сворачивание");
 //#sijapp cond.if modules_CAMERA="true"#
-			// V8 (MOTOMAGX): оба способа, какой поймёт — тот и сработает.
+			// MIDP foreground arbitration; not a native-window hide on V8.
 			try { Jimm.display.setCurrent(null); } catch (Exception ignore) {}
 //#sijapp cond.else#
 //#			// V3 (P2K): только notifyPaused(). В исходном Jimm «Свернуть» для

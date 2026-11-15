@@ -1,3 +1,4 @@
+//#sijapp cond.if modules_MOTOMAGX!="true"#
 package jimm;
 
 import com.vodafone.system.DeviceControl;
@@ -15,3 +16,4 @@ public final class VodafoneFlipState extends FlipState
 		return device.getDeviceState(7);
 	}
 }
+//#sijapp cond.end#

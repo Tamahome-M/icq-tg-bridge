@@ -1998,6 +1998,10 @@ public class JimmUI implements CommandListener, VirtualListCommands
 	// Called in the UI queue; verify the physical state again before locking.
 	public static void checkAutoLock()
 	{
+//#sijapp cond.if modules_MOTOMAGX="true"#
+		// Selecting the lock screen in the background can request foreground.
+		// startApp checks the deadline before restoring the UI instead.
+//#sijapp cond.else#
 		FlipState.poll();
 		if (SplashCanvas.locked()) return;
 		if (FlipState.supported())
@@ -2018,6 +2022,7 @@ public class JimmUI implements CommandListener, VirtualListCommands
 			return;
 		}
 		if (VirtualList.idleMillis() >= minutes * 60000L) SplashCanvas.lock();
+//#sijapp cond.end#
 	}
 
 	private static Timer uiClock;
@@ -2029,9 +2034,13 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		{
 			try
 			{
-				boolean changed = FlipState.poll();
 				long now = System.currentTimeMillis();
+//#sijapp cond.if modules_MOTOMAGX="true"#
+				if (now >= nextClock)
+//#sijapp cond.else#
+				boolean changed = FlipState.poll();
 				if (changed || now >= nextClock || (!SplashCanvas.locked() && FlipState.lockDue()))
+//#sijapp cond.end#
 				{
 					if (now >= nextClock) nextClock = now + 10000L;
 					MainThread.showTime();
@@ -2047,7 +2056,11 @@ public class JimmUI implements CommandListener, VirtualListCommands
 		// Reuse the independent clock timer, without an extra thread. Physical
 		// polling is once a second; ordinary clock/reconnect work stays at 10 s.
 		uiClock = new Timer();
+//#sijapp cond.if modules_MOTOMAGX="true"#
+		uiClock.schedule(new ClockTask(), 500, 10000);
+//#sijapp cond.else#
 		uiClock.schedule(new ClockTask(), 500, 1000);
+//#sijapp cond.end#
 	}
 
 	public static synchronized void stopTaskForTimeString()

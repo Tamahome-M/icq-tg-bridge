@@ -1,7 +1,7 @@
 """Actual cover adapter, clock and UI keylock; optional vendor API is simulated.
 
 Usage: python tests/test_client_flip.py BUILD_WORK [CLASSES]
-Both API transitions and a JVM without any Vodafone class are exercised.
+V3 exercises physical transitions and absent APIs; V8 exercises pause/resume.
 """
 from pathlib import Path
 import os
@@ -67,6 +67,10 @@ public class PackagedFlipCheck {
 
 
 def run(work, classes):
+    if not (classes/'jimm/VodafoneFlipState.class').exists():
+        from tests.test_client_v8_pause import run as run_v8
+        run_v8(work, classes)
+        return
     libs = [p for p in sorted((work/'wtk/lib').glob('*.jar')) if p.name != 'tmm-vendor-stubs.jar']
     cp = os.pathsep.join(str(p) for p in [classes, *libs])
     for mode in ('native', 'absent'):

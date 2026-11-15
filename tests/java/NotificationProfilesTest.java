@@ -5,6 +5,14 @@ import javax.microedition.media.Manager;
 import jimm.*;
 
 public final class NotificationProfilesTest {
+    // V3 has a physical getter; V8 uses the explicitly selected AMS convention.
+    static void cover(int state)throws Exception{
+        try{FlipState.class.getMethod(state==1?"paused":"resumed").invoke(null);}
+        catch(NoSuchMethodException physical){
+            Class api=Class.forName("com.vodafone.system.DeviceControl");
+            api.getField("state").setInt(null,state);FlipState.poll();
+        }
+    }
     static void check(boolean ok,String why){if(!ok)throw new AssertionError(why);}
     static Field field(Class c,String name) throws Exception {
         Field f=c.getDeclaredField(name);f.setAccessible(true);return f;
@@ -145,9 +153,9 @@ public final class NotificationProfilesTest {
         defaults();SplashCanvas.unlock(false);Options.setBoolean(Options.OPTION_DISPLAY_DATE,false);
         Options.setInt(Options.OPTION_MESS_NOTIF_VOL,80);Options.setLong(Options.OPTION_MESS_UNLOCKED_VOL,20);
         Options.setLong(Options.OPTION_AUTOLOCK_MINUTES,0);
-        com.vodafone.system.DeviceControl.state=0;FlipState.poll();
+        cover(0);
         ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);sound(dir,"msg_low.mp3",20);last().finish();
-        com.vodafone.system.DeviceControl.state=1;FlipState.poll();
+        cover(1);
         check(!SplashCanvas.locked() && FlipState.notificationLocked(),"closed alerts require actual keylock");
         ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);sound(dir,"message.mp3",80);last().finish();
         check(!ContactList.readingChat("123456"),"closed chat suppresses alert as being read");
@@ -155,14 +163,14 @@ public final class NotificationProfilesTest {
         ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);check(count==Manager.started.size(),"closed profile silence ignored");
         Options.setInt(Options.OPTION_MESS_NOTIF_MODE,1);ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);
         check(Manager.toneVolume==80,"closed beep uses unlocked volume");
-        Options.setInt(Options.OPTION_MESS_NOTIF_MODE,2);com.vodafone.system.DeviceControl.state=0;FlipState.poll();
+        Options.setInt(Options.OPTION_MESS_NOTIF_MODE,2);cover(0);
         ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);sound(dir,"msg_low.mp3",20);last().finish();
-        com.vodafone.system.DeviceControl.state=1;FlipState.poll();Options.setBoolean(Options.OPTION_SILENT_MODE,true);
+        cover(1);Options.setBoolean(Options.OPTION_SILENT_MODE,true);
         count=Manager.started.size();int tones=Manager.toneCount;
         ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);
         check(count==Manager.started.size() && tones==Manager.toneCount,"closed cover bypasses global silence");
-        com.vodafone.system.DeviceControl.state=0;FlipState.poll();
-        System.out.println("PASS: physical cover uses locked MP3/mode/volume immediately, including keylock disabled; open restores quiet profile; silence/beep/global mute and closed reading gate");
+        cover(0);
+        System.out.println("PASS: inactive/closed profile uses locked MP3/mode/volume immediately, including keylock disabled; open restores quiet profile; silence/beep/global mute and closed reading gate");
     }
 
     static void startupQuiet(String dir) throws Exception {
@@ -179,8 +187,8 @@ public final class NotificationProfilesTest {
             Options.setLong(Options.OPTION_MESS_UNLOCKED_MODE,mode);Options.setInt(Options.OPTION_MESS_NOTIF_MODE,mode);
             for(int i=0;i<300;i++)ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);
             SplashCanvas.lock();ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);SplashCanvas.unlock(false);
-            com.vodafone.system.DeviceControl.state=1;FlipState.poll();ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);
-            com.vodafone.system.DeviceControl.state=0;FlipState.poll();
+            cover(1);ContactList.playSoundNotification(ContactList.SOUND_TYPE_MESSAGE);
+            cover(0);
         }
         check(players==Manager.created && count==Manager.started.size() && tones==Manager.toneCount && pending.isEmpty(),"startup alerts create/queue/play MP3 or beep");
         Options.setInt(Options.OPTION_TYPING_MODE,2);ContactList.playSoundNotification(ContactList.SOUND_TYPE_TYPING);
