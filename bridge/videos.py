@@ -88,6 +88,9 @@ class VideoStore:
         self.max_source_bytes = max_source_bytes
         self.pages: dict[str, VideoPage] = {}
         self._keys: dict[tuple, str] = {}
+        # Replaced/expired pages can detach jobs while their cancellation
+        # cleanup still owns a download or ffmpeg process. Shutdown awaits all.
+        self._tasks: set[asyncio.Task] = set()
         self._gate = asyncio.Semaphore(1)
         for path in self.directory.glob("*.json"):
             if not TOKEN.fullmatch(path.stem):
@@ -181,9 +184,10 @@ class VideoStore:
                 self._drop(page)
 
     async def stop(self) -> None:
-        tasks = [task for page in self.pages.values() for task in page.jobs.values()]
+        tasks = list(self._tasks)
         for task in tasks:
-            task.cancel()
+            if not task.cancelling():
+                task.cancel()  # do not interrupt cleanup already running after cancellation
         await asyncio.gather(*tasks, return_exceptions=True)
 
     def resolve(self, path: str, start: bool = True, as_path: bool = False) -> tuple[bytes | Path, str, str] | None:
@@ -211,7 +215,10 @@ class VideoStore:
             state = "new"
         if start and state == "new":
             page.states[segment] = "pending"
-            page.jobs[segment] = asyncio.create_task(self._prepare(page, segment))
+            task = asyncio.create_task(self._prepare(page, segment))
+            page.jobs[segment] = task
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
             state = "pending"
         body = self._html(page, segment, state)
         return body, "application/vnd.wap.xhtml+xml; charset=utf-8", "страница"

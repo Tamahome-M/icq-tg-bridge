@@ -1085,6 +1085,10 @@ public class Icq implements Runnable
 							jimm.ConnLog.note("старая попытка: " + e.getFullErrCode() + ", пропущено");
 							break;
 						}
+						// init() failed before the action entered actAction. Its
+						// screen/listener still needs the same terminal event as
+						// an active request, otherwise it waits forever.
+						newAction.onEvent(Action.ON_ERROR);
 						JimmException.handleException(e);
 						if (e.isCritical())
 							throw (e);

@@ -40,6 +40,13 @@ import jimm.SplashCanvas;
 
 public class ActionListener
 {
+	// Notification bodies can be shorter than their declared UIN/text fields.
+	// Reject just that packet instead of killing the entire connection loop.
+	private static void requireLength(byte[] data, int minimum) throws JimmException
+	{
+		if (data.length < minimum) throw new JimmException(133, 4, false);
+	}
+
 	// Optional UTF-8 sender name in live/offline message TLVs. Ignore bad
 	// metadata without losing the message, and bound allocations on V3.
 	private static String readSenderName(byte[] buf, int marker)
@@ -173,7 +180,9 @@ public class ActionListener
 			if ((snacPacket.getFamily() == 0x0010) && (snacPacket.getCommand() == 0x0003))
 			{
 				byte[] p = snacPacket.getDataRef();
+				requireLength(p, 1);
 				int len = Util.getByte(p, 0);
+				requireLength(p, 2 + len);
 				String uin = Util.byteArrayToString(p, 1, len);
 				boolean ok = (p.length > 1 + len) && (Util.getByte(p, 1 + len) == 0);
 				jimm.VoiceRecorder.voiceSent(uin, ok, snacPacket.getReference());
@@ -192,7 +201,9 @@ public class ActionListener
 					&& Options.getInt(Options.OPTION_TYPING_MODE) > 0)
 			{
 				byte[] p = snacPacket.getDataRef();
+				requireLength(p, 11);
 				int uin_len = Util.getByte(p, 10);
+				requireLength(p, 13 + uin_len);
 				String uin = Util.byteArrayToString(p, 11, uin_len);
 				int flag = Util.getWord(p, 11 + uin_len);
 				DebugLog.addText("Typing notify: " + flag);
@@ -213,6 +224,7 @@ public class ActionListener
 				byte[] buf = snacPacket.getDataRef();
 
 				// Read the error code from the packet
+				requireLength(buf, 2);
 				int errCode = Util.getWord(buf, 0);
 
 				DebugLog.addText("Error after requesting offline messages, error code: " + errCode);
@@ -272,15 +284,17 @@ public class ActionListener
 				// Get raw data
 				byte[] buf = snacPacket.getDataRef();
 				
+				requireLength(buf, 11);
 				int msgId1 = (int)Util.getDWord(buf, 0);
 				int msgId2 = (int)Util.getDWord(buf, 4);
 				
 				// Get length of the uin 
 				int uinLen = Util.getByte(buf, 10);
+				requireLength(buf, 60 + uinLen);
 				String uin = Util.byteArrayToString(buf, 11, uinLen);
 
 				// Get message type
-				int msgType = Util.getWord(buf, 58 + uinLen, false); // TODO: fix java.lang.ArrayIndexOutOfBoundsException
+				int msgType = Util.getWord(buf, 58 + uinLen, false);
 
 				if (((msgType == Message.MESSAGE_TYPE_NORM) || (msgType == 26)) // 26 is sended from ICQ6
 					&& (msgId2 == 0x0002) 
@@ -890,7 +904,9 @@ public class ActionListener
 				byte[] buf = snacPacket.getDataRef();
 
 				// Get UIN of the contact changing status
+				requireLength(buf, 1);
 				int uinLen = Util.getByte(buf, 0);
+				requireLength(buf, 1 + uinLen);
 				String uin = Util.byteArrayToString(buf, 1, uinLen);
 
 				// Create a new system notice
@@ -911,7 +927,9 @@ public class ActionListener
 				byte[] buf = snacPacket.getDataRef();
 
 				// Get UIN of the contact changing status
+				requireLength(buf, 1);
 				int length = Util.getByte(buf, 0);
+				requireLength(buf, length + 3);
 				authMarker += 1;
 				String uin = Util.byteArrayToString(buf, authMarker, length);
 				authMarker += length;
@@ -919,6 +937,7 @@ public class ActionListener
 				// Get reason
 				length = Util.getWord(buf, authMarker);
 				authMarker += 2;
+				requireLength(buf, authMarker + length);
 				String reason = Util.byteArrayToString(buf, authMarker, length,
 						Util.isDataUTF8(buf, authMarker, length));
 
@@ -940,7 +959,9 @@ public class ActionListener
 				byte[] buf = snacPacket.getDataRef();
 
 				// Get UIN of the contact changing status
+				requireLength(buf, 1);
 				int length = Util.getByte(buf, 0);
+				requireLength(buf, length + 2);
 				authMarker += 1;
 				String uin = Util.byteArrayToString(buf, authMarker, length);
 				authMarker += length;
@@ -957,9 +978,12 @@ public class ActionListener
 				SystemNotice notice;
 				if (!granted)
 				{
+					requireLength(buf, authMarker + 2);
 					length = Util.getWord(buf, authMarker);
+					authMarker += 2;
+					requireLength(buf, authMarker + length);
 					String reason = Util.byteArrayToString(buf, authMarker,
-							length + 2);
+							length, Util.isDataUTF8(buf, authMarker, length));
 					// Create a new system notice
 					if (length == 0)
 						notice = new SystemNotice(

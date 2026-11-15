@@ -252,6 +252,7 @@ public class SOCKETConnection extends Connection implements Runnable
 		byte[] flapHeader = new byte[6];
 		byte[] rcvdPacket;
 		int bRead = 0, bReadSum;
+		boolean receivedAny = false, deferredEof = false;
 
 
 		// Try
@@ -338,6 +339,7 @@ public class SOCKETConnection extends Connection implements Runnable
 				{
 					if (receiver != rcvThread) break;
 					queuePacket(ready);
+					receivedAny = true;
 				}
 
 				// Notify main loop
@@ -345,6 +347,25 @@ public class SOCKETConnection extends Connection implements Runnable
 				{
 					Icq.getWaitObj().notify();
 				}
+			}
+
+			// Auth servers close after their final reply. Reporting EOF here
+			// used to disconnect/clear the queue before the login action saw
+			// that reply (or while it was processing the redirect). Keep the
+			// terminal event behind the complete frames, including an already
+			// dequeued frame whose handler has not returned yet.
+			if (bRead == -1 && receivedAny && typeNetwork == JimmException.ICQ_MAIN
+					&& receiver == rcvThread && waitForPacketSpace(0))
+			{
+				synchronized (this)
+				{
+					if (receiver == rcvThread && !getInputCloseFlag())
+					{
+						queuePacket(new JimmException(120, 4, typeNetwork));
+						deferredEof = true;
+					}
+				}
+				if (deferredEof) synchronized (Icq.getWaitObj()) { Icq.getWaitObj().notifyAll(); }
 			}
 
 		}
@@ -399,14 +420,14 @@ public class SOCKETConnection extends Connection implements Runnable
 			// Never take the Icq lock while holding the connection lock.
 			synchronized (Icq.class)
 			{
-				if (receiver == rcvThread && Icq.isMyConnection(this)
+				if (!deferredEof && receiver == rcvThread && Icq.isMyConnection(this)
 						&& (this.typeNetwork == JimmException.ICQ_MAIN))
 					Icq.setNotConnected();
 			}
 		}
 		
 		// Sometimes Nokia emulator stops working and bRead returns -1 
-		if (receiver == rcvThread && bRead == -1 && !getInputCloseFlag() && Icq.isMyConnection(this))
+		if (!deferredEof && receiver == rcvThread && bRead == -1 && !getInputCloseFlag() && Icq.isMyConnection(this))
 		{
 			if (this.typeNetwork == JimmException.ICQ_MAIN) jimm.ConnLog.note("сервер закрыл соединение");
 			JimmException f = new JimmException(120, 4, this.typeNetwork);

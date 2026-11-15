@@ -19,7 +19,6 @@ import java.io.InputStream;
 
 import javax.microedition.io.Connector;
 import javax.microedition.io.file.FileConnection;
-import javax.microedition.io.file.FileSystemRegistry;
 import javax.microedition.lcdui.Canvas;
 import javax.microedition.lcdui.Command;
 import javax.microedition.lcdui.CommandListener;
@@ -48,7 +47,8 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 	public static final int MAX_SECONDS = 30;
 	private static final long ANSWER_WAIT = 180 * 1000L;
 
-	private static VideoRecorder current;
+	private static volatile VideoRecorder current;
+	private static int nextTemp;
 
 	private final JimmScreen back;
 	private final String uin;
@@ -60,7 +60,8 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 	private long startedAt;
 	private String status;
 	private String[] details;
-	private boolean recording;
+	private volatile boolean recording;
+	private boolean starting, stopRequested;
 	private volatile boolean sending;
 	private Icq.Upload transfer;
 	private java.util.TimerTask answerTask;
@@ -97,7 +98,12 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 				try
 				{
 					p = Manager.createPlayer("capture://video");
+					synchronized (VideoRecorder.this) {
+						if (current != VideoRecorder.this) return;
+						player = p;
+					}
 					p.realize();
+					if (!ownsPlayer(p)) return;
 					VideoControl vc = (VideoControl) p.getControl("VideoControl");
 					if (vc == null) throw new Exception("no VideoControl");
 					vc.initDisplayMode(VideoControl.USE_DIRECT_VIDEO, VideoRecorder.this);
@@ -111,18 +117,24 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 					vc.setDisplaySize(vw, vh);
 					vc.setDisplayLocation(0, (getHeight() - vh) / 2);
 					vc.setVisible(true);
+					if (!ownsPlayer(p)) return;
 					p.start();
-					if (current != VideoRecorder.this) { try { p.close(); } catch (Exception ig) {} return; }
-					player = p;
-					video = vc;
-					status = null;
+					synchronized (VideoRecorder.this) {
+						if (!ownsPlayer(p)) return;
+						video = vc;
+						status = null;
+					}
 					repaint();
 				}
 				catch (Throwable e)
 				{
 					// Незакрытый плеер копит «too many players» — см. CameraShot.
-					if (p != null) { try { p.close(); } catch (Exception ig) {} }
-					failed(e);
+					stopCamera();
+					if (current == VideoRecorder.this) failed(e);
+				}
+				finally
+				{
+					if (!ownsPlayer(p)) closePlayer(p);
 				}
 			}
 		}.start();
@@ -130,36 +142,64 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 
 	private void start()
 	{
-		if (player == null || recording || sending) return;
-		recording = true;
+		final Player camera;
+		synchronized (this) {
+			if (current != this || player == null || video == null || recording || sending) return;
+			camera = player;
+			recording = true; starting = true; stopRequested = false;
+			startedAt = 0;
+		}
 		status = null;
 		repaint();
 		new Thread() {
 			public void run()
 			{
+				String path = null;
+				boolean retained = false;
 				try
 				{
-					RecordControl rc = (RecordControl) player.getControl("RecordControl");
+					RecordControl rc = (RecordControl) camera.getControl("RecordControl");
 					if (rc == null) throw new Exception("no RecordControl");
-					tempUrl = tempFileUrl();
-					if (tempUrl != null)
-					{
-						rc.setRecordLocation(tempUrl);
+					path = tempFileUrl();
+					ByteArrayOutputStream data = path == null ? new ByteArrayOutputStream() : null;
+					synchronized (VideoRecorder.this) {
+						if (!ownsPlayer(camera) || !recording) return;
+						tempUrl = path;
+						sink = data;
 					}
-					else
-					{
-						sink = new ByteArrayOutputStream();
-						rc.setRecordStream(sink);
-					}
+					if (path != null) rc.setRecordLocation(path);
+					else rc.setRecordStream(data);
+					if (!ownsPlayer(camera)) return;
 					rc.startRecord();
-					record = rc;
-					startedAt = System.currentTimeMillis();
-					tick();
+					boolean stop;
+					synchronized (VideoRecorder.this) {
+						if (!ownsPlayer(camera) || !recording) return;
+						record = rc;
+						startedAt = System.currentTimeMillis();
+						starting = false;
+						stop = stopRequested;
+						retained = true;
+					}
+					if (stop) stopAndSend();
+					else tick();
 				}
 				catch (Throwable e)
 				{
 					recording = false;
-					failed(e);
+					stopCamera();
+					if (current == VideoRecorder.this) failed(e);
+				}
+				finally
+				{
+					if (!retained) {
+						closePlayer(camera);
+						TempFiles.remove(path);
+						synchronized (VideoRecorder.this) {
+							starting = false;
+							sink = null;
+							if (path == tempUrl) tempUrl = null;
+						}
+					}
 				}
 			}
 		}.start();
@@ -189,10 +229,17 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 
 	private void stopAndSend()
 	{
-		if (!recording || sending) return;
-		recording = false; sending = true;
+		final RecordControl recordingControl;
+		final String sourcePath;
+		synchronized (this) {
+			if (current != this || !recording || sending) return;
+			// «Стоп» может прийти, пока телефон ещё открывает файл записи.
+			if (starting) { stopRequested = true; return; }
+			recording = false; sending = true;
+			recordingControl = record;
+			sourcePath = tempUrl;
+		}
 		final int secs = Math.max(1, seconds());
-		final String sourcePath = tempUrl;
 		transfer = new Icq.Upload(uin) {
 			public boolean isActive() { return current == VideoRecorder.this && sending && super.isActive(); }
 			public void onPart(int part, int total) {
@@ -206,10 +253,17 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 			InputStream in = null;
 			try
 			{
-				record.commit();
+				recordingControl.commit();
+				ByteArrayOutputStream recordingData;
+				synchronized (VideoRecorder.this) {
+					if (current != VideoRecorder.this || !sending) return;
+					recordingData = sink;
+					sink = null;
+				}
 				String type = null;
-				try { type = record.getContentType(); } catch (Exception ignore) {}
-				byte[] data = sink == null ? null : sink.toByteArray();
+				try { type = recordingControl.getContentType(); } catch (Exception ignore) {}
+				byte[] data = recordingData == null ? null : recordingData.toByteArray();
+				recordingData = null;
 				long length;
 				if (data == null)
 				{
@@ -236,7 +290,10 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 			{
 				try { if (in != null) in.close(); } catch (Throwable ignore) {}
 				try { if (source != null) source.close(); } catch (Throwable ignore) {}
-				stopCamera(); deleteTemp(); repaint();
+				stopCamera();
+				synchronized (VideoRecorder.this) { if (tempUrl == sourcePath) tempUrl = null; }
+				TempFiles.remove(sourcePath);
+				repaint();
 			}
 		} }.start();
 	}
@@ -245,21 +302,17 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 	// несуществующем файле V8 отвечает «нет» при живом доступе к файлам.
 	private static String tempFileUrl()
 	{
-		return TempFiles.writableUrl("tmm_note.3gp");
+		// Отменённый native-вызов ещё может дописать свой файл после Back.
+		int id;
+		synchronized (VideoRecorder.class) { id = ++nextTemp; }
+		return TempFiles.writableUrl("tmm_note_" + id + ".3gp");
 	}
 
 	private void deleteTemp()
 	{
-		String url = tempUrl;
-		tempUrl = null;
-		if (url == null) return;
-		try
-		{
-			FileConnection fc = (FileConnection) Connector.open(url, Connector.READ_WRITE);
-			if (fc.exists()) fc.delete();
-			fc.close();
-		}
-		catch (Exception ignore) {}
+		String url;
+		synchronized (this) { url = tempUrl; tempUrl = null; }
+		TempFiles.remove(url);
 	}
 
 	// Мост отвечает 10/03. Не ответил — не висим вечно.
@@ -375,16 +428,27 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 		else start();
 	}
 
+	private synchronized boolean ownsPlayer(Player p)
+	{
+		return p != null && current == this && player == p;
+	}
+
+	private static void closePlayer(Player p)
+	{
+		if (p == null) return;
+		try { p.stop(); } catch (Throwable ignore) {}
+		try { p.close(); } catch (Throwable ignore) {}
+	}
+
 	private void stopCamera()
 	{
-		video = null;
-		record = null;
-		if (player != null)
-		{
-			try { player.stop(); } catch (Exception ignore) {}
-			try { player.close(); } catch (Exception ignore) {}
-			player = null;
+		Player p;
+		synchronized (this) {
+			video = null;
+			record = null;
+			p = player; player = null;
 		}
+		closePlayer(p);
 	}
 
 	public void commandAction(Command c, Displayable d)
@@ -394,11 +458,14 @@ public class VideoRecorder extends Canvas implements CommandListener, JimmScreen
 
 	private void close()
 	{
-		boolean owned = current == this;
-		if (owned) current = null;
+		boolean owned;
+		synchronized (this) {
+			owned = current == this;
+			if (owned) current = null;
+			recording = false; sending = false;
+		}
 		if (transfer != null) transfer.cancel();
 		if (answerTask != null) answerTask.cancel();
-		recording = false;
 		stopCamera();
 		sink = null;
 		deleteTemp();

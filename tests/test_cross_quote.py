@@ -133,9 +133,10 @@ async def main():
             assert len(tg.sent) == before_tg
             maximum.message = old_max
 
-            # Unknown fields in PyMax 2.4 still expose the body of a native forward.
+            # A native forward retains its source message under current PyMax models.
             maximum.message = MaxMessage.model_validate(dict(id=BIG_ID, chatId=-5678, time=1800000000000,
-                type="USER", text="", link=dict(type="FORWARD", message=dict(text="Из пересылки"))))
+                type="USER", text="", link=dict(type="FORWARD", chatId=-5679,
+                    message=dict(id=BIG_ID - 1, time=1799999999999, type="USER", text="Из пересылки"))))
             assert not await bridge.on_phone_quote(dst, ms, BIG_ID)
             assert tg.sent[-1][1].endswith("Из пересылки")
             maximum.message = old_max

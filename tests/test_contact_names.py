@@ -26,6 +26,7 @@ def make_session():
     class Writer:
         def get_extra_info(self, name): return ("127.0.0.1", 1)
     session = Session(server, None, Writer())
+    server.session = session
     session.tmm_version = (1, 20)
     session.ready = True
     session.build_ssi()

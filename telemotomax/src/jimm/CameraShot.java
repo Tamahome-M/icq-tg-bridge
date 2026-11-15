@@ -39,7 +39,7 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 	/** Столько ждём от моста ответа «ушло или нет». */
 	public static final int ANSWER_WAIT = 45 * 1000;
 
-	private static CameraShot current;
+	private static volatile CameraShot current;
 
 	private final JimmScreen back;
 	private final String uin;
@@ -97,30 +97,41 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 					// на случай другого телефона.
 					String[] tries = { "capture://video", "capture://camera", "capture://image" };
 					String why = "";
-					for (int i = 0; i < tries.length && p == null; i++)
+					for (int i = 0; i < tries.length && p == null && current == CameraShot.this; i++)
 					{
 						try { p = Manager.createPlayer(tries[i]); locator = tries[i].substring(10); }
 						catch (Throwable e) { why += tries[i].substring(10) + ": " + shortName(e) + "; "; }
 					}
 					if (p == null) throw new Exception(why);
+					synchronized (CameraShot.this) {
+						if (current != CameraShot.this) return;
+						player = p;
+					}
 					p.realize();
+					if (!ownsPlayer(p)) return;
 					VideoControl vc = (VideoControl) p.getControl("VideoControl");
 					if (vc == null) throw new Exception("no VideoControl");
 					vc.initDisplayMode(VideoControl.USE_DIRECT_VIDEO, CameraShot.this);
 					vc.setDisplaySize(getWidth(), getHeight());
 					vc.setDisplayLocation(0, 0);
 					vc.setVisible(true);
+					if (!ownsPlayer(p)) return;
 					p.start();
-					if (current != CameraShot.this) { try { p.close(); } catch (Exception ig) {} return; }
-					player = p;
-					video = vc;
-					status = null;
+					synchronized (CameraShot.this) {
+						if (!ownsPlayer(p)) return;
+						video = vc;
+						status = null;
+					}
 					repaint();
 				}
 				catch (Throwable e)
 				{
-					if (p != null) { try { p.close(); } catch (Exception ig) {} }
-					failed(e);
+					stopCamera();
+					if (current == CameraShot.this) failed(e);
+				}
+				finally
+				{
+					if (!ownsPlayer(p)) closePlayer(p);
 				}
 			}
 		}.start();
@@ -438,15 +449,26 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 		if (action == FIRE || keyCode == KEY_NUM5) shoot();
 	}
 
+	private synchronized boolean ownsPlayer(Player p)
+	{
+		return p != null && current == this && player == p;
+	}
+
+	private static void closePlayer(Player p)
+	{
+		if (p == null) return;
+		try { p.stop(); } catch (Throwable ignore) {}
+		try { p.close(); } catch (Throwable ignore) {}
+	}
+
 	private void stopCamera()
 	{
-		video = null;
-		if (player != null)
-		{
-			try { player.stop(); } catch (Exception ignore) {}
-			try { player.close(); } catch (Exception ignore) {}
-			player = null;
+		Player p;
+		synchronized (this) {
+			video = null;
+			p = player; player = null;
 		}
+		closePlayer(p);
 	}
 
 	public void commandAction(Command c, Displayable d)
@@ -456,8 +478,12 @@ public class CameraShot extends Canvas implements CommandListener, JimmScreen
 
 	private void close()
 	{
-		boolean owned = current == this;
-		if (owned) current = null;
+		boolean owned;
+		synchronized (this) {
+			owned = current == this;
+			if (owned) current = null;
+			sending = false;
+		}
 		if (transfer != null) transfer.cancel();
 		if (answerTask != null) answerTask.cancel();
 		shotInfo = null;

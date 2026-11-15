@@ -36,6 +36,7 @@ log = logging.getLogger("web")
 MAX_REQUEST_LINE = 2048
 MAX_HEADERS = 40             # больше телефон не пришлёт, а поток — сколько угодно
 MAX_BODY = 4096              # форма входа — и только она
+WRITE_TIMEOUT = 120          # idle write/close, not the total duration of a GPRS download
 # Браузеры таких телефонов ждут именно этот тип для XHTML Mobile Profile.
 MIME_PAGE = "application/vnd.wap.xhtml+xml"
 REALM = "icq-tg-bridge"
@@ -204,13 +205,11 @@ class PhotoServer:
         except Exception:
             log.exception("ошибка обработки запроса")
         finally:
-            self._writers.discard(writer)
-            self.access.free_slot()
             try:
-                writer.close()
-                await writer.wait_closed()
-            except (ConnectionError, OSError):
-                pass
+                await self._close_writer(writer)
+            finally:
+                self._writers.discard(writer)
+                self.access.free_slot()
 
     async def _route(self, writer, host: str, method: str, path: str, params: dict,
                      headers: dict, body: bytes) -> None:
@@ -545,6 +544,45 @@ class PhotoServer:
             + "".join(rows) + "</body></html>\n"
         ).encode("utf-8", "xmlcharrefreplace")
 
+    @staticmethod
+    async def _wait_writer(writer, operation) -> None:
+        # A single drain can take minutes on GPRS while its high-water buffer
+        # is still shrinking. Time out only when a whole interval makes no progress.
+        pending = asyncio.ensure_future(operation)
+        size = getattr(getattr(writer, "transport", None), "get_write_buffer_size", lambda: 0)
+        try:
+            previous = size()
+            while True:
+                done, _ = await asyncio.wait((pending,), timeout=WRITE_TIMEOUT)
+                if done:
+                    await pending
+                    return
+                remaining = size()
+                if remaining >= previous:
+                    raise asyncio.TimeoutError
+                previous = remaining
+        finally:
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+    async def _drain_writer(self, writer) -> None:
+        await self._wait_writer(writer, writer.drain())
+
+    async def _close_writer(self, writer) -> bool:
+        try:
+            writer.close()
+            # Cancelling StreamWriter.wait_closed directly would cancel the
+            # protocol's shared close waiter, including the handler's final close.
+            await self._wait_writer(writer, asyncio.shield(writer.wait_closed()))
+            return True
+        except (ConnectionError, OSError):
+            writer.transport.abort()
+            return False
+        except asyncio.CancelledError:
+            writer.transport.abort()
+            raise
+
     async def _reply(self, writer, status: int, mime: str, body: bytes | FileBody,
                      head_only: bool = False, extra: list[str] | None = None) -> bool:
         """Пишет ответ и дожидается, пока он уйдёт. False — клиент оборвал приём.
@@ -571,15 +609,14 @@ class PhotoServer:
                             raise OSError("file truncated during HTTP response")
                         writer.write(chunk)
                         remaining -= len(chunk)
-                        await writer.drain()
+                        await self._drain_writer(writer)
             elif not head_only:
                 view = memoryview(body)
                 for offset in range(0, len(view), 16 * 1024):
                     writer.write(view[offset:offset + 16 * 1024])
-                    await writer.drain()
-            await writer.drain()
-            writer.close()
-            await writer.wait_closed()
-            return True
+                    await self._drain_writer(writer)
+            await self._drain_writer(writer)
+            return await self._close_writer(writer)
         except (ConnectionError, OSError):
+            writer.transport.abort()
             return False
