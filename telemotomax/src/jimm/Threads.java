@@ -38,6 +38,9 @@ public class Threads implements Runnable
 	// застревал в очереди.
 	private static boolean reconnectPending;
 	private static long retryAt;
+	private static boolean retryStartupDns;
+	private static int reconnectGeneration;
+	private int generation;
 
 	// Пауза между попытками, когда быстрые попытки кончились, а сети нет.
 	final static public long SLOW_RECONNECT_MS = 60 * 1000;
@@ -45,6 +48,20 @@ public class Threads implements Runnable
 	public Threads(int type)
 	{
 		this.type = type;
+		synchronized (Threads.class) { generation = reconnectGeneration; }
+	}
+
+	// Invalidate a sleeping scheduler and any deferred retry, without spawning
+	// another worker while the old one is still returning from connect().
+	public static synchronized void cancelReconnect()
+	{
+		++reconnectGeneration;
+		retryAt = 0;
+	}
+
+	private boolean current()
+	{
+		synchronized (Threads.class) { return generation == reconnectGeneration; }
 	}
 	
 	public void run()
@@ -55,11 +72,13 @@ public class Threads implements Runnable
 			boolean again = false;
 			try
 			{
-				if (!Icq.isDisconnected())
+				if (current() && !Icq.isDisconnected())
 				{
 					try {Thread.sleep(delay);} catch (Exception e) {}
+					synchronized (Icq.class)
+					{
 					// За время паузы могли отключиться руками — тогда не лезем.
-					if (Icq.isDisconnected() || Icq.isConnected() || Icq.isConnecting())
+					if (!current() || Icq.isDisconnected() || Icq.isConnected() || Icq.isConnecting())
 					{
 						ConnLog.note(Icq.isConnected() ? "попытка отменена: уже в сети" :
 								(Icq.isConnecting() ? "попытка отменена: уже подключаемся" :
@@ -69,6 +88,7 @@ public class Threads implements Runnable
 					ConnLog.note("попытка входа");
 					ContactList.beforeConnect();
 					Icq.connect(true);
+					}
 				}
 			}
 			catch (Throwable t)
@@ -82,7 +102,7 @@ public class Threads implements Runnable
 			{
 				synchronized (Threads.class) { reconnectPending = false; }
 			}
-			if (again) reconnect(SLOW_RECONNECT_MS);
+			if (again) reconnect(SLOW_RECONNECT_MS, generation);
 			break;
 		}
 	}
@@ -95,15 +115,37 @@ public class Threads implements Runnable
 
 	static public void reconnect(long delayMs)
 	{
+		final int currentGeneration;
+		synchronized (Threads.class) { currentGeneration = reconnectGeneration; }
+		reconnect(delayMs, currentGeneration);
+	}
+
+	private static void reconnect(long delayMs, int expectedGeneration)
+	{
+		boolean startupDns = jimm.comm.connections.StartupDns.needsNextAddress();
+		boolean automatic = Options.getBoolean(Options.OPTION_RECONNECT);
 		synchronized (Threads.class)
 		{
-			if (reconnectPending) return;
+			if (expectedGeneration != reconnectGeneration) return;
+			if (reconnectPending)
+			{
+				// The new login can fail before the previous scheduler returns
+				// from Icq.connect(). Keep its authorized retry for the clock.
+				if (startupDns || automatic)
+				{
+					retryAt = System.currentTimeMillis() + delayMs;
+					retryStartupDns = startupDns;
+				}
+				return;
+			}
 			reconnectPending = true;
 			retryAt = 0;
+			retryStartupDns = startupDns;
 		}
 		try
 		{
 			Threads ri = new Threads(TYPE_RECONNECT);
+			ri.generation = expectedGeneration;
 			ri.delay = delayMs;
 			new Thread(ri).start();
 		}
@@ -112,7 +154,8 @@ public class Threads implements Runnable
 			synchronized (Threads.class)
 			{
 				reconnectPending = false;
-				retryAt = System.currentTimeMillis() + SLOW_RECONNECT_MS;
+				if (expectedGeneration == reconnectGeneration && retryAt == 0)
+					retryAt = System.currentTimeMillis() + SLOW_RECONNECT_MS;
 			}
 		}
 	}
@@ -121,12 +164,18 @@ public class Threads implements Runnable
 	// native thread allocation failed would fail for the same reason.
 	static public void checkReconnect()
 	{
+		boolean startupDns;
+		int currentGeneration;
 		synchronized (Threads.class)
 		{
-			if (retryAt == 0 || System.currentTimeMillis() < retryAt) return;
+			if (reconnectPending || retryAt == 0 || System.currentTimeMillis() < retryAt) return;
 			retryAt = 0;
+			startupDns = retryStartupDns;
+			currentGeneration = reconnectGeneration;
 		}
-		if (Options.getBoolean(Options.OPTION_RECONNECT) && !Icq.isDisconnected() && !Icq.isConnected() && !Icq.isConnecting()) reconnect(0);
+		boolean allowed = startupDns ? jimm.comm.connections.StartupDns.needsNextAddress()
+				: Options.getBoolean(Options.OPTION_RECONNECT);
+		if (allowed && !Icq.isDisconnected() && !Icq.isConnected() && !Icq.isConnecting()) reconnect(0, currentGeneration);
 	}
 	
 		

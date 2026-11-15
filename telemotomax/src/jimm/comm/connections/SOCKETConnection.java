@@ -116,6 +116,11 @@ public class SOCKETConnection extends Connection implements Runnable
 		boolean admitted = false;
 		try
 		{
+			hostAndPort = StartupDns.address(hostAndPort, this);
+			synchronized (this)
+			{
+				if (generation != connectGeneration || getInputCloseFlag()) throw new IOException();
+			}
 			// Connector.open/crypto can block for minutes. Cancellation must
 			// acquire neither this monitor nor a lock held during network I/O.
 			socket = (SocketConnection)Connector.open("socket://" + hostAndPort, Connector.READ_WRITE);

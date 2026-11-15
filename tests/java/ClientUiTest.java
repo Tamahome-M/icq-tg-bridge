@@ -158,16 +158,16 @@ public final class ClientUiTest {
         Object form=((sun.misc.Unsafe)field(sun.misc.Unsafe.class,"theUnsafe").get(null)).allocateInstance(formClass);
         Form network=new Form("network");field(formClass,"optionsForm").set(form,network);
         method(formClass,"showNetworkOptions").invoke(form);
-        check(network.items.size()==10,"network form contains obsolete transport fields or lost ping/encryption settings");
+        check(network.items.size()==13,"network form contains obsolete transport fields or lost ping/encryption settings");
         ChoiceGroup pingLimit=(ChoiceGroup)field(formClass,"pingMissLimitChoice").get(form);
-        check(network.items.elementAt(4)==pingLimit && pingLimit.getType()==Choice.POPUP
+        check(network.items.elementAt(7)==pingLimit && pingLimit.getType()==Choice.POPUP
             && pingLimit.size()==10 && pingLimit.getSelectedIndex()==2,"ping threshold is not a 1..10 dropdown defaulting to 3");
         for(int i=0;i<10;i++)check(pingLimit.getString(i).equals(String.valueOf(i+1)),"ping choices do not match their values");
         pingLimit.setSelectedIndex(9,true);
         ((TextField)network.items.elementAt(0)).setString("bridge.example");
         ((TextField)network.items.elementAt(1)).setString("5190");
-        ((ChoiceGroup)network.items.elementAt(2)).setSelectedIndex(0,true);
-        ((TextField)network.items.elementAt(3)).setString("120");
+        ((ChoiceGroup)field(formClass,"keepConnAliveChoiceGroup").get(form)).setSelectedIndex(0,true);
+        ((TextField)field(formClass,"connAliveIntervTextField").get(form)).setString("120");
         ((ChoiceGroup)field(formClass,"encryptionChoiceGroup").get(form)).setSelectedIndex(0,true);
         String psk="moto 2026";
         ((TextField)field(formClass,"encryptionPskTextField").get(form)).setString(psk);

@@ -200,6 +200,7 @@ package javax.microedition.lcdui;
 public class Form extends Displayable {
  public java.util.Vector items=new java.util.Vector();
  public Form(String title){} public int append(Item i){items.addElement(i);return items.size()-1;}
+ public int append(String s){items.addElement(s);return items.size()-1;}
  public void setItemStateListener(ItemStateListener l){}
 }
 """

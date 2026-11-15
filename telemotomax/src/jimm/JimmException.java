@@ -155,11 +155,13 @@ public class JimmException extends Exception
 		{
 			// Reset comm. subsystem
 
-			boolean diconnFlag, wasConnected;
+			boolean diconnFlag, wasConnected, nextStartupAddress;
 			synchronized (Icq.class)
 			{
 				diconnFlag = Icq.isDisconnected();
 				wasConnected = Icq.isConnected();
+				nextStartupAddress = !diconnFlag && !wasConnected
+						&& Icq.nextStartupAddress(e.getErrCode());
 				Icq.disconnect(true);
 				Icq.setDisconnected(diconnFlag);
 				Icq.resetServerCon();
@@ -184,7 +186,12 @@ public class JimmException extends Exception
 					&& !Icq.isDisconnected()
 					&& Options.getBoolean(Options.OPTION_RECONNECT);
 			
-			if (auto && Icq.reconnect_attempts > 0)
+			if (nextStartupAddress)
+			{
+				SplashCanvas.setLastErrCode(e.getFullErrCode());
+				Threads.reconnect();
+			}
+			else if (auto && Icq.reconnect_attempts > 0)
 			{
 				int reconTotal = Options.getInt(Options.OPTION_RECONNECT_NUMBER);
 				SplashCanvas.setLastErrCode(e.getFullErrCode()+" "+(reconTotal-Icq.reconnect_attempts+1)+"/"+reconTotal);

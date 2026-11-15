@@ -184,6 +184,7 @@ public class ConnectAction extends Action
         owner = Thread.currentThread();
         connection = Icq.c;
         if (canceled || !Icq.isCurrentConnection(owner, connection)) return;
+		jimm.comm.connections.StartupDns.checkServer(this.srvHost);
 
         // #sijapp cond.if modules_PROXY is "true" #
         int retry = 1;
