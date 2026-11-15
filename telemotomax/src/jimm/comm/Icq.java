@@ -245,6 +245,7 @@ public class Icq implements Runnable
 					"вход пропущен: уже подключаемся");
 			return;
 		}
+		if (!quiet) jimm.Threads.cancelReconnect();
 		setDisconnected(false);
 		//#sijapp cond.if target isnot "MOTOROLA"#
 		if (Options.getBoolean(Options.OPTION_SHADOW_CON))
@@ -293,6 +294,7 @@ public class Icq implements Runnable
 	/* Disconnects from the ICQ network */
 	static public synchronized void disconnect(boolean force)
 	{
+		jimm.Threads.cancelReconnect();
 		jimm.NativeQuote.disconnected();
 		if (activeUpload != null) activeUpload.cancel();
 		//#sijapp cond.if target!="DEFAULT" & modules_AVATARS="true"#
@@ -633,6 +635,7 @@ public class Icq implements Runnable
 	// Puts the comm. subsystem into STATE_CONNECTED
 	static protected synchronized void setConnected()
 	{
+		jimm.comm.connections.StartupDns.connected(c);
 		if (!connected) sessionId++;
 		SplashCanvas.setLastErrCode(null);
 		Icq.reconnect_attempts = (Options.getBoolean(Options.OPTION_RECONNECT))	?
@@ -1248,6 +1251,7 @@ public class Icq implements Runnable
 		        // Bad PSK/configuration/integrity: show the error, keep encryption enabled.
 		    case 119:	// "You need to allow network connection"
 		    case 122:	// Specified server host and/or port is invalid
+		    case 195: case 196: // Startup DNS failed, or the configured host changed.
 		    case 127:	// peer connection: specified server host and/or port is invalid
 			return false;
 		}
@@ -1644,6 +1648,7 @@ public class Icq implements Runnable
 	
 	public static void rotateServersList()
 	{
+		if (jimm.comm.connections.StartupDns.isEnabled()) return;
 		String[] servers = Util.explode(Options.getString(Options.OPTION_SRV_HOST), ',');
 		if ((servers == null) || (servers.length < 2)) return;
 		String first = servers[0];
@@ -1651,6 +1656,11 @@ public class Icq implements Runnable
 		servers[servers.length-1] = first;
 		Options.setString(Options.OPTION_SRV_HOST, Util.implode(servers, ','));
 		DebugLog.addText("Icq.rotateServersList(): " + servers[0]);
+	}
+
+	public static synchronized boolean nextStartupAddress(int errorCode)
+	{
+		return jimm.comm.connections.StartupDns.failed(c, errorCode);
 	}
 	
 	

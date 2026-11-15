@@ -24,6 +24,7 @@
 package jimm;
 
 import jimm.comm.Icq;
+import jimm.comm.connections.StartupDns;
 import jimm.util.ResourceBundle;
 import jimm.MainThread;
 
@@ -351,6 +352,9 @@ public class Jimm extends MIDlet
 		);
 		//#sijapp cond.end#
 
+		// Snapshot DNS settings once, after the UI is ready, before auto-login.
+		StartupDns.start();
+
 		if (loadError.length() == 0)
 		{
 			if (Options.getBoolean(Options.OPTION_AUTO_CONNECT))
@@ -394,6 +398,7 @@ public class Jimm extends MIDlet
 			throws MIDletStateChangeException
 	{
 		JimmUI.stopTaskForTimeString();
+		StartupDns.destroy();
 		// Disconnect
 		Icq.disconnect(false);
 

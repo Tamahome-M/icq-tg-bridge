@@ -23,6 +23,7 @@ public class Threads {
  public static void reconnect(){retries++;}
  public static void reconnect(long delay){retries++;}
  public static void checkReconnect(){}
+ public static void cancelReconnect(){}
 }'''
     cp = os.pathsep.join(str(p) for p in [classes, *sorted((work/'wtk/lib').glob('*.jar'))])
     with tempfile.TemporaryDirectory(prefix='tmm-disconnect-alerts-') as temp:

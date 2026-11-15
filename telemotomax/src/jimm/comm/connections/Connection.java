@@ -92,6 +92,9 @@ public abstract class Connection implements Runnable
 
 	// Type of connection for exceptions handling
 	protected int typeNetwork;
+	// Address selected for this login; kept through the auth -> BOS redirect.
+	String startupDnsAddress;
+	boolean startupDnsFailed;
 
 	// Opens a connection to the specified host and starts the receiver
 	// thread

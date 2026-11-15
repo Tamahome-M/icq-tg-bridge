@@ -29,10 +29,13 @@ public class SettingsNavigationTest {
   menu.choose(1);Form form=(Form)Jimm.display.getCurrent();
   ((TextField)field(type,"encryptionPskTextField").get(owner)).setString("moto code");
   ((ChoiceGroup)field(type,"pingMissLimitChoice").get(owner)).setSelectedIndex(9,true);
+  ((ChoiceGroup)field(type,"startupDnsChoice").get(owner)).setSelectedIndex(1,true);
+  ((TextField)field(type,"dnsServerTextField").get(owner)).setString("8.8.8.8");
   ((CommandListener)owner).commandAction(save?JimmUI.cmdSave:JimmUI.cmdBack,form);
   check(Jimm.display.getCurrent()==menu,"network form did not return to settings");
   check(Options.getString(Options.OPTION_ENCRYPTION_PSK).equals(save?"moto code":""),"save/cancel changed PSK incorrectly");
   check(Options.pingMissLimit()==(save?10:3),"save/cancel changed ping threshold incorrectly");
+  check(Options.getBoolean(Options.OPTION_STARTUP_DNS)==save && Options.getString(Options.OPTION_DNS_SERVER).equals(save?"8.8.8.8":"1.1.1.1"),"save/cancel changed DNS incorrectly");
   Vector stack=(Vector)field(JimmUI.class,"lastScreens").get(null);
   check(stack.contains(owner),"closing a network form removed the settings screen");
   if(origin==2)stack.removeElementAt(0); // parent unavailable: return must fall back to main menu

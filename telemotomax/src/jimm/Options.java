@@ -86,6 +86,8 @@ public class Options
 	public static final int OPTION_MEDIA_VIDEO_SIZE   = 33;
 	public static final int OPTION_ENCRYPTION_PSK     = 35;
 	public static final int OPTION_ENCRYPTION         = 176;
+	public static final int OPTION_STARTUP_DNS        = 177;
+	public static final int OPTION_DNS_SERVER         = 38;
 	public static final int OPTION_MESS_NOTIF_FILE    = 4;
 	public static final int OPTION_MESS_UNLOCKED_FILE = 36;
 	public static final int OPTION_LOCK_PIN = 37;
@@ -433,6 +435,8 @@ public class Options
 		setString(OPTION_LOCK_PIN, emptyString);
 		setLong(OPTION_AUTOLOCK_MINUTES, 2);
 		setBoolean(Options.OPTION_ENCRYPTION, false);
+		setBoolean(Options.OPTION_STARTUP_DNS, false);
+		setString(Options.OPTION_DNS_SERVER, "1.1.1.1");
 		setBoolean(Options.OPTION_KEEP_CONN_ALIVE, true);
 		setBoolean(Options.OPTION_RECONNECT, true);
 		setInt(Options.OPTION_RECONNECT_NUMBER, 10);
@@ -1082,6 +1086,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 	private TextField[] passwordTextField;
 	private TextField srvHostTextField;
 	private TextField srvPortTextField;
+	private ChoiceGroup startupDnsChoice;
+	private TextField dnsServerTextField;
 	private ChoiceGroup encryptionChoiceGroup;
 	private TextField encryptionPskTextField;
 	private ChoiceGroup keepConnAliveChoiceGroup;
@@ -2016,6 +2022,14 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 
 		optionsForm.append(srvHostTextField);
 		optionsForm.append(srvPortTextField);
+		startupDnsChoice = new ChoiceGroup(ResourceBundle.getString("startup_dns"), Choice.POPUP);
+		addStr(startupDnsChoice, "dns_off|dns_on");
+		startupDnsChoice.setSelectedIndex(Options.getBoolean(Options.OPTION_STARTUP_DNS) ? 1 : 0, true);
+		dnsServerTextField = new TextField(ResourceBundle.getString("dns_server"),
+				Options.getString(Options.OPTION_DNS_SERVER), 15, TextField.ANY);
+		optionsForm.append(startupDnsChoice);
+		optionsForm.append(dnsServerTextField);
+		optionsForm.append(ResourceBundle.getString("dns_restart"));
 //#sijapp cond.if modules_PROXY is "true"#
 		optionsForm.append(connTypeChoiceGroup);
 //#sijapp cond.end#
@@ -2944,6 +2958,12 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		int interval = number(connAliveIntervTextField, 1, 9999);
 		int retries = number(reconnectNumberTextField, 0, 99);
 		if (srvHostTextField.getString().trim().length() == 0) throw new IllegalArgumentException(ResourceBundle.getString("number_format"));
+		boolean startupDns = startupDnsChoice.getSelectedIndex() == 1;
+		String dnsServer = dnsServerTextField.getString().trim();
+		if (startupDns && !jimm.comm.connections.DnsResolver.isIPv4(dnsServer))
+			throw new IllegalArgumentException(ResourceBundle.getString("dns_format"));
+		Options.setBoolean(Options.OPTION_STARTUP_DNS, startupDns);
+		Options.setString(Options.OPTION_DNS_SERVER, dnsServer);
 		Options.setString(Options.OPTION_SRV_HOST, srvHostTextField.getString());
 		Options.setString(Options.OPTION_SRV_PORT, String.valueOf(port));
 //#sijapp cond.if modules_PROXY is "true"#
@@ -3230,6 +3250,8 @@ class OptionsForm implements CommandListener, ItemStateListener, VirtualListComm
 		passwordTextField = null;
 		srvHostTextField = null;
 		srvPortTextField = null;
+		startupDnsChoice = null;
+		dnsServerTextField = null;
 		encryptionChoiceGroup = null;
 		encryptionPskTextField = null;
 		keepConnAliveChoiceGroup = null;
