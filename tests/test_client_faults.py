@@ -68,10 +68,10 @@ def run(work, classes):
     loop = dict(LIFECYCLE)
     loop['jimm/comm/connections/SOCKETConnection.java'] = '''package jimm.comm.connections;
 public class SOCKETConnection extends Connection {
- public static int opened;public static final java.util.Vector packets=new java.util.Vector();
+ public static int opened;public static volatile String lastHost;public static final java.util.Vector packets=new java.util.Vector();
  public static final java.util.concurrent.CountDownLatch oldEntered=new java.util.concurrent.CountDownLatch(1),oldResume=new java.util.concurrent.CountDownLatch(1);
  public SOCKETConnection(){}public SOCKETConnection(int n){}
- public void connect(String host){opened++;if(host.equals("old")){oldEntered.countDown();try{oldResume.await(3,java.util.concurrent.TimeUnit.SECONDS);}catch(Exception e){throw new AssertionError(e);}}state=true;}
+ public void connect(String host){lastHost=host;opened++;if(host.equals("old")){oldEntered.countDown();try{oldResume.await(3,java.util.concurrent.TimeUnit.SECONDS);}catch(Exception e){throw new AssertionError(e);}}state=true;}
  public void sendPacket(jimm.comm.Packet packet){packets.addElement(packet);}
  public void forceDisconnect(){state=false;notifyToDisconnect();}
 }'''
@@ -107,6 +107,7 @@ public class Connector {
         ('FaultSocketTest', socket, []),
         ('FaultLoopTest', loop, []),
         ('jimm.comm.FaultBartTest', loop, []),
+        ('jimm.comm.BartHandshakeTest', loop, []),
     ]
     if (classes/'jimm/FileDownloader.class').exists():
         files = ui_stubs()

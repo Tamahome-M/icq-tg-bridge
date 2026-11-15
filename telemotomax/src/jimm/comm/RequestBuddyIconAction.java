@@ -53,11 +53,6 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 
     /** *********************************************************************** */
 
-    // Server host
-    private String srvHost;
-    // Server port
-    private String srvPort;
-
     private String uin;
 
     private byte[] biHash;
@@ -171,41 +166,42 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 			    if (packet instanceof SnacPacket)
 			    {
 					SnacPacket snacPacket = (SnacPacket) packet;
-					if ((snacPacket.getFamily() == SnacPacket.SRV_REDIRECT_FAMILY)
-						&& (snacPacket.getCommand() == SnacPacket.SRV_REDIRECT_COMMAND))
+					// Main-connection packets also reach this action while BART opens.
+					if (snacPacket.getFamily() != SnacPacket.SRV_REDIRECT_FAMILY
+							|| snacPacket.getCommand() != SnacPacket.SRV_REDIRECT_COMMAND) break;
+					byte[] buf = snacPacket.getDataRef();
+					String address = null;
+					byte[] cookie = null;
+					int service = 0x0010;
+					int marker = 0;
+					while (marker < buf.length)
 					{
-						// Get data
-						byte[] buf = snacPacket.getDataRef();
-						int marker = 0;
-						for (int i = 0; i < 3; i++)
+						if (buf.length - marker < 4) throw new JimmException(133, 0, false);
+						int type = Util.getWord(buf, marker);
+						int length = Util.getWord(buf, marker + 2);
+						marker += 4;
+						if (length > buf.length - marker) throw new JimmException(133, 0, false);
+						if (type == 0x0005) address = Util.byteArrayToString(buf, marker, length);
+						else if (type == 0x0006)
 						{
-							int tlvType = Util.getWord(buf, marker);
-							byte[] tlvData = Util.getTlv(buf, marker);
-							switch (tlvType)
-							{
-								case 0x0005 : // BART server
-									this.srvHost = Util.byteArrayToString(tlvData);
-									this.srvPort = "5190";
-									break;
-								case 0x0006 : // client cookie
-									this.clicookie = tlvData;
-									break;
-							}
-							marker += 2 + 2 + tlvData.length;
+							cookie = new byte[length];
+							System.arraycopy(buf, marker, cookie, 0, length);
 						}
+						else if (type == 0x000D)
+						{
+							if (length != 2) throw new JimmException(133, 0, false);
+							service = Util.getWord(buf, marker);
+						}
+						marker += length;
 					}
-					// Check parameters
-					if (this.clicookie == null || this.clicookie.length == 0)
-					{
-						this.state = RequestBuddyIconAction.STATE_ERROR;
-						throw (new JimmException(117, 0, false));
-					}
-	
-					// Open connection on a thread of its own; the comm
-					// thread must not wait for Connector.open.
-					this.state = RequestBuddyIconAction.STATE_CONNECTING;
-					Icq.connectBart(this.srvHost + ":" + this.srvPort, this);
-					// Packet has been consumed
+					if (service != 0x0010) break;
+					if (address == null || address.length() == 0 || cookie == null || cookie.length == 0)
+						throw new JimmException(133, 0, false);
+					if (address.indexOf(':') < 0) address += ":5190";
+					this.clicookie = cookie;
+					// Connector.open runs separately so incoming messages keep flowing.
+					this.state = STATE_CONNECTING;
+					Icq.connectBart(address, this);
 					consumed = true;
 			    }	
 				break;
@@ -218,14 +214,11 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 					ConnectPacket connectPacket = (ConnectPacket) packet;
 					if (connectPacket.getType() == ConnectPacket.SRV_CLI_HELLO)
 					{
-					    // Send a CLI_IDENT packet as reply
-				    	ConnectPacket reply = new ConnectPacket(this.clicookie);
-				    	Icq.bartC.sendPacket(reply);
+						ConnectPacket reply = new ConnectPacket(this.clicookie);
+						Icq.bartC.sendPacket(reply);
+						this.state = STATE_CLI_COOKIE_SENT;
+						consumed = true;
 					}
-					// Move to next state
-					this.state = RequestBuddyIconAction.STATE_CLI_COOKIE_SENT;
-					// Packet has been consumed
-					consumed = true;
 			    }
 			    break;
 	
@@ -235,6 +228,8 @@ public class RequestBuddyIconAction extends Action implements Icq.BartConnectLis
 			    if (packet instanceof SnacPacket)
 			    {
 					// Send a CLI_READY packet
+					SnacPacket snacPacket = (SnacPacket) packet;
+					if (snacPacket.getFamily() != 0x0001 || snacPacket.getCommand() != 0x0003) break;
 					SnacPacket reply = new SnacPacket(SnacPacket.CLI_READY_FAMILY, SnacPacket.CLI_READY_COMMAND, 0x00000000, new byte[0], ConnectAction.CLI_READY_DATA);
 					Icq.bartC.sendPacket(reply);
 	
