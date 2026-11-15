@@ -7,6 +7,8 @@ import os
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -16,7 +18,7 @@ from bridge.config import Config
 from bridge.oscar import const as C
 
 
-def make_bridge() -> Bridge:
+def make_bridge(*, connected: bool = False) -> Bridge:
     cfg = Config(tg_api_id=1, tg_api_hash="x")
     work = tempfile.mkdtemp()
     cfg.db = os.path.join(work, "test.db")
@@ -34,6 +36,12 @@ def make_bridge() -> Bridge:
     bridge.storage.uin_for_peer(-100200, kind="channel", title="Новости",
                                 group_name="Каналы", favourite=1)
     bridge._roster = bridge.storage.contacts()
+    if connected:
+        # A known classic client has no quiet list. Without a phone, muted
+        # candidates now wait for its eventual client-owned list instead.
+        bridge.oscar.session = SimpleNamespace(
+            ready=True, closed=False, quiet_delivery=False, profile={},
+            notify_status=AsyncMock())
     return bridge
 
 
@@ -70,7 +78,7 @@ async def main() -> None:
     bridge.storage.close()
 
     # --- заглушённое придерживается, но при возврате в сеть не всплывает ---
-    bridge = make_bridge()
+    bridge = make_bridge(connected=True)
     await bridge.on_owner_status(C.STATUS_OCCUPIED)
     now = int(time.time())
     await bridge.on_telegram_message(-4002, "Вася", "из заглушённой", now)

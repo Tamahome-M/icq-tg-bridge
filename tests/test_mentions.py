@@ -101,7 +101,10 @@ class MaxClient:
 
 class Phone:
     ready, closed = True, False
-    def __init__(self): self.sent = []
+    quiet_delivery = False
+    def __init__(self):
+        self.sent = []
+        self.profile = {}
     async def deliver(self, uin, text, **kwargs):
         self.sent.append((uin, text, kwargs))
         return True
@@ -141,6 +144,10 @@ async def run_network(network, *, mode=policy.QUIET, disabled=False, catch_up=Fa
                 bridge._unread[(peer, 0)] = len(messages)
                 await bridge.catch_up()
             else:
+                # These assertions describe live classic-client filtering.
+                # Offline muted candidates are retained until a client sends
+                # its own quiet list (covered by test_quiet_delivery).
+                bridge.oscar.session = Phone()
                 for message in messages:
                     if network == "telegram":
                         # Incoming handler only receives incoming events in Telethon.

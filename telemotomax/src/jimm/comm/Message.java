@@ -75,6 +75,13 @@ public abstract class Message
 	public String getSenderName() { return senderName; }
 	public void setSenderName(String value) { senderName = value; }
 
+//#sijapp cond.if modules_MOTOMAGX="true"#
+	// Delivery policy only: no per-row/per-contact copy is retained in the chat.
+	private boolean silent;
+	public boolean isSilent() { return silent; }
+	public void setSilent(boolean value) { silent = value; }
+//#sijapp cond.end#
+
 	protected boolean offline;
 
 	// Senders UIN (set for both incoming and outgoing messages)

@@ -101,7 +101,8 @@ class Bridge:
                                  self.chat_list, self.open_chat, self.group_paths,
                                  video_link=self.video_link, on_quote=self.on_phone_quote,
                                  quote_supported=self.quote_supported,
-                                 quote_reference=self.storage.quote_reference)
+                                 quote_reference=self.storage.quote_reference,
+                                 on_quiet_chats=self.on_phone_quiet_chats)
         # Любую сеть можно выключить с телефона (настройки сетей в
         # TeleMotoMax): выбор запоминается в базе и действует и после
         # перезапуска, пока телефон не пришлёт другой.
@@ -387,9 +388,7 @@ class Bridge:
         if real == C.STATUS_OFFLINE:
             return real          # собеседника нет — это важнее любой подмены
 
-        if contact is not None and not policy.allows(self.mode, contact.kind,
-                                                     bool(contact.favourite),
-                                                     bool(contact.muted)):
+        if contact is not None and not self._allows_contact(contact):
             return C.STATUS_NA if policy.holds(self.mode) else C.STATUS_DND
         return real
 
@@ -520,6 +519,33 @@ class Bridge:
             self._reload_roster()
         return found
 
+    def _quiet_contact(self, contact: Contact) -> bool:
+        """The phone owns this list; it exists only for the current session."""
+        session = self.oscar.session
+        return bool(session is not None and not getattr(session, "closed", False)
+                    and getattr(session, "quiet_delivery", False)
+                    and getattr(session, "quiet_synced", False)
+                    and contact.uin in session.quiet_uins)
+
+    def _allows_contact(self, contact: Contact, mention: bool = False,
+                        *, defer_offline: bool = False) -> bool:
+        session = self.oscar.session
+        unknown_list = defer_offline and (
+            session is None or getattr(session, "closed", False)
+            or not getattr(session, "ready", False)
+            or (getattr(session, "quiet_delivery", False)
+                and not getattr(session, "quiet_synced", False)))
+        muted = bool(contact.muted) and not (unknown_list or self._quiet_contact(contact))
+        return policy.allows(self.mode, contact.kind, bool(contact.favourite), muted, mention)
+
+    async def on_phone_quiet_chats(self) -> None:
+        """Apply a replacement list without changing network mute settings."""
+        for uin in list(self._typing):
+            contact = self.storage.contact_by_uin(uin)
+            if contact is not None and self._quiet_contact(contact):
+                await self.stop_typing(uin)
+        await self.refresh_shown_statuses()
+
     def verdict_for(self, uin: int, mention: bool = False) -> str:
         """Что делать с накопленным сообщением при текущем статусе.
 
@@ -530,8 +556,7 @@ class Bridge:
         contact = self.storage.contact_by_uin(uin)
         if contact is None:
             return "send"
-        if policy.allows(self.mode, contact.kind, bool(contact.favourite),
-                         bool(contact.muted), mention and self.cfg.mentions_through):
+        if self._allows_contact(contact, mention and self.cfg.mentions_through):
             return "send"
         return "hold" if policy.holds(self.mode) else "drop"
 
@@ -551,9 +576,9 @@ class Bridge:
 
         Доставляем всё, что моложе busy_hold_minutes, не пропуская через новый
         фильтр: эти сообщения и так отложены из-за «занят», а человек вернулся.
-        Исключения два: переход в тихий режим («не беспокоить», «недоступен») —
-        там телефон должен молчать, и заглушённые в Telegram чаты — они
-        придержаны как раз из-за мьюта, и снимать его возврат в сеть не должен.
+        При переходе в тихий режим («не беспокоить», «недоступен») пакет
+        не отдаём. Мьют проверяется с учётом списка тихой доставки клиента;
+        если телефон ещё не подключён, окончательная проверка будет при входе.
         """
         rows = self.storage.take_held(with_source=True)
         if not rows:
@@ -569,8 +594,7 @@ class Bridge:
             if ts < cutoff:
                 continue
             contact = self.storage.contact_by_uin(uin)
-            if (self.mode != policy.ALL and contact is not None
-                    and contact.muted):
+            if contact is not None and not self._allows_contact(contact, defer_offline=True):
                 continue
             if await self.oscar.deliver(uin, text, ts=ts, source_message_id=message_id,
                                         attach=attach, source_ts=source_ts):
@@ -1216,9 +1240,13 @@ class Bridge:
         net = self.network_of(peer_id)
         mention = mention and self.cfg.mentions_through
         # Звонок приходит всегда: ни мьют, ни статус его не останавливают.
-        if contact is not None and not always and not policy.allows(
-                self.mode, contact.kind, bool(contact.favourite),
-                bool(contact.muted), mention):
+        # Until a phone connects, its private quiet list is unknown. Keep
+        # potential matches in the bounded queue; sift_pending applies the
+        # actual client's list before anything is sent. Do not mark these
+        # undecided messages read in the source messenger.
+        allowed = contact is None or always or self._allows_contact(contact, mention)
+        deferred_mute = not allowed and self._allows_contact(contact, mention, defer_offline=True)
+        if not allowed and not deferred_mute:
             why = (f"заглушён в {net}" if contact.muted
                    else f"режим «{policy.MODE_NAMES[self.mode]}»")
             # Отсеянных бывает много (заглушённые каналы шумят), поэтому
@@ -1237,15 +1265,16 @@ class Bridge:
         accepted = await self.oscar.deliver(uin, text, forced=always, ts=ts, attach=attach,
                                            mention=mention, message_id=message_id, source_ts=source_ts)
         if accepted:
-            log.info("из %s: %s → в очередь телефону, %d симв.%s%s", net, name, len(text),
-                     ", звонок" if always else ", упоминание" if mention else "",
-                     "" if self.oscar.online else " (телефон не в сети)")
+            log.log(logging.DEBUG if deferred_mute else logging.INFO,
+                    "из %s: %s → в очередь телефону, %d симв.%s%s", net, name, len(text),
+                    ", звонок" if always else ", упоминание" if mention else "",
+                    "" if self.oscar.online else " (телефон не в сети)")
             log.debug("из %s: %s: %s", net, name, text[:300])
         # Отмечаем даже то, что легло в очередь: оно уже сохранено в базе,
         # и при следующем запуске догружать его повторно не нужно.
         if accepted and ts:
             self.storage.note_delivered(peer_id, ts, topic_id)
-        return accepted
+        return accepted and not deferred_mute
 
     async def on_telegram_status(self, peer_id: int, status: str) -> None:
         contact = self.storage.contact_by_peer(peer_id)
@@ -1272,8 +1301,7 @@ class Bridge:
         if not active:
             await self.stop_typing(contact.uin, "собеседник закончил")
             return
-        if not policy.allows(self.mode, contact.kind, bool(contact.favourite),
-                             bool(contact.muted)):
+        if self._quiet_contact(contact) or not self._allows_contact(contact):
             log.debug("Telegram: в чате «%s» печатают, но чат отсеян — не показываю",
                       contact.title)
             return

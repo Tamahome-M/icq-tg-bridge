@@ -370,12 +370,19 @@ public class ActionListener
 				byte[] messageRef = null;
 				byte[] attachToken = null;
 				int attachKind = 0;
+//#sijapp cond.if modules_MOTOMAGX="true"#
+				boolean silent = false;
+//#sijapp cond.end#
 				int extMarker = marker;
 				while (extMarker + 4 <= buf.length)
 				{
 					int extType = Util.getWord(buf, extMarker);
 					int extLength = Util.getTlvLength(buf, extMarker, buf.length);
 					if (extLength < 0) break;
+//#sijapp cond.if modules_MOTOMAGX="true"#
+					if (extType == 0x9005 && extLength == 1 && buf[extMarker + 4] == 1)
+						silent = true;
+//#sijapp cond.end#
 					if (extType == 0x9002 && extLength == 8)
 					{
 						messageRef = new byte[8];
@@ -466,6 +473,9 @@ public class ActionListener
 						PlainMessage plainMsg = new PlainMessage(uin, Options
 								.getString(Options.OPTION_UIN), Util
 								.createCurrentDate(false), text, false);
+//#sijapp cond.if modules_MOTOMAGX="true"#
+						plainMsg.setSilent(silent);
+//#sijapp cond.end#
 						plainMsg.setAttach(attachToken, attachKind);
 						plainMsg.setMessageRef(messageRef);
 						plainMsg.setSenderName(senderName);
@@ -643,6 +653,9 @@ public class ActionListener
 						}
 
 						// Forward message object to contact list
+//#sijapp cond.if modules_MOTOMAGX="true"#
+						message.setSilent(silent);
+//#sijapp cond.end#
 						message.setAttach(attachToken, attachKind);
 						message.setMessageRef(messageRef);
 						message.setSenderName(senderName);

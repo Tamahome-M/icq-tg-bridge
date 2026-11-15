@@ -149,6 +149,9 @@ class Session:
         # Версия TeleMotoMax (старший, младший), если подключился он: такому
         # клиенту можно слать то, чего обычный Jimm не поймёт.
         self.tmm_version: tuple[int, int] | None = None
+        self._quiet_delivery = False
+        self.quiet_uins: set[int] = set()
+        self.quiet_synced = False
         # Что за телефон (TeleMotoMax присылает после входа) и его профиль.
         self.device: profiles.Device | None = None
         self.profile_name = ""
@@ -609,6 +612,7 @@ class Session:
             (C.ICBM, C.ICBM_CLIENT_EVENT): self.on_icbm_typing,
             (C.OSERVICE, C.SERVICE_REQUEST): self.on_service_request,
             (C.OSERVICE, C.CLIENT_INFO): self.on_client_info,
+            (C.OSERVICE, C.CLIENT_QUIET_CHATS): self.on_quiet_chats,
             (C.PD, C.PD_RIGHTS_REQ): self.on_pd_rights,
             (C.SSI, C.SSI_RIGHTS_REQ): self.on_ssi_rights,
             (C.SSI, C.SSI_LIST_REQ): self.on_ssi_list,
@@ -674,14 +678,62 @@ class Session:
         """Клиент объявил свои способности. Нас интересует одна — TeleMotoMax:
         по ней сессия становится расширенной. Обычный Jimm её не шлёт."""
         caps = s.reader().tlvs().get(C.LOCATE_TLV_CAPS) or b""
+        self._quiet_delivery = False
         for i in range(0, len(caps) - 15, 16):
             cap = caps[i:i + 16]
             if cap.startswith(C.CAP_TMM_PREFIX):
                 self.tmm_version = (cap[4], cap[5])
+                self._quiet_delivery = bool(cap[6] & C.CAP_TMM_QUIET_DELIVERY)
+                if not self.quiet_delivery:
+                    self.quiet_uins = set()
+                    self.quiet_synced = False
                 self.client_name = f"TeleMotoMax {cap[4]}.{cap[5]}"
                 log.info("клиент %s: %s — расширенный протокол", self.peer, self.client_name)
                 return
         log.debug("способности клиента: %d шт., TeleMotoMax среди них нет", len(caps) // 16)
+        self.quiet_uins = set()
+        self.quiet_synced = False
+
+    async def on_quiet_chats(self, s: Snac) -> None:
+        """Replace the client's whitelist before ready/offline delivery starts."""
+        if self.service_only or not self.quiet_delivery:
+            await self.send_error(C.OSERVICE, 1, s.request_id,
+                                  "Тихая доставка недоступна этому клиенту")
+            return
+        count = struct.unpack(">H", s.data[:2])[0] if len(s.data) >= 2 else -1
+        if count < 0 or count > 256 or len(s.data) != 2 + 4 * count:
+            await self.send_error(C.OSERVICE, 1, s.request_id,
+                                  "Неверный список тихих чатов")
+            return
+        selected = {struct.unpack_from(">I", s.data, offset)[0]
+                    for offset in range(2, len(s.data), 4)}
+        if 0 in selected:
+            await self.send_error(C.OSERVICE, 1, s.request_id,
+                                  "Неверный UIN в списке тихих чатов")
+            return
+        self.quiet_uins = selected
+        self.quiet_synced = True
+        if self.server.on_quiet_chats is not None:
+            try:
+                await self.server.on_quiet_chats()
+            except Exception:
+                log.warning("тихие чаты: не удалось обновить статусы", exc_info=True)
+        self.server.wake_sender()
+
+    @property
+    def quiet_delivery(self) -> bool:
+        """Only an explicitly capable current client may receive silent messages."""
+        owner = self.server.session if self.service_only else self
+        return bool(owner is not None and not owner.service_only and not owner.closed
+                    and (owner.tmm_version or (0, 0)) >= (1, 28)
+                    and owner._quiet_delivery)
+
+    def silent_for(self, uin: int, row_id: int | None) -> bool:
+        """Re-evaluate the current client selection; forced replies/mentions stay audible."""
+        owner = self.server.session if self.service_only else self
+        return bool(self.quiet_delivery and owner.quiet_synced
+                    and uin in owner.quiet_uins and row_id is not None
+                    and self.server.storage.pending_can_be_silent(row_id))
 
     @property
     def extended(self) -> bool:
@@ -1110,10 +1162,15 @@ class Session:
         «удалите» — это и есть подтверждение приёма всей пачки.
         """
         rows = self.server.sift_pending()
+        selected = self.quiet_uins
         count = 0
         for row_id, sender, text, ts, _url, attach in rows:
             if self.closed:
                 return
+            if self.server.session is not self or self.quiet_uins is not selected:
+                break  # finish the batch, then filter the remaining rows again
+            if self.silent_for(sender, row_id):
+                continue  # the legacy batch cannot carry the silent ICBM flag
             if self.quote_enabled(sender) and self.server.storage.pending_message_id(row_id):
                 continue  # normal ICBM delivery carries the reference after the offline batch
             if attach and self.extended:
@@ -1363,7 +1420,7 @@ class Session:
 
     async def deliver(self, uin: int, text: str, wait_ack: bool = False,
                       row_id: int | None = None, url: str = "", attach: str = "",
-                      message_id: int | str = 0) -> bool:
+                      message_id: int | str = 0, silent: bool = False) -> bool:
         """Отправляет текст телефону. True — кадры ушли в сокет.
 
         В режиме подтверждений сообщение уходит расширенным форматом (канал 2),
@@ -1387,6 +1444,7 @@ class Session:
         ref = self.server.message_ref(uin, message_id or (self.server.storage.pending_message_id(row_id) if row_id else 0)) if self.quote_enabled(uin) else b""
         ref_tlv = tlv(C.TLV_TMM_MESSAGE_REF, ref) if ref else b""
         sender_name = self.sender_name_tlv(uin)
+        silent_tlv = tlv(C.TLV_TMM_SILENT, b"\x01") if silent and self.quiet_delivery else b""
         extra = b""
         if attach and self.extended:
             token = self.server.register_attachment(uin, attach)
@@ -1415,11 +1473,11 @@ class Session:
                 part_url = url if index == len(parts) - 1 else ""
                 body = (cookie + struct.pack(">H", 2) + sender
                         + tlv(0x0005, blocks.channel2_message(cookie, part, part_url))
-                        + tail + ref_tlv + (sender_name if index == 0 else b""))
+                        + tail + ref_tlv + silent_tlv + (sender_name if index == 0 else b""))
             else:
                 body = (cookie + struct.pack(">H", 1) + sender
                         + tlv(0x0002, blocks.message_fragments(part))
-                        + tlv(0x0006, b"") + tail + ref_tlv
+                        + tlv(0x0006, b"") + tail + ref_tlv + silent_tlv
                         + (sender_name if index == 0 else b""))
 
             # Запись считаем доставленной по подтверждению последней части.
@@ -1969,13 +2027,15 @@ class OscarServer:
                  video_link: Callable[[int, str], str] | None = None,
                  on_quote: Callable[[int, int, int], Awaitable[str]] | None = None,
                  quote_supported: Callable[[int], bool] | None = None,
-                 quote_reference: Callable[[int, int | str], int] | None = None):
+                 quote_reference: Callable[[int, int | str], int] | None = None,
+                 on_quiet_chats: Callable[[], Awaitable[None]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
         self.on_quote = on_quote
         self.quote_supported = quote_supported or (lambda uin: on_quote is not None)
         self.quote_reference = quote_reference
+        self.on_quiet_chats = on_quiet_chats
         self.roster = roster
         self.status_of = status_of or (lambda uin: C.STATUS_ONLINE)
         self.chat_info = chat_info or self._no_info
@@ -2327,8 +2387,14 @@ class OscarServer:
             return False
 
         with_ack = self.use_ack and self.ack_works is not False
-        if not await self.session.deliver(uin, text, wait_ack=with_ack, row_id=row_id,
-                                          url=url, attach=attach):
+        if getattr(self.session, "quiet_delivery", False):
+            sent = await self.session.deliver(uin, text, wait_ack=with_ack, row_id=row_id,
+                                              url=url, attach=attach,
+                                              silent=self.session.silent_for(uin, row_id))
+        else:
+            sent = await self.session.deliver(uin, text, wait_ack=with_ack, row_id=row_id,
+                                              url=url, attach=attach)
+        if not sent:
             return False
 
         if row_id is not None:
@@ -2557,6 +2623,8 @@ class OscarServer:
         выбрасывается. Упоминания сохраняют исключение из мьюта; ответы на
         команды и звонки идут мимо фильтра.
         """
+        if getattr(self.session, "quiet_delivery", False) and not self.session.quiet_synced:
+            return []  # do not apply mute policy until the client's selection arrives
         keep: list[tuple[int, int, str, int, str, str]] = []
         skipped = 0
         for row_id, uin, text, ts, forced, url, attach, mention in self.storage.peek_pending():
@@ -2582,10 +2650,15 @@ class OscarServer:
         rows = self.sift_pending()
         if not rows:
             return
+        session = self.session
+        selected = getattr(session, "quiet_uins", None)
         sent = 0
         for row_id, uin, text, ts, url, attach in rows:
             if not self.online:
                 break
+            if self.session is not session or getattr(session, "quiet_uins", None) is not selected:
+                self.wake_sender()
+                return  # a new full list requires filtering the remaining rows again
             # Метку времени получает только то, что успело полежать в очереди.
             if time.time() - ts > STALE_SECONDS:
                 stamp = time.strftime("%d.%m %H:%M", time.localtime(ts))

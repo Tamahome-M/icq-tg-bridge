@@ -1553,7 +1553,11 @@ public class ContactList implements CommandListener, VirtualTreeCommands,
 			SplashCanvas.messageAvailable();
 
 			/* Notify user */
-			lastAlertAllowed = MessageAlerts.allowed() && messageAlertGate();
+			lastAlertAllowed =
+//#sijapp cond.if modules_MOTOMAGX="true"#
+					!message.isSilent() &&
+//#sijapp cond.end#
+					MessageAlerts.allowed() && messageAlertGate();
 			if (!treeBuilt && lastAlertAllowed) needPlayMessNotif = true;
 //#sijapp cond.if target isnot "DEFAULT" #
 			else if (!readingChat(uin) && lastAlertAllowed) playSoundNotification(SOUND_TYPE_MESSAGE);

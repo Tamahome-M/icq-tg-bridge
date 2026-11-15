@@ -616,6 +616,9 @@ public class Icq implements Runnable
 	static public synchronized void setNotConnected()
 	{
 		connected = false;
+//#sijapp cond.if modules_MOTOMAGX="true"#
+		jimm.QuietDelivery.disconnected();
+//#sijapp cond.end#
 	}
 
 	// Checks whether the comm. subsystem is in STATE_CONNECTED
@@ -648,6 +651,9 @@ public class Icq implements Runnable
 
 		// Reset all variables
 		connected = false;
+//#sijapp cond.if modules_MOTOMAGX="true"#
+		jimm.QuietDelivery.disconnected();
+//#sijapp cond.end#
 
 		// Reset all timer tasks
 		cancelKeepAlive();
@@ -1397,12 +1403,17 @@ public class Icq implements Runnable
 	public static final int CAPF_UTF8_INTERNAL   = 1 << 1; // Client unterstands UTF-8 messages
 	public static final int CAPF_TYPING          = 1 << 10;
 	// TeleMotoMax: own capability so the bridge knows an extended client is
-	// talking to it. "TMM:" then major and minor version, rest zeros.
+	// talking to it. "TMM:", protocol version, then feature bits and padding.
 	public static final int TMM_VERSION_MAJOR = 0;
 	public static final int TMM_VERSION_MINOR = 4;
 	public static final byte[] CAP_TMM = new byte[] {
 		(byte) 'T', (byte) 'M', (byte) 'M', (byte) ':', (byte) TMM_VERSION_MAJOR, (byte) TMM_VERSION_MINOR,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+//#sijapp cond.if modules_MOTOMAGX="true"#
+		1, // Feature bit 0: quiet delivery TLV 0x9005.
+//#sijapp cond.else#
+//#		0,
+//#sijapp cond.end#
+		0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 	public static void parseCapabilities(ContactItem item, byte[] capabilities)
 	{

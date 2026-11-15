@@ -165,6 +165,9 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 	// Журнал «Связь» — сообщением в чат; нужен и на V3, где камеры нет.
 	// TeleMotoMax: chat history from the bridge on its own screen
 	static final Command cmdServerHistory = new Command(ResourceBundle.getString("server_history"), Command.ITEM, 5);
+//#sijapp cond.if modules_MOTOMAGX="true"#
+	static final Command cmdQuietDelivery = new Command(ResourceBundle.getString("quiet_delivery"), Command.ITEM, 5);
+//#sijapp cond.end#
 	private static final Command cmdAddUrs = new Command(ResourceBundle.getString("add_user", ResourceBundle.FLAG_ELLIPSIS), Command.ITEM, 5);
 	private static final Command cmdDenyAuth = new Command(ResourceBundle.getString("deny"), Command.CANCEL, 1);
 	
@@ -282,6 +285,9 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		textList.addCommandEx(cmdSendMedia, VirtualList.MENU_TYPE_RIGHT);
 //#sijapp cond.end#
 		textList.addCommandEx(cmdServerHistory, VirtualList.MENU_TYPE_RIGHT);
+//#sijapp cond.if modules_MOTOMAGX="true"#
+		textList.addCommandEx(cmdQuietDelivery, VirtualList.MENU_TYPE_RIGHT);
+//#sijapp cond.end#
 		textList.addCommandEx(cmdContactMenu, VirtualList.MENU_TYPE_RIGHT);
 		
 		textList.addCommandEx(cmdCloseChat, VirtualList.MENU_TYPE_LEFT_BAR);
@@ -363,6 +369,13 @@ class ChatTextList implements VirtualListCommands, CommandListener, JimmScreen
 		else if (c == cmdCameraShot)
 		{
 			CameraShot.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN), this);
+		}
+//#sijapp cond.end#
+//#sijapp cond.if modules_MOTOMAGX="true"#
+		else if (c == cmdQuietDelivery)
+		{
+			QuietDelivery.show(contact.getStringValue(ContactItem.CONTACTITEM_UIN),
+					contact.getStringValue(ContactItem.CONTACTITEM_NAME), this);
 		}
 //#sijapp cond.end#
 		else if (c == cmdServerHistory)
@@ -896,7 +909,11 @@ public class ChatHistory
 					);
 				//#sijapp cond.end#
 				
-				if (!offline)
+				if (!offline
+//#sijapp cond.if modules_MOTOMAGX="true"#
+						&& !message.isSilent()
+//#sijapp cond.end#
+						)
 				{
 					/* Show creeping line */
 					JimmUI.showCreepingLine(JimmUI.getCurrentScreen(), plainMsg.getText(), contact);
