@@ -640,3 +640,15 @@
 "vibra_locked"		"Vibration: locked, s"
 
 "number_format"		"Enter a number in the range"
+
+//#sijapp cond.if modules_MOTOMAGX="true"#
+"quiet_delivery"		"Receive without alerts"
+"quiet_normal"		"Normal delivery"
+"quiet_silent"		"Without alerts"
+"quiet_hint"		"Selected chats arrive without sound, vibration or ticker. The unread icon remains."
+"quiet_retry"		"Retry"
+"quiet_limit"		"The list already contains 256 chats."
+"quiet_storage_error"		"Cannot read or save the setting on the phone. Please retry."
+"quiet_saved"		"Saved on the phone and sent to the bridge."
+"quiet_saved_offline"		"Saved on the phone. Will be sent to the bridge on the next connection."
+//#sijapp cond.end#

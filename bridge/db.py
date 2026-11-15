@@ -538,6 +538,12 @@ class Storage:
     def pending_message_id(self, row_id: int) -> str:
         return self.pending_source(row_id)[0]
 
+    def pending_can_be_silent(self, row_id: int) -> bool:
+        """Calls, command replies and mentions retain their normal alerts."""
+        row = self.conn.execute(
+            "SELECT forced, mention FROM pending WHERE id = ?", (row_id,)).fetchone()
+        return row is not None and not row["forced"] and not row["mention"]
+
     def pending_source(self, row_id: int) -> tuple[str, int]:
         row = self.conn.execute("SELECT message_id, source_ts FROM pending WHERE id = ?", (row_id,)).fetchone()
         return (row["message_id"], row["source_ts"]) if row else ("", 0)

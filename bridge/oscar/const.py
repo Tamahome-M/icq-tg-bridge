@@ -46,6 +46,7 @@ SRV_VERSIONS = 0x0018
 SET_STATUS = 0x001E
 SERVICE_REQUEST = 0x0004    # клиент просит адрес дополнительного сервиса
 CLIENT_INFO = 0x00F2        # TeleMotoMax: платформа, экран, куча — по ним мост выбирает профиль
+CLIENT_QUIET_CHATS = 0x00F3  # TeleMotoMax V8: полный список тихих чатов, u16 count + u32 UIN[]
 SERVICE_REDIRECT = 0x0005   # ответ: куда идти за этим сервисом
 SRV_MOTD = 0x0013
 
@@ -68,8 +69,9 @@ LOCATE_USER_INFO_REQ = 0x0015
 LOCATE_SET_INFO = 0x0004       # клиент объявляет свои способности (TLV 0x05)
 LOCATE_TLV_CAPS = 0x0005
 # Способность TeleMotoMax — форка Jimm для моста: «TMM:», старший и младший
-# номер версии, остальное нули. По ней мост узнаёт расширенный клиент.
+# номер версии; byte 6 — дополнительные возможности. Остальное — нули.
 CAP_TMM_PREFIX = b"TMM:"
+CAP_TMM_QUIET_DELIVERY = 0x01  # byte 6: тихая доставка, TeleMotoMax V8 1.28+
 # Расширение TeleMotoMax: TLV в конце входящего сообщения (04/07) — вид
 # вложения (1 байт) и 16-байтный токен, по которому клиент просит снимок у
 # службы 0x10. Обычный Jimm дальше тела сообщения не читает.
@@ -81,6 +83,7 @@ TLV_TMM_MESSAGE_REF = 0x9002
 TLV_TMM_ATTACH = 0x9001
 TLV_TMM_ERROR_TEXT = 0x9003      # UTF-8 пояснение ошибки истории, TeleMotoMax 0.86+
 TLV_TMM_SENDER_NAME = 0x9004     # UTF-8 имя отправителя вне списка, TeleMotoMax 1.20+
+TLV_TMM_SILENT = 0x9005          # ровно byte 1: без звука и вибрации, при CAP_TMM_QUIET_DELIVERY
 ATTACH_PHOTO = 0x01
 ATTACH_VIDEO = 0x02          # превью видео: картинка, как фото, только кадр
 ATTACH_VOICE = 0x03          # голосовое: картинки нет, только «Прослушать»

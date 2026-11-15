@@ -368,7 +368,11 @@ public class MainThread implements Runnable
 	{
 		addMainThreadTask(TYPE_ADD_MSG, message);
 //#sijapp cond.if target is "MIDP2"#
-		if (Options.getBoolean(Options.OPTION_BRING_UP)) Jimm.setMinimized(false);
+		if (Options.getBoolean(Options.OPTION_BRING_UP)
+//#sijapp cond.if modules_MOTOMAGX="true"#
+				&& !((Message)message).isSilent()
+//#sijapp cond.end#
+				) Jimm.setMinimized(false);
 //#sijapp cond.end #
 	}
 

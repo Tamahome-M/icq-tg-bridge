@@ -106,6 +106,9 @@ public class ConnectAction extends Action
 
     // Server port
     private String srvPort;
+//#sijapp cond.if modules_MOTOMAGX="true"#
+    private String quietHost;
+//#sijapp cond.end#
 
     // Action state
     private volatile int state;
@@ -143,6 +146,10 @@ public class ConnectAction extends Action
         this.password = password;
         this.srvHost = srvHost;
         this.srvPort = srvPort;
+//#sijapp cond.if modules_MOTOMAGX="true"#
+        // Match the saved host-list identity, not the selected fallback address.
+        this.quietHost = Options.getString(Options.OPTION_SRV_HOST);
+//#sijapp cond.end#
         
         System.out.println("ConnectAction, this="+this);
     }
@@ -880,6 +887,10 @@ public class ConnectAction extends Action
             // STATE_CLI_STATUS_INFO_SENT
 			else if (this.state == ConnectAction.STATE_CLI_STATUS_INFO_SENT)
 			{
+//#sijapp cond.if modules_MOTOMAGX="true"#
+				// Publish the client's full local list before queued messages drain.
+				jimm.QuietDelivery.sync(connection, quietHost, srvPort, uin);
+//#sijapp cond.end#
 				// Send a CLI_READY packet
 				SnacPacket reply2 = new SnacPacket(SnacPacket.CLI_READY_FAMILY, SnacPacket.CLI_READY_COMMAND, 0x00000000, new byte[0], ConnectAction.CLI_READY_DATA);
 				connection.sendPacket(reply2);
