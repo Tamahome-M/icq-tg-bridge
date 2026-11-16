@@ -6,7 +6,7 @@ namespace tmm {
 static const SettingField fields[] = {
     {"account", "uin", "UIN", "", "", 10, false},
     {"account", "password", "Пароль", "", "", 64, true},
-    {"network", "host", "Сервер", "127.0.0.1", "", 512, false},
+    {"network", "host", "Сервер", "", "", 512, false},
     {"network", "port", "Порт", "5190", "", 65535, false},
     {"network", "network", "Доступ в сеть", "auto",
      "auto=Автоматически|system=Системный маршрут|mobile=Мобильный профиль", 0, false},
@@ -197,7 +197,7 @@ bool validateSetting(const SettingField &f, const std::string &v, std::string &e
         e = "Слишком длинное значение";
         return false;
     }
-    if (key == "host" && (v.empty() || v.find_first_of("/\r\n\t ") != std::string::npos)) {
+    if (key == "host" && v.find_first_of("/\r\n\t ") != std::string::npos) {
         e = "Укажите имя сервера или IP без URL";
         return false;
     }
@@ -222,6 +222,29 @@ bool validateSetting(const SettingField &f, const std::string &v, std::string &e
             return false;
         }
     }
+    return true;
+}
+bool validateNetworkSettings(const Settings &s, std::string &error) {
+    if (settingValue(s, "host").empty()) {
+        error = "Укажите сервер моста в настройках сети";
+        return false;
+    }
+    const char *keys[] = {"host",       "port", "network",    "network_profile",
+                          "encryption", "psk",  "startup_dns"};
+    for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i)
+        if (!validateSetting(*settingField(keys[i]), settingValue(s, keys[i]), error))
+            return false;
+    if (settingValue(s, "network") == "mobile" && settingValue(s, "network_profile").empty()) {
+        error = "Выберите профиль Интернета в настройках сети";
+        return false;
+    }
+    if (settingFlag(s, "encryption") && settingValue(s, "psk").empty()) {
+        error = "Укажите общий ключ PSK или отключите шифрование";
+        return false;
+    }
+    if (settingFlag(s, "startup_dns") &&
+        !validateSetting(*settingField("dns_server"), settingValue(s, "dns_server"), error))
+        return false;
     return true;
 }
 static unsigned limit(const Settings &s, const char *k) {

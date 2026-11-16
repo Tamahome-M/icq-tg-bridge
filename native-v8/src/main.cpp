@@ -10,9 +10,6 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
-#ifndef TMM_NATIVE_VERSION
-#define TMM_NATIVE_VERSION "0.1.0"
-#endif
 int main(int argc, char **argv) {
     umask(0077);
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {

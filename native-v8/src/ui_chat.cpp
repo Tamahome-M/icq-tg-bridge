@@ -100,12 +100,21 @@ void Window::connectClient() {
         showSettings("account");
         return;
     }
-    if (connectionState_ == Event::Connecting || connectionState_ == Event::Online)
+    if (connectionState_ == Event::Connecting || connectionState_ == Event::Reconnecting ||
+        connectionState_ == Event::Online)
         return;
+    if (!validateNetworkSettings(settings_, accountError)) {
+        showSettings("network");
+        showText(u("Ошибка подключения"), u(accountError.c_str()));
+        return;
+    }
     if (storage_->accountDir().empty() && !selectScope())
         return;
     manualDisconnect_ = false;
+    connectionErrorShown_ = false;
     ClientConfig cfg = clientSettings(settings_, storage_->accountDir() + "/cache", quiet_);
+    fprintf(stderr, "Connection: starting worker (%s network)\n", cfg.network.c_str());
+    fflush(stderr);
     client_.configure(cfg);
     client_.start();
     generation_ = client_.sessionGeneration();
@@ -153,6 +162,8 @@ void Window::consume(const Event &e) {
     if (e.type == Event::State) {
         unsigned before = connectionState_;
         connectionState_ = e.state;
+        if (e.state == Event::Online)
+            connectionErrorShown_ = false;
         note(e.text);
         if (e.state == Event::Disconnected || e.state == Event::Reconnecting) {
             pending_.clear();
@@ -378,6 +389,23 @@ void Window::consume(const Event &e) {
                 stack_[i].request = 0;
         pending_.erase(e.requestId);
         pendingUin_.erase(e.requestId);
+        if (!e.requestId) {
+            fprintf(stderr, "Connection error: %s\n", e.text.c_str());
+            fflush(stderr);
+            if (!connectionErrorShown_ && (connectionState_ == Event::Connecting ||
+                                           connectionState_ == Event::Reconnecting)) {
+                connectionErrorShown_ = true;
+                showText(u("Ошибка подключения"), u(e.text));
+                view().context = "connection-error";
+                notice_ = QString::null;
+                return;
+            }
+            if (view().context == "connection-error") {
+                view().rows[0].text = u(e.text);
+                update();
+                return;
+            }
+        }
         info(u(e.text));
         return;
     }

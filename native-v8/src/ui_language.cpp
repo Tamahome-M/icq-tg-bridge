@@ -6,6 +6,12 @@ void setUiLanguage(const std::string &language) {
     english = language == "en";
 }
 static const char *translations[][2] = {
+    {"Ошибка подключения", "Connection error"},
+    {"Укажите сервер моста в настройках сети", "Enter the bridge server in network settings"},
+    {"Выберите профиль Интернета в настройках сети",
+     "Select an Internet profile in network settings"},
+    {"Укажите общий ключ PSK или отключите шифрование",
+     "Enter the shared PSK or disable encryption"},
     {"Следующий фрагмент", "Next segment"},
     {"Следующий фрагмент…", "Next segment…"},
     {"Продолжить", "Resume"},

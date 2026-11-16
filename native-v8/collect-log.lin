@@ -1,0 +1,27 @@
+#!/bin/sh
+# Run on the V8 after a crash. The report is written next to this script.
+set -eu
+umask 077
+case "$0" in */*) tmm_script_dir=${0%/*} ;; *) tmm_script_dir=. ;; esac
+tmm_script_dir=$(CDPATH= cd "$tmm_script_dir" && pwd)
+tmm_data=${TMM_NATIVE_DATA:-/ezxlocal/download/appwrite/TeleMotoMaxNative}
+tmm_report="$tmm_script_dir/TeleMotoMax-log.txt"
+tmm_temporary="$tmm_script_dir/.tmm-log-$$"
+# mkdir is available in the stock firmware; mktemp is not.
+mkdir "$tmm_temporary"
+trap 'rm -f "$tmm_temporary/report"; rmdir "$tmm_temporary"' 0
+trap 'exit 1' 1 2 15
+{
+    printf '%s\n' 'TeleMotoMax Native launcher logs' "Data directory: $tmm_data"
+    for tmm_name in launcher.log launcher.previous.log; do
+        printf '\n--- %s ---\n' "$tmm_name"
+        if test -r "$tmm_data/$tmm_name"; then
+            cat "$tmm_data/$tmm_name"
+            printf '\n'
+        else
+            printf '%s\n' '(log file is missing or unreadable)'
+        fi
+    done
+} > "$tmm_temporary/report"
+mv -f "$tmm_temporary/report" "$tmm_report"
+printf 'Saved: %s\n' "$tmm_report"

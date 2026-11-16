@@ -43,12 +43,13 @@ static std::vector<std::string> split(const std::string &s, char separator) {
 }
 void Window::mainMenu() {
     View v(View::Menu, u("TeleMotoMax Native"));
+    const bool connecting =
+        connectionState_ == Event::Connecting || connectionState_ == Event::Reconnecting;
     row(v,
-        connectionState_ == Event::Online       ? "Отключиться"
-        : connectionState_ == Event::Connecting ? "Отменить подключение"
-                                                : "Подключиться",
-        connectionState_ == Event::Online || connectionState_ == Event::Connecting ? "disconnect"
-                                                                                   : "connect");
+        connectionState_ == Event::Online ? "Отключиться"
+        : connecting                      ? "Отменить подключение"
+                                          : "Подключиться",
+        connectionState_ == Event::Online || connecting ? "disconnect" : "connect");
     row(v, "Статус", "status");
     row(v, "Контакты", "home");
     row(v, "Контакт-лист", "contact-list");
@@ -305,11 +306,15 @@ void Window::activate(const Row &chosen) {
         return;
     }
     if (action == "connect") {
-        if (connectionState_ == Event::Online || connectionState_ == Event::Connecting)
+        // Close the command menu before connectClient may open settings or an
+        // error page. A hotkey can invoke this action without a menu.
+        if (view().kind == View::Menu)
+            back();
+        if (connectionState_ == Event::Online || connectionState_ == Event::Connecting ||
+            connectionState_ == Event::Reconnecting)
             disconnectClient();
         else
             connectClient();
-        back();
         return;
     }
     if (action == "disconnect") {
@@ -1107,10 +1112,11 @@ void Window::activate(const Row &chosen) {
                 resident = 0;
             fclose(memory);
         }
-        QString description = u("TeleMotoMax Native 0.1.0\nMotorola RAZR V8 / Qt 2\nПротокол OSCAR "
-                                "+ TeleMotoMax 1.31\n") +
-                              u(connectionState_ == Event::Online ? "Подключено" : "Отключено") +
-                              "\n" + QString::number(contacts_.size()) + u(" контактов");
+        QString description =
+            u("TeleMotoMax Native " TMM_NATIVE_VERSION "\nMotorola RAZR V8 / Qt 2\nПротокол OSCAR "
+              "+ TeleMotoMax 1.31\n") +
+            u(connectionState_ == Event::Online ? "Подключено" : "Отключено") + "\n" +
+            QString::number(contacts_.size()) + u(" контактов");
         if (resident)
             description +=
                 "\nRSS: " + QString::number(resident * (unsigned long)getpagesize() / 1024) + " KB";

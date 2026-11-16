@@ -4,6 +4,8 @@
 #include "ui_language.h"
 #include "ui_files.h"
 #include "instance.h"
+#include "input_indicator.h"
+#include <ZKbInputField.h>
 #include <ZMultiLineEdit.h>
 #include <ZKeyDef.h>
 #include <qapplication.h>
@@ -39,14 +41,14 @@ static QString number(unsigned n) {
 }
 Window::Window(const std::string &dir)
     : QWidget(0, "telemotomax", WRepaintNoErase | WResizeNoErase), storage_(new Storage(dir)),
-      platform_(this), player_(this), capture_(this), notifier_(0), editor_(0), data_(dir),
-      editUin_(0), quoteUin_(0), captureUin_(0), pickUin_(0), videoUin_(0), videoSegment_(0),
-      connectionState_(Event::Disconnected), captureKind_(0), pickKind_(0), playPosition_(0),
-      playDuration_(0), generation_(0), editDepth_(0), loadedMediaReady_(false), locked_(false),
-      closed_(false), editorWasVisible_(false), silent_(false), paused_(false),
-      manualDisconnect_(false), lightOn_(true), closedAt_(0), startedAt_(now()), lastAlert_(0),
-      lastActivity_(now()), typingSentAt_(0), noticeUntil_(0), tickerUntil_(0), pictureZoom_(100),
-      pictureRotation_(0) {
+      platform_(this), player_(this), capture_(this), notifier_(0), editor_(0), inputIndicator_(0),
+      data_(dir), editUin_(0), quoteUin_(0), captureUin_(0), pickUin_(0), videoUin_(0),
+      videoSegment_(0), connectionState_(Event::Disconnected), captureKind_(0), pickKind_(0),
+      playPosition_(0), playDuration_(0), generation_(0), editDepth_(0), loadedMediaReady_(false),
+      connectionErrorShown_(false), locked_(false), closed_(false), editorWasVisible_(false),
+      silent_(false), paused_(false), manualDisconnect_(false), lightOn_(true), closedAt_(0),
+      startedAt_(now()), lastAlert_(0), lastActivity_(now()), typingSentAt_(0), noticeUntil_(0),
+      tickerUntil_(0), pictureZoom_(100), pictureRotation_(0) {
     setCaption("TeleMotoMax Native");
     setFocusPolicy(StrongFocus);
     setBackgroundMode(NoBackground);
@@ -72,6 +74,10 @@ Window::Window(const std::string &dir)
     connect(&capture_, SIGNAL(ready(const QString &, const QString &)), this,
             SLOT(captureReady(const QString &, const QString &)));
     editor_ = new ZMultiLineEdit(this, true, 8);
+    inputIndicator_ = new InputIndicator(this);
+    editor_->getInputField()->setOptions(
+        ZKbInputField::FIELD_OPTION_IMSTATEOBSERVER,
+        reinterpret_cast<long>(static_cast<QObject *>(inputIndicator_)));
     editor_->hide();
     editor_->setWordWrap(ZMultiLineEdit::WidgetWidth);
     editor_->setUndoDepth(8);
@@ -84,11 +90,11 @@ Window::Window(const std::string &dir)
     selectScope();
     home();
     applySettings();
-    note("TeleMotoMax Native 0.1.0; OSCAR/TMM 1.31");
+    note("TeleMotoMax Native " TMM_NATIVE_VERSION "; OSCAR/TMM 1.31");
     client_.configure(clientSettings(settings_, storage_->accountDir() + "/cache", quiet_));
     if (settingFlag(settings_, "auto_connect"))
         connectClient();
-    else if (settingFlag(settings_, "startup_dns")) {
+    else if (settingFlag(settings_, "startup_dns") && validateNetworkSettings(settings_, error)) {
         client_.prefetchDns();
         generation_ = client_.sessionGeneration();
     }
@@ -100,6 +106,10 @@ Window::~Window() {
     capture_.cancel();
     if (!managedMediaPath_.empty())
         unlink(managedMediaPath_.c_str());
+    // The native input field holds a non-owning observer pointer. End its
+    // lifetime while the input indicator is still a live QObject child.
+    delete editor_;
+    editor_ = 0;
     delete storage_;
 }
 void Window::saveState() {
@@ -308,9 +318,7 @@ void Window::settingsChanged() {
         showSettings(view().context);
 }
 void Window::resizeEvent(QResizeEvent *) {
-    if (editor_)
-        editor_->setGeometry(2, 28, width() - 4,
-                             settingFlag(settings_, "full_editor") ? height() - 56 : height() / 2);
+    layoutEditor();
     QWidget *w = player_.videoWidget();
     if (w && w->isVisible())
         w->setGeometry(0, 30, width(), height() - 88);
@@ -409,6 +417,13 @@ void Window::tick() {
     }
 }
 bool Window::eventFilter(QObject *object, QEvent *event) {
+    if (object == editor_ && inputIndicator_) {
+        if (event->type() == QEvent::Show) {
+            layoutEditor();
+            inputIndicator_->show();
+        } else if (event->type() == QEvent::Hide)
+            inputIndicator_->hide();
+    }
     if (object == editor_ && event->type() == QEvent::KeyPress) {
         QKeyEvent *k = static_cast<QKeyEvent *>(event);
         lastActivity_ = now();
@@ -767,8 +782,23 @@ void Window::drawList(QPainter &p) {
     p.setClipping(false);
     p.setFont(font());
 }
-void Window::paintEvent(QPaintEvent *) {
-    QPainter p(this);
+void Window::paintEvent(QPaintEvent *event) {
+    if (frame_.size() != size())
+        frame_.resize(size());
+    if (frame_.isNull())
+        return;
+    QPainter buffered(&frame_);
+    buffered.setFont(font());
+    drawFrame(buffered);
+    buffered.end();
+    // Present a completed frame. Painting the background directly to the
+    // framebuffer exposes a blank menu between key presses on the V8.
+    // The QWidget painter keeps native editor/video children clipped out.
+    QPainter screen(this);
+    const QRect area = event->rect().intersect(rect());
+    screen.drawPixmap(area.x(), area.y(), frame_, area.x(), area.y(), area.width(), area.height());
+}
+void Window::drawFrame(QPainter &p) {
     bool dark = settingValue(settings_, "theme") == "dark";
     p.fillRect(rect(), dark                                          ? QColor(20, 22, 25)
                        : settingValue(settings_, "theme") == "blue"  ? QColor(216, 235, 252)

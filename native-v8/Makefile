@@ -1,4 +1,5 @@
 SDK ?= /arm-eabi
+.DEFAULT_GOAL := all
 QT := $(SDK)/lib/qt-v8
 EZX := $(SDK)/lib/ezx-v8
 SYS := $(SDK)/arm-linux-gnueabi
@@ -10,15 +11,20 @@ CPPFLAGS := -D_FILE_OFFSET_BITS=64 -DQWS -DEZX_V8 -DTMM_NATIVE_VERSION='"$(VERSI
 # MontaVista GCC 3.4.3 otherwise miscompiles unsigned vector-size comparisons
 # (CMN vs CMP when size==0); see tests/toolchain_vector_test.cpp.
 CXXFLAGS := -std=c++98 -Os -fno-expensive-optimizations -Wall -Wextra -fno-exceptions -fno-rtti -ffunction-sections -fdata-sections
-LDFLAGS := -L$(BUILD)/sdk-link -L$(QT)/lib -L$(EZX)/lib -L$(SYS)/lib -Wl,--gc-sections,-rpath-link,$(QT)/lib:$(EZX)/lib:$(SYS)/lib
+# The SDK's old linker drops non-COMDAT .ARM.exidx/.ARM.extab with
+# --gc-sections, even for live functions (e.g. Transport::connect).
+# Exceptions then terminate the process instead of reaching Client's catch.
+# Keep unwind tables; exception-test exercises throws across real object files.
+LDFLAGS := -L$(BUILD)/sdk-link -L$(QT)/lib -L$(EZX)/lib -L$(SYS)/lib -Wl,-rpath-link,$(QT)/lib:$(EZX)/lib:$(SYS)/lib
 SOURCES := $(wildcard src/*.cpp)
 OBJECTS := $(patsubst src/%.cpp,$(BUILD)/%.o,$(SOURCES))
 MOCS := window platform media capture external_display
 MOC_OBJECTS := $(addprefix $(BUILD)/moc_,$(addsuffix .o,$(MOCS)))
 CORE := $(BUILD)/crypto.o $(BUILD)/settings.o $(BUILD)/storage.o
 $(BUILD)/client.o $(BUILD)/transport.o $(BUILD)/oscar.o $(BUILD)/dns.o $(BUILD)/main.o: CXXFLAGS += -fexceptions
+$(BUILD)/main.o $(BUILD)/window.o $(BUILD)/ui_actions.o: VERSION
 
-.PHONY: all clean package check-sdk core-tests
+.PHONY: all clean package check-sdk core-tests ui-probe
 all: check-sdk $(BUILD)/telemotomax-native
 check-sdk:
 	@test -x "$(CXX)" || { echo 'Set SDK to the MotoMAGX SDK path'; exit 1; }
@@ -34,7 +40,7 @@ $(BUILD)/moc_%.cpp: src/%.h | $(BUILD)
 	$(MOC) $< -o $@
 $(BUILD)/moc_%.o: $(BUILD)/moc_%.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
-$(BUILD)/telemotomax-native: $(OBJECTS) $(MOC_OBJECTS) $(BUILD)/sdk-link/.ready
+$(BUILD)/telemotomax-native: $(OBJECTS) $(MOC_OBJECTS) $(BUILD)/sdk-link/.ready Makefile
 	$(CXX) $(LDFLAGS) $(OBJECTS) $(MOC_OBJECTS) -lezxsound -lqte-mt -lezxappbase -lezxpm -lm -ldl -lpthread -lrt -lresolv -o $@
 $(BUILD)/crypto-driver: tests/crypto_driver.cpp $(BUILD)/crypto.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/crypto.o -o $@
@@ -42,12 +48,18 @@ $(BUILD)/storage-test: tests/storage_test.cpp $(CORE) $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(CORE) -o $@
 $(BUILD)/toolchain-vector-test: tests/toolchain_vector_test.cpp src/client.h $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< -o $@
-core-tests: $(BUILD)/crypto-driver $(BUILD)/storage-test $(BUILD)/toolchain-vector-test
+$(BUILD)/exception-test: tests/exception_test.cpp $(BUILD)/transport.o $(BUILD)/oscar.o $(BUILD)/crypto.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -fexceptions $(LDFLAGS) $< $(BUILD)/transport.o $(BUILD)/oscar.o $(BUILD)/crypto.o -lrt -o $@
+core-tests: $(BUILD)/crypto-driver $(BUILD)/storage-test $(BUILD)/toolchain-vector-test $(BUILD)/exception-test
 ui-probe: $(BUILD)/ui-probe
-$(BUILD)/ui-probe: tests/ui_probe.cpp $(filter-out $(BUILD)/main.o,$(OBJECTS)) $(MOC_OBJECTS) $(BUILD)/sdk-link/.ready
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) tests/ui_probe.cpp $(filter-out $(BUILD)/main.o,$(OBJECTS)) $(MOC_OBJECTS) -lezxsound -lqte-mt -lezxappbase -lezxpm -lm -ldl -lpthread -lrt -lresolv -o $@
+UI_TESTS := tests/ui_probe.cpp tests/ui_paint_probe.cpp tests/ui_connection_probe.cpp tests/input_indicator_test.cpp
+UI_TEST_OBJECTS := $(patsubst tests/%.cpp,$(BUILD)/test_%.o,$(UI_TESTS))
+$(BUILD)/test_%.o: tests/%.cpp | $(BUILD)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
+$(BUILD)/ui-probe: $(UI_TEST_OBJECTS) $(filter-out $(BUILD)/main.o,$(OBJECTS)) $(MOC_OBJECTS) $(BUILD)/sdk-link/.ready Makefile
+	$(CXX) $(LDFLAGS) $(UI_TEST_OBJECTS) $(filter-out $(BUILD)/main.o,$(OBJECTS)) $(MOC_OBJECTS) -Wl,--wrap=_ZN8QPainter8fillRectEiiiiRK6QBrush,--wrap=_ZN8QPainter10drawPixmapEiiRK7QPixmapiiii,--wrap=pthread_create,--wrap=pthread_join,--wrap=connect -lezxsound -lqte-mt -lezxappbase -lezxpm -lm -ldl -lpthread -lrt -lresolv -o $@
 package: all
 	python3 tools/package.py --binary $(BUILD)/telemotomax-native --output dist
 clean:
 	rm -rf $(BUILD)
--include $(OBJECTS:.o=.d) $(MOC_OBJECTS:.o=.d)
+-include $(OBJECTS:.o=.d) $(MOC_OBJECTS:.o=.d) $(UI_TEST_OBJECTS:.o=.d)
