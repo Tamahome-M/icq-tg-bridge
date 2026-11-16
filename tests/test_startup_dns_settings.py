@@ -32,14 +32,15 @@ def run(work, classes):
                         '-d', str(directory), *sources], check=True)
         subprocess.run([str(work/'jdk/bin/java'), '-cp', str(directory)+os.pathsep+cp,
                         'StartupDnsSettingsTest'], check=True, timeout=25)
-    permission = 'javax.microedition.io.Connector.datagram'
+    permission = 'javax.microedition.io.Connector.socket'
     descriptors = list((work/'out').glob('*.jad'))
     assert descriptors, 'built JAD missing'
     for descriptor in descriptors:
         attrs = dict(line.split(': ', 1) for line in descriptor.read_text().splitlines() if ': ' in line)
-        assert permission in attrs.get('MIDlet-Permissions-Opt', '').split(','), 'optional UDP permission missing'
-        assert permission not in attrs.get('MIDlet-Permissions', '').split(','), 'UDP became required for installation'
-    print('PASS: optional client UDP permission in built JAD')
+        assert permission in attrs.get('MIDlet-Permissions-Opt', '').split(','), 'optional TCP permission missing'
+        assert 'javax.microedition.io.Connector.datagram' not in attrs.get('MIDlet-Permissions-Opt', '').split(','), 'unused UDP permission retained'
+        assert permission not in attrs.get('MIDlet-Permissions', '').split(','), 'TCP became required for installation'
+    print('PASS: DNS uses existing optional client TCP permission in built JAD')
 
 
 if __name__ == '__main__':

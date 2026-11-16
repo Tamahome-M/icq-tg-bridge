@@ -1,19 +1,23 @@
 package jimm.comm.connections;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.Random;
 import java.util.Timer;
 import java.util.TimerTask;
 import javax.microedition.io.Connector;
-import javax.microedition.io.Datagram;
-import javax.microedition.io.DatagramConnection;
+import javax.microedition.io.StreamConnection;
 
 /** One bounded startup DNS lookup. No platform name lookup or persistent worker. */
 public final class DnsResolver {
     private static final int TIMEOUT = 12000;
     private static final int MAX_ALIASES = 8;
     private static final int MAX_PACKETS = 16;
-    private DatagramConnection connection;
+    private static final int MAX_REPLY = 2048;
+    private StreamConnection connection;
+    private InputStream input;
+    private OutputStream output;
     private Timer timer;
     private boolean used, cancelled, expired;
     private long deadline;
@@ -103,10 +107,10 @@ public final class DnsResolver {
                     public void run() { expire(); }
                 }, TIMEOUT);
             }
-            String remote = "datagram://" + dnsServer + ":53";
+            String remote = "socket://" + dnsServer + ":53";
             // A native Connector.open may itself ignore the timeout hint. Do
             // not hold our monitor: cancel/expiry must still mark a late open.
-            DatagramConnection opened = (DatagramConnection)Connector.open(remote, Connector.READ_WRITE, true);
+            StreamConnection opened = (StreamConnection)Connector.open(remote, Connector.READ_WRITE, true);
             boolean admitted = false;
             synchronized (this) {
                 if (!cancelled && !expired && System.currentTimeMillis() < deadline) {
@@ -115,8 +119,19 @@ public final class DnsResolver {
                 }
             }
             if (!admitted) { close(opened); check(); throw new IOException("DNS timed out"); }
+            InputStream incoming = opened.openInputStream();
+            synchronized (this) {
+                admitted = !cancelled && !expired && System.currentTimeMillis() < deadline;
+                if (admitted) input = incoming;
+            }
+            if (!admitted) { close(incoming); check(); throw new IOException("DNS timed out"); }
+            OutputStream outgoing = opened.openOutputStream();
+            synchronized (this) {
+                admitted = !cancelled && !expired && System.currentTimeMillis() < deadline;
+                if (admitted) output = outgoing;
+            }
+            if (!admitted) { close(outgoing); check(); throw new IOException("DNS timed out"); }
             byte[] buffer = new byte[512];
-            Datagram packet = opened.newDatagram(buffer, buffer.length, remote);
             String[] chain = new String[MAX_ALIASES + 1];
             chain[0] = name;
             int chainSize = 1;
@@ -126,22 +141,20 @@ public final class DnsResolver {
                 check();
                 int id = random.nextInt() & 65535;
                 int size = query(buffer, id, name);
-                packet.setData(buffer, 0, size);
-                packet.setAddress(remote);
-                opened.send(packet);
+                // RFC 7766: length and query travel in a single write. Shift
+                // only the small request; DNS reply offsets still start at 0.
+                System.arraycopy(buffer, 0, buffer, 2, size);
+                put(buffer, 0, size);
+                outgoing.write(buffer, 0, size + 2);
+                outgoing.flush();
                 Packet reply = null;
                 for (int received = 0; received < MAX_PACKETS; received++) {
-                    check();
-                    packet.setData(buffer, 0, buffer.length);
-                    opened.receive(packet);
-                    check();
-                    if (!source(packet.getAddress(), dnsServer)) continue;
-                    int offset = packet.getOffset();
-                    size = packet.getLength();
-                    byte[] data = packet.getData();
-                    if (offset < 0 || size < 2 || size > buffer.length || offset > data.length - size) continue;
-                    if (word(data, offset) != id) continue;
-                    if (data != buffer || offset != 0) System.arraycopy(data, offset, buffer, 0, size);
+                    readFully(incoming, buffer, 2);
+                    size = word(buffer, 0);
+                    if (size < 12 || size > MAX_REPLY) throw new IOException("Invalid DNS frame length");
+                    if (size > buffer.length) buffer = new byte[size];
+                    readFully(incoming, buffer, size);
+                    if (word(buffer, 0) != id) continue;
                     Packet candidate = new Packet(buffer, size);
                     if (!candidate.question(name)) continue;
                     reply = candidate;
@@ -164,7 +177,7 @@ public final class DnsResolver {
             throw failure;
         } catch (SecurityException denied) {
             if (owner) check();
-            throw new IOException("DNS permission denied");
+            throw new IOException("DNS TCP permission denied");
         } finally {
             if (owner) release(false, false);
         }
@@ -174,33 +187,52 @@ public final class DnsResolver {
     private void expire() { release(false, true); }
 
     private void release(boolean cancel, boolean timeout) {
-        DatagramConnection pending;
+        StreamConnection pending;
+        InputStream reading;
+        OutputStream writing;
         Timer clock;
         synchronized (this) {
             cancelled |= cancel;
             expired |= timeout;
             pending = connection; connection = null;
+            reading = input; input = null;
+            writing = output; output = null;
             clock = timer; timer = null;
         }
         if (clock != null) clock.cancel();
+        // MIDP Connection.close() alone leaves its open streams alive.
+        close(reading);
+        close(writing);
         close(pending);
     }
 
-    private static void close(DatagramConnection pending) {
+    private static void close(StreamConnection pending) {
         if (pending != null) try { pending.close(); } catch (IOException ignored) { }
+    }
+
+    private static void close(InputStream pending) {
+        if (pending != null) try { pending.close(); } catch (IOException ignored) { }
+    }
+
+    private static void close(OutputStream pending) {
+        if (pending != null) try { pending.close(); } catch (IOException ignored) { }
+    }
+
+    private void readFully(InputStream incoming, byte[] data, int length) throws IOException {
+        int offset = 0;
+        while (offset < length) {
+            check();
+            int count = incoming.read(data, offset, length - offset);
+            check();
+            if (count <= 0) throw new IOException("DNS connection closed or stalled");
+            offset += count;
+        }
     }
 
     private synchronized void check() throws IOException {
         if (cancelled) throw new IOException("DNS cancelled");
         if (expired || (deadline != 0 && System.currentTimeMillis() >= deadline))
             throw new IOException("DNS timed out");
-    }
-
-    private static boolean source(String source, String server) {
-        if (source == null) return false;
-        if (source.startsWith("datagram://")) source = source.substring(11);
-        else if (source.startsWith("//")) source = source.substring(2);
-        return source.equals(server + ":53");
     }
 
     private static int word(byte[] data, int at) { return ((data[at] & 255) << 8) | (data[at + 1] & 255); }
@@ -220,7 +252,7 @@ public final class DnsResolver {
         return at + 4;
     }
 
-    /** Packet cursors never follow a pointer outside this 512-byte reply. */
+    /** Packet cursors never follow a pointer outside the bounded reply. */
     private static final class Packet {
         private final byte[] data;
         private final int length;
