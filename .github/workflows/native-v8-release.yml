@@ -52,6 +52,7 @@ jobs:
           /usr/bin/qemu-arm-static -L "$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi" -E LD_LIBRARY_PATH="$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi/lib" native-v8/build/storage-test
           /usr/bin/qemu-arm-static -L "$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi" -E LD_LIBRARY_PATH="$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi/lib" native-v8/build/toolchain-vector-test
           /usr/bin/qemu-arm-static -L "$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi" -E LD_LIBRARY_PATH="$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi/lib" native-v8/build/exception-test
+          /usr/bin/qemu-arm-static -L "$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi" -E LD_LIBRARY_PATH="$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi/lib" native-v8/build/password-test
           python3 tools/native-v8-release.py manifest
       - uses: actions/upload-artifact@v4
         with:

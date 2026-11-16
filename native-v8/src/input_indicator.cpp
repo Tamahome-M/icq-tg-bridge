@@ -1,9 +1,21 @@
+#define FEAT_KEYPAD_SUPPORT
+#include "input_controller_v8.h"
+#include "zapplication_v8.h"
 #include "input_indicator.h"
 #include <ZAppInfoArea.h>
 namespace tmm {
 InputIndicator::InputIndicator(QWidget *parent)
     : QWidget(parent, "input-status", WRepaintNoErase | WResizeNoErase),
-      area_(new ZAppInfoArea(this)) {
+      area_(new ZAppInfoArea(this)),
+      adapter_(static_cast<ZApplication *>(qApp)->getInputFieldAdapter()), controller_(0) {
+    // A plain QWidget does not run ZKbMainWidget::slotKbStateChanged, which
+    // normally installs this controller. Without it typing works, but no
+    // language/case events reach FIELD_OPTION_IMSTATEOBSERVER.
+    controller_ = static_cast<KbUIController *>(adapter_->getUIController());
+    if (!controller_) {
+        controller_ = new KbUIController(adapter_);
+        adapter_->setUIController(controller_); // Owned by the native adapter.
+    }
     // Do not derive from ZAppInfoArea: its SDK declaration omits native
     // virtual overrides (including sizeHint). Keep the firmware's vtable.
     setFocusPolicy(NoFocus);
@@ -13,6 +25,14 @@ InputIndicator::InputIndicator(QWidget *parent)
     area_->show();
     installEventFilter(this);
     hide();
+}
+QObject *InputIndicator::stateSource() const {
+    return adapter_;
+}
+void InputIndicator::activate(int windowId, bool active) {
+    QWidget *window = topLevelWidget();
+    if (window && int(window->winId()) == windowId)
+        controller_->activateInputUI(window, 0, 0, active);
 }
 QSize InputIndicator::sizeHint() const {
     return area_->sizeHint();

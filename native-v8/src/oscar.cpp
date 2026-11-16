@@ -184,6 +184,20 @@ static unsigned nextUtf8(const std::string &s, size_t &i) {
         throw Error("Неверный UTF-8");
     return c;
 }
+std::string passwordBytes(const std::string &s) {
+    // Settings/editor text is UTF-8; classic ICQ and this bridge authenticate
+    // Latin-1 bytes. Do not fold case, trim whitespace or silently replace a
+    // character with '?': any such change authenticates a different password.
+    std::string out;
+    for (size_t at = 0; at < s.size();) {
+        unsigned c = nextUtf8(s, at);
+        if (c > 255)
+            throw Error(
+                "Пароль учётной записи содержит символы, которые мост не поддерживает (Latin-1)");
+        out += char(c);
+    }
+    return out;
+}
 std::string utf16(const std::string &s) {
     std::string out;
     for (size_t i = 0; i < s.size();) {

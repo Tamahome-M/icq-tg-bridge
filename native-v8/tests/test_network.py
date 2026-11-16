@@ -275,6 +275,45 @@ async def negative_cases(executable, folder):
     finally: await server.stop();store.close()
 
 
+async def password_cases(executable, folder):
+    cases = [
+        ('12345678901234567890', '12345678901234567890', True),
+        (' aB2!z ', ' aB2!z ', True),
+        ('caféÆÿ', 'caféÆÿ', True),
+        ('abc2', 'Abc2', False),
+        ('dummy', 'пароль', False),
+    ]
+    for md5 in (True, False):
+        for expected, given, accepted in cases:
+            cfg = Config()
+            cfg.oscar_host = cfg.bos_host = '127.0.0.1'
+            cfg.oscar_port = 0
+            cfg.oscar_uin = '12345'
+            cfg.oscar_password = expected
+            store = Storage(':memory:')
+            async def outgoing(*_): return 1
+            server = OscarServer(cfg, store, outgoing, store.contacts, lambda _: C.STATUS_ONLINE)
+            await server.start()
+            port = server._server.sockets[0].getsockname()[1]
+            cfg.oscar_port = cfg.bos_port = port
+            process = await asyncio.create_subprocess_exec(
+                *executable, str(port), '0', str(int(md5)), str(folder),
+                env=dict(os.environ, TMM_TEST_PASSWORD=given), stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            phone = Phone(process)
+            try:
+                result = await phone.wait(lambda e: e.get('type') == 12 or
+                                          (e.get('type') == 0 and e.get('state') == 2))
+                assert (result['type'] == 0) == accepted, result
+            finally:
+                process.stdin.write(b'quit\n')
+                await process.stdin.drain()
+                await asyncio.wait_for(process.wait(), 5)
+                await server.stop()
+                store.close()
+    print('PASS native passwords: digits, mixed case, spaces, Latin-1, wrong case and unsupported characters')
+
+
 async def main():
     with tempfile.TemporaryDirectory(prefix='tmm-native-network-') as directory:
         folder = pathlib.Path(directory); binary = folder/'network-test'
@@ -283,6 +322,7 @@ async def main():
         for encrypted,md5 in ((False,True),(True,True),(False,False)):
             cache=folder/f'cache-{encrypted}-{md5}';cache.mkdir()
             await scenario(command,cache,encrypted,md5)
+        await password_cases(command, folder)
         if not os.environ.get("TMM_NETWORK_DRIVER"): await negative_cases(command,folder)
 
 if __name__ == '__main__': asyncio.run(main())

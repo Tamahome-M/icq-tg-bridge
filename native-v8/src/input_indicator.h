@@ -3,6 +3,8 @@
 #include <qwidget.h>
 #include <qevent.h>
 class ZAppInfoArea;
+class ZInputFieldAdapter;
+class KbUIController;
 
 // Motorola V8's observer event is absent from the public SDK headers.
 // Layout verified against KbStatusControl::setInputState in the V8 firmware
@@ -25,6 +27,8 @@ class InputIndicator : public QWidget {
   public:
     explicit InputIndicator(QWidget *parent);
     QSize sizeHint() const;
+    QObject *stateSource() const;
+    void activate(int windowId, bool active);
 
   protected:
     bool eventFilter(QObject *, QEvent *);
@@ -32,6 +36,8 @@ class InputIndicator : public QWidget {
 
   private:
     ZAppInfoArea *area_;
+    ZInputFieldAdapter *adapter_;
+    KbUIController *controller_;
     QString values_[4];
 };
 } // namespace tmm

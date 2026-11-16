@@ -388,6 +388,13 @@ class Client::Impl : public Cancellation {
         send(0x15, 2, tlv(1, le16(body.size()) + body));
     }
     void login(const std::string &ip) {
+        std::string password;
+        try {
+            password = passwordBytes(cfg.password);
+        } catch (const Error &) {
+            permanentFailure = true;
+            throw;
+        }
         open(cfg.host, cfg.port, ip);
         uint64_t deadline = monotonicMs() + 60000;
         Tlvs reply;
@@ -397,7 +404,7 @@ class Client::Impl : public Cancellation {
             Snac keyReply = expect(0x17, 7, deadline);
             Reader kr(keyReply.data);
             std::string key = kr.p16();
-            std::string digest = crypto::md5(key + cfg.password + "AOL Instant Messenger (SM)");
+            std::string digest = crypto::md5(key + password + "AOL Instant Messenger (SM)");
             send(0x17, 2, tlv(1, cfg.uin) + tlv(0x25, digest) + tlv(3, "TeleMotoMax Native V8"));
             Snac loginReply = expect(0x17, 3, deadline);
             Reader lr(loginReply.data);
@@ -405,7 +412,6 @@ class Client::Impl : public Cancellation {
         } else {
             static const unsigned char roast[16] = {0xf3, 0x26, 0x81, 0xc4, 0x39, 0x86, 0xdb, 0x92,
                                                     0x71, 0xa3, 0xb9, 0xe6, 0x53, 0x7a, 0x95, 0x7c};
-            std::string password = cfg.password;
             for (size_t i = 0; i < password.size(); ++i)
                 password[i] ^= roast[i % 16];
             sendFlap(1, be32(1) + tlv(1, cfg.uin) + tlv(2, password) +

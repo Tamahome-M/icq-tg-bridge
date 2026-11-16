@@ -57,6 +57,7 @@ std::string utf8(unsigned code);
 std::string decode(const std::string &text, const std::string &encoding = "CP1251");
 std::string encode1251(const std::string &utf8);
 std::string utf16(const std::string &utf8);
+std::string passwordBytes(const std::string &utf8);
 std::string messageBody(const std::string &text);
 std::string ssiItem(const ContactRecord &c, const std::string &encoding = "CP1251");
 void ssi(const Snac &s, std::vector<ContactRecord> &out, uint32_t &stamp,

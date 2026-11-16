@@ -23,4 +23,6 @@ mkdir -p "$TMM_NATIVE_DATA"
 if test -s "$TMM_NATIVE_DATA/launcher.log"; then
     mv -f "$TMM_NATIVE_DATA/launcher.log" "$TMM_NATIVE_DATA/launcher.previous.log"
 fi
-exec ./telemotomax-native "$@" > "$TMM_NATIVE_DATA/launcher.log" 2>&1
+# Motorola's input engine prints the edited buffer to stdout, even for password
+# fields. Keep application diagnostics on stderr; never record native input text.
+exec ./telemotomax-native "$@" > /dev/null 2> "$TMM_NATIVE_DATA/launcher.log"

@@ -938,6 +938,13 @@ void Window::activate(const Row &chosen) {
         }
         return;
     }
+    if (action == "editor-secret" && editSecret_) {
+        editor_->setEchoMode(editor_->echoMode() == ZMultiLineEdit::Password
+                                 ? ZMultiLineEdit::Normal
+                                 : ZMultiLineEdit::Password);
+        back();
+        return;
+    }
     if (action == "editor-copy-all") {
         copy(editor_->text());
         return;
