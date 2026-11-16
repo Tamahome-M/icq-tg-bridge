@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+case "$0" in */*) tmm_app_dir=${0%/*} ;; *) tmm_app_dir=. ;; esac
+tmm_app_dir=$(CDPATH= cd "$tmm_app_dir" && pwd)
+cd "$tmm_app_dir"
+umask 077
+if test -r /etc/initservices/services/ezxenv.sh; then
+    . /etc/initservices/services/ezxenv.sh
+fi
+if test -z "${QTDIR-}" || test ! -r "$QTDIR/lib/fonts/fontdir"; then
+    for tmm_qt in /usr/lib/ezx /usr /usr/local/qt-embedded; do
+        if test -r "$tmm_qt/lib/fonts/fontdir"; then QTDIR=$tmm_qt; break; fi
+    done
+fi
+export QTDIR
+if test -z "${EZX_RES_FONT_PATH-}"; then EZX_RES_FONT_PATH=/usr/language/fonts; fi
+export EZX_RES_FONT_PATH
+# Settings/history live outside the installed application. A vInstaller
+# update can replace the application without touching account data.
+TMM_NATIVE_DATA=${TMM_NATIVE_DATA:-/ezxlocal/download/appwrite/TeleMotoMaxNative}
+export TMM_NATIVE_DATA
+mkdir -p "$TMM_NATIVE_DATA"
+if test -s "$TMM_NATIVE_DATA/launcher.log"; then
+    mv -f "$TMM_NATIVE_DATA/launcher.log" "$TMM_NATIVE_DATA/launcher.previous.log"
+fi
+exec ./telemotomax-native "$@" > "$TMM_NATIVE_DATA/launcher.log" 2>&1

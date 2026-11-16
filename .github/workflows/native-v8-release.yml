@@ -1,0 +1,74 @@
+name: TeleMotoMax Native V8
+on:
+  push:
+    branches: [main]
+    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
+  pull_request:
+    branches: [main]
+    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-v8-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test core and release packaging
+        run: |
+          python3 -m pip install -r requirements.txt
+          python3 native-v8/tests/test_crypto.py
+          python3 tests/test_native_release.py
+          g++ -std=c++98 -O2 -Inative-v8/src native-v8/tests/storage_test.cpp native-v8/src/{storage,settings,crypto}.cpp -o "$RUNNER_TEMP/storage-test"
+          "$RUNNER_TEMP/storage-test"
+          g++ -std=c++98 -Inative-v8/src native-v8/tests/instance_test.cpp native-v8/src/instance.cpp -o "$RUNNER_TEMP/instance-test"
+          "$RUNNER_TEMP/instance-test"
+          python3 native-v8/tests/test_network.py
+          python3 native-v8/tests/test_dns.py
+          python3 native-v8/tests/test_startup_dns.py
+          python3 native-v8/tests/test_transport_failure.py
+          python3 native-v8/tests/test_wire.py
+          g++ -std=c++98 -Inative-v8/src native-v8/tests/ui_settings_test.cpp native-v8/src/{ui_settings,settings}.cpp -o "$RUNNER_TEMP/ui-settings-test"
+          "$RUNNER_TEMP/ui-settings-test"
+          g++ -std=c++98 -Inative-v8/src native-v8/tests/ui_files_test.cpp native-v8/src/ui_files.cpp -o "$RUNNER_TEMP/ui-files-test"
+          "$RUNNER_TEMP/ui-files-test"
+      - name: Check native version
+        run: python3 tools/native-v8-release.py check --repo "$GITHUB_REPOSITORY"
+      - name: Prepare ARM compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-user-static libc6-i386 lib32stdc++6
+          python3 native-v8/tools/fetch_sdk.py --output "$RUNNER_TEMP/tmm-sdk"
+          python3 native-v8/tools/prepare_qemu_sdk.py --sdk "$RUNNER_TEMP/tmm-sdk" --qemu /usr/bin/qemu-i386-static --output "$RUNNER_TEMP/tmm-compiler"
+      - name: Build ARM client and package
+        run: |
+          make -C native-v8 SDK="$RUNNER_TEMP/tmm-sdk" CXX="$RUNNER_TEMP/tmm-compiler/arm-linux-gnueabi-g++" MOC="$RUNNER_TEMP/tmm-compiler/moc" -j2 package core-tests
+          export TMM_CRYPTO_DRIVER="/usr/bin/qemu-arm-static -L $RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi -E LD_LIBRARY_PATH=$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi/lib native-v8/build/crypto-driver"
+          python3 native-v8/tests/test_crypto.py
+          /usr/bin/qemu-arm-static -L "$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi" -E LD_LIBRARY_PATH="$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi/lib" native-v8/build/storage-test
+          /usr/bin/qemu-arm-static -L "$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi" -E LD_LIBRARY_PATH="$RUNNER_TEMP/tmm-sdk/arm-linux-gnueabi/lib" native-v8/build/toolchain-vector-test
+          python3 tools/native-v8-release.py manifest
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TeleMotoMax-Native-V8
+          path: native-v8/dist/*
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: TeleMotoMax-Native-V8
+          path: native-v8/dist
+      - name: Publish independent native release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/native-v8-release.py publish --repo "$GITHUB_REPOSITORY"
