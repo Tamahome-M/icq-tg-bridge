@@ -736,11 +736,13 @@ void Window::activate(const Row &chosen) {
                            (captureKind_ == 1   ? ".jpg"
                             : captureKind_ == 2 ? ".3gp"
                                                 : ".amr");
-        if (captureKind_ == 1)
+        if (captureKind_ == 1) {
             capture_.capturePhoto(u(path));
-        else if (captureKind_ == 2)
+            resume();
+        } else if (captureKind_ == 2) {
             capture_.recordVideo(u(path), 30);
-        else {
+            resume();
+        } else {
             View v(View::Menu, u("Запись голосового…"));
             v.context = "recording";
             row(v, "Стоп", "record-stop");

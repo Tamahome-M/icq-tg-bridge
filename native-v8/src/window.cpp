@@ -5,6 +5,9 @@
 #include "ui_files.h"
 #include "instance.h"
 #include "input_indicator.h"
+#include "system_menu.h"
+#include "system_chrome.h"
+#include "status_icon.h"
 #include <ZKbInputField.h>
 #include <ZMultiLineEdit.h>
 #include <ZKeyDef.h>
@@ -42,16 +45,18 @@ static QString number(unsigned n) {
 Window::Window(const std::string &dir)
     : QWidget(0, "telemotomax", WRepaintNoErase | WResizeNoErase), storage_(new Storage(dir)),
       platform_(this), player_(this), capture_(this), notifier_(0), editor_(0), inputIndicator_(0),
-      data_(dir), editUin_(0), quoteUin_(0), captureUin_(0), pickUin_(0), videoUin_(0),
-      videoSegment_(0), connectionState_(Event::Disconnected), captureKind_(0), pickKind_(0),
-      playPosition_(0), playDuration_(0), generation_(0), editDepth_(0), loadedMediaReady_(false),
-      editSecret_(false), connectionErrorShown_(false), locked_(false), closed_(false),
-      editorWasVisible_(false), silent_(false), paused_(false), manualDisconnect_(false),
-      lightOn_(true), closedAt_(0), startedAt_(now()), lastAlert_(0), lastActivity_(now()),
-      typingSentAt_(0), noticeUntil_(0), tickerUntil_(0), pictureZoom_(100), pictureRotation_(0) {
+      systemMenu_(0), systemChrome_(0), data_(dir), editUin_(0), quoteUin_(0), captureUin_(0),
+      pickUin_(0), videoUin_(0), videoSegment_(0), connectionState_(Event::Disconnected),
+      captureKind_(0), pickKind_(0), playPosition_(0), playDuration_(0), generation_(0),
+      editDepth_(0), loadedMediaReady_(false), editSecret_(false), connectionErrorShown_(false),
+      locked_(false), closed_(false), editorWasVisible_(false), silent_(false), paused_(false),
+      manualDisconnect_(false), lightOn_(true), closedAt_(0), startedAt_(now()), lastAlert_(0),
+      lastActivity_(now()), typingSentAt_(0), noticeUntil_(0), tickerUntil_(0), pictureZoom_(100),
+      pictureRotation_(0) {
     setCaption("TeleMotoMax Native");
     setFocusPolicy(StrongFocus);
     setBackgroundMode(NoBackground);
+    statusIcons_.load("statuses.png");
     std::string error;
     if (!settings_.load(dir + "/settings", error)) {
         note(error);
@@ -74,6 +79,10 @@ Window::Window(const std::string &dir)
     connect(&capture_, SIGNAL(ready(const QString &, const QString &)), this,
             SLOT(captureReady(const QString &, const QString &)));
     editor_ = new ZMultiLineEdit(this, true, 8);
+    systemMenu_ = new SystemMenu(this);
+    systemChrome_ = new SystemChrome(*this);
+    connect(qApp, SIGNAL(signalAppThemeChange()), this, SLOT(systemThemeChanged()));
+    connect(qApp, SIGNAL(signalThemeChange()), this, SLOT(systemThemeChanged()));
     inputIndicator_ = new InputIndicator(this);
     connect(inputIndicator_->stateSource(), SIGNAL(signalKbStateChanged(int, bool)), this,
             SLOT(inputStateChanged(int, bool)));
@@ -112,6 +121,8 @@ Window::~Window() {
     // lifetime while the input indicator is still a live QObject child.
     delete editor_;
     editor_ = 0;
+    delete systemMenu_;
+    delete systemChrome_;
     delete storage_;
 }
 void Window::saveState() {
@@ -133,11 +144,33 @@ View &Window::view() {
 const View &Window::view() const {
     return stack_.back();
 }
+bool Window::systemMenuVisible() const {
+    if (!systemMenu_ || stack_.empty() || view().rows.empty() || locked_ ||
+        (editor_ && !editor_->isHidden()))
+        return false;
+    View::Kind kind = view().kind;
+    return kind == View::Menu || kind == View::SettingsPage || kind == View::Choice ||
+           kind == View::Files || kind == View::Templates;
+}
+void Window::syncSystemMenu() {
+    if (!systemMenu_ || stack_.empty())
+        return;
+    int bottom = height() - 27;
+    if (!notice_.isEmpty())
+        bottom -= 52;
+    else if (!ticker_.isEmpty())
+        bottom -= 25;
+    systemMenu_->sync(view(), systemMenuVisible(), 29, bottom);
+}
+void Window::update() {
+    syncSystemMenu();
+    QWidget::update();
+}
 void Window::syncVideoVisibility() {
     QWidget *video = player_.videoWidget();
     if (!video)
         return;
-    if (!stack_.empty() && view().kind == View::Player && !locked_ && !closed_)
+    if (!stack_.empty() && view().kind == View::Player && !locked_ && !closed_ && isVisible())
         video->show();
     else
         video->hide();
@@ -244,21 +277,24 @@ QString Window::name(uint32_t id) const {
     return number(id);
 }
 QString Window::status(uint32_t value) const {
-    if (value == 0xffffffffU)
+    switch (statusIcon(value)) {
+    case 6:
         return u("Не в сети");
-    if (value & 0x100)
+    case 3:
         return u("Сеть недоступна");
-    if (value & 0x20)
+    case 1:
         return u("Свободен для общения");
-    if (value & 0x10)
+    case 5:
         return u("Занят");
-    if (value & 4)
+    case 2:
         return u("Не беспокоить");
-    if (value & 2)
+    case 4:
         return u("Недоступен");
-    if (value & 1)
+    case 0:
         return u("Отошёл");
-    return u("В сети");
+    default:
+        return u("В сети");
+    }
 }
 ContactRecord *Window::contact(uint32_t id) {
     for (size_t i = 0; i < contacts_.size(); ++i)
@@ -321,6 +357,7 @@ void Window::settingsChanged() {
 }
 void Window::resizeEvent(QResizeEvent *) {
     layoutEditor();
+    syncSystemMenu();
     QWidget *w = player_.videoWidget();
     if (w && w->isVisible())
         w->setGeometry(0, 30, width(), height() - 88);
@@ -340,6 +377,22 @@ void Window::suspend() {
         editor_->setEchoMode(ZMultiLineEdit::Password);
     saveDraft();
     capture_.cancel();
+}
+void Window::resume() {
+    // Platform refreshes the hardware flip state before requesting foreground.
+    platform_.requestForeground();
+    if (closed_)
+        return;
+    lastActivity_ = now();
+    lightOn_ = true;
+    if (!locked_ && editor_ && !editor_->isHidden())
+        editor_->setFocus();
+    else if (systemMenuVisible())
+        systemMenu_->focus();
+    else
+        setFocus();
+    syncVideoVisibility();
+    update();
 }
 void Window::minimize() {
     suspend();
@@ -395,7 +448,7 @@ void Window::unlock() {
 }
 void Window::tick() {
     if (takeActivationRequest())
-        platform_.requestForeground();
+        resume();
     unsigned long ms = now();
     if (closed_ && closedAt_ && settingNumber(settings_, "flip_lock_minutes") > 0 &&
         ms - closedAt_ >= (unsigned long)settingNumber(settings_, "flip_lock_minutes") * 60000)
@@ -427,7 +480,18 @@ void Window::tick() {
 void Window::inputStateChanged(int windowId, bool active) {
     inputIndicator_->activate(windowId, active);
 }
+void Window::systemThemeChanged() {
+    if (systemChrome_)
+        systemChrome_->refresh();
+    update();
+}
 bool Window::eventFilter(QObject *object, QEvent *event) {
+    if (systemMenu_ && systemMenu_->owns(object) &&
+        (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease)) {
+        if (event->type() == QEvent::KeyPress)
+            key(static_cast<QKeyEvent *>(event)->key());
+        return true;
+    }
     if (object == editor_ && inputIndicator_) {
         if (event->type() == QEvent::Show) {
             layoutEditor();
@@ -636,15 +700,12 @@ void Window::key(int code) {
     hotkey(code);
 }
 void Window::drawHeader(QPainter &p) {
-    p.fillRect(0, 0, width(), 28, QColor(27, 72, 106));
-    p.setPen(Qt::white);
     QString title = locked_ ? u("Заблокировано")
                             : (editor_ && editor_->isVisible() ? editTitle_ : view().title);
     if (unread())
         title += " [" + number(unread()) + "]";
-    p.drawText(5 + settingNumber(settings_, "caption_offset"), 0,
-               width() - 10 - settingNumber(settings_, "caption_offset"), 28,
-               Qt::AlignVCenter | Qt::SingleLine, title);
+    systemChrome_->drawHeader(p, QRect(0, 0, width(), 28), title,
+                              settingNumber(settings_, "caption_offset"));
 }
 void Window::drawFooter(QPainter &p) {
     QString left = u("Выбрать"), right = u("Назад");
@@ -674,11 +735,7 @@ void Window::drawFooter(QPainter &p) {
         left = right;
         right = swap;
     }
-    p.fillRect(0, height() - 26, width(), 26, QColor(27, 72, 106));
-    p.setPen(Qt::white);
-    p.drawText(4, height() - 26, width() / 2 - 8, 26, Qt::AlignLeft | Qt::AlignVCenter, left);
-    p.drawText(width() / 2, height() - 26, width() / 2 - 4, 26, Qt::AlignRight | Qt::AlignVCenter,
-               right);
+    systemChrome_->drawFooter(p, QRect(0, height() - 26, width(), 26), left, right);
 }
 int Window::rowHeight(const Row &r) const {
     if (view().kind != View::Chat && view().kind != View::History)
@@ -762,22 +819,27 @@ void Window::drawList(QPainter &p) {
         if (v.kind == View::Roster && v.rows[i].uin) {
             ContactRecord *c = contact(v.rows[i].uin);
             if (c) {
-                left = 20;
-                QColor presence = selected                   ? Qt::white
-                                  : c->status == 0xffffffffU ? Qt::gray
-                                  : (c->status & 0x100)      ? QColor(190, 50, 45)
-                                                             : QColor(35, 145, 60);
-                p.setPen(QPen(presence, 2));
-                if (c->status != 0xffffffffU && (c->status & 0x100)) {
-                    p.drawLine(5, y + 10, 12, y + 17);
-                    p.drawLine(12, y + 10, 5, y + 17);
+                left = 24;
+                if (!statusIcons_.isNull()) {
+                    p.drawPixmap(4, y + (h - 16) / 2, statusIcons_, statusIcon(c->status) * 16, 0,
+                                 16, 16);
                 } else {
-                    if (c->status != 0xffffffffU)
-                        p.setBrush(presence);
-                    p.drawEllipse(5, y + 10, 8, 8);
-                    p.setBrush(Qt::NoBrush);
+                    QColor presence = selected                   ? Qt::white
+                                      : c->status == 0xffffffffU ? Qt::gray
+                                      : (c->status & 0x100)      ? QColor(190, 50, 45)
+                                                                 : QColor(35, 145, 60);
+                    p.setPen(QPen(presence, 2));
+                    if (c->status != 0xffffffffU && (c->status & 0x100)) {
+                        p.drawLine(5, y + 10, 12, y + 17);
+                        p.drawLine(12, y + 10, 5, y + 17);
+                    } else {
+                        if (c->status != 0xffffffffU)
+                            p.setBrush(presence);
+                        p.drawEllipse(5, y + 10, 8, 8);
+                        p.setBrush(Qt::NoBrush);
+                    }
+                    p.setPen(ink);
                 }
-                p.setPen(ink);
             }
         }
         p.drawText(left, y + 4 - offset, width() - left - 7, h - 8,
@@ -794,6 +856,7 @@ void Window::drawList(QPainter &p) {
     p.setFont(font());
 }
 void Window::paintEvent(QPaintEvent *event) {
+    syncSystemMenu();
     if (frame_.size() != size())
         frame_.resize(size());
     if (frame_.isNull())
@@ -811,11 +874,13 @@ void Window::paintEvent(QPaintEvent *event) {
 }
 void Window::drawFrame(QPainter &p) {
     bool dark = settingValue(settings_, "theme") == "dark";
-    p.fillRect(rect(), dark                                          ? QColor(20, 22, 25)
+    // Transparent native skin parts blend against the phone's palette in menus.
+    p.fillRect(rect(), systemMenuVisible() ? palette().active().background()
+                       : dark              ? QColor(20, 22, 25)
                        : settingValue(settings_, "theme") == "blue"  ? QColor(216, 235, 252)
                        : settingValue(settings_, "theme") == "green" ? QColor(222, 246, 224)
                                                                      : QColor(245, 246, 248));
-    if (!background_.isNull() && !locked_) {
+    if (!background_.isNull() && !locked_ && !systemMenuVisible()) {
         if (settingValue(settings_, "background_mode") == "tile")
             p.drawTiledPixmap(rect(), background_);
         else
@@ -853,7 +918,7 @@ void Window::drawFrame(QPainter &p) {
         p.drawText(5, 32 - view().selected * 25, width() - 10, 100000, Qt::WordBreak,
                    view().rows[0].text);
         p.setClipping(false);
-    } else
+    } else if (!systemMenuVisible())
         drawList(p);
     if (!notice_.isEmpty()) {
         p.fillRect(0, height() - 79, width(), 52, QColor(255, 245, 190));

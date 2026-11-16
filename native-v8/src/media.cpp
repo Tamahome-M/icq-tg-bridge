@@ -95,7 +95,11 @@ QWidget *MediaController::ensureVideoWidget() {
     void *storage = std::malloc(248);
     if (!storage)
         return 0;
-    function<void (*)(void *, QWidget *, const char *, unsigned)>(ctor)(storage, 0,
+    QObject *owner = parent();
+    // The SDK's inline isWidgetType bitfield test disagrees with the V8 Qt
+    // build. Query the native metaobject instead of reading that SDK field.
+    QWidget *surface = owner && owner->inherits("QWidget") ? static_cast<QWidget *>(owner) : 0;
+    function<void (*)(void *, QWidget *, const char *, unsigned)>(ctor)(storage, surface,
                                                                         "telemotomax-video", 0);
     video_ = static_cast<QWidget *>(storage);
     connect(video_, SIGNAL(destroyed()), this, SLOT(videoDestroyed()));

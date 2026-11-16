@@ -33,6 +33,7 @@ class CaptureController : public QObject {
 
   private:
     void camera(const QString &destination, bool video, int seconds);
+    QString cameraFileName(QDialog *) const;
     QWidget *window_;
     QDialog *dialog_;
     bool busy_, cancelled_;

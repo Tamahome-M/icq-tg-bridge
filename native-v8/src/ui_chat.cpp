@@ -65,6 +65,7 @@ bool Window::selectScope() {
     quoteText_.clear();
     quoteUin_ = 0;
     contacts_.clear();
+    collapsed_.clear();
     chats_.clear();
     quiet_.clear();
     videoToken_.clear();
@@ -162,8 +163,11 @@ void Window::consume(const Event &e) {
     if (e.type == Event::State) {
         unsigned before = connectionState_;
         connectionState_ = e.state;
-        if (e.state == Event::Online)
+        if (e.state == Event::Online) {
             connectionErrorShown_ = false;
+            if (before != Event::Online)
+                collapsed_.clear();
+        }
         note(e.text);
         if (e.state == Event::Disconnected || e.state == Event::Reconnecting) {
             pending_.clear();
@@ -525,6 +529,12 @@ void Window::rebuildRoster() {
         if (!settingFlag(settings_, "hide_offline") || online(c.status) || unread)
             groups[group].push_back(i);
     }
+    // New groups, including implicit parents such as Telegram, start closed.
+    // Presence/roster refreshes preserve what the user opened in this session.
+    for (std::map<std::string, std::vector<size_t> >::const_iterator g = groups.begin();
+         g != groups.end(); ++g)
+        if (!g->first.empty() && collapsed_.find(g->first) == collapsed_.end())
+            collapsed_[g->first] = true;
     for (std::map<std::string, std::vector<size_t> >::iterator g = groups.begin();
          g != groups.end(); ++g) {
         std::string parent = g->first;

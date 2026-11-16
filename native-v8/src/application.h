@@ -7,6 +7,7 @@ class Application : public ZApplication {
     Application(int &argc, char **argv, QApplication::Type type = QApplication::GuiClient)
         : ZApplication(argc, argv, type) {}
     virtual void slotQuickQuit();
+    virtual void slotRaise();
     virtual int slotUsbStorageInOut(bool connected);
     virtual void slotShutdown();
     virtual int slotKillactionByMassstorage();
