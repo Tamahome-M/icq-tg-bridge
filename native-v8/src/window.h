@@ -82,6 +82,7 @@ class Window : public QWidget {
     void mediaFinished();
     void mediaPosition(unsigned int, unsigned int);
     void editorChanged();
+    void inputStateChanged(int, bool);
 
   private:
     friend class UiProbe;
@@ -100,7 +101,7 @@ class Window : public QWidget {
     uint32_t editUin_, quoteUin_, captureUin_, pickUin_, videoUin_, videoSegment_;
     unsigned connectionState_, captureKind_, pickKind_, playPosition_, playDuration_, generation_,
         editDepth_;
-    bool loadedMediaReady_;
+    bool loadedMediaReady_, editSecret_;
     bool connectionErrorShown_;
     bool locked_, closed_, editorWasVisible_, silent_, paused_, manualDisconnect_, lightOn_;
     unsigned long closedAt_, startedAt_, lastAlert_, lastActivity_, typingSentAt_;

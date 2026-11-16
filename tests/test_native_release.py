@@ -124,6 +124,29 @@ class NativeReleaseTests(unittest.TestCase):
         (self.root/"native-v8/collect-log.lin").write_text("changed")
         with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
 
+    def test_launcher_discards_firmware_input_echo_but_keeps_errors_and_exit_status(self):
+        directory = Path(self.tmp.name)/"phone files"; directory.mkdir()
+        data = directory/"private data"
+        script = directory/"telemotomax.lin"
+        shutil.copyfile(ROOT/"native-v8/telemotomax.lin", script)
+        binary = directory/"telemotomax-native"
+        binary.write_text('#!/bin/sh\nprintf "native input: dummy-secret\\n"\nprintf "connection error: %s\\n" "$1" >&2\nexit 7\n')
+        binary.chmod(0o755)
+        env = dict(os.environ, TMM_NATIVE_DATA=str(data))
+        for run in ("first", "second"):
+            result = subprocess.run(["sh", str(script), run], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 7)
+            self.assertEqual(result.stdout, b"")
+            self.assertEqual((data/"launcher.log").read_text(), "connection error: " + run + "\n")
+        self.assertEqual((data/"launcher.previous.log").read_text(), "connection error: first\n")
+        collector = directory/"collect-log.lin"
+        shutil.copyfile(ROOT/"native-v8/collect-log.lin", collector)
+        subprocess.run(["sh", str(collector)], env=env, check=True, capture_output=True)
+        report = (directory/"TeleMotoMax-log.txt").read_text()
+        self.assertNotIn("dummy-secret", report)
+        self.assertIn("connection error: first", report)
+        self.assertIn("connection error: second", report)
+
     def test_publish_keeps_java_latest_and_uses_independent_tag(self):
         calls = []
         def api(owner, path, token, **kwargs):

@@ -4,6 +4,7 @@
 #include "ui_language.h"
 #include "input_indicator.h"
 #include <ZMultiLineEdit.h>
+#include <ZKbInputField.h>
 #include <qapplication.h>
 #include <qclipboard.h>
 #include <stdio.h>
@@ -41,6 +42,13 @@ void Window::edit(const QString &title, const std::string &action, const std::st
     editUin_ = uin;
     editTitle_ = title;
     editDepth_ = stack_.size();
+    editSecret_ = secret;
+    ZKbInputField *field = editor_->getInputField();
+    field->setType(secret ? ZKbInputField::FIELD_TYPE_PASSWORD : ZKbInputField::FIELD_TYPE_REGULAR);
+    field->setOptions(secret ? ZKbInputField::FIELD_OPTION_DISABLE_COMPLETION |
+                                   ZKbInputField::FIELD_OPTION_DISABLE_UAD |
+                                   ZKbInputField::FIELD_OPTION_DEFAULT_LOWER_CASE
+                             : 0);
     editor_->setMaxLength(maximum);
     editor_->setEchoMode(secret ? ZMultiLineEdit::Password : ZMultiLineEdit::Normal);
     editor_->blockSignals(true);
@@ -48,6 +56,9 @@ void Window::edit(const QString &title, const std::string &action, const std::st
     editor_->blockSignals(false);
     layoutEditor();
     editor_->show();
+    // Enter native editing now, so the language/case is known before typing.
+    // Mere focus leaves Motorola's input filter inactive until the first key.
+    editor_->setModalEditing(true);
     editor_->setFocus();
     update();
 }
@@ -115,6 +126,7 @@ void Window::finishEdit(bool accept) {
         }
     }
     editor_->hide();
+    editSecret_ = false;
     editAction_.clear();
     editKey_.clear();
     while (stack_.size() > editDepth_)
@@ -243,6 +255,10 @@ void Window::editorMenu() {
     editor_->hide();
     View v(View::Menu, u("Редактор"));
     v.context = "editor-menu";
+    if (editSecret_)
+        v.rows.push_back(Row(u(editor_->echoMode() == ZMultiLineEdit::Password ? "Показать пароль"
+                                                                               : "Скрыть пароль"),
+                             "editor-secret"));
     v.rows.push_back(Row(u("Копировать выделенное"), "editor-copy"));
     v.rows.push_back(Row(u("Вырезать выделенное"), "editor-cut"));
     v.rows.push_back(Row(u("Копировать всё"), "editor-copy-all"));

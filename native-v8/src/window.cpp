@@ -45,10 +45,10 @@ Window::Window(const std::string &dir)
       data_(dir), editUin_(0), quoteUin_(0), captureUin_(0), pickUin_(0), videoUin_(0),
       videoSegment_(0), connectionState_(Event::Disconnected), captureKind_(0), pickKind_(0),
       playPosition_(0), playDuration_(0), generation_(0), editDepth_(0), loadedMediaReady_(false),
-      connectionErrorShown_(false), locked_(false), closed_(false), editorWasVisible_(false),
-      silent_(false), paused_(false), manualDisconnect_(false), lightOn_(true), closedAt_(0),
-      startedAt_(now()), lastAlert_(0), lastActivity_(now()), typingSentAt_(0), noticeUntil_(0),
-      tickerUntil_(0), pictureZoom_(100), pictureRotation_(0) {
+      editSecret_(false), connectionErrorShown_(false), locked_(false), closed_(false),
+      editorWasVisible_(false), silent_(false), paused_(false), manualDisconnect_(false),
+      lightOn_(true), closedAt_(0), startedAt_(now()), lastAlert_(0), lastActivity_(now()),
+      typingSentAt_(0), noticeUntil_(0), tickerUntil_(0), pictureZoom_(100), pictureRotation_(0) {
     setCaption("TeleMotoMax Native");
     setFocusPolicy(StrongFocus);
     setBackgroundMode(NoBackground);
@@ -75,6 +75,8 @@ Window::Window(const std::string &dir)
             SLOT(captureReady(const QString &, const QString &)));
     editor_ = new ZMultiLineEdit(this, true, 8);
     inputIndicator_ = new InputIndicator(this);
+    connect(inputIndicator_->stateSource(), SIGNAL(signalKbStateChanged(int, bool)), this,
+            SLOT(inputStateChanged(int, bool)));
     editor_->getInputField()->setOptions(
         ZKbInputField::FIELD_OPTION_IMSTATEOBSERVER,
         reinterpret_cast<long>(static_cast<QObject *>(inputIndicator_)));
@@ -334,6 +336,8 @@ void Window::closeEvent(QCloseEvent *e) {
     minimize();
 }
 void Window::suspend() {
+    if (editSecret_)
+        editor_->setEchoMode(ZMultiLineEdit::Password);
     saveDraft();
     capture_.cancel();
 }
@@ -346,6 +350,8 @@ void Window::flipChanged(bool closed) {
         return;
     closed_ = closed;
     if (closed) {
+        if (editSecret_)
+            editor_->setEchoMode(ZMultiLineEdit::Password);
         closedAt_ = now();
         if (capture_.busy())
             capture_.cancel();
@@ -363,6 +369,8 @@ void Window::lock() {
     if (locked_)
         return;
     locked_ = true;
+    if (editSecret_)
+        editor_->setEchoMode(ZMultiLineEdit::Password);
     platform_.clearExternalText();
     pin_ = QString::null;
     editorWasVisible_ = editor_ && editor_->isVisible();
@@ -415,6 +423,9 @@ void Window::tick() {
             update();
         }
     }
+}
+void Window::inputStateChanged(int windowId, bool active) {
+    inputIndicator_->activate(windowId, active);
 }
 bool Window::eventFilter(QObject *object, QEvent *event) {
     if (object == editor_ && inputIndicator_) {

@@ -35,6 +35,9 @@ class IndicatorObserver : public QObject {
     }
 };
 void checkInputIndicator(tmm::InputIndicator &indicator) {
+    // The real input controller is active now. Drain its pending events before
+    // observing the separate ABI producer exercised by this unit probe.
+    QApplication::sendPostedEvents();
     // Real native constructor, producer and destructor; no synthetic Qt events.
     typedef void (*Init)(void *);
     typedef void (*Set)(void *, QObject *, const InputState &, bool);

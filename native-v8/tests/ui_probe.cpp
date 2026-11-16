@@ -5,6 +5,7 @@
 #include "ui_language.h"
 #include "input_indicator.h"
 #include <ZMultiLineEdit.h>
+#include <ZKbInputField.h>
 #include <ZKeyDef.h>
 #include <qapplication.h>
 #include <qtimer.h>
@@ -215,8 +216,64 @@ class UiProbe {
         w.finishEdit(false);
         require(!w.inputIndicator_->isVisible(), "closing editor hides input status");
         require(w.storage_->loadDraft(a.uin) == "Draft survives PIN", "cancel preserves draft");
-        w.edit(QString::fromLatin1("Message"), "message", "Before ", a.uin);
+        w.showSettings("account");
+        w.chooseSetting("password");
+        require(w.editSecret_ && w.editor_->echoMode() == ZMultiLineEdit::Password &&
+                    w.editor_->getInputField()->getType() == ZKbInputField::FIELD_TYPE_PASSWORD,
+                "password uses native secret field semantics, not only masking");
+        const QString dummyPassword = QString::fromUtf8(" Abc9é ");
+        w.editor_->setText(dummyPassword);
+        w.editor_->setCursorPosition(0, 3);
         w.editorMenu();
+        require(w.view().rows[0].action == "editor-secret", "password menu offers visibility");
+        w.activate(w.view().rows[0]);
+        int line = -1, column = -1;
+        w.editor_->getCursorPosition(&line, &column);
+        require(w.editor_->isVisible() && w.editor_->echoMode() == ZMultiLineEdit::Normal &&
+                    w.editor_->text() == dummyPassword && line == 0 && column == 3 &&
+                    w.editor_->getInputField()->getType() == ZKbInputField::FIELD_TYPE_PASSWORD,
+                "show password preserves text, cursor and native input rules");
+        w.editorMenu();
+        w.activate(w.view().rows[0]);
+        require(w.editor_->echoMode() == ZMultiLineEdit::Password,
+                "password menu can hide the text again");
+        w.editorMenu();
+        w.activate(w.view().rows[0]);
+        w.suspend();
+        require(w.editor_->echoMode() == ZMultiLineEdit::Password,
+                "background remasks a revealed password");
+        w.editorMenu();
+        w.activate(w.view().rows[0]);
+        w.flipChanged(true);
+        w.flipChanged(false);
+        require(w.editor_->echoMode() == ZMultiLineEdit::Password,
+                "closing the flip remasks a revealed password");
+        w.editorMenu();
+        w.activate(w.view().rows[0]);
+        w.lock();
+        w.unlock();
+        require(w.editor_->echoMode() == ZMultiLineEdit::Password &&
+                    w.editor_->text() == dummyPassword,
+                "PIN remasks a revealed password without changing it");
+        w.finishEdit(true);
+        Settings reloaded;
+        require(reloaded.load(w.settings_.path(), initialError) &&
+                    reloaded.get("password") == std::string(dummyPassword.utf8()),
+                "saved account password preserves case, spaces and UTF-8 after reload");
+        w.chooseSetting("password");
+        require(w.editor_->text() == dummyPassword &&
+                    w.editor_->echoMode() == ZMultiLineEdit::Password,
+                "reopening password starts masked with the exact saved value");
+        w.finishEdit(false);
+        w.openChat(a.uin);
+        w.edit(QString::fromLatin1("Message"), "message", "Before ", a.uin);
+        require(!w.editSecret_ &&
+                    w.editor_->getInputField()->getType() == ZKbInputField::FIELD_TYPE_REGULAR &&
+                    w.editor_->getInputField()->getOptions() == 0,
+                "ordinary editor restores regular input rules after a password");
+        w.editorMenu();
+        require(w.view().rows[0].action != "editor-secret",
+                "ordinary editor has no password visibility command");
         w.activate(Row(QString::null, "smileys"));
         w.activate(Row(QString::null, "insert::)"));
         require(w.editor_->isVisible() && w.editor_->text().find(":)") >= 0 &&

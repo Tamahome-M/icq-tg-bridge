@@ -24,7 +24,7 @@ CORE := $(BUILD)/crypto.o $(BUILD)/settings.o $(BUILD)/storage.o
 $(BUILD)/client.o $(BUILD)/transport.o $(BUILD)/oscar.o $(BUILD)/dns.o $(BUILD)/main.o: CXXFLAGS += -fexceptions
 $(BUILD)/main.o $(BUILD)/window.o $(BUILD)/ui_actions.o: VERSION
 
-.PHONY: all clean package check-sdk core-tests ui-probe
+.PHONY: all clean package check-sdk core-tests ui-probe input-probe
 all: check-sdk $(BUILD)/telemotomax-native
 check-sdk:
 	@test -x "$(CXX)" || { echo 'Set SDK to the MotoMAGX SDK path'; exit 1; }
@@ -50,8 +50,15 @@ $(BUILD)/toolchain-vector-test: tests/toolchain_vector_test.cpp src/client.h $(B
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< -o $@
 $(BUILD)/exception-test: tests/exception_test.cpp $(BUILD)/transport.o $(BUILD)/oscar.o $(BUILD)/crypto.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -fexceptions $(LDFLAGS) $< $(BUILD)/transport.o $(BUILD)/oscar.o $(BUILD)/crypto.o -lrt -o $@
-core-tests: $(BUILD)/crypto-driver $(BUILD)/storage-test $(BUILD)/toolchain-vector-test $(BUILD)/exception-test
+$(BUILD)/password-test: tests/password_test.cpp $(BUILD)/oscar.o $(BUILD)/crypto.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -fexceptions $(LDFLAGS) $< $(BUILD)/oscar.o $(BUILD)/crypto.o -o $@
+core-tests: $(BUILD)/crypto-driver $(BUILD)/storage-test $(BUILD)/toolchain-vector-test $(BUILD)/exception-test $(BUILD)/password-test
 ui-probe: $(BUILD)/ui-probe
+input-probe: $(BUILD)/input-password-probe $(BUILD)/input-text-probe
+$(BUILD)/input-password-probe: tests/input_editor_probe.cpp tests/input_keymap_fixture.cpp $(filter-out $(BUILD)/main.o,$(OBJECTS)) $(MOC_OBJECTS) $(BUILD)/sdk-link/.ready Makefile
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -fexceptions $(LDFLAGS) -Wl,--export-dynamic tests/input_editor_probe.cpp tests/input_keymap_fixture.cpp $(filter-out $(BUILD)/main.o,$(OBJECTS)) $(MOC_OBJECTS) -lezxsound -lqte-mt -lezxappbase -lezxpm -lm -ldl -lpthread -lrt -lresolv -o $@
+$(BUILD)/input-text-probe: $(BUILD)/input-password-probe
+	ln -sf input-password-probe $@
 UI_TESTS := tests/ui_probe.cpp tests/ui_paint_probe.cpp tests/ui_connection_probe.cpp tests/input_indicator_test.cpp
 UI_TEST_OBJECTS := $(patsubst tests/%.cpp,$(BUILD)/test_%.o,$(UI_TESTS))
 $(BUILD)/test_%.o: tests/%.cpp | $(BUILD)

@@ -6,6 +6,8 @@ void setUiLanguage(const std::string &language) {
     english = language == "en";
 }
 static const char *translations[][2] = {
+    {"Показать пароль", "Show password"},
+    {"Скрыть пароль", "Hide password"},
     {"Ошибка подключения", "Connection error"},
     {"Укажите сервер моста в настройках сети", "Enter the bridge server in network settings"},
     {"Выберите профиль Интернета в настройках сети",
