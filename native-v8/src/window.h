@@ -16,6 +16,7 @@ class ZMultiLineEdit;
 namespace tmm {
 class Storage;
 class UiProbe;
+class InputIndicator;
 struct Row {
     QString text;
     std::string action;
@@ -93,18 +94,20 @@ class Window : public QWidget {
     QSocketNotifier *notifier_;
     QTimer timer_;
     ZMultiLineEdit *editor_;
+    InputIndicator *inputIndicator_;
     std::string data_, editAction_, editKey_, pendingFileAction_, playPath_, downloadName_,
         quoteId_, quoteText_, videoToken_;
     uint32_t editUin_, quoteUin_, captureUin_, pickUin_, videoUin_, videoSegment_;
     unsigned connectionState_, captureKind_, pickKind_, playPosition_, playDuration_, generation_,
         editDepth_;
     bool loadedMediaReady_;
+    bool connectionErrorShown_;
     bool locked_, closed_, editorWasVisible_, silent_, paused_, manualDisconnect_, lightOn_;
     unsigned long closedAt_, startedAt_, lastAlert_, lastActivity_, typingSentAt_;
     QString pin_, notice_, ticker_, editTitle_;
     unsigned long noticeUntil_, tickerUntil_;
     int pictureZoom_, pictureRotation_;
-    QPixmap picture_, background_;
+    QPixmap picture_, background_, frame_;
     std::vector<ContactRecord> contacts_;
     std::map<uint32_t, ChatState> chats_;
     std::vector<View> stack_;
@@ -150,6 +153,7 @@ class Window : public QWidget {
               bool secret = false, int maximum = 4096);
     void finishEdit(bool accept);
     void editorMenu();
+    void layoutEditor();
     void showTemplates(bool insert);
     void saveDraft();
     void confirm(const QString &, const std::string &, uint32_t uin = 0, unsigned value = 0);
@@ -187,6 +191,7 @@ class Window : public QWidget {
     QString status(uint32_t) const;
     QString messageText(const MessageRecord &) const;
     int rowHeight(const Row &) const;
+    void drawFrame(QPainter &);
     void drawList(QPainter &);
     void drawHeader(QPainter &);
     void drawFooter(QPainter &);

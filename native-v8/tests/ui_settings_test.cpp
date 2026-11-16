@@ -5,6 +5,25 @@ using namespace tmm;
 int main() {
     Settings s;
     std::string error;
+    assert(!validateNetworkSettings(s, error));
+    s.set("host", "bridge.example");
+    assert(validateNetworkSettings(s, error)); // Auto may use an existing system route.
+    s.set("network", "mobile");
+    assert(!validateNetworkSettings(s, error));
+    s.set("network_profile", "Internet");
+    assert(validateNetworkSettings(s, error));
+    s.setBool("encryption", true);
+    assert(!validateNetworkSettings(s, error));
+    s.set("psk", "1234");
+    assert(validateNetworkSettings(s, error));
+    s.setBool("startup_dns", true);
+    s.set("dns_server", "invalid");
+    assert(!validateNetworkSettings(s, error));
+    s.setBool("startup_dns", false);
+    assert(validateNetworkSettings(s, error)); // Irrelevant DNS setting is ignored.
+    s.set("port", "0");
+    assert(!validateNetworkSettings(s, error));
+    s.set("port", "5190");
     const std::vector<SettingField> &fields = settingFields();
     for (size_t i = 0; i < fields.size(); ++i) {
         if (!validateSetting(fields[i], fields[i].initial, error)) {

@@ -3,6 +3,7 @@
 #include "storage.h"
 #include "ui_settings.h"
 #include "ui_language.h"
+#include "input_indicator.h"
 #include <ZMultiLineEdit.h>
 #include <ZKeyDef.h>
 #include <qapplication.h>
@@ -10,9 +11,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <errno.h>
 extern "C" void UTIL_SetPowerOnHandleStatus(int);
 extern "C" void UTIL_SetFlipStatus(int);
 extern "C" void UTIL_SetKeypadLockStatus(bool);
+void checkPaint(QWidget &, const char *);
+void checkInputIndicator(tmm::InputIndicator &);
+void scheduleNetworkWorker(int);
+void runNetworkWorker();
 namespace tmm {
 class UiProbe {
     static unsigned checks;
@@ -47,6 +53,52 @@ class UiProbe {
         w.settings_.set("uin", "123456");
         w.settings_.set("password", "dummy");
         w.settings_.setInt("auto_connect", 0);
+        w.settings_.setInt("auto_reconnect", 0);
+        w.settings_.setInt("encryption", 0);
+        w.settings_.set("network", "system");
+        w.settings_.set("uin", "");
+        w.mainMenu();
+        w.activate(w.view().rows[0]);
+        require(w.view().kind == View::SettingsPage && w.view().context == "account",
+                "connect menu keeps missing account settings visible");
+        w.settings_.set("uin", "123456");
+        w.home();
+        w.settings_.set("host", "");
+        w.mainMenu();
+        w.activate(w.view().rows[0]);
+        require(w.connectionState_ == Event::Disconnected && w.view().kind == View::Text,
+                "missing server stays in application with readable error");
+        w.back();
+        require(w.view().kind == View::SettingsPage && w.view().context == "network",
+                "back from configuration error opens network settings");
+        w.settings_.set("host", "127.0.0.1");
+        w.home();
+        scheduleNetworkWorker(0);
+        w.connectClient();
+        runNetworkWorker();
+        w.eventsReady();
+        require(w.connectionState_ == Event::Disconnected &&
+                    w.view().context == "connection-error" &&
+                    w.view().rows[0].text.find("refused") >= 0,
+                "actual ARM network failure returns to UI without exiting");
+        w.back();
+        scheduleNetworkWorker(EAGAIN);
+        w.connectClient();
+        w.eventsReady();
+        require(w.connectionState_ == Event::Disconnected && w.view().context == "connection-error",
+                "worker creation failure remains readable");
+        w.back();
+        scheduleNetworkWorker(0);
+        Event retry;
+        retry.type = Event::State;
+        retry.state = Event::Reconnecting;
+        w.consume(retry);
+        w.mainMenu();
+        require(w.view().rows[0].action == "disconnect", "reconnecting menu offers cancellation");
+        w.activate(w.view().rows[0]);
+        require(w.connectionState_ == Event::Disconnected && w.manualDisconnect_ &&
+                    w.view().kind != View::Menu,
+                "cancel reconnect returns to application");
         require(w.selectScope(), "test account scope");
         w.storage_->clearAllHistory(initialError);
         w.chats_.clear();
@@ -136,8 +188,20 @@ class UiProbe {
         w.back();
         w.edit(QString::fromLatin1("Message"), "message", "Draft survives PIN", a.uin);
         require(w.editor_->text() == "Draft survives PIN", "native editor draft");
+        QApplication::sendPostedEvents();
+        fprintf(stderr, "INPUT layout: visible=%d editor=%d,%d %dx%d indicator=%d,%d %dx%d\n",
+                w.inputIndicator_->isVisible(), w.editor_->x(), w.editor_->y(), w.editor_->width(),
+                w.editor_->height(), w.inputIndicator_->x(), w.inputIndicator_->y(),
+                w.inputIndicator_->width(), w.inputIndicator_->height());
+        require(w.inputIndicator_->isVisible() &&
+                    w.editor_->y() >= w.inputIndicator_->geometry().bottom(),
+                "native input indicator has a separate visible row");
+        checkInputIndicator(*w.inputIndicator_);
+        checkPaint(w, "editor parent");
         w.lock();
         require(w.locked_ && !w.editor_->isVisible(), "PIN hides native editor");
+        require(!w.inputIndicator_->isVisible(), "PIN hides input status");
+        checkPaint(w, "PIN");
         w.minimize();
         require(!w.isVisible() && w.locked_, "minimize preserves PIN lock");
         w.platform_.requestForeground();
@@ -149,6 +213,7 @@ class UiProbe {
         require(!w.locked_ && w.editor_->isVisible() && w.editor_->text() == "Draft survives PIN",
                 "PIN restores same editor and draft");
         w.finishEdit(false);
+        require(!w.inputIndicator_->isVisible(), "closing editor hides input status");
         require(w.storage_->loadDraft(a.uin) == "Draft survives PIN", "cancel preserves draft");
         w.edit(QString::fromLatin1("Message"), "message", "Before ", a.uin);
         w.editorMenu();
@@ -289,6 +354,27 @@ class UiProbe {
         w.resize(240, 320);
         w.show();
         w.repaint();
+        checkPaint(w, "chat");
+        const unsigned char *buffer = w.frame_.scanLine(0);
+        for (unsigned i = 0; i < 12; ++i) {
+            w.key(i % 2 ? KEYCODE_UP : KEYCODE_DOWN);
+            checkPaint(w, "navigation");
+            require(w.frame_.scanLine(0) == buffer, "frame buffer reused");
+        }
+        w.mainMenu();
+        checkPaint(w, "menu");
+        w.showSettings("media");
+        w.chooseSetting("video_kbps");
+        checkPaint(w, "choice");
+        w.resize(240, 280);
+        checkPaint(w, "resized");
+        require(w.frame_.size() == w.size(), "buffer follows window resize");
+        w.resize(240, 320);
+        w.home();
+        w.openChat(a.uin);
+        w.edit(QString::fromUtf8("Сообщение"), "message", "Привет! Проверка языка ввода.", a.uin);
+        checkInputIndicator(*w.inputIndicator_);
+        fprintf(stderr, "PAINT buffer=%d bytes\n", w.frame_.bytesPerLine() * w.frame_.height());
         fprintf(stderr, "UI PASS %u checks\n", checks);
     }
 };

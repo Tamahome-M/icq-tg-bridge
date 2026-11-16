@@ -15,6 +15,7 @@ std::string settingValue(const Settings &, const std::string &key);
 int settingNumber(const Settings &, const std::string &key);
 bool settingFlag(const Settings &, const std::string &key);
 bool validateSetting(const SettingField &, const std::string &value, std::string &error);
+bool validateNetworkSettings(const Settings &, std::string &error);
 std::map<unsigned, unsigned> mediaSettings(const Settings &);
 ClientConfig clientSettings(const Settings &, const std::string &cache,
                             const std::vector<uint32_t> &quiet);

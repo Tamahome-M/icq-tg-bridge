@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -92,6 +93,7 @@ class NativeReleaseTests(unittest.TestCase):
                     self.assertFalse(item.issym() or item.islnk()); self.assertNotIn("data", Path(item.name).parts)
                 prefix = "app/" if name.endswith(".pep") else "TeleMotoMax-Native/"
                 self.assertEqual(archive.getmember(prefix+"telemotomax.lin").mode, 0o755)
+                self.assertEqual(archive.getmember(prefix+"collect-log.lin").mode, 0o755)
                 self.assertIn("sounds/msg_low.mp3", "\n".join(archive.getnames()))
                 if name.endswith(".pep"):
                     ini = archive.extractfile("description.ini").read()
@@ -102,6 +104,26 @@ class NativeReleaseTests(unittest.TestCase):
         binary = Path(self.tmp.name)/"x86"; binary.write_bytes(b"\x7fELF\x02\x01" + b"\0"*50)
         with self.assertRaises(ValueError): package.inputs(binary)
 
+    def test_log_collector_current_previous_missing_and_no_private_settings(self):
+        directory = Path(self.tmp.name)/"phone files"; directory.mkdir()
+        data = directory/"data"; data.mkdir()
+        script = directory/"collect-log.lin"
+        shutil.copyfile(ROOT/"native-v8/collect-log.lin", script)
+        (data/"settings").write_text("password=must-not-appear")
+        env = dict(os.environ, TMM_NATIVE_DATA=str(data))
+        for have_logs in (True, False):
+            for name in ("launcher.log", "launcher.previous.log"):
+                if have_logs: (data/name).write_text("test:"+name+"\n")
+                else: (data/name).unlink()
+            result = subprocess.run(["sh", str(script)], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = (directory/"TeleMotoMax-log.txt").read_text()
+            self.assertNotIn("must-not-appear", report)
+            self.assertIn("test:launcher.previous.log" if have_logs else "missing or unreadable", report)
+            self.assertFalse(list(directory.glob(".tmm-log-*")))
+        (self.root/"native-v8/collect-log.lin").write_text("changed")
+        with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
+
     def test_publish_keeps_java_latest_and_uses_independent_tag(self):
         calls = []
         def api(owner, path, token, **kwargs):
@@ -110,7 +132,7 @@ class NativeReleaseTests(unittest.TestCase):
                 raise release.urllib.error.HTTPError(path, 404, "absent", {}, None)
             if path == "releases":
                 payload = json.loads(kwargs["data"])
-                self.assertEqual(payload["tag_name"], "telemotomax-native-v0.1.0")
+                self.assertEqual(payload["tag_name"], "telemotomax-native-v" + release.version(self.root))
                 self.assertEqual(payload["target_commitish"], "commit")
                 self.assertTrue(payload["draft"])
                 return {"id": 99, "assets": [], "upload_url": "https://uploads.github.com/assets{?name}"}

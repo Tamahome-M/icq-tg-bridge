@@ -29,6 +29,7 @@ def inputs(binary):
         raise ValueError("Expected a little-endian ELF32 ARM executable")
     result = dict(ASSETS)
     result.update({"telemotomax-native": binary, "telemotomax.lin": ROOT / "telemotomax.lin",
+                   "collect-log.lin": ROOT / "collect-log.lin",
                    "features.tsv": ROOT / "features.tsv",
                    "README.md": ROOT / "README.md", "COPYING": ROOT.parent / "telemotomax/COPYING"})
     return result
@@ -52,7 +53,7 @@ def archive(files):
 
 
 def build(binary, output):
-    app = {name: (path.read_bytes(), name in ("telemotomax-native", "telemotomax.lin")) for name, path in inputs(binary).items()}
+    app = {name: (path.read_bytes(), name in ("telemotomax-native", "telemotomax.lin", "collect-log.lin")) for name, path in inputs(binary).items()}
     output.mkdir(parents=True, exist_ok=True)
     (output / "TeleMotoMax-Native-V8.tar.gz").write_bytes(archive({"TeleMotoMax-Native/" + n: v for n, v in app.items()}))
     description = f"""[Actions]

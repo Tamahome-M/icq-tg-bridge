@@ -2,12 +2,14 @@
 #include "storage.h"
 #include "ui_settings.h"
 #include "ui_language.h"
+#include "input_indicator.h"
 #include <ZMultiLineEdit.h>
 #include <qapplication.h>
 #include <qclipboard.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <algorithm>
 namespace tmm {
 static QString u(const char *s) {
     return uiText(s);
@@ -19,6 +21,18 @@ static std::string num(unsigned n) {
     char b[32];
     snprintf(b, sizeof(b), "%u", n);
     return b;
+}
+void Window::layoutEditor() {
+    if (!editor_ || !inputIndicator_)
+        return;
+    const int statusHeight = std::max(24, inputIndicator_->sizeHint().height());
+    inputIndicator_->setGeometry(2, 29, width() - 4, statusHeight);
+    // Motorola's skin may enforce a larger minimum than sizeHint().
+    const int top = inputIndicator_->geometry().bottom() + 1;
+    const int available = std::max(1, height() - top - 27);
+    editor_->setGeometry(2, top, width() - 4,
+                         settingFlag(settings_, "full_editor") ? available
+                                                               : std::min(available, height() / 2));
 }
 void Window::edit(const QString &title, const std::string &action, const std::string &text,
                   uint32_t uin, bool secret, int maximum) {
@@ -32,8 +46,7 @@ void Window::edit(const QString &title, const std::string &action, const std::st
     editor_->blockSignals(true);
     editor_->setText(u(text));
     editor_->blockSignals(false);
-    editor_->setGeometry(2, 29, width() - 4,
-                         settingFlag(settings_, "full_editor") ? height() - 56 : height() / 2);
+    layoutEditor();
     editor_->show();
     editor_->setFocus();
     update();
