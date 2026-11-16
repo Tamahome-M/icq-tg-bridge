@@ -37,6 +37,12 @@ void Window::layoutEditor() {
 }
 void Window::edit(const QString &title, const std::string &action, const std::string &text,
                   uint32_t uin, bool secret, int maximum) {
+    // A field may already be active (including during native startup/dialog
+    // transitions). Merely calling setModalEditing(true) again does nothing,
+    // leaving its cached UI interface and password rules from that activation.
+    // End editing before changing the field and reactivate it below.
+    editor_->setModalEditing(false);
+    editor_->clearFocus();
     saveDraft();
     editAction_ = action;
     editUin_ = uin;
