@@ -78,14 +78,16 @@ Window::Window(const std::string &dir)
     connect(&capture_, SIGNAL(error(const QString &)), this, SLOT(platformError(const QString &)));
     connect(&capture_, SIGNAL(ready(const QString &, const QString &)), this,
             SLOT(captureReady(const QString &, const QString &)));
+    // Native input modes cache their UI interface at activation. Install it
+    // before constructing any editor that may take focus during initialization.
+    inputIndicator_ = new InputIndicator(this);
+    connect(inputIndicator_->stateSource(), SIGNAL(signalKbStateChanged(int, bool)), this,
+            SLOT(inputStateChanged(int, bool)));
     editor_ = new ZMultiLineEdit(this, true, 8);
     systemMenu_ = new SystemMenu(this);
     systemChrome_ = new SystemChrome(*this);
     connect(qApp, SIGNAL(signalAppThemeChange()), this, SLOT(systemThemeChanged()));
     connect(qApp, SIGNAL(signalThemeChange()), this, SLOT(systemThemeChanged()));
-    inputIndicator_ = new InputIndicator(this);
-    connect(inputIndicator_->stateSource(), SIGNAL(signalKbStateChanged(int, bool)), this,
-            SLOT(inputStateChanged(int, bool)));
     editor_->getInputField()->setOptions(
         ZKbInputField::FIELD_OPTION_IMSTATEOBSERVER,
         reinterpret_cast<long>(static_cast<QObject *>(inputIndicator_)));
