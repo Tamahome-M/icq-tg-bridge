@@ -46,13 +46,14 @@ Window::Window(const std::string &dir)
     : QWidget(0, "telemotomax", WRepaintNoErase | WResizeNoErase), storage_(new Storage(dir)),
       platform_(this), player_(this), capture_(this), notifier_(0), editor_(0), inputIndicator_(0),
       systemMenu_(0), systemChrome_(0), data_(dir), editUin_(0), quoteUin_(0), captureUin_(0),
-      pickUin_(0), videoUin_(0), videoSegment_(0), connectionState_(Event::Disconnected),
-      captureKind_(0), pickKind_(0), playPosition_(0), playDuration_(0), generation_(0),
-      editDepth_(0), loadedMediaReady_(false), editSecret_(false), connectionErrorShown_(false),
-      locked_(false), closed_(false), editorWasVisible_(false), silent_(false), paused_(false),
-      manualDisconnect_(false), lightOn_(true), closedAt_(0), startedAt_(now()), lastAlert_(0),
-      lastActivity_(now()), typingSentAt_(0), noticeUntil_(0), tickerUntil_(0), pictureZoom_(100),
-      pictureRotation_(0) {
+      pickUin_(0), videoUin_(0), videoSegment_(0), outgoingRequest_(0),
+      connectionState_(Event::Disconnected), captureKind_(0), pickKind_(0), playPosition_(0),
+      playDuration_(0), generation_(0), editDepth_(0), connectionProgress_(0),
+      loadedMediaReady_(false), editSecret_(false), captureOwned_(false),
+      connectionErrorShown_(false), locked_(false), closed_(false), editorWasVisible_(false),
+      silent_(false), paused_(false), manualDisconnect_(false), lightOn_(true), closedAt_(0),
+      startedAt_(now()), lastAlert_(0), lastActivity_(now()), typingSentAt_(0), noticeUntil_(0),
+      tickerUntil_(0), pictureZoom_(100), pictureRotation_(0) {
     setCaption("TeleMotoMax Native");
     setFocusPolicy(StrongFocus);
     setBackgroundMode(NoBackground);
@@ -75,7 +76,8 @@ Window::Window(const std::string &dir)
     connect(&player_, SIGNAL(finished()), this, SLOT(mediaFinished()));
     connect(&player_, SIGNAL(positionChanged(unsigned int, unsigned int)), this,
             SLOT(mediaPosition(unsigned int, unsigned int)));
-    connect(&capture_, SIGNAL(error(const QString &)), this, SLOT(platformError(const QString &)));
+    connect(&capture_, SIGNAL(error(const QString &)), this, SLOT(captureError(const QString &)));
+    connect(&capture_, SIGNAL(cancelled()), this, SLOT(captureCancelled()));
     connect(&capture_, SIGNAL(ready(const QString &, const QString &)), this,
             SLOT(captureReady(const QString &, const QString &)));
     // Native input modes cache their UI interface at activation. Install it
@@ -117,6 +119,8 @@ Window::~Window() {
     client_.stop();
     player_.stop();
     capture_.cancel();
+    outgoingRequest_ = 0;
+    discardAttachment();
     if (!managedMediaPath_.empty())
         unlink(managedMediaPath_.c_str());
     // The native input field holds a non-owning observer pointer. End its
@@ -152,7 +156,7 @@ bool Window::systemMenuVisible() const {
         return false;
     View::Kind kind = view().kind;
     return kind == View::Menu || kind == View::SettingsPage || kind == View::Choice ||
-           kind == View::Files || kind == View::Templates;
+           kind == View::Files || kind == View::Templates || kind == View::AttachmentReview;
 }
 void Window::syncSystemMenu() {
     if (!systemMenu_ || stack_.empty())
@@ -162,7 +166,8 @@ void Window::syncSystemMenu() {
         bottom -= 52;
     else if (!ticker_.isEmpty())
         bottom -= 25;
-    systemMenu_->sync(view(), systemMenuVisible(), 29, bottom);
+    systemMenu_->sync(view(), systemMenuVisible(), view().kind == View::AttachmentReview ? 145 : 29,
+                      bottom);
 }
 void Window::update() {
     syncSystemMenu();
@@ -197,17 +202,13 @@ void Window::back() {
             client_.submit(c);
             pending_.erase(c.requestId);
             pendingUin_.erase(c.requestId);
-            if (captureUploads_.find(c.requestId) != captureUploads_.end()) {
-                capturePath_ = captureUploads_[c.requestId];
-                captureUploads_.erase(c.requestId);
-            }
+            if (outgoingRequest_ == c.requestId)
+                outgoingRequest_ = 0;
         }
         if (view().context == "recording")
             capture_.cancel();
-        if (view().context == "capture-ready" && !capturePath_.empty()) {
-            unlink(capturePath_.c_str());
-            capturePath_.clear();
-        }
+        if (view().context == "attachment-review")
+            discardAttachment();
         if (view().kind == View::Picture)
             picture_ = QPixmap();
         if (view().kind == View::Player) {
@@ -471,6 +472,13 @@ void Window::tick() {
         platform_.setBacklight(false);
         lightOn_ = false;
     }
+    if (!stack_.empty() && view().kind == View::Recording && capture_.busy()) {
+        QString state = u("Запись: ") + number(capture_.durationSeconds()) + u(" с");
+        if (view().status != state) {
+            view().status = state;
+            update();
+        }
+    }
     if (!stack_.empty() && view().kind == View::Chat) {
         ChatState &chat = chats_[view().uin];
         if (chat.typingUntil && ms >= chat.typingUntil) {
@@ -570,6 +578,26 @@ void Window::key(int code) {
         else if (code == KEYCODE_RSK)
             code = KEYCODE_LSK;
     }
+    if (connectionProgressVisible()) {
+        if (code == KEYCODE_LSK || code == KEYCODE_CLEAR)
+            disconnectClient();
+        else if (code == KEYCODE_RSK)
+            mainMenu();
+        return;
+    }
+    if (view().kind == View::Transfer) {
+        if (code == KEYCODE_LSK || code == KEYCODE_RSK || code == KEYCODE_CLEAR ||
+            code == KEYCODE_CENTER_SELECT)
+            back();
+        return;
+    }
+    if (view().kind == View::Recording) {
+        if (code == KEYCODE_LSK || code == KEYCODE_CENTER_SELECT)
+            capture_.stop();
+        else if (code == KEYCODE_RSK || code == KEYCODE_CLEAR)
+            back();
+        return;
+    }
     if (view().kind == View::Text && (code == KEYCODE_UP || code == KEYCODE_DOWN)) {
         int max = 0;
         if (!view().rows.empty())
@@ -591,20 +619,24 @@ void Window::key(int code) {
             if (pixels / 100 * zoom / 100 * zoom <= 2000000UL)
                 pictureZoom_ = zoom;
         } else if (code == KEYCODE_DOWN)
-            pictureZoom_ = std::max(25, pictureZoom_ - 25);
+            pictureZoom_ = std::max(1, pictureZoom_ - (pictureZoom_ > 25 ? 25 : 5));
         else if (code == KEYCODE_RIGHT)
             pictureRotation_ = (pictureRotation_ + 90) % 360;
         else if (code == KEYCODE_LEFT)
             pictureRotation_ = (pictureRotation_ + 270) % 360;
         else if (code == KEYCODE_RSK || code == KEYCODE_CLEAR)
             back();
-        else if (code == KEYCODE_LSK)
-            files("/mmc/mmca1", "save-media");
+        else if (code == KEYCODE_LSK) {
+            if (view().context == "outgoing-preview")
+                back();
+            else
+                files("", "save-media");
+        }
         update();
         return;
     }
     if (view().kind == View::Player) {
-        if (code == KEYCODE_3 && !videoToken_.empty()) {
+        if (code == KEYCODE_3 && view().context != "outgoing-preview" && !videoToken_.empty()) {
             nextVideo();
             return;
         }
@@ -704,7 +736,12 @@ void Window::key(int code) {
 void Window::drawHeader(QPainter &p) {
     QString title = locked_ ? u("Заблокировано")
                             : (editor_ && editor_->isVisible() ? editTitle_ : view().title);
-    if (unread())
+    if (view().kind == View::Picture)
+        title += " " + number(pictureZoom_) + "%";
+    if (connectionProgressVisible())
+        title = u("Подключение");
+    if (unread() && view().kind != View::Transfer && view().kind != View::AttachmentReview &&
+        view().kind != View::Recording && !connectionProgressVisible())
         title += " [" + number(unread()) + "]";
     systemChrome_->drawHeader(p, QRect(0, 0, width(), 28), title,
                               settingNumber(settings_, "caption_offset"));
@@ -718,7 +755,19 @@ void Window::drawFooter(QPainter &p) {
         right = u("Меню");
     }
     if (view().kind == View::Picture)
-        left = u("Сохранить");
+        left = u(view().context == "outgoing-preview" ? "Назад" : "Сохранить");
+    if (view().kind == View::Transfer) {
+        left = u("Отмена");
+        right = QString::null;
+    }
+    if (view().kind == View::Recording) {
+        left = u("Готово");
+        right = u("Отмена");
+    }
+    if (connectionProgressVisible()) {
+        left = u("Отмена");
+        right = u("Меню");
+    }
     if (view().kind == View::Player)
         left = u("Меню");
     if (editor_ && editor_->isVisible()) {
@@ -882,7 +931,9 @@ void Window::drawFrame(QPainter &p) {
                        : settingValue(settings_, "theme") == "blue"  ? QColor(216, 235, 252)
                        : settingValue(settings_, "theme") == "green" ? QColor(222, 246, 224)
                                                                      : QColor(245, 246, 248));
-    if (!background_.isNull() && !locked_ && !systemMenuVisible()) {
+    if (!background_.isNull() && !locked_ && !systemMenuVisible() &&
+        view().kind != View::Transfer && view().kind != View::Recording &&
+        !connectionProgressVisible()) {
         if (settingValue(settings_, "background_mode") == "tile")
             p.drawTiledPixmap(rect(), background_);
         else
@@ -901,13 +952,32 @@ void Window::drawFrame(QPainter &p) {
         p.drawText(10, 55, width() - 20, height() - 100, Qt::AlignCenter | Qt::WordBreak, text);
         return;
     }
-    if (view().kind == View::Picture && !picture_.isNull()) {
+    if (connectionProgressVisible()) {
+        drawProgress(p, u(settingValue(settings_, "host")), connectionStage_, connectionProgress_,
+                     100);
+    } else if (view().kind == View::Transfer || view().kind == View::Recording) {
+        drawProgress(p, view().details, view().status, view().bytes, view().total);
+    } else if (view().kind == View::AttachmentReview) {
+        drawAttachmentDetails(p);
+    } else if (view().kind == View::Picture && !picture_.isNull()) {
+        p.save();
+        const QRect area(0, 29, width(), std::max(1, height() - 94));
+        p.setClipRect(area);
         QWMatrix matrix;
         double scale = (double)pictureZoom_ / 100;
         matrix.scale(scale, scale);
         matrix.rotate(pictureRotation_);
         QPixmap image = picture_.xForm(matrix);
-        p.drawPixmap((width() - image.width()) / 2, (height() - image.height()) / 2, image);
+        p.drawPixmap((width() - image.width()) / 2, area.y() + (area.height() - image.height()) / 2,
+                     image);
+        p.restore();
+        p.setPen(dark ? Qt::white : Qt::black);
+        QFont hint = font();
+        hint.setPointSize(12);
+        p.setFont(hint);
+        p.drawText(4, height() - 62, width() - 8, 34, Qt::AlignCenter | Qt::WordBreak,
+                   u("Вверх/вниз: масштаб\nВлево/вправо: поворот"));
+        p.setFont(font());
     } else if (view().kind == View::Player) {
         p.setPen(dark ? Qt::white : Qt::black);
         p.drawText(8, height() - 85, width() - 16, 48, Qt::WordBreak,

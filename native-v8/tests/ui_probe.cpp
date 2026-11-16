@@ -330,7 +330,11 @@ class UiProbe {
         require(w.chats_[a.uin].unread == 0 && w.view().kind == View::Chat,
                 "opening chat clears unread");
         w.key(KEYCODE_RSK);
-        require(w.view().rows.size() > 10, "chat menu opens via key");
+        bool attachments = false;
+        for (size_t i = 0; i < w.view().rows.size(); ++i)
+            attachments = attachments || w.view().rows[i].action == "attachments";
+        require(w.view().kind == View::Menu && attachments && w.view().uin == a.uin,
+                "chat menu opens with attachments for the selected recipient");
         w.back();
         w.edit(QString::fromLatin1("Message"), "message", "Draft survives PIN", a.uin);
         require(w.editor_->text() == "Draft survives PIN", "native editor draft");

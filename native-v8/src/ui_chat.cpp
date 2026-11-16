@@ -47,17 +47,13 @@ bool Window::selectScope() {
         unlink(managedMediaPath_.c_str());
         managedMediaPath_.clear();
     }
-    if (!capturePath_.empty()) {
-        unlink(capturePath_.c_str());
-        capturePath_.clear();
-    }
-    for (std::map<uint32_t, std::string>::iterator i = captureUploads_.begin();
-         i != captureUploads_.end(); ++i)
-        unlink(i->second.c_str());
-    captureUploads_.clear();
+    outgoingRequest_ = 0;
+    discardAttachment();
     loadedMediaReady_ = false;
     savedMediaPurpose_.clear();
     playPath_.clear();
+    receivedPath_.clear();
+    receivedName_.clear();
     pickUin_ = captureUin_ = 0;
     pending_.clear();
     pendingUin_.clear();
@@ -113,6 +109,8 @@ void Window::connectClient() {
         return;
     manualDisconnect_ = false;
     connectionErrorShown_ = false;
+    connectionProgress_ = 0;
+    connectionStage_ = u("Подготовка сети");
     ClientConfig cfg = clientSettings(settings_, storage_->accountDir() + "/cache", quiet_);
     fprintf(stderr, "Connection: starting worker (%s network)\n", cfg.network.c_str());
     fflush(stderr);
@@ -121,13 +119,14 @@ void Window::connectClient() {
     generation_ = client_.sessionGeneration();
     connectionState_ = Event::Connecting;
     note("Подключение к " + cfg.host);
-    info(u("Подключение… В меню можно отменить"));
+    notice_ = QString::null;
     update();
 }
 void Window::disconnectClient() {
     manualDisconnect_ = true;
     client_.stop();
     generation_ = 0;
+    retireTransfers();
     pending_.clear();
     pendingUin_.clear();
     for (size_t i = 0; i < stack_.size(); ++i)
@@ -170,6 +169,11 @@ void Window::consume(const Event &e) {
         }
         note(e.text);
         if (e.state == Event::Disconnected || e.state == Event::Reconnecting) {
+            retireTransfers();
+            if (e.state == Event::Reconnecting) {
+                connectionProgress_ = 0;
+                connectionStage_ = u(e.text.empty() ? "Повторное подключение…" : e.text);
+            }
             pending_.clear();
             pendingUin_.clear();
             for (size_t i = 0; i < stack_.size(); ++i)
@@ -344,17 +348,38 @@ void Window::consume(const Event &e) {
         return;
     }
     if (e.type == Event::Progress) {
-        if (pending_.find(e.requestId) != pending_.end())
-            info(u("Передано ") + QString::number((unsigned long)e.bytes) + " / " +
-                 QString::number((unsigned long)e.total));
+        if (!e.requestId) {
+            connectionProgress_ =
+                e.total ? (unsigned)std::min<uint64_t>(100, e.bytes * 100 / e.total) : 0;
+            connectionStage_ = u(e.text);
+            update();
+            return;
+        }
+        if (pending_.find(e.requestId) == pending_.end())
+            return;
+        for (size_t i = 0; i < stack_.size(); ++i) {
+            View &target = stack_[i];
+            if (target.context != "transfer" || target.request != e.requestId)
+                continue;
+            target.bytes = e.bytes;
+            target.total = e.total;
+            bool sending = pending_[e.requestId] == "upload";
+            target.status =
+                u(sending && e.total && e.bytes >= e.total ? "Ожидание подтверждения моста…"
+                  : sending                                ? "Передача файла…"
+                                                           : "Получение файла…");
+            if (!sending && !e.text.empty())
+                target.status = u(e.text);
+            if (!e.filename.empty())
+                target.details =
+                    u(sending ? "Кому: " : "Чат: ") + name(target.uin) + "\n" + u(e.filename);
+        }
+        update();
         return;
     }
     if (e.type == Event::Media) {
         if (pending_.find(e.requestId) != pending_.end()) {
-            if (view().context == "transfer" && view().request == e.requestId) {
-                view().request = 0;
-                stack_.pop_back();
-            }
+            removeTransfer(e.requestId);
             showMedia(e);
             pending_.erase(e.requestId);
             pendingUin_.erase(e.requestId);
@@ -363,30 +388,35 @@ void Window::consume(const Event &e) {
         return;
     }
     if (e.type == Event::QuoteResult || e.type == Event::CommandResult) {
+        if (e.requestId && pending_.find(e.requestId) == pending_.end())
+            return; // A cancelled/previous session ACK must not report success.
+        bool outgoing = e.requestId && e.requestId == outgoingRequest_;
         pending_.erase(e.requestId);
         pendingUin_.erase(e.requestId);
-        if (captureUploads_.find(e.requestId) != captureUploads_.end()) {
-            if (e.flag)
-                unlink(captureUploads_[e.requestId].c_str());
-            else
-                capturePath_ = captureUploads_[e.requestId];
-            captureUploads_.erase(e.requestId);
+        QString message =
+            u(e.text.empty() ? (e.flag ? "Готово" : "Операция не выполнена") : e.text);
+        if (outgoing) {
+            completeAttachment(e.flag, message);
+            return;
         }
+        removeTransfer(e.requestId);
         for (size_t i = 0; i < stack_.size(); ++i)
             if (stack_[i].request == e.requestId)
                 stack_[i].request = 0;
-        if (view().context == "transfer" && view().request == 0)
-            back();
-        info(u(e.text.empty() ? (e.flag ? "Готово" : "Операция не выполнена") : e.text));
+        info(message);
         return;
     }
     if (e.type == Event::Error) {
         if (e.requestId && pending_.find(e.requestId) == pending_.end())
             return;
-        if (captureUploads_.find(e.requestId) != captureUploads_.end()) {
-            capturePath_ = captureUploads_[e.requestId];
-            captureUploads_.erase(e.requestId);
+        if (e.requestId && e.requestId == outgoingRequest_) {
+            pending_.erase(e.requestId);
+            pendingUin_.erase(e.requestId);
+            note(e.text);
+            completeAttachment(false, u(e.text));
+            return;
         }
+        removeTransfer(e.requestId);
         note(e.text);
         for (size_t i = 0; i < stack_.size(); ++i)
             if (stack_[i].request == e.requestId)

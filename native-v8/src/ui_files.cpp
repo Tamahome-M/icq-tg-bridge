@@ -5,7 +5,80 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <string.h>
+#include <dirent.h>
+#include <stdlib.h>
+#include <limits.h>
+#include <algorithm>
 namespace tmm {
+static DIR *openMediaDirectory(const std::string &path, std::string &canonical) {
+    char resolved[PATH_MAX];
+    if (path.empty() || !realpath(path.c_str(), resolved)) {
+        if (path.empty())
+            errno = ENOENT;
+        return 0;
+    }
+    DIR *directory = opendir(resolved);
+    if (directory)
+        canonical = resolved;
+    return directory;
+}
+bool readableMediaDirectory(const std::string &path, std::string &canonical) {
+    DIR *directory = openMediaDirectory(path, canonical);
+    if (!directory)
+        return false;
+    closedir(directory);
+    return true;
+}
+static bool fileEntryLess(const MediaFileEntry &a, const MediaFileEntry &b) {
+    return a.directory != b.directory ? a.directory : a.name < b.name;
+}
+bool listMediaDirectory(const std::string &path, std::string &canonical,
+                        std::vector<MediaFileEntry> &entries, bool &truncated, std::string &error) {
+    std::string resolved;
+    DIR *directory = openMediaDirectory(path, resolved);
+    if (!directory) {
+        error = std::string("Не открыть папку: ") + strerror(errno);
+        return false;
+    }
+    std::vector<MediaFileEntry> result;
+    unsigned scanned = 0;
+    bool limited = false;
+    int failure = 0;
+    for (;;) {
+        // stat() below can fail for a broken or looping symlink. Only errno
+        // from readdir() determines whether the directory read failed.
+        errno = 0;
+        struct dirent *entry = readdir(directory);
+        if (!entry) {
+            failure = errno;
+            break;
+        }
+        std::string name = entry->d_name;
+        if (name == "." || name == "..")
+            continue;
+        if (++scanned > 4096 || result.size() >= 1000) {
+            limited = true;
+            break;
+        }
+        std::string child = resolved + (resolved == "/" ? "" : "/") + name;
+        struct stat st;
+        if (stat(child.c_str(), &st) < 0)
+            continue;
+        if (S_ISDIR(st.st_mode) || S_ISREG(st.st_mode))
+            result.push_back(MediaFileEntry(name, child, st.st_size, S_ISDIR(st.st_mode)));
+    }
+    closedir(directory);
+    if (failure) {
+        error = std::string("Ошибка чтения папки: ") + strerror(failure);
+        return false;
+    }
+    std::sort(result.begin(), result.end(), fileEntryLess);
+    canonical = resolved;
+    entries.swap(result);
+    truncated = limited;
+    error.clear();
+    return true;
+}
 static unsigned be16(const unsigned char *p) {
     return ((unsigned)p[0] << 8) | p[1];
 }

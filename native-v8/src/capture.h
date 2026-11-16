@@ -28,12 +28,14 @@ class CaptureController : public QObject {
   signals:
     void ready(const QString &path, const QString &mime);
     void error(const QString &reason);
+    void cancelled();
   private slots:
     void poll();
 
   private:
     void camera(const QString &destination, bool video, int seconds);
     QString cameraFileName(QDialog *) const;
+    static void fitPhotoSize(int &width, int &height, int maximumWidth, int maximumHeight);
     QWidget *window_;
     QDialog *dialog_;
     bool busy_, cancelled_;

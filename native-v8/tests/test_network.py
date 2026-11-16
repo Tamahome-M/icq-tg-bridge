@@ -111,6 +111,9 @@ async def scenario(executable, folder, encryption, md5):
     phone = Phone(process)
     try:
         await phone.wait(lambda e: e.get('type') == 0 and e.get('state') == 2)
+        progress = [e for e in phone.events if e.get('type') == 10 and e.get('id') == 0]
+        assert [e['bytes'] for e in progress] == [0, 10, 20, 35, 50, 65, 75, 90, 100], progress
+        assert all(e['total'] == 100 and e['text'] and e['generation'] == 1 for e in progress), progress
         offline = await phone.wait(lambda e: e.get('type') == 3 and e.get('messages')
                                    and e['messages'][0]['text'] == 'Офлайн по UTC')
         assert offline['messages'][0]['time'] == offline_ts, offline
@@ -142,7 +145,11 @@ async def scenario(executable, folder, encryption, md5):
             await phone.command(command, ident, who, token=avatar_hash if command == 5 else tokens[command])
             result = await phone.response(ident, 9)
             assert result['kind'] == bart_kind
-            assert pathlib.Path(result['path']).read_bytes() == (photo if command in (5,6) else blob)
+            expected = photo if command in (5,6) else blob
+            assert pathlib.Path(result['path']).read_bytes() == expected
+            chunks = [e for e in phone.events if e.get('id') == ident and e.get('type') == 10]
+            assert chunks and chunks[-1]['bytes'] == len(expected), chunks
+            assert all(e['total'] == 0 and 'часть' in e['text'] for e in chunks), chunks
         await phone.command(10, 40, who, limit=1)
         page = await phone.response(40, 7)
         assert page['more'] and page['offset'] == 1 and page['contacts'][0]['name'] == 'Мама', page
@@ -158,6 +165,12 @@ async def scenario(executable, folder, encryption, md5):
             assert (await phone.response(50+index,13))['flag']
         assert [u[0] for u in uploads] == ['photo','voice','video','file']
         assert all(u[2] == blob for u in uploads)
+        # Files chosen from memory use the document route with a media hint;
+        # only a newly recorded video uses the timed video-note route above.
+        for ident, media_kind in ((54, 1), (55, 2)):
+            await phone.command(20, ident, who, path=source, mode=media_kind)
+            assert (await phone.response(ident, 13))['flag']
+            assert uploads[-1] == ('file', who, blob, 'upload.bin', media_kind), uploads[-1]
         await phone.command(1, 60, who, flag=True)
         await phone.command(22, 61, who)
         assert (await phone.response(61,13))['flag']
@@ -237,6 +250,8 @@ async def negative_cases(executable, folder):
         await asyncio.wait_for(accepted.wait(),3)
         phone.p.stdin.write(b'stop\n');await phone.p.stdin.drain()
         await phone.wait(lambda e:e.get('type')==0 and e.get('state')==0,timeout=2)
+        stages = [e['bytes'] for e in phone.events if e.get('type') == 10 and e.get('id') == 0]
+        assert stages == [0, 10, 20], stages
     finally:
         await close(phone);listener.close()
         for writer in writers: writer.close();await writer.wait_closed()
