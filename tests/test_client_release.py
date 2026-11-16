@@ -28,12 +28,12 @@ release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 
 
-def fixture(root: Path) -> tuple[Path, Path, dict]:
+def fixture(root: Path, client_version: str = "1.15") -> tuple[Path, Path, dict]:
     source = root / "source"
     client = source / "telemotomax"
     (client / "src").mkdir(parents=True)
     (client / "src/App.java").write_text("class App {}\n")
-    (client / "VERSION").write_text("1.15\n")
+    (client / "VERSION").write_text(client_version + "\n")
     keys = client / "sign-keys"
     keys.mkdir()
     (keys / "signer.der").write_bytes(b"fixture-signer")
@@ -50,7 +50,7 @@ def fixture(root: Path) -> tuple[Path, Path, dict]:
     for base in release.BASES:
         jar = dist / f"{base}.jar"
         attrs = ("Manifest-Version: 1.0\nMIDlet-Name: TeleMotoMax\n"
-                 "MIDlet-Vendor: fixture\nMIDlet-Version: 1.15\n"
+                 f"MIDlet-Vendor: fixture\nMIDlet-Version: {client_version}\n"
                  "MIDlet-Permissions-Opt: javax.microedition.io.Connector.socket\n")
         with zipfile.ZipFile(jar, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("META-INF/MANIFEST.MF", attrs)
@@ -104,7 +104,7 @@ def serve(source: Path, dist: Path, events: Path | None = None):
                     log.write("get " + self.path + "\n")
             if self.path == "/project/archive/refs/heads/main.zip":
                 data = archive.getvalue()
-            elif self.path.startswith("/project/releases/download/telemotomax-v1.15/"):
+            elif self.path.startswith(f"/project/releases/download/telemotomax-v{release.version(source)}/"):
                 path = dist / self.path.rsplit("/", 1)[-1]
                 if not path.is_file():
                     self.send_error(404)
@@ -143,6 +143,51 @@ class ReleaseTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.source, self.dist, self.manifest = fixture(self.root)
+
+    def modern_fixture(self):
+        self.source, self.dist, self.manifest = fixture(self.root / "modern", "1.31")
+        self.manifest = add_probe(self.source, self.dist)
+
+    def test_historical_source_hashes_and_probe_manifest_remain_compatible(self):
+        # Digests recorded with the 1.30 publisher, before Probe retirement.
+        self.assertEqual(self.manifest["source_sha256"],
+                         "129e78054c7c54e4f1a9e2de194593362c874f8dcc471910b66dddd7266ba77b")
+        source, dist, _ = fixture(self.root / "legacy", "1.30")
+        manifest = add_probe(source, dist)
+        self.assertEqual(manifest["source_sha256"],
+                         "11ddf6b85f817b52b2b091202db2ed1a542229b6702adef298660bf518872894")
+        release.validate_manifest(source, manifest)
+        self.assertEqual(set(manifest["files"]), set(release.FILES) | {
+            "TmmFlipProbe.jar", "TmmFlipProbe.jad"})
+        with serve(source, dist) as repo:
+            release.download(source, repo, self.root / "legacy-installed")
+        self.assertEqual(set(snapshot(self.root / "legacy-installed")), set(manifest["files"]))
+
+    def test_modern_release_ignores_retained_probe_sources_and_binaries(self):
+        self.modern_fixture()
+        self.assertEqual(set(self.manifest["files"]), set(release.FILES))
+        self.assertIsNone(release.probe_version(self.source))
+        (self.source / release.PROBE_DIR / "VERSION").write_text("manual-build-version\n")
+        (self.source / release.PROBE_DIR / "VodafoneFlip.java").write_text("// manual diagnostic edit\n")
+        (self.dist / "TmmFlipProbe.jar").write_bytes(b"old unused output")
+        (self.dist / "TmmFlipProbe.jad").unlink()
+        release.validate_manifest(self.source, self.manifest)
+        self.assertEqual(release.make_manifest(self.source, self.dist), self.manifest)
+        unexpected = json.loads(json.dumps(self.manifest))
+        unexpected["files"]["TmmFlipProbe.jar"] = unexpected["files"][release.FILES[0]]
+        with self.assertRaisesRegex(ValueError, "пары JAR/JAD"):
+            release.validate_manifest(self.source, unexpected)
+
+    def test_modern_download_replaces_old_managed_probe_pair(self):
+        self.modern_fixture()
+        destination = self.root / "installed"
+        destination.mkdir()
+        for name in ("TmmFlipProbe.jar", "TmmFlipProbe.jad"):
+            (destination / name).write_bytes(b"previous probe")
+        with serve(self.source, self.dist) as repo:
+            release.download(self.source, repo, destination)
+        self.assertEqual(set(snapshot(destination)), set(release.FILES))
+        self.assertTrue((self.source / release.PROBE_DIR / "FlipProbe.java").is_file())
 
     def test_download_keeps_pairs_and_signed_jad_exact(self):
         destination = self.root / "installed"
@@ -393,6 +438,56 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(set(json.loads((self.root / "work/release" / release.MANIFEST).read_text())["files"]),
                          set(release.release_files(self.source)))
 
+    def test_modern_ci_builds_only_clients_and_removes_probe_from_resumed_draft(self):
+        self.modern_fixture()
+        draft = {"id": 7, "draft": True, "html_url": "test", "assets": [
+            {"id": 11, "name": "TmmFlipProbe.jar"},
+            {"id": 12, "name": "TmmFlipProbe.jad"},
+            {"id": 13, "name": "notes.txt"}],
+            "upload_url": "https://uploads.github.com/repos/owner/repo/releases/7/assets{?name,label}"}
+        modules = []
+
+        def builder(command, *, env, check):
+            modules.append(env["TMM_MODULES"])
+            destination = Path(env["TMM_DIST_DIR"])
+            # Include stale local Probe output: it must never be uploaded.
+            for name in (*release.FILES, "TmmFlipProbe.jar", "TmmFlipProbe.jad"):
+                shutil.copyfile(self.dist / name, destination / name)
+
+        with patch.dict(os.environ, {"GH_TOKEN": "test-token"}), \
+                patch.object(release, "api", return_value=draft) as api, \
+                patch.object(release, "download"), \
+                patch.object(release.subprocess, "run", side_effect=builder):
+            release.publish(self.source, "owner/repo", None, self.root / "work", "main")
+        self.assertEqual(modules, ["v3", "v3light", "v8"])
+        uploads = [call.args[1] for call in api.call_args_list if call.args[1].startswith("https://uploads.")]
+        self.assertEqual(len(uploads), 7)
+        self.assertFalse(any("TmmFlipProbe" in url for url in uploads))
+        deletes = [call.args[1] for call in api.call_args_list if call.kwargs.get("method") == "DELETE"]
+        self.assertEqual(deletes, ["releases/assets/11", "releases/assets/12"])
+        self.assertEqual(set(json.loads((self.root / "work/release" / release.MANIFEST).read_text())["files"]),
+                         set(release.FILES))
+
+    def test_new_publication_does_not_describe_or_upload_probe(self):
+        self.modern_fixture()
+        draft = {"id": 7, "draft": True, "html_url": "test", "assets": [],
+                 "upload_url": "https://uploads.github.com/repos/owner/repo/releases/7/assets{?name,label}"}
+
+        def fake_api(repo, path, token, **kwargs):
+            if path.startswith("releases/tags/"):
+                raise urllib.error.HTTPError("test", 404, "not found", {}, None)
+            return draft
+
+        with patch.dict(os.environ, {"GH_TOKEN": "test-token"}), \
+                patch.object(release, "api", side_effect=fake_api) as api, \
+                patch.object(release, "download"):
+            release.publish(self.source, "owner/repo", self.dist, self.root / "work", "main")
+        create = next(call for call in api.call_args_list if call.args[1] == "releases")
+        self.assertNotIn("TmmFlipProbe", json.loads(create.kwargs["data"])["body"])
+        uploads = [call.args[1] for call in api.call_args_list if call.args[1].startswith("https://uploads.")]
+        self.assertEqual(len(uploads), 7)
+        self.assertFalse(any("TmmFlipProbe" in url for url in uploads))
+
     def test_interrupted_draft_upload_can_resume(self):
         calls = []
         first = (self.dist / release.FILES[0]).read_bytes()
@@ -491,6 +586,62 @@ class ReleaseTests(unittest.TestCase):
         stop = trace.index("service stop")
         self.assertEqual(sum(line.startswith("get ") for line in trace[:stop]), 10)
         self.assertEqual(trace.count("service start"), 2)
+
+    def test_vps_upgrade_130_to_131_removes_managed_probe_and_preserves_user_files(self):
+        self.source, self.dist, self.manifest = fixture(self.root / "legacy", "1.30")
+        self.manifest = add_probe(self.source, self.dist)
+        install, events, env = self.prepare_installed()
+        with serve(self.source, self.dist, events) as repo:
+            legacy = self.run_update(install, repo, env)
+        self.assertEqual(legacy.returncode, 0, legacy.stdout + legacy.stderr)
+        self.assertTrue((install / "telemotomax/dist/TmmFlipProbe.jar").is_file())
+        custom = install / "downloads/custom.jar"
+        original = custom.read_bytes()
+
+        self.modern_fixture()
+        events.write_text("")
+        with serve(self.source, self.dist, events) as repo:
+            first = self.run_update(install, repo, env, installed=True)
+            second = self.run_update(install, repo, env, installed=True)
+        for result in (first, second):
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(set(snapshot(install / "telemotomax/dist")), set(release.FILES))
+        for name in release.FILES:
+            self.assertEqual((install / "telemotomax/dist" / name).read_bytes(), (self.dist / name).read_bytes())
+        self.assertEqual(custom.read_bytes(), original)
+        self.assertTrue((install / release.PROBE_DIR / "FlipProbe.java").is_file())
+        self.assertTrue((install / release.PROBE_DIR / "build.py").is_file())
+        trace = events.read_text().splitlines()
+        self.assertEqual(sum(line.startswith("get ") for line in trace[:trace.index("service stop")]), 8)
+        self.assertFalse(any("TmmFlipProbe.jar" in line or "TmmFlipProbe.jad" in line for line in trace))
+        self.assertEqual(trace.count("service start"), 2)
+
+    def test_modern_update_dry_run_reports_probe_removal_without_mutation(self):
+        self.modern_fixture()
+        install, events, env = self.prepare_installed()
+        for name in ("TmmFlipProbe.jar", "TmmFlipProbe.jad"):
+            (install / "telemotomax/dist" / name).write_bytes(b"previous probe")
+        before = snapshot(install)
+        with serve(self.source, self.dist, events) as repo:
+            result = self.run_update(install, repo, env, "-n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(snapshot(install), before)
+        for name in ("TmmFlipProbe.jar", "TmmFlipProbe.jad"):
+            self.assertRegex(result.stdout, "удалится +telemotomax/dist/" + name)
+        self.assertNotIn("service ", events.read_text())
+
+    def test_failed_modern_release_keeps_installed_probe_and_bridge_running(self):
+        self.modern_fixture()
+        install, events, env = self.prepare_installed()
+        for name in ("TmmFlipProbe.jar", "TmmFlipProbe.jad"):
+            (install / "telemotomax/dist" / name).write_bytes(b"previous probe")
+        before = snapshot(install)
+        (self.dist / release.FILES[-1]).write_bytes(b"corrupt")
+        with serve(self.source, self.dist, events) as repo:
+            result = self.run_update(install, repo, env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(snapshot(install), before)
+        self.assertNotIn("service ", events.read_text())
 
     def test_failed_probe_download_does_not_stop_or_update_bridge(self):
         self.manifest = add_probe(self.source, self.dist)

@@ -43,6 +43,11 @@ def version(source: Path) -> str:
 
 
 def probe_version(source: Path) -> str | None:
+    # Keep the exact asset set/source identity of already published releases.
+    # From 1.31 the diagnostic sources remain available for manual builds,
+    # but are no longer inputs or artifacts of the client release.
+    if tuple(map(int, version(source).split("."))) >= (1, 31):
+        return None
     path = source / PROBE_DIR / "VERSION"
     if not path.is_file():
         return None
@@ -53,7 +58,7 @@ def probe_version(source: Path) -> str | None:
 
 
 def release_files(source: Path) -> tuple[str, ...]:
-    """Older releases have three client pairs; new ones also carry the separate probe."""
+    """Three client pairs, plus the probe only for historical releases that had it."""
     if probe_version(source) is None:
         return FILES
     return FILES + (f"{PROBE_BASE}.jar", f"{PROBE_BASE}.jad")
@@ -301,6 +306,12 @@ def publish(source: Path, repo: str, dist: Path | None, work: Path, target: str)
     upload = release["upload_url"].split("{", 1)[0]
     # A failed upload leaves a draft; the next invocation can finish it.
     existing = {asset["name"]: asset for asset in release["assets"]}
+    if probe_version(source) is None:
+        # An interrupted draft may have been started by an older publisher.
+        # Published releases returned above and are never changed here.
+        for name in (f"{PROBE_BASE}.jar", f"{PROBE_BASE}.jad"):
+            if name in existing:
+                api(owner_repo, f"releases/assets/{existing[name]['id']}", token, method="DELETE")
     for name in (*release_files(source), MANIFEST):
         blob = (dist / name).read_bytes()
         if name in existing:

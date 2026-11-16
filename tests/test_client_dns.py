@@ -1,4 +1,4 @@
-"""Compile DNS against CLDC/MIDP, then test the real class with a fake UDP transport."""
+"""Compile DNS against CLDC/MIDP, then test the real class with a fake TCP transport."""
 from pathlib import Path
 import os
 import subprocess
