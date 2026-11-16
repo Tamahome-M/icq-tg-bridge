@@ -4,6 +4,9 @@
 #include "ui_settings.h"
 #include "ui_language.h"
 #include "input_indicator.h"
+#include "system_menu.h"
+#include "status_icon.h"
+#include <ZListBox.h>
 #include <ZMultiLineEdit.h>
 #include <ZKbInputField.h>
 #include <ZKeyDef.h>
@@ -13,6 +16,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <errno.h>
+#include <unistd.h>
 extern "C" void UTIL_SetPowerOnHandleStatus(int);
 extern "C" void UTIL_SetFlipStatus(int);
 extern "C" void UTIL_SetKeypadLockStatus(bool);
@@ -20,6 +24,8 @@ void checkPaint(QWidget &, const char *);
 void checkInputIndicator(tmm::InputIndicator &);
 void scheduleNetworkWorker(int);
 void runNetworkWorker();
+void checkForeground(tmm::Platform &, QWidget &);
+void checkVideoParent(QWidget &);
 namespace tmm {
 class UiProbe {
     static unsigned checks;
@@ -43,12 +49,125 @@ class UiProbe {
         m.nativeId = std::string(8, (char)serial);
         return m;
     }
+    static void menus(Window &w) {
+        w.home();
+        w.notice_ = QString::null;
+        w.mainMenu();
+        ZListBox *list = w.systemMenu_->list();
+        require(list->isVisible() && list->count() == int(w.view().rows.size()),
+                "command menu uses the actual Motorola list");
+        unsigned revision = w.systemMenu_->revision();
+        QKeyEvent down(QEvent::KeyPress, KEYCODE_DOWN, 0, 0);
+        QApplication::sendEvent(list->viewport(), &down);
+        require(w.view().selected == 1 && list->currentItem() == 1 &&
+                    w.systemMenu_->revision() == revision,
+                "native menu key moves once without rebuilding rows");
+        w.update();
+        require(w.systemMenu_->revision() == revision, "idle update reuses native menu objects");
+        w.back();
+        require(!list->isVisible(), "back from menu hides native list");
+        View empty(View::Menu, QString::fromLatin1("Search"));
+        w.push(empty);
+        require(!list->isVisible() && !w.systemMenuVisible(),
+                "empty results leave the no-messages hint visible");
+        w.view().request = 101;
+        w.update();
+        require(!list->isVisible() && !w.systemMenuVisible(),
+                "pending results leave the loading hint visible");
+        w.view().request = 0;
+        w.back();
+        w.showSettings("account");
+        ZSettingItem *setting = static_cast<ZSettingItem *>(list->firstItem());
+        require(setting && setting->getSubItemCount(0) == 2 &&
+                    setting->getSubItemText(0, 0) == uiText("UIN") &&
+                    setting->getSubItemText(0, 1) ==
+                        QString::fromUtf8(w.settings_.get("uin").c_str()),
+                "settings use native label and value regions");
+        w.chooseSetting("password");
+        require(!list->isVisible() && w.editor_->isVisible(),
+                "editor replaces native settings list");
+        w.hide();
+        w.update();
+        require(list->isHidden() && !w.systemMenuVisible(),
+                "background updates do not show a menu over the hidden editor");
+        w.show();
+        w.editorMenu();
+        require(list->isVisible(), "editor commands use native menu");
+        w.back();
+        require(!list->isVisible() && w.editor_->isVisible(), "back restores original editor");
+        w.finishEdit(false);
+        w.chooseSetting("video_kbps");
+        int chosen = w.view().selected;
+        require(list->isVisible() && list->currentItem() == chosen,
+                "choice list retains the configured value selection");
+        w.lock();
+        require(!list->isVisible(), "PIN covers system menu");
+        w.unlock();
+        require(list->isVisible() && list->currentItem() == chosen,
+                "unlock restores system menu selection");
+        w.info("menu notice");
+        require(list->geometry().bottom() < w.height() - 79,
+                "native list leaves notification banner visible");
+        w.notice_ = QString::null;
+        View large(View::Files, QString::fromLatin1("Files"));
+        for (unsigned i = 0; i < 120; ++i)
+            large.rows.push_back(Row(QString::number(i), "back"));
+        w.push(large);
+        for (int i = 0; i < 100; ++i)
+            w.key(KEYCODE_DOWN);
+        require(w.view().selected == 100 && list->count() <= 32 &&
+                    list->item(list->currentItem())->getSubItemText(0, 0) == "100",
+                "large file list keeps bounded native rows and correct selection");
+        for (int i = 0; i < 80; ++i)
+            w.key(KEYCODE_UP);
+        require(w.view().selected == 20 &&
+                    list->item(list->currentItem())->getSubItemText(0, 0) == "20",
+                "reverse navigation crosses native pages correctly");
+        w.home();
+        w.showSettings("media");
+        require(list->isVisible() && list->count() < 32, "settings replace a large file page");
+        setting = static_cast<ZSettingItem *>(list->firstItem());
+        require(setting->getSubItemText(0, 0) == uiText("Фото: размер") &&
+                    setting->getSubItemText(0, 1) == uiText("Мост"),
+                "native settings preserve colon-containing label separately from value");
+        w.home();
+        require(!list->isVisible(), "returning to contacts removes menu overlay");
+        w.lastActivity_ = 0;
+        w.lightOn_ = false;
+        w.hide();
+        w.resume();
+        w.tick();
+        require(w.isVisible() && w.lightOn_ && w.lastActivity_ != 0,
+                "restoring the dimmed application wakes light and resets idle time");
+        w.hide();
+        static_cast<Application *>(qApp)->slotRaise();
+        require(w.isVisible() && w.lightOn_,
+                "native application activation restores its main window");
+        w.pending_[777] = "video";
+        Event media;
+        media.requestId = 777;
+        media.path = "/state/downloaded.3gp";
+        media.filename = "downloaded.3gp";
+        w.hide();
+        w.showMedia(media);
+        require(!w.isVisible() && !w.player_.active() && w.loadedMediaReady_ &&
+                    w.savedMediaPurpose_ == "video",
+                "background video completion stays ready without opening a player window");
+        w.pending_.erase(777);
+        w.loadedMediaReady_ = false;
+        w.playPath_.clear();
+        w.savedMediaPurpose_.clear();
+        w.notice_ = QString::null;
+        w.resume();
+    }
 
   public:
     static void run(Window &w) {
         fprintf(stderr, "UI BEGIN\n");
         fflush(stderr);
         w.timer_.stop();
+        checkForeground(w.platform_, w);
+        checkVideoParent(w);
         std::string initialError;
         w.settings_.set("host", "127.0.0.1");
         w.settings_.set("uin", "123456");
@@ -57,6 +176,7 @@ class UiProbe {
         w.settings_.setInt("auto_reconnect", 0);
         w.settings_.setInt("encryption", 0);
         w.settings_.set("network", "system");
+        menus(w);
         w.settings_.set("uin", "");
         w.mainMenu();
         w.activate(w.view().rows[0]);
@@ -128,8 +248,15 @@ class UiProbe {
         a.type = 0;
         a.inRoster = true;
         roster.contacts.push_back(a);
+        w.home();
         w.consume(roster);
         require(w.contact(a.uin) && w.contact(a.uin)->name == "Alice", "initial roster");
+        require(w.collapsed_["Telegram"] && w.view().rows.size() == 1 &&
+                    w.view().rows[0].action == "group-toggle:Telegram",
+                "initial contact groups start collapsed");
+        w.activate(w.view().rows[0]);
+        require(!w.collapsed_["Telegram"] && w.view().rows.size() == 2,
+                "collapsed group opens on selection");
         Event incremental;
         incremental.type = Event::Roster;
         ContactRecord b = a;
@@ -138,6 +265,24 @@ class UiProbe {
         incremental.contacts.push_back(b);
         w.consume(incremental);
         require(w.contact(a.uin) && w.contact(b.uin), "incremental roster preserves existing");
+        require(!w.collapsed_["Telegram"] && w.view().rows.size() == 3,
+                "roster refresh preserves an opened group");
+        Event online;
+        online.type = Event::State;
+        online.state = Event::Online;
+        w.consume(online);
+        require(w.collapsed_["Telegram"] && w.view().rows.size() == 1,
+                "a new login folds contact groups again");
+        w.connectionState_ = Event::Disconnected; // Fixture does not create a real session.
+        require(w.statusIcons_.width() == 224 && w.statusIcons_.height() == 16 &&
+                    statusIcon(0) == 7 && statusIcon(0xffffffffU) == 6 && statusIcon(0x100) == 3 &&
+                    statusIcon(2) == 2 && statusIcon(4) == 4 && statusIcon(0x13) == 2 &&
+                    statusIcon(0x05) == 4 && statusIcon(0x2001) == 12,
+                "Java daisy atlas and raw OSCAR status priorities");
+        require(w.status(0x13) == uiText("Не беспокоить") &&
+                    w.status(0x05) == uiText("Недоступен") &&
+                    w.status(0x200) == uiText("Сеть недоступна"),
+                "status labels agree with Java daisy priority");
         ContactRecord privacy;
         privacy.type = 14;
         privacy.uin = a.uin;
@@ -429,8 +574,24 @@ class UiProbe {
         w.resize(240, 320);
         w.home();
         w.openChat(a.uin);
-        w.edit(QString::fromUtf8("Сообщение"), "message", "Привет! Проверка языка ввода.", a.uin);
-        checkInputIndicator(*w.inputIndicator_);
+        if (selectedScene == "menu")
+            w.mainMenu();
+        else if (selectedScene == "statuses") {
+            w.collapsed_["Telegram"] = w.collapsed_["Telegram/Каналы"] = w.collapsed_["MAX"] =
+                false;
+            w.home();
+        } else if (selectedScene == "settings") {
+            w.settings_.set("photo_size", "176x220");
+            w.settings_.set("photo_kb", "20");
+            w.showSettings("media");
+        } else if (selectedScene == "choice") {
+            w.showSettings("media");
+            w.chooseSetting("video_kbps");
+        } else if (selectedScene == "editor") {
+            w.edit(QString::fromUtf8("Сообщение"), "message", "Привет! Проверка языка ввода.",
+                   a.uin);
+            checkInputIndicator(*w.inputIndicator_);
+        }
         fprintf(stderr, "PAINT buffer=%d bytes\n", w.frame_.bytesPerLine() * w.frame_.height());
         fprintf(stderr, "UI PASS %u checks\n", checks);
     }
@@ -439,6 +600,7 @@ unsigned UiProbe::checks = 0;
 } // namespace tmm
 int main(int argc, char **argv) {
     tmm::Application app(argc, argv, QApplication::GuiServer);
+    chdir("/work"); // Packaged assets copied to the runner's read-only build mount.
     UTIL_SetPowerOnHandleStatus(10);
     UTIL_SetFlipStatus(SYSTEM_FLIP_OPEN);
     UTIL_SetKeypadLockStatus(false);

@@ -50,6 +50,10 @@ class NativeReleaseTests(unittest.TestCase):
         (self.root / "telemotomax/res/MIDP2/sounds/tg.mp3").write_bytes(b"changed")
         with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
 
+    def test_status_sprite_change_requires_native_version(self):
+        (self.root / "telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png").write_bytes(b"changed")
+        with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
+
     def test_manifest_rejects_wrong_source_assets_and_sizes(self):
         release.validate_manifest(self.root, self.manifest)
         cases = []
@@ -95,6 +99,8 @@ class NativeReleaseTests(unittest.TestCase):
                 self.assertEqual(archive.getmember(prefix+"telemotomax.lin").mode, 0o755)
                 self.assertEqual(archive.getmember(prefix+"collect-log.lin").mode, 0o755)
                 self.assertIn("sounds/msg_low.mp3", "\n".join(archive.getnames()))
+                self.assertEqual(archive.extractfile(prefix+"statuses.png").read(),
+                                 package.ASSETS["statuses.png"].read_bytes())
                 if name.endswith(".pep"):
                     ini = archive.extractfile("description.ini").read()
                     self.assertIn(b"Name = TeleMotoMax Native", ini)

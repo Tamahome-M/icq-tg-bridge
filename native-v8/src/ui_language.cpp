@@ -6,6 +6,7 @@ void setUiLanguage(const std::string &language) {
     english = language == "en";
 }
 static const char *translations[][2] = {
+    {"Вложение получено. Откройте через меню", "Attachment received. Open it from the menu"},
     {"Показать пароль", "Show password"},
     {"Скрыть пароль", "Hide password"},
     {"Ошибка подключения", "Connection error"},

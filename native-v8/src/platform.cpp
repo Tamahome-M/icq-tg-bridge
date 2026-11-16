@@ -139,8 +139,15 @@ void Platform::minimize() {
         window_->hide();
 }
 void Platform::requestForeground() {
+    // Activation can arrive after the application was hidden. Refresh the
+    // physical lid state instead of relying only on a previous notification.
+    lidChanged(UTIL_GetFlipStatus());
     if (window_ && !closed_) {
+        setBacklight(true);
         window_->showFullScreen();
+        // Re-register/show the main widget through the firmware as well as Qt.
+        // raiseAppWindows alone only asks AM to raise windows it already knows.
+        static_cast<ZApplication *>(qApp)->showMainWidget(window_);
         window_->raise();
         window_->setActiveWindow();
         static_cast<ZApplication *>(qApp)->raiseAppWindows();

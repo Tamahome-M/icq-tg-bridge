@@ -140,8 +140,8 @@ void Window::showMedia(const Event &e) {
         downloadName_ = "attachment.bin";
     savedMediaPurpose_ = purpose;
     loadedMediaReady_ = true;
-    if (locked_ || closed_) {
-        info(u("Вложение получено. Откройте через меню после разблокировки"));
+    if (locked_ || closed_ || !isVisible()) {
+        info(u("Вложение получено. Откройте через меню"));
         return;
     }
     if (purpose == "photo" || purpose == "avatar") {
@@ -192,7 +192,7 @@ void Window::nextVideo() {
     }
 }
 void Window::play(const std::string &path, bool audioOnly) {
-    if (locked_ || closed_) {
+    if (locked_ || closed_ || !isVisible()) {
         info(u("Откройте крышку и разблокируйте экран для просмотра"));
         return;
     }
@@ -205,7 +205,8 @@ void Window::play(const std::string &path, bool audioOnly) {
         stack_.pop_back();
     QWidget *w = player_.videoWidget();
     if (w) {
-        w->reparent(this, QPoint(0, 30), false);
+        if (w->parentWidget() != this)
+            w->reparent(this, QPoint(0, 30), false);
         w->setGeometry(0, 30, width(), height() - 88);
     }
     View v(View::Player, u("Плеер"));

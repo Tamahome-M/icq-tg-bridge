@@ -376,9 +376,7 @@ void CaptureController::camera(const QString &path, bool video, int seconds) {
         timer_.start(100);
     int result = dialog_->exec();
     timer_.stop();
-    const char *actual =
-        fn<const char *(*)(void *)>(dlsym(cameraLibrary_, "GetCameraFileName"))(dialog_);
-    QString recorded = actual ? QString::fromLocal8Bit(actual) : QString::null;
+    QString recorded = cameraFileName(dialog_);
     fn<void (*)(void *)>(dlsym(cameraLibrary_, "DestroyCameraDlg"))(dialog_);
     dialog_ = 0;
     videoSeconds_ = 0;
@@ -403,5 +401,14 @@ void CaptureController::camera(const QString &path, bool video, int seconds) {
         duration_ = video ? captureDuration(path.local8Bit().data()) : 0;
         emit ready(path, video ? "video/3gpp" : "image/jpeg");
     }
+}
+QString CaptureController::cameraFileName(QDialog *dialog) const {
+    // V8 GetCameraFileName returns the model's QString by reference, not a
+    // char buffer: its export returns model+584, which CAM_UI_Dlg::done passes
+    // directly to QString's copy constructor. Copy while the dialog still owns
+    // the model; interpreting these object bytes as UTF-8 corrupts the path.
+    const QString *actual =
+        fn<const QString *(*)(void *)>(dlsym(cameraLibrary_, "GetCameraFileName"))(dialog);
+    return actual ? *actual : QString::null;
 }
 } // namespace tmm

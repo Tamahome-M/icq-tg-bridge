@@ -8,7 +8,7 @@ FIRMWARE_LIBS ?= /tmp/yam-firmware-link
 TEST_HARDWARE_LIBS ?=
 FW_LIBRARY_PATH := $(TEST_HARDWARE_LIBS):$(FIRMWARE_LIBS):$(FIRMWARE_ROOT)/usr/lib/ezx/lib:$(FIRMWARE_ROOT)/usr/lib:$(FIRMWARE_ROOT)/lib
 FW_RUN = $(QEMU_ARM) -L $(FIRMWARE_ROOT) -E LD_LIBRARY_PATH=$(FW_LIBRARY_PATH)
-FW_TESTS := capture-codec-test capture-media-test capture-lifecycle-test media-lifecycle-test platform-firmware-test platform-widget-test toolchain-vector-test
+FW_TESTS := capture-codec-test capture-media-test capture-lifecycle-test camera-filename-test media-lifecycle-test platform-firmware-test platform-widget-test toolchain-vector-test
 
 .PHONY: firmware-tests firmware-check
 firmware-tests: $(addprefix $(BUILD)/,$(FW_TESTS))
@@ -18,6 +18,8 @@ $(BUILD)/capture-media-test: tests/capture_media_test.cpp $(BUILD)/capture_media
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/capture_media.o -o $@
 $(BUILD)/capture-lifecycle-test: tests/capture_lifecycle_test.cpp $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -Wl,-E $< $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o -lezxsound -lqte-mt -ldl -lpthread -o $@
+$(BUILD)/camera-filename-test: tests/camera_filename_test.cpp $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o -lezxsound -lqte-mt -ldl -lpthread -o $@
 $(BUILD)/media-lifecycle-test: tests/media_lifecycle_test.cpp $(BUILD)/media.o $(BUILD)/moc_media.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/media.o $(BUILD)/moc_media.o -lezxsound -lqte-mt -ldl -o $@
 $(BUILD)/platform-firmware-test: tests/platform_firmware_test.cpp $(BUILD)/sdk-link/.ready
@@ -29,6 +31,7 @@ firmware-check: firmware-tests
 	$(FW_RUN) $(BUILD)/capture-codec-test $(abspath $(BUILD))/test-codec.amr
 	$(FW_RUN) $(BUILD)/capture-media-test $(abspath $(BUILD))/test-codec.amr
 	$(FW_RUN) $(BUILD)/capture-lifecycle-test
+	$(FW_RUN) $(BUILD)/camera-filename-test
 	$(FW_RUN) $(BUILD)/media-lifecycle-test
 	$(FW_RUN) $(BUILD)/platform-firmware-test
 	$(FW_RUN) $(BUILD)/toolchain-vector-test

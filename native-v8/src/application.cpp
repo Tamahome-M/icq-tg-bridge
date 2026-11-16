@@ -7,6 +7,10 @@ void Application::slotQuickQuit() {
         mainWidget()->hide();
     }
 }
+void Application::slotRaise() {
+    if (mainWidget())
+        static_cast<Window *>(mainWidget())->resume();
+}
 int Application::slotUsbStorageInOut(bool connected) {
     if (connected)
         quit();
