@@ -16,8 +16,12 @@ $(BUILD)/capture-codec-test: tests/capture_codec_test.cpp $(BUILD)/capture_codec
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/capture_codec.o -ldl -o $@
 $(BUILD)/capture-media-test: tests/capture_media_test.cpp $(BUILD)/capture_media.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/capture_media.o -o $@
-$(BUILD)/capture-lifecycle-test: tests/capture_lifecycle_test.cpp $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o $(BUILD)/sdk-link/.ready
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -Wl,-E $< $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o -lezxsound -lqte-mt -ldl -lpthread -o $@
+$(BUILD)/moc_capture_test_observer.cpp: tests/capture_test_observer.h | $(BUILD)
+	$(MOC) $< -o $@
+$(BUILD)/moc_capture_test_observer.o: $(BUILD)/moc_capture_test_observer.cpp tests/capture_test_observer.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -Itests -c $< -o $@
+$(BUILD)/capture-lifecycle-test: tests/capture_lifecycle_test.cpp tests/capture_test_observer.h $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o $(BUILD)/moc_capture_test_observer.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -Wl,-E $< $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o $(BUILD)/moc_capture_test_observer.o -lezxsound -lqte-mt -ldl -lpthread -o $@
 $(BUILD)/camera-filename-test: tests/camera_filename_test.cpp $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o -lezxsound -lqte-mt -ldl -lpthread -o $@
 $(BUILD)/media-lifecycle-test: tests/media_lifecycle_test.cpp $(BUILD)/media.o $(BUILD)/moc_media.o $(BUILD)/sdk-link/.ready

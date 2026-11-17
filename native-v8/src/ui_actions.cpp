@@ -5,6 +5,7 @@
 #include "ui_files.h"
 #include "network_profile.h"
 #include <unistd.h>
+#include <sys/stat.h>
 #include <ZMultiLineEdit.h>
 #include <ZKeyDef.h>
 #include <qapplication.h>
@@ -55,6 +56,8 @@ void Window::mainMenu() {
     row(v, "Контакт-лист", "contact-list");
     if (loadedMediaReady_)
         row(v, "Полученное вложение", "media-received");
+    if (!capturePath_.empty() && !outgoingRequest_)
+        row(v, "Неотправленное вложение", "attachment-pending");
     row(v, "Настройки", "settings");
     row(v, silent_ ? "Включить оповещения" : "Без звука", "silent");
     row(v, "Блокировать", "lock");
@@ -107,11 +110,7 @@ void Window::chatMenu() {
     if (!quoteId_.empty())
         row(v, "Цитировать сюда", "quote-here", id);
     row(v, "Получать без оповещений", "quiet", id);
-    row(v, "Сфотографировать", "capture-photo", id);
-    row(v, "Записать голосовое", "capture-voice", id);
-    row(v, "Записать видео", "capture-video", id);
-    row(v, "Отправить файл", "upload-file", id);
-    row(v, "Отправить фото/звук/видео", "upload-media", id);
+    row(v, "Прикрепить", "attachments", id);
     row(v, "Контакт", "contact-menu", id);
     row(v, "Очистить этот чат", "clear-chat-confirm", id);
     row(v, "Очистить локальную историю", "clear-history-confirm", id);
@@ -146,8 +145,9 @@ void Window::messageMenu() {
 void Window::playerMenu() {
     View v(View::Menu, u("Плеер"));
     row(v, paused_ ? "Продолжить" : "Пауза", "player-pause");
-    row(v, "Сохранить в папку", "save-media-file");
-    if (!videoToken_.empty())
+    if (view().context != "outgoing-preview")
+        row(v, "Сохранить в папку", "save-media-file");
+    if (view().context != "outgoing-preview" && !videoToken_.empty())
         row(v, "Следующий фрагмент", "player-next");
     row(v, "Остановить и закрыть", "player-stop");
     push(v);
@@ -720,9 +720,20 @@ void Window::activate(const Row &chosen) {
         rebuildRoster();
         return;
     }
+    if (action == "attachment-pending") {
+        showAttachmentReview();
+        return;
+    }
+    if (action == "attachments") {
+        attachmentMenu(id);
+        return;
+    }
     if (action == "capture-photo" || action == "capture-voice" || action == "capture-video") {
-        if (capture_.busy() || !capturePath_.empty() || !captureUploads_.empty()) {
-            info(u("Завершите текущую запись"));
+        if (capture_.busy() || !capturePath_.empty() || outgoingRequest_) {
+            if (!capturePath_.empty() && !outgoingRequest_)
+                showAttachmentReview();
+            else
+                info(u("Завершите текущую запись"));
             return;
         }
         capture_.setProfile(u(settingValue(settings_, "camera_size")),
@@ -743,9 +754,12 @@ void Window::activate(const Row &chosen) {
             capture_.recordVideo(u(path), 30);
             resume();
         } else {
-            View v(View::Menu, u("Запись голосового…"));
+            View v(View::Recording, u("Голосовое"));
             v.context = "recording";
-            row(v, "Стоп", "record-stop");
+            v.uin = id;
+            v.details = u("Кому: ") + name(id);
+            v.status = u("Запись: 0 с");
+            row(v, "Готово", "record-stop");
             row(v, "Отмена", "record-cancel");
             push(v);
             capture_.recordVoice(u(path), settingNumber(settings_, "voice_seconds")
@@ -757,7 +771,7 @@ void Window::activate(const Row &chosen) {
     if (action == "upload-file") {
         pickUin_ = id;
         pickKind_ = 4;
-        files("/mmc/mmca1", "upload");
+        files("", "upload");
         return;
     }
     if (action == "upload-media") {
@@ -771,15 +785,15 @@ void Window::activate(const Row &chosen) {
     if (action == "pick-photo" || action == "pick-video" || action == "pick-voice") {
         pickUin_ = id;
         pickKind_ = action == "pick-photo" ? 1 : action == "pick-video" ? 2 : 3;
-        files("/mmc/mmca1", "upload");
+        files("", "upload");
         return;
     }
     if (action == "pick-background") {
-        files("/mmc/mmca1", "background");
+        files("", "background");
         return;
     }
-    if (action == "directory") {
-        view().directory = std::string(r.text.utf8());
+    if (action.compare(0, 10, "directory:") == 0 || action == "directory") {
+        view().directory = action == "directory" ? std::string(r.text.utf8()) : action.substr(10);
         loadFiles();
         return;
     }
@@ -790,10 +804,8 @@ void Window::activate(const Row &chosen) {
             settings_.set("background_file", path);
             back();
             settingsChanged();
-        } else if (purpose == "upload") {
-            back();
-            upload(path, pickKind_, pickUin_);
-        }
+        } else if (purpose == "upload")
+            reviewAttachment(path, pickKind_, pickUin_, false);
         return;
     }
     if (action == "save-here") {
@@ -816,34 +828,47 @@ void Window::activate(const Row &chosen) {
         return;
     }
     if (action == "capture-send") {
-        std::string path = capturePath_;
-        if (path.empty())
+        if (capturePath_.empty()) {
+            info(u("Вложение недоступно"));
             return;
-        upload(path, captureKind_, captureUin_);
-        if (view().context == "transfer") {
-            captureUploads_[view().request] = path;
-            capturePath_.clear();
         }
+        upload(capturePath_, captureKind_, captureUin_);
         return;
     }
     if (action == "capture-delete") {
-        if (!capturePath_.empty()) {
-            unlink(capturePath_.c_str());
-            capturePath_.clear();
-        }
         back();
         return;
     }
     if (action == "capture-preview") {
-        if (captureKind_ == 1) {
-            Event e;
-            e.path = capturePath_;
-            e.requestId = client_.nextRequestId();
-            pending_[e.requestId] = "photo";
-            showMedia(e);
-            pending_.erase(e.requestId);
+        previewAttachment();
+        return;
+    }
+    if (action == "attachment-details") {
+        struct stat st;
+        QString details = u("Кому: ") + name(captureUin_) + "\n" + u(capturePath_);
+        if (!stat(capturePath_.c_str(), &st))
+            details += "\n" + QString::number((unsigned long)st.st_size) + u(" байт");
+        showText(u("Вложение"), details);
+        return;
+    }
+    if (action == "attachment-replace") {
+        uint32_t target = captureUin_;
+        unsigned kind = captureKind_;
+        bool owned = captureOwned_;
+        back();
+        if (!owned) {
+            if (view().kind != View::Files || view().context != "upload" || pickUin_ != target ||
+                pickKind_ != kind) {
+                pickUin_ = target;
+                pickKind_ = kind;
+                files("", "upload");
+            }
         } else
-            play(capturePath_, captureKind_ == 3);
+            activate(Row(QString::null,
+                         kind == 1   ? "capture-photo"
+                         : kind == 2 ? "capture-video"
+                                     : "capture-voice",
+                         target));
         return;
     }
     if (action == "transfer-cancel") {
@@ -871,7 +896,7 @@ void Window::activate(const Row &chosen) {
         return;
     }
     if (action == "save-media-file") {
-        files("/mmc/mmca1", "save-media");
+        files("", "save-media");
         return;
     }
     if (action == "open-media-file") {
@@ -880,8 +905,8 @@ void Window::activate(const Row &chosen) {
     }
     if (action == "media-received") {
         Event e;
-        e.path = playPath_;
-        e.filename = downloadName_;
+        e.path = receivedPath_;
+        e.filename = receivedName_;
         e.requestId = client_.nextRequestId();
         pending_[e.requestId] = savedMediaPurpose_;
         showMedia(e);

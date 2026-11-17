@@ -225,6 +225,15 @@ class Client::Impl : public Cancellation {
         e.text = text;
         post(e);
     }
+    void connectionProgress(unsigned percent, const std::string &stage) {
+        // Request zero belongs to login, never to a file transfer. These are
+        // completed protocol stages rather than a timer pretending to advance.
+        Event e(Event::Progress);
+        e.bytes = percent;
+        e.total = 100;
+        e.text = stage;
+        post(e);
+    }
     void error(uint32_t id, uint32_t who, const std::string &text, int code = 1) {
         Event e(Event::Error);
         e.requestId = id;
@@ -395,7 +404,10 @@ class Client::Impl : public Cancellation {
             permanentFailure = true;
             throw;
         }
+        connectionProgress(20, cfg.encryption ? "Соединение и защита TMME"
+                                             : "Соединение с сервером");
         open(cfg.host, cfg.port, ip);
+        connectionProgress(35, "Авторизация");
         uint64_t deadline = monotonicMs() + 60000;
         Tlvs reply;
         if (cfg.md5Login) {
@@ -440,9 +452,11 @@ class Client::Impl : public Cancellation {
             }
         }
         socket.close();
+        connectionProgress(50, "Подключение к сеансу");
         open(host, port, host == cfg.host ? ip : std::string());
         sendFlap(1, be32(1) + tlv(6, reply[6]));
         expect(1, 3, deadline);
+        connectionProgress(65, "Согласование протокола");
         unsigned fam[] = {1, 2, 3, 4, 9, 0x10, 0x13, 0x15};
         std::string versions, ready;
         for (unsigned i = 0; i < sizeof fam / sizeof fam[0]; ++i) {
@@ -467,6 +481,7 @@ class Client::Impl : public Cancellation {
         send(4, 4);
         send(9, 2);
         send(0x13, 2);
+        connectionProgress(75, "Получение контактов");
         send(0x13, 4);
         stamp = 0;
         roster.clear();
@@ -479,6 +494,7 @@ class Client::Impl : public Cancellation {
             else
                 dispatch(a);
         }
+        connectionProgress(90, "Подготовка контакт-листа");
         std::map<unsigned, std::string> groups;
         for (size_t i = 0; i < roster.size(); ++i)
             if (roster[i].type == 1)
@@ -505,6 +521,7 @@ class Client::Impl : public Cancellation {
             Guard g(mutex);
             online = true;
         }
+        connectionProgress(100, "Подключено");
         state(Event::Online, "Подключено");
     }
     void cleanupPending(uint32_t id) {
@@ -726,6 +743,9 @@ class Client::Impl : public Cancellation {
             progress.uin = b.uin;
             progress.bytes = p.bytes;
             progress.kind = p.kind;
+            progress.filename = p.name;
+            // BART announces a number of parts, not the final byte length.
+            progress.text = "Получена часть " + decimal(b.part) + " из " + decimal(b.total);
             post(progress);
         }
         if (b.part != b.total)
@@ -1252,9 +1272,11 @@ class Client::Impl : public Cancellation {
             try {
                 state(failures ? Event::Reconnecting : Event::Connecting,
                       failures ? "Переподключение" : "Подключение");
+                connectionProgress(0, "Открытие доступа в сеть");
                 std::string mobileError;
                 if (!mobile.open(cfg, *this, mobileError))
                     throw Error(mobileError);
+                connectionProgress(10, "Определение адреса сервера");
                 std::vector<std::string> ips = resolve(cfg.host, cfg.startupDns);
                 std::string reason;
                 bool ok = false;

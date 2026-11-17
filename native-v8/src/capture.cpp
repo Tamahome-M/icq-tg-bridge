@@ -97,8 +97,11 @@ class VoiceCapture {
     unsigned error() const {
         return error_;
     }
-    unsigned frames() const {
-        return frames_;
+    unsigned frames() {
+        pthread_mutex_lock(&mutex_);
+        unsigned value = frames_;
+        pthread_mutex_unlock(&mutex_);
+        return value;
     }
 
   private:
@@ -164,7 +167,9 @@ class VoiceCapture {
                         break;
                     }
                     filled = 0;
+                    pthread_mutex_lock(&mutex_);
                     ++frames_;
+                    pthread_mutex_unlock(&mutex_);
                 }
             }
             if (error_)
@@ -212,6 +217,14 @@ void CaptureController::setProfile(const QString &size, const QString &encoding)
     }
 }
 void CaptureController::setVoiceBitrate(unsigned bitrate) {
+    // The client presents 4.8/5.2/8.0 kbit/s, whereas native AMR expects
+    // the exact 4750/5150/7950 bit/s modes.
+    if (bitrate == 4800)
+        bitrate = 4750;
+    else if (bitrate == 5200)
+        bitrate = 5150;
+    else if (bitrate == 8000)
+        bitrate = 7950;
     const unsigned rates[] = {4750, 5150, 5900, 6700, 7400, 7950, 10200, 12200};
     for (unsigned i = 0; i < 8; ++i)
         if (rates[i] == bitrate)
@@ -220,8 +233,24 @@ void CaptureController::setVoiceBitrate(unsigned bitrate) {
 bool CaptureController::busy() const {
     return busy_;
 }
+void CaptureController::fitPhotoSize(int &width, int &height, int maximumWidth, int maximumHeight) {
+    if (width <= 0 || height <= 0 || maximumWidth <= 0 || maximumHeight <= 0 ||
+        (width <= maximumWidth && height <= maximumHeight))
+        return;
+    if (static_cast<long>(width) * maximumHeight > static_cast<long>(height) * maximumWidth) {
+        height = static_cast<long>(height) * maximumWidth / width;
+        width = maximumWidth;
+        if (!height)
+            height = 1;
+    } else {
+        width = static_cast<long>(width) * maximumHeight / height;
+        height = maximumHeight;
+        if (!width)
+            width = 1;
+    }
+}
 unsigned CaptureController::durationSeconds() const {
-    return duration_;
+    return voice_ ? voice_->frames() / 50 : duration_;
 }
 void CaptureController::capturePhoto(const QString &path) {
     camera(path, false, 0);
@@ -250,6 +279,7 @@ void CaptureController::recordVoice(const QString &path, int seconds) {
         delete voice_;
         voice_ = 0;
         unlink(path.local8Bit().data());
+        destination_ = QString::null;
         emit error(QString::fromUtf8("Не удалось начать запись"));
         return;
     }
@@ -263,6 +293,8 @@ void CaptureController::stop() {
         cancel();
 }
 void CaptureController::cancel() {
+    if (!busy_)
+        return;
     cancelled_ = true;
     if (voice_)
         voice_->stop();
@@ -281,7 +313,9 @@ void CaptureController::poll() {
         destination_ = QString::null;
         if (cancelled_ || code || !frames) {
             unlink(path.local8Bit().data());
-            if (!cancelled_)
+            if (cancelled_)
+                emit cancelled();
+            else
                 emit error(QString::fromUtf8("Ошибка записи звука: ") + QString::number(code));
         } else {
             duration_ = (frames + 49) / 50;
@@ -358,11 +392,11 @@ void CaptureController::camera(const QString &path, bool video, int seconds) {
     videoSeconds_ = video ? (seconds < 1 ? 1 : seconds > 30 ? 30 : seconds) : 0;
     typedef QDialog *(*Create)(int, int, QWidget *, const char *, bool, bool, const char *);
     dialog_ = fn<Create>(dlsym(cameraLibrary_, "CreateCameraDlg"))(
-        video ? 2 : 1, video ? 8 * 1024 * 1024 : 4 * 1024 * 1024, window_, "telemotomax-camera",
-        true, false, 0);
+        video ? 2 : 1, 4 * 1024 * 1024, window_, "telemotomax-camera", true, false, 0);
     if (!dialog_) {
         busy_ = false;
         unlink(path.local8Bit().data());
+        destination_ = QString::null;
         emit error(QString::fromUtf8("Не удалось открыть камеру"));
         return;
     }
@@ -385,9 +419,15 @@ void CaptureController::camera(const QString &path, bool video, int seconds) {
     if (ok && !video) {
         QImage image(path);
         ok = !image.isNull();
-        if (ok && (image.width() != width || image.height() != height)) {
-            image = image.smoothScale(width, height);
-            ok = image.save(path, "JPEG", 85);
+        if (ok) {
+            // Native camera can return a smaller or differently oriented frame.
+            // Treat the selected size as bounds, preserving its proportions.
+            int fittedWidth = image.width(), fittedHeight = image.height();
+            fitPhotoSize(fittedWidth, fittedHeight, width, height);
+            if (image.width() != fittedWidth || image.height() != fittedHeight) {
+                image = image.smoothScale(fittedWidth, fittedHeight);
+                ok = !image.isNull() && image.save(path, "JPEG", 85);
+            }
         }
     }
     busy_ = false;
@@ -396,6 +436,8 @@ void CaptureController::camera(const QString &path, bool video, int seconds) {
         unlink(path.local8Bit().data());
         if (!cancelled_ && result == QDialog::Accepted)
             emit error(QString::fromUtf8("Камера не сохранила файл"));
+        else
+            emit cancelled();
     } else {
         chmod(path.local8Bit().data(), 0600);
         duration_ = video ? captureDuration(path.local8Bit().data()) : 0;
