@@ -22,7 +22,7 @@ MOCS := window platform media capture external_display
 MOC_OBJECTS := $(addprefix $(BUILD)/moc_,$(addsuffix .o,$(MOCS)))
 CORE := $(BUILD)/crypto.o $(BUILD)/settings.o $(BUILD)/storage.o
 $(BUILD)/client.o $(BUILD)/transport.o $(BUILD)/oscar.o $(BUILD)/dns.o $(BUILD)/main.o: CXXFLAGS += -fexceptions
-$(BUILD)/main.o $(BUILD)/window.o $(BUILD)/ui_actions.o: VERSION
+$(BUILD)/main.o $(BUILD)/window.o $(BUILD)/ui_actions.o $(BUILD)/ui_java_menus.o: VERSION
 
 .PHONY: all clean package check-sdk core-tests ui-probe input-probe
 all: check-sdk $(BUILD)/telemotomax-native
