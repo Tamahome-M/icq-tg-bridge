@@ -195,6 +195,15 @@ void Window::activate(const Row &chosen) {
         return;
     }
     if (action == "open") {
+        if (view().context == "all-chats" && connectionState_ == Event::Online) {
+            Command restore(Command::OpenChat);
+            restore.uin = id;
+            restore.requestId = client_.nextRequestId();
+            pending_[restore.requestId] = "restore-chat";
+            pendingUin_[restore.requestId] = id;
+            if (!send(restore))
+                return;
+        }
         openChat(id);
         return;
     }

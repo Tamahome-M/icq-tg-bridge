@@ -79,6 +79,13 @@ int main() {
     Settings defaults;
     assert(settingNumber(defaults, "server_history_count") == 10);
     assert(settingNumber(defaults, "history_count") == 200);
+    assert(settingFlag(defaults, "save_history") && settingIsToggle("save_history"));
+    assert(std::string(settingField("save_history")->section) == "interface");
+    Settings disabled;
+    disabled.setInt("history_count", 0);
+    assert(!settingFlag(disabled, "save_history"));
+    disabled.setBool("save_history", true);
+    assert(settingFlag(disabled, "save_history"));
     assert(settingNumber(defaults, "chat_messages") == 15);
     assert(!validateSetting(*settingField("server_history_count"), "0", error));
     assert(validateSetting(*settingField("server_history_count"), "100", error));

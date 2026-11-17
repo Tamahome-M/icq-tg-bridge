@@ -181,6 +181,7 @@ class Window : public QWidget {
     void rebuildRoster();
     void rebuildChat();
     void openChat(uint32_t);
+    void requestLastMessage(uint32_t);
     void history(bool server, bool more = false);
     void showHistory(View &);
     void search(bool all = false, bool more = false);

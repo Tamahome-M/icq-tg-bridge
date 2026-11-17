@@ -306,6 +306,9 @@ void Window::commitSetting(const std::string &key, const std::string &value) {
         return;
     }
     if (settingsEditing_) {
+        if (key == "save_history" && value == "1" &&
+            settingNumber(settingsDraft_, "history_count") == 0)
+            settingsDraft_.setInt("history_count", 200);
         settingsDraft_.set(key, value);
         showSettings(settingsSection_);
         return;

@@ -329,7 +329,17 @@ ContactRecord *Window::contact(uint32_t id) {
 void Window::applySettings() {
     setUiLanguage(settingValue(settings_, "language"));
     setFont(QFont("Helvetica", settingNumber(settings_, "font_size")));
-    storage_->setHistoryLimit(settingNumber(settings_, "history_count"));
+    const unsigned history = settingFlag(settings_, "save_history")
+                                 ? std::max(0, settingNumber(settings_, "history_count"))
+                                 : 0;
+    storage_->setHistoryLimit(history);
+    if (!history) {
+        std::string error;
+        if (!storage_->clearAllHistory(error, true)) {
+            note(error);
+            info(u("Не удалось удалить локальную историю: ") + u(error));
+        }
+    }
     if (isVisible()) {
         if (settingFlag(settings_, "fullscreen"))
             showFullScreen();

@@ -137,6 +137,12 @@ async def scenario(executable, folder, encryption, md5):
         page = await phone.response(12, 6)
         assert page['more'] and page['offset'] == 1 and page['messages'][0]['thread'] == second, page
         assert page['messages'][0]['ref'] == (987654).to_bytes(8, 'big').hex()
+        # Fresh-chat preload uses the regular history route with one record,
+        # not OpenChat (which restores a chat to the roster).
+        await phone.command(3, 14, who, limit=1)
+        tail = await phone.response(14, 6)
+        assert len(tail['messages']) == 1 and tail['messages'][0]['time'] == 0, tail
+        assert tail['messages'][0]['text'] == 'Мама\nТекст истории', tail
         await phone.command(3, 13, second)
         failed = await phone.wait(lambda e: e.get('id') == 13 and e.get('type') == 12)
         assert failed['text'] == 'Сеть временно недоступна', failed

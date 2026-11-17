@@ -513,18 +513,38 @@ class UiProbe {
         menu(w, settings, COUNT(settings), "settings top-level labels/order match Java V8");
         w.showSettings("interface");
         // Options.java: one form, four separator groups, no detached Chat/Light page.
-        const char *interfaceActions[] = {
-            "field:lock_pin",      "field:flip_lock_minutes", "settings-heading",
-            "field:display_date",  "field:fullscreen",        "field:mirror_menu",
-            "field:small_font",    "settings-heading",        "field:use_groups",
-            "field:hide_empty",    "field:hide_offline",      "field:show_deleted",
-            "field:sort_by",       "settings-heading",        "field:cp1251",
-            "field:initial_caps",  "field:show_receipts",     "field:server_history_count",
-            "field:chat_messages", "settings-heading",        "field:chat_small_font",
-            "field:show_icons",    "field:show_sender",       "field:show_time",
-            "field:show_newlines", "field:show_smileys",      "field:colored_text",
-            "field:full_editor",   "field:light_seconds",     "field:manual_light",
-            "field:caption_offset"};
+        const char *interfaceActions[] = {"field:lock_pin",
+                                          "field:flip_lock_minutes",
+                                          "settings-heading",
+                                          "field:display_date",
+                                          "field:fullscreen",
+                                          "field:mirror_menu",
+                                          "field:small_font",
+                                          "settings-heading",
+                                          "field:use_groups",
+                                          "field:hide_empty",
+                                          "field:hide_offline",
+                                          "field:show_deleted",
+                                          "field:sort_by",
+                                          "settings-heading",
+                                          "field:cp1251",
+                                          "field:initial_caps",
+                                          "field:show_receipts",
+                                          "field:save_history",
+                                          "field:server_history_count",
+                                          "field:chat_messages",
+                                          "settings-heading",
+                                          "field:chat_small_font",
+                                          "field:show_icons",
+                                          "field:show_sender",
+                                          "field:show_time",
+                                          "field:show_newlines",
+                                          "field:show_smileys",
+                                          "field:colored_text",
+                                          "field:full_editor",
+                                          "field:light_seconds",
+                                          "field:manual_light",
+                                          "field:caption_offset"};
         bool interfaceOrder = w.view().rows.size() == COUNT(interfaceActions);
         for (size_t i = 0; i < COUNT(interfaceActions) && i < w.view().rows.size(); ++i)
             interfaceOrder = interfaceOrder && w.view().rows[i].action == interfaceActions[i];
@@ -816,6 +836,156 @@ class UiProbe {
                 "privacy success closes only after SSI state and matching acknowledgement");
         reset(w);
     }
+    static void localHistory(Window &w, uint32_t id) {
+        reset(w);
+        const Settings previous = w.settings_;
+        const bool previousSilent = w.silent_;
+        w.silent_ = true;
+        w.settings_.setBool("save_history", true);
+        w.settings_.setInt("history_count", 200);
+        w.settings_.setInt("timezone", 3);
+        w.settings_.setInt("daylight", 0);
+        w.settings_.setInt("time_offset_minutes", 0);
+        w.settings_.setBool("show_time", true);
+        w.settings_.setBool("display_date", true);
+        w.settings_.setBool("show_sender", true);
+        w.settings_.setBool("show_newlines", true);
+        w.applySettings();
+        std::string error;
+        MessageRecord saved = message(id);
+        saved.cookie = 1234;
+        saved.text = "old on-disk message";
+        require(w.storage_->appendHistory(id, saved, error), "seed real local history");
+        const std::string path = w.storage_->accountDir() + "/history-1000001.dat";
+        Storage other(w.data_);
+        require(other.setAccount("second.example", 5190, 123456, error) &&
+                    other.appendHistory(id, saved, error),
+                "seed second account history");
+        const std::string otherPath = other.accountDir() + "/history-1000001.dat";
+        w.openChat(id);
+        const size_t inMemory = w.chats_[id].messages.size();
+        w.showSettings("interface");
+        w.chooseSetting("save_history");
+        require(!settingFlag(w.settingsDraft_, "save_history") &&
+                    settingFlag(w.settings_, "save_history") && access(path.c_str(), F_OK) == 0,
+                "history switch is staged without deleting files");
+        w.finishSettings(false);
+        require(settingFlag(w.settings_, "save_history") && access(path.c_str(), F_OK) == 0,
+                "Back cancels disabling history without deletion");
+        w.showSettings("interface");
+        w.chooseSetting("save_history");
+        w.finishSettings(true);
+        require(!settingFlag(w.settings_, "save_history") && access(path.c_str(), F_OK) < 0 &&
+                    access(otherPath.c_str(), F_OK) < 0 && w.chats_[id].messages.size() == inMemory,
+                "Save disables history, removes every account archive and retains live chat");
+        MessageRecord live = message(id);
+        live.cookie = 2345;
+        live.outgoing = true;
+        w.incoming(live);
+        Event receipt(Event::Receipt);
+        receipt.uin = id;
+        receipt.cookie = live.cookie;
+        receipt.delivery = 2;
+        receipt.nativeId = std::string(8, 'r');
+        w.consume(receipt);
+        require(w.chats_[id].messages.back().delivery == 2 &&
+                    w.chats_[id].messages.back().nativeId == receipt.nativeId &&
+                    access(path.c_str(), F_OK) < 0,
+                "messages and receipts stay usable in RAM without recreating history");
+        Settings reloaded;
+        require(reloaded.load(w.settings_.path(), error) && !settingFlag(reloaded, "save_history"),
+                "disabled history survives reload");
+        w.saveState();
+        require(w.selectScope(), "recreate empty chat state from the saved account");
+        w.applySettings();
+        w.connectionState_ = Event::Online;
+        submitted.clear();
+        w.openChat(id);
+        require(w.chats_[id].messages.empty() && submitted.size() == 1 &&
+                    submitted[0].type == Command::History && submitted[0].uin == id &&
+                    submitted[0].limit == 1 && submitted[0].offset == 0,
+                "fresh chat requests exactly one history record like Java");
+        const uint32_t preload = submitted[0].requestId;
+        w.openChat(id);
+        require(submitted.size() == 1, "reopening empty chat deduplicates its active preload");
+        MessageRecord historical = message(id);
+        historical.time = 0;
+        historical.nativeId = std::string(8, 'h');
+        historical.text = "[17.11 12:05] Nick: text";
+        require(w.messageText(historical) == QString::fromUtf8(historical.text.c_str()),
+                "formatted server history has no epoch date, duplicate author or extra newline");
+        Event last(Event::History);
+        last.uin = id;
+        last.requestId = preload;
+        last.messages.push_back(historical);
+        w.consume(last);
+        require(w.chats_[id].messages.size() == 1 && w.chats_[id].unread == 0 &&
+                    w.view().rows[0].text == QString::fromUtf8(historical.text.c_str()) &&
+                    access(path.c_str(), F_OK) < 0,
+                "preloaded server message renders once, stays read and never persists when off");
+        submitted.clear();
+        w.openChat(id);
+        require(submitted.empty(), "populated session chat does not refetch its last message");
+        w.chats_[id].messages.clear();
+        w.connectionState_ = Event::Disconnected;
+        w.openChat(id);
+        require(submitted.empty(), "offline empty chat waits for connection");
+        Event online(Event::State);
+        online.state = Event::Online;
+        w.consume(online);
+        require(submitted.size() == 1 && submitted[0].type == Command::History &&
+                    submitted[0].limit == 1,
+                "connecting an already open empty chat starts preload");
+        last.requestId = submitted[0].requestId;
+        live.outgoing = false;
+        live.text = "new live message";
+        ++live.cookie;
+        w.incoming(live);
+        w.consume(last);
+        require(w.chats_[id].messages.size() == 1 && w.chats_[id].messages[0].text == live.text,
+                "late preload cannot append older text after a live message");
+        w.chats_[id].messages.clear();
+        submitted.clear();
+        w.openChat(id);
+        Event failure(Event::Error);
+        failure.requestId = submitted[0].requestId;
+        failure.uin = id;
+        failure.text = "history temporarily unavailable";
+        w.consume(failure);
+        w.openChat(id);
+        require(submitted.size() == 2 && submitted[1].type == Command::History,
+                "failed preload can retry on next chat open");
+        last.requestId = submitted[1].requestId;
+        w.home();
+        w.consume(last);
+        require(w.chats_[id].messages.size() == 1 && w.chats_[id].unread == 0,
+                "preload finishing off screen never creates unread notifications");
+        w.showSettings("interface");
+        w.chooseSetting("save_history");
+        w.finishSettings(true);
+        ++live.cookie;
+        w.incoming(live);
+        require(settingFlag(w.settings_, "save_history") && access(path.c_str(), F_OK) == 0,
+                "reenabling local history permits new saves");
+        live.time = 1700000000;
+        live.senderName = "Nick";
+        live.outgoing = false;
+        w.settings_.setBool("show_newlines", false);
+        require(w.messageText(live) == QString::fromLatin1("15.11 01:13 Nick: new live message"),
+                "real message timestamp and configured timezone still render normally");
+        // Restoring a chat from All Chats remains its own bridge operation.
+        w.chats_[id].messages.clear();
+        submitted.clear();
+        w.search(true);
+        w.activate(Row(QString::null, "open", id));
+        require(submitted.size() == 2 && submitted[0].type == Command::AllChats &&
+                    submitted[1].type == Command::OpenChat,
+                "All Chats still restores the selected chat without a duplicate preload");
+        w.settings_ = previous;
+        w.silent_ = previousSilent;
+        w.applySettings();
+        reset(w);
+    }
     static void scene(Window &w, uint32_t id) {
         reset(w);
         w.connectionState_ = Event::Online;
@@ -907,6 +1077,7 @@ class UiProbe {
         templates(w, 1000001);
         smileys(w, 1000001);
         privacy(w, 1000001);
+        localHistory(w, 1000001);
         scene(w, 1000001);
         fprintf(stderr, "JAVA UI PASS %u checks\n", checks_);
     }

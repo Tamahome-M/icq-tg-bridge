@@ -391,6 +391,8 @@ bool Storage::loadHistory(uint32_t uin, std::vector<MessageRecord> &out, size_t 
     out.clear();
     if (scope_.empty() || !uin)
         return false;
+    if (!historyLimit_)
+        return true;
     std::string s;
     if (!readBounded(file("history", uin), s, FILE_LIMIT))
         return errno == ENOENT;
@@ -421,6 +423,8 @@ bool Storage::saveHistory(uint32_t uin, const std::vector<MessageRecord> &items,
         error = "No account/chat selected";
         return false;
     }
+    if (!historyLimit_)
+        return true;
     // Trim both count and encoded bytes. Long messages cannot make the file
     // written here exceed the bounds accepted by the reader on next launch.
     size_t begin = items.size() > historyLimit_ ? items.size() - historyLimit_ : 0, total = 8;
@@ -475,6 +479,8 @@ bool Storage::updateReceipt(uint32_t uin, uint64_t cookie, unsigned delivery,
         error = "Invalid receipt";
         return false;
     }
+    if (!historyLimit_)
+        return true;
     std::vector<MessageRecord> items;
     if (!loadHistory(uin, items, HISTORY_LIMIT)) {
         error = "Local history is damaged; not overwritten";
@@ -495,8 +501,7 @@ bool Storage::updateReceipt(uint32_t uin, uint64_t cookie, unsigned delivery,
         }
         if (!changed)
             return true;
-        // Updating a receipt must not prune old history, including when the
-        // user disabled saving new messages after sending this one.
+        // Updating a receipt must not prune old history to a smaller limit.
         unsigned previous = historyLimit_;
         historyLimit_ = HISTORY_LIMIT;
         bool ok = saveHistory(uin, items, error);
@@ -508,40 +513,79 @@ bool Storage::updateReceipt(uint32_t uin, uint64_t cookie, unsigned delivery,
 bool Storage::clearHistory(uint32_t uin, std::string &error) {
     return !scope_.empty() && uin && removeFile(file("history", uin), error);
 }
-bool Storage::clearAllHistory(std::string &error) {
-    if (scope_.empty()) {
-        error = "No account selected";
+namespace {
+bool clearHistoryDirectory(const std::string &path, std::string &error) {
+    DIR *directory = 0;
+    if (!resetOpen(path, directory, error))
         return false;
-    }
-    DIR *d = opendir(scope_.c_str());
-    if (!d) {
-        error = "Cannot open account directory";
-        return false;
-    }
+    if (!directory)
+        return true;
     bool ok = true;
-    struct dirent *e;
     for (;;) {
         errno = 0;
-        e = readdir(d);
-        if (!e) {
+        struct dirent *entry = readdir(directory);
+        if (!entry) {
             if (errno) {
                 error = "Cannot enumerate local history";
                 ok = false;
             }
             break;
         }
-        std::string n = e->d_name;
-        if (n.size() > 12 && n.compare(0, 8, "history-") == 0 &&
-            n.compare(n.size() - 4, 4, ".dat") == 0) {
-            bool digits = true;
-            for (size_t i = 8; i < n.size() - 4; ++i)
-                if (n[i] < '0' || n[i] > '9')
-                    digits = false;
-            if (digits && !removeFile(scope_ + "/" + n, error))
-                ok = false;
-        }
+        const std::string name = entry->d_name;
+        if (name.compare(0, 8, "history-") == 0 && resetRecord(name) &&
+            !resetFile(path + "/" + name, error))
+            ok = false;
     }
-    closedir(d);
+    closedir(directory);
+    return ok;
+}
+} // namespace
+bool Storage::clearAllHistory(std::string &error, bool allAccounts) {
+    error.clear();
+    if (!allAccounts) {
+        if (scope_.empty()) {
+            error = "No account selected";
+            return false;
+        }
+        return clearHistoryDirectory(scope_, error);
+    }
+    DIR *base = 0;
+    if (!resetOpen(base_, base, error))
+        return false;
+    if (!base)
+        return true;
+    closedir(base);
+    DIR *accounts = 0;
+    const std::string path = base_ + "/accounts";
+    if (!resetOpen(path, accounts, error))
+        return false;
+    if (!accounts)
+        return true;
+    bool ok = true;
+    for (;;) {
+        errno = 0;
+        struct dirent *entry = readdir(accounts);
+        if (!entry) {
+            if (errno) {
+                error = "Cannot enumerate local accounts";
+                ok = false;
+            }
+            break;
+        }
+        const std::string name = entry->d_name;
+        if (name.size() != 64 || name.find_first_not_of("0123456789abcdef") != std::string::npos)
+            continue;
+        const std::string directory = path + "/" + name;
+        struct stat st;
+        if (lstat(directory.c_str(), &st) < 0) {
+            if (errno != ENOENT) {
+                error = "Cannot inspect local account";
+                ok = false;
+            }
+        } else if (S_ISDIR(st.st_mode) && !clearHistoryDirectory(directory, error))
+            ok = false;
+    }
+    closedir(accounts);
     return ok;
 }
 std::string Storage::loadDraft(uint32_t uin) const {

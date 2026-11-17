@@ -42,6 +42,7 @@ static const SettingField fields[] = {
     {"interface", "cp1251", "Win1251 кодировка", "1", "0=Нет|1=Да", 0, false},
     {"interface", "initial_caps", "Авторегистр", "1", "0=Нет|1=Да", 0, false},
     {"interface", "show_receipts", "Доставка и прочтение", "1", "0=Нет|1=Да", 0, false},
+    {"interface", "save_history", "Сохранять локальную историю", "1", "0=Нет|1=Да", 0, false},
     {"interface", "server_history_count", "Сообщений в истории с сервера", "10", "", 100, false},
     {"interface", "chat_messages", "Сообщений в чате", "15", "", 100, false},
     {"interface", "chat_small_font", "Мелкий шрифт", "1", "0=Нет|1=Да", 0, false},
@@ -161,7 +162,11 @@ const SettingField *settingField(const std::string &key) {
 }
 std::string settingValue(const Settings &s, const std::string &key) {
     const SettingField *f = settingField(key);
-    return s.get(key, f ? f->initial : "");
+    // Honor the old hidden zero-retention setting until the new switch is used.
+    const char *initial = f ? f->initial : "";
+    if (key == "save_history" && s.get("history_count") == "0")
+        initial = "0";
+    return s.get(key, initial);
 }
 int settingNumber(const Settings &s, const std::string &key) {
     return atoi(settingValue(s, key).c_str());
@@ -171,12 +176,12 @@ bool settingFlag(const Settings &s, const std::string &key) {
 }
 bool settingIsToggle(const std::string &key) {
     const char *keys[] = {
-        "keepalive",     "auto_connect",    "md5_login",    "auto_reconnect", "encryption",
-        "display_date",  "fullscreen",      "mirror_menu",  "small_font",     "use_groups",
-        "hide_empty",    "hide_offline",    "show_deleted", "cp1251",         "initial_caps",
-        "show_receipts", "chat_small_font", "show_icons",   "show_sender",    "show_time",
-        "show_newlines", "show_smileys",    "colored_text", "full_editor",    "manual_light",
-        "telegram_on",   "max_on",          "express_on",   "ticker"};
+        "keepalive",     "auto_connect",  "md5_login",       "auto_reconnect", "encryption",
+        "display_date",  "fullscreen",    "mirror_menu",     "small_font",     "use_groups",
+        "hide_empty",    "hide_offline",  "show_deleted",    "cp1251",         "initial_caps",
+        "show_receipts", "save_history",  "chat_small_font", "show_icons",     "show_sender",
+        "show_time",     "show_newlines", "show_smileys",    "colored_text",   "full_editor",
+        "manual_light",  "telegram_on",   "max_on",          "express_on",     "ticker"};
     for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i)
         if (key == keys[i])
             return true;

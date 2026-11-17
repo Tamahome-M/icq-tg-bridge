@@ -173,6 +173,8 @@ void Window::consume(const Event &e) {
             connectionErrorShown_ = false;
             if (before != Event::Online)
                 collapsed_.clear();
+            if (view().kind == View::Chat)
+                requestLastMessage(view().uin);
         }
         note(e.text);
         if (e.state == Event::Disconnected || e.state == Event::Reconnecting) {
@@ -323,10 +325,21 @@ void Window::consume(const Event &e) {
             showHistory(target);
         }
         if (pending_[e.requestId] == "last") {
-            for (size_t i = 0; i < e.messages.size(); ++i) {
-                MessageRecord m = e.messages[i];
-                m.silent = true;
-                incoming(m);
+            std::map<uint32_t, ChatState>::iterator chat = chats_.find(e.uin);
+            // A preload is conversation context, never a new unread delivery.
+            // A live message may already have filled the chat while it loaded.
+            if (chat != chats_.end() && chat->second.loaded && chat->second.messages.empty() &&
+                !e.messages.empty()) {
+                MessageRecord message = e.messages.back();
+                message.uin = e.uin;
+                message.silent = true;
+                chat->second.messages.push_back(message);
+                chat->second.stamp = now();
+                std::string error;
+                if (!storage_->appendHistory(e.uin, message, error))
+                    note(error);
+                if (view().kind == View::Chat && view().uin == e.uin)
+                    rebuildChat();
             }
         }
         pending_.erase(e.requestId);
@@ -535,7 +548,7 @@ void Window::incoming(const MessageRecord &m) {
     while (chat.messages.size() > cap)
         chat.messages.erase(chat.messages.begin());
     std::string error;
-    if (settingNumber(settings_, "history_count") > 0 && !storage_->appendHistory(m.uin, m, error))
+    if (!storage_->appendHistory(m.uin, m, error))
         note(error);
     if (!contact(m.uin)) {
         ContactRecord c;
@@ -691,23 +704,27 @@ void Window::rebuildRoster() {
 }
 QString Window::messageText(const MessageRecord &m) const {
     QString text;
-    time_t stamp =
-        m.time +
-        (settingNumber(settings_, "timezone") + settingNumber(settings_, "daylight")) * 3600 +
-        settingNumber(settings_, "time_offset_minutes") * 60;
-    struct tm *tm = gmtime(&stamp);
-    char when[32];
-    strftime(when, sizeof(when), settingFlag(settings_, "display_date") ? "%d.%m %H:%M" : "%H:%M",
-             tm);
-    if (settingFlag(settings_, "show_time"))
-        text += u(when) + " ";
-    if (settingFlag(settings_, "show_sender"))
-        text += (m.outgoing
-                     ? u("Я")
-                     : u(m.senderName.empty() ? std::string(name(m.uin).utf8()) : m.senderName)) +
-                ": ";
-    if (settingFlag(settings_, "show_newlines"))
-        text += "\n";
+    // BART history carries a ready-made [dd.mm hh:mm] author prefix, not a
+    // Unix timestamp. Keep that header instead of inventing 01.01.1970.
+    if (m.time) {
+        time_t stamp =
+            m.time +
+            (settingNumber(settings_, "timezone") + settingNumber(settings_, "daylight")) * 3600 +
+            settingNumber(settings_, "time_offset_minutes") * 60;
+        struct tm *tm = gmtime(&stamp);
+        char when[32];
+        strftime(when, sizeof(when),
+                 settingFlag(settings_, "display_date") ? "%d.%m %H:%M" : "%H:%M", tm);
+        if (settingFlag(settings_, "show_time"))
+            text += u(when) + " ";
+        if (settingFlag(settings_, "show_sender"))
+            text += (m.outgoing ? u("Я")
+                                : u(m.senderName.empty() ? std::string(name(m.uin).utf8())
+                                                         : m.senderName)) +
+                    ": ";
+        if (settingFlag(settings_, "show_newlines"))
+            text += "\n";
+    }
     text += u(m.text);
     if (settingFlag(settings_, "show_smileys")) {
         replaceText(text, "*IN_LOVE*", "<3");
@@ -741,14 +758,30 @@ void Window::openChat(uint32_t id) {
     state.unread = 0;
     trimChats();
     rebuildChat();
-    if (state.messages.empty() && connectionState_ == Event::Online) {
-        Command c(Command::OpenChat);
-        c.uin = id;
-        c.requestId = client_.nextRequestId();
-        pending_[c.requestId] = "last";
-        pendingUin_[c.requestId] = id;
-        send(c);
+    requestLastMessage(id);
+}
+void Window::requestLastMessage(uint32_t id) {
+    if (!id || connectionState_ != Event::Online)
+        return;
+    std::map<uint32_t, ChatState>::const_iterator chat = chats_.find(id);
+    if (chat == chats_.end() || !chat->second.messages.empty())
+        return;
+    for (std::map<uint32_t, std::string>::const_iterator pending = pending_.begin();
+         pending != pending_.end(); ++pending) {
+        std::map<uint32_t, uint32_t>::const_iterator target = pendingUin_.find(pending->first);
+        if ((pending->second == "last" || pending->second == "restore-chat") &&
+            target != pendingUin_.end() && target->second == id)
+            return;
     }
+    // Java preloads one history record. OpenChat is the separate bridge
+    // operation that restores a chat to the roster and may deliver a message.
+    Command request(Command::History);
+    request.uin = id;
+    request.limit = 1;
+    request.requestId = client_.nextRequestId();
+    pending_[request.requestId] = "last";
+    pendingUin_[request.requestId] = id;
+    send(request);
 }
 void Window::rebuildChat() {
     if (view().kind != View::Chat)
