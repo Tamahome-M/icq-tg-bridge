@@ -280,9 +280,40 @@ int main(int argc, char **argv) {
         key(view, KEYCODE_CLEAR, false);
         assert(cancelled == 2);
     }
+    {
+        FixtureDialog dialog;
+        VideoView view(&dialog);
+        dialog.show();
+        view.show();
+        tmm::CameraUiV8 ui(&dialog, library, true);
+        enableFixture(ui, modelTable);
+        key(view, KEYCODE_5, true);
+        key(view, KEYCODE_5, false);
+        assert(ui.recording());
+        key(view, KEYCODE_RSK, true);
+        key(view, KEYCODE_RSK, true, true);
+        key(view, KEYCODE_RSK, false);
+        assert(view.stops == 1 && !ui.recording() && !ui.heldKey_ && cancelled == 2);
+        VideoPreview saved(&dialog);
+        saved.show();
+        drain();
+        assert(accepted == 4 && cancelled == 2 && dialog.result() == QDialog::Accepted);
+    }
+    {
+        FixtureDialog dialog;
+        VideoView view(&dialog);
+        dialog.show();
+        view.show();
+        tmm::CameraUiV8 ui(&dialog, library, true);
+        enableFixture(ui, modelTable);
+        key(view, KEYCODE_RSK, true);
+        key(view, KEYCODE_RSK, false);
+        assert(cancelled == 3 && !dialog.isVisible());
+    }
     fprintf(
         stderr,
-        "CAMERA UI PASS: real native stop metadata, scoped Fire/5 start/stop, repeat "
+        "CAMERA UI PASS: real native stop metadata, scoped Fire/5 start and Fire/5/RSK stop, "
+        "repeat "
         "suppression, video-only preview and insert result accept, hide/delete/cancel guards\n");
     return 0;
 }

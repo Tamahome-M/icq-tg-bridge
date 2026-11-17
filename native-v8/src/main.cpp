@@ -2,6 +2,7 @@
 #include "window.h"
 #include "instance.h"
 #include "storage.h"
+#include "status_icon_v8.h"
 #include <exception>
 #include <sys/stat.h>
 #include <sys/file.h>
@@ -34,6 +35,7 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "%s\n", error.c_str());
     try {
         tmm::Application app(argc, argv);
+        tmm::StatusIconV8 statusIcon;
         tmm::Window window(data);
         app.setMainWidget(&window);
         window.showFullScreen();

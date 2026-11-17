@@ -8,6 +8,7 @@
 #include "system_menu.h"
 #include "system_chrome.h"
 #include "status_icon.h"
+#include "status_icon_v8.h"
 #include <ZKbInputField.h>
 #include <ZMultiLineEdit.h>
 #include <ZKeyDef.h>
@@ -337,6 +338,7 @@ ContactRecord *Window::contact(uint32_t id) {
     return 0;
 }
 void Window::applySettings() {
+    StatusIconV8::configureApplication(settingNumber(settings_, "running_icon"));
     setUiLanguage(settingValue(settings_, "language"));
     setFont(QFont("Helvetica", settingNumber(settings_, "font_size")));
     const unsigned history = settingFlag(settings_, "save_history")

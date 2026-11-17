@@ -151,14 +151,17 @@ bool CameraUiV8::eventFilter(QObject *object, QEvent *event) {
         return false;
     QKeyEvent *key = static_cast<QKeyEvent *>(event);
     const int code = key->key();
-    if (code == KEYCODE_RSK || code == KEYCODE_CLEAR || code == KEYCODE_END) {
+    // The stock right softkey is Stop while recording, not Cancel. Keep
+    // owning its release after stop changes the native recording state.
+    bool stopKey = video_ && code == KEYCODE_RSK && (heldKey_ == code || recording());
+    if ((!stopKey && code == KEYCODE_RSK) || code == KEYCODE_CLEAR || code == KEYCODE_END) {
         if (event->type() == QEvent::KeyPress && !key->isAutoRepeat() && !finishing_) {
             finishing_ = true;
             cancel_(static_cast<QDialog *>(dialog_));
         }
         return true;
     }
-    if (!fire(code))
+    if (!fire(code) && !stopKey)
         return false;
     if (event->type() == QEvent::KeyRelease) {
         if (heldKey_ == code)

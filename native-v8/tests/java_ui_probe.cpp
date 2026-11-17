@@ -513,43 +513,38 @@ class UiProbe {
         menu(w, settings, COUNT(settings), "settings top-level labels/order match Java V8");
         w.showSettings("interface");
         // Options.java: one form, four separator groups, no detached Chat/Light page.
-        const char *interfaceActions[] = {"field:lock_pin",
-                                          "field:flip_lock_minutes",
-                                          "settings-heading",
-                                          "field:display_date",
-                                          "field:fullscreen",
-                                          "field:mirror_menu",
-                                          "field:small_font",
-                                          "settings-heading",
-                                          "field:use_groups",
-                                          "field:hide_empty",
-                                          "field:hide_offline",
-                                          "field:show_deleted",
-                                          "field:sort_by",
-                                          "settings-heading",
-                                          "field:cp1251",
-                                          "field:initial_caps",
-                                          "field:show_receipts",
-                                          "field:save_history",
-                                          "field:server_history_count",
-                                          "field:chat_messages",
-                                          "settings-heading",
-                                          "field:chat_small_font",
-                                          "field:show_icons",
-                                          "field:show_sender",
-                                          "field:show_time",
-                                          "field:show_newlines",
-                                          "field:show_smileys",
-                                          "field:colored_text",
-                                          "field:full_editor",
-                                          "field:light_seconds",
-                                          "field:manual_light",
+        const char *interfaceActions[] = {"field:lock_pin",        "field:flip_lock_minutes",
+                                          "settings-heading",      "field:display_date",
+                                          "field:fullscreen",      "field:running_icon",
+                                          "field:mirror_menu",     "field:small_font",
+                                          "settings-heading",      "field:use_groups",
+                                          "field:hide_empty",      "field:hide_offline",
+                                          "field:show_deleted",    "field:sort_by",
+                                          "settings-heading",      "field:cp1251",
+                                          "field:initial_caps",    "field:show_receipts",
+                                          "field:save_history",    "field:server_history_count",
+                                          "field:chat_messages",   "settings-heading",
+                                          "field:chat_small_font", "field:show_icons",
+                                          "field:show_sender",     "field:show_time",
+                                          "field:show_newlines",   "field:show_smileys",
+                                          "field:colored_text",    "field:full_editor",
+                                          "field:light_seconds",   "field:manual_light",
                                           "field:caption_offset"};
         bool interfaceOrder = w.view().rows.size() == COUNT(interfaceActions);
         for (size_t i = 0; i < COUNT(interfaceActions) && i < w.view().rows.size(); ++i)
             interfaceOrder = interfaceOrder && w.view().rows[i].action == interfaceActions[i];
         require(interfaceOrder, "interface form retains all Java field groups and order");
         footer(w, "Назад", "Сохр.", "interface has Back / Save softkeys");
+        w.chooseSetting("running_icon");
+        require(w.view().kind == View::Choice && w.view().rows.size() == 3 &&
+                    index(w, "set:running_icon:1") >= 0 && index(w, "set:running_icon:2") >= 0 &&
+                    index(w, "set:running_icon:0") >= 0,
+                "running icon has explicit header, idle-screen and off choices");
+        w.activate(w.view().rows[index(w, "set:running_icon:2")]);
+        require(w.view().context == "interface" &&
+                    settingNumber(w.settingsDraft_, "running_icon") == 2 &&
+                    settingNumber(w.settings_, "running_icon") == 1,
+                "icon placement is staged with the other interface settings");
         bool previous = settingFlag(w.settings_, "display_date");
         size_t depth = w.stack_.size();
         w.chooseSetting("display_date");
@@ -561,11 +556,19 @@ class UiProbe {
         require(!w.settingsEditing_ && w.view().context == "settings-menu" &&
                     settingFlag(w.settings_, "display_date") == previous,
                 "interface Back discards all draft changes");
+        require(settingNumber(w.settings_, "running_icon") == 1,
+                "Back discards staged icon placement");
         w.showSettings("interface");
+        w.commitSetting("running_icon", "2");
         w.chooseSetting("display_date");
         w.key(KEYCODE_RSK);
         require(!w.settingsEditing_ && settingFlag(w.settings_, "display_date") != previous,
                 "interface Save commits staged changes and closes the form");
+        Settings iconReload;
+        std::string iconError;
+        require(iconReload.load(w.settings_.path(), iconError) &&
+                    iconReload.get("running_icon") == "2",
+                "Save persists icon placement across restart");
         const std::string savedUin = settingValue(w.settings_, "uin");
         const std::string savedPassword = settingValue(w.settings_, "password");
         w.showSettings("account");

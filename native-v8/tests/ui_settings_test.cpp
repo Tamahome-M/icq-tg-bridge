@@ -96,6 +96,12 @@ int main() {
     assert(validateSetting(*settingField("typing_sound"), "display", error));
     assert(validateSetting(*settingField("sound_locked"), "custom.mp3", error));
     assert(!validateSetting(*settingField("sound_locked"), "../outside.mp3", error));
+    assert(settingNumber(s, "running_icon") == 1 && !settingIsToggle("running_icon"));
+    for (unsigned icon = 0; icon <= 2; ++icon) {
+        s.setInt("running_icon", icon);
+        assert(validateSetting(*settingField("running_icon"), s.get("running_icon"), error));
+    }
+    assert(!validateSetting(*settingField("running_icon"), "3", error));
     assert(settingIsToggle("show_receipts") && settingIsToggle("telegram_on"));
     assert(!settingIsToggle("startup_dns") && !settingIsToggle("sort_by"));
     assert(std::string(settingField("async_transfer")->section) == "_native");

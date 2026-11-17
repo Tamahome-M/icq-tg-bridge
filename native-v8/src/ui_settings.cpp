@@ -32,6 +32,8 @@ static const SettingField fields[] = {
      999, false},
     {"interface", "display_date", "Дата на заставке", "0", "0=Нет|1=Да", 0, false},
     {"interface", "fullscreen", "Полный экран", "0", "0=Нет|1=Да", 0, false},
+    {"interface", "running_icon", "Значок запущенного приложения", "1",
+     "1=Строка статуса (вместо BT/USB)|2=Экран ожидания|0=Нет", 0, false},
     {"interface", "mirror_menu", "'Зеркальные' меню", "0", "0=Нет|1=Да", 0, false},
     {"interface", "small_font", "Мелкий шрифт", "0", "0=Нет|1=Да", 0, false},
     {"interface", "use_groups", "Группы контактов", "0", "0=Нет|1=Да", 0, false},

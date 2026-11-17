@@ -50,3 +50,13 @@ $(BUILD)/camera-ui-v8-test: tests/camera_ui_v8_test.cpp $(BUILD)/camera_ui_v8.o 
 
 .PHONY: camera-ui-v8-test
 camera-ui-v8-test: $(BUILD)/camera-ui-v8-test
+
+# Test only in an isolated Qt/QWS server, not against the phone's header daemon.
+$(BUILD)/moc_status_icon_observer.cpp: tests/status_icon_observer.h | $(BUILD)
+	$(MOC) $< -o $@
+$(BUILD)/moc_status_icon_observer.o: $(BUILD)/moc_status_icon_observer.cpp tests/status_icon_observer.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -Itests -c $< -o $@
+$(BUILD)/status-icon-test: tests/status_icon_test.cpp $(BUILD)/moc_status_icon_observer.o $(BUILD)/status_icon_v8.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -Itests $(LDFLAGS) $< $(BUILD)/moc_status_icon_observer.o $(BUILD)/status_icon_v8.o -lezxappbase -lqte-mt -ldl -o $@
+.PHONY: status-icon-test
+status-icon-test: $(BUILD)/status-icon-test
