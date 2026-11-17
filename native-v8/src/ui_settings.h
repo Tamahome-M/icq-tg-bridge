@@ -14,6 +14,18 @@ const SettingField *settingField(const std::string &key);
 std::string settingValue(const Settings &, const std::string &key);
 int settingNumber(const Settings &, const std::string &key);
 bool settingFlag(const Settings &, const std::string &key);
+bool settingIsToggle(const std::string &key);
+const char *settingGroup(const std::string &key);
+bool migrateJavaSettings(Settings &);
+uint32_t interfaceColor(const Settings &, unsigned javaColorIndex);
+uint32_t interfaceColorByTheme(unsigned themeIndex, unsigned javaColorIndex);
+struct HotkeySetting {
+    const char *action;
+    const char *label;
+};
+const std::vector<HotkeySetting> &javaHotkeyActions();
+std::string javaHotkeyDefault(const std::string &key);
+const char *javaHotkeyLabel(const std::string &action);
 bool validateSetting(const SettingField &, const std::string &value, std::string &error);
 bool validateNetworkSettings(const Settings &, std::string &error);
 std::map<unsigned, unsigned> mediaSettings(const Settings &);

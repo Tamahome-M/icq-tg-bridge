@@ -27,13 +27,12 @@ void Window::layoutEditor() {
     if (!editor_ || !inputIndicator_)
         return;
     const int statusHeight = std::max(24, inputIndicator_->sizeHint().height());
-    inputIndicator_->setGeometry(2, 29, width() - 4, statusHeight);
+    const bool hideTitle = editAction_ == "message" && settingFlag(settings_, "full_editor");
+    inputIndicator_->setGeometry(2, hideTitle ? 1 : 29, width() - 4, statusHeight);
     // Motorola's skin may enforce a larger minimum than sizeHint().
     const int top = inputIndicator_->geometry().bottom() + 1;
     const int available = std::max(1, height() - top - 27);
-    editor_->setGeometry(2, top, width() - 4,
-                         settingFlag(settings_, "full_editor") ? available
-                                                               : std::min(available, height() / 2));
+    editor_->setGeometry(2, top, width() - 4, available);
 }
 void Window::edit(const QString &title, const std::string &action, const std::string &text,
                   uint32_t uin, bool secret, int maximum) {
@@ -44,17 +43,47 @@ void Window::edit(const QString &title, const std::string &action, const std::st
     editor_->setModalEditing(false);
     editor_->clearFocus();
     saveDraft();
+    if (action == "template-edit" && !editAction_.empty()) {
+        EditorState parent;
+        parent.title = editTitle_;
+        parent.text = editor_->text();
+        parent.action = editAction_;
+        parent.key = editKey_;
+        parent.uin = editUin_;
+        parent.depth = editDepth_;
+        parent.secret = editSecret_;
+        parent.maximum = editor_->maxLength();
+        editor_->cursorPosition(&parent.cursorParagraph, &parent.cursorIndex);
+        editorParents_.push_back(parent);
+    }
     editAction_ = action;
     editUin_ = uin;
     editTitle_ = title;
+    if (action == "message") {
+        ContactRecord *receiver = contact(uin);
+        if (receiver)
+            editTitle_ = u(receiver->name) + u(" - Сообщение");
+        maximum = std::max(2000, int(u(text).length()));
+    }
     editDepth_ = stack_.size();
     editSecret_ = secret;
     ZKbInputField *field = editor_->getInputField();
-    field->setType(secret ? ZKbInputField::FIELD_TYPE_PASSWORD : ZKbInputField::FIELD_TYPE_REGULAR);
+    const SettingField *setting = action == "setting" ? settingField(editKey_) : 0;
+    const std::string fieldKey = setting ? setting->key : "";
+    const bool numeric = action == "add-contact" || fieldKey == "uin" || fieldKey == "lock_pin" ||
+                         (setting && setting->maximum && !setting->secret && fieldKey != "host" &&
+                          fieldKey != "dns_server" && fieldKey != "network_profile" &&
+                          fieldKey != "background_file");
+    field->setType(
+        numeric
+            ? (secret ? ZKbInputField::FIELD_TYPE_NUMPASSWORD : ZKbInputField::FIELD_TYPE_NUMERIC)
+            : (secret ? ZKbInputField::FIELD_TYPE_PASSWORD : ZKbInputField::FIELD_TYPE_REGULAR));
     field->setOptions(secret ? ZKbInputField::FIELD_OPTION_DISABLE_COMPLETION |
                                    ZKbInputField::FIELD_OPTION_DISABLE_UAD |
                                    ZKbInputField::FIELD_OPTION_DEFAULT_LOWER_CASE
-                             : 0);
+                             : (action == "message" && !settingFlag(settings_, "initial_caps")
+                                    ? ZKbInputField::FIELD_OPTION_DEFAULT_LOWER_CASE
+                                    : 0));
     editor_->setMaxLength(maximum);
     editor_->setEchoMode(secret ? ZMultiLineEdit::Password : ZMultiLineEdit::Normal);
     editor_->blockSignals(true);
@@ -78,12 +107,6 @@ void Window::saveDraft() {
 void Window::editorChanged() {
     if (editAction_ != "message" || !editUin_ || locked_)
         return;
-    QString value = editor_->text();
-    if (settingFlag(settings_, "initial_caps") && value.length() == 1 && value != value.upper()) {
-        editor_->setText(value.upper());
-        editor_->setCursorPosition(0, 1);
-        return;
-    }
     unsigned long t = (unsigned long)time(0);
     if (t - typingSentAt_ < 5)
         return;
@@ -101,11 +124,7 @@ void Window::finishEdit(bool accept) {
     if (!accept) {
         saveDraft();
     }
-    if (accept && action == "message") {
-        if (value.empty()) {
-            info(u("Введите сообщение"));
-            return;
-        }
+    if (accept && action == "message" && !value.empty()) {
         Command c(Command::SendMessage);
         c.uin = id;
         c.text = value;
@@ -120,13 +139,19 @@ void Window::finishEdit(bool accept) {
         m.text = value;
         m.time = time(0);
         incoming(m);
+    }
+    if (accept && action == "message") {
         std::string error;
-        storage_->saveDraft(id, "", error);
+        if (!storage_->saveDraft(id, "", error))
+            note(error);
     }
     if (accept && action == "setting") {
         const SettingField *f = settingField(key);
         std::string error;
-        if (!f || !validateSetting(*f, value, error)) {
+        const Settings &draft = settingsEditing_ ? settingsDraft_ : settings_;
+        const bool deferredDns = key == "dns_server" && !settingFlag(draft, "startup_dns");
+        if (!f || (!deferredDns && value != settingValue(settings_, key) &&
+                   !validateSetting(*f, value, error))) {
             info(u(error));
             return;
         }
@@ -138,6 +163,18 @@ void Window::finishEdit(bool accept) {
     while (stack_.size() > editDepth_)
         stack_.pop_back();
     setFocus();
+    if (action == "template-edit" && !editorParents_.empty()) {
+        const EditorState parent = editorParents_.back();
+        editorParents_.pop_back();
+        editKey_ = parent.key;
+        edit(parent.title, parent.action, std::string(parent.text.utf8()), parent.uin,
+             parent.secret, parent.maximum);
+        editDepth_ = parent.depth;
+        editor_->setCursorPosition(parent.cursorParagraph, parent.cursorIndex);
+        // The original message stays suspended until the template list closes.
+        editor_->hide();
+        setFocus();
+    }
     if (action == "message") {
         Command c(Command::Typing);
         c.uin = id;
@@ -214,13 +251,14 @@ void Window::finishEdit(bool accept) {
     }
     if (action == "template-edit") {
         std::vector<std::string> templates = storage_->templates();
-        if (key == "new") {
+        value = std::string(u(value).stripWhiteSpace().utf8());
+        if (key == "new" && !value.empty()) {
             if (templates.size() >= 100) {
                 info(u("Слишком много шаблонов"));
                 return;
             }
             templates.push_back(value);
-        } else {
+        } else if (key != "new") {
             unsigned index = atoi(key.c_str());
             if (index < templates.size())
                 templates[index] = value;
@@ -230,9 +268,10 @@ void Window::finishEdit(bool accept) {
             info(u(error));
         while (stack_.size() > 1 && view().kind != View::Templates)
             stack_.pop_back();
+        const bool insertion = view().kind == View::Templates && view().context == "insert";
         if (view().kind == View::Templates)
             stack_.pop_back();
-        showTemplates(false);
+        showTemplates(insertion);
         return;
     }
     if (action == "account-add") {
@@ -258,22 +297,29 @@ void Window::editorMenu() {
     if (editAction_.empty())
         return;
     saveDraft();
-    editor_->hide();
-    View v(View::Menu, u("Редактор"));
+    View v(View::Popup, u("Редактор"));
     v.context = "editor-menu";
+    const bool message = editAction_ == "message";
+    v.rows.push_back(Row(u(message ? "Отправить" : "ОК"), message ? "editor-send" : "editor-ok"));
     if (editSecret_)
         v.rows.push_back(Row(u(editor_->echoMode() == ZMultiLineEdit::Password ? "Показать пароль"
                                                                                : "Скрыть пароль"),
                              "editor-secret"));
-    v.rows.push_back(Row(u("Копировать выделенное"), "editor-copy"));
-    v.rows.push_back(Row(u("Вырезать выделенное"), "editor-cut"));
-    v.rows.push_back(Row(u("Копировать всё"), "editor-copy-all"));
+    if (!editSecret_ && !editor_->text().isEmpty()) {
+        v.rows.push_back(Row(u("Копировать выделенное"), "editor-copy"));
+        v.rows.push_back(Row(u("Вырезать выделенное"), "editor-cut"));
+        v.rows.push_back(Row(u("Копировать всё"), "editor-copy-all"));
+    }
+    // Reading QClipboard merely to decide whether to show Paste enters a
+    // nested native event loop when another process owns the clipboard.
+    // Keep the standard Motorola command and read only on an explicit Paste.
     v.rows.push_back(Row(u("Вставить"), "editor-paste"));
-    v.rows.push_back(Row(u("Очистить"), "editor-clear"));
-    v.rows.push_back(Row(u("Шаблоны"), "template-insert-list"));
-    v.rows.push_back(Row(u("Смайлы"), "smileys"));
-    v.rows.push_back(Row(u("Вернуться в редактор"), "back"));
-    v.rows.push_back(Row(u("Закрыть редактор"), "editor-back"));
+    if (message) {
+        v.rows.push_back(Row(u("Смайлы"), "smileys"));
+        v.rows.push_back(Row(u("Шаблоны"), "template-insert-list"));
+        v.rows.push_back(Row(u("Стереть"), "editor-clear"));
+    }
+    v.rows.push_back(Row(u(message ? "Отмена" : "Назад"), "editor-cancel"));
     push(v);
 }
 void Window::showTemplates(bool insert) {
@@ -282,8 +328,6 @@ void Window::showTemplates(bool insert) {
     std::vector<std::string> templates = storage_->templates();
     for (size_t i = 0; i < templates.size(); ++i)
         v.rows.push_back(Row(u(templates[i]), "template", 0, i));
-    if (!insert)
-        v.rows.push_back(Row(u("Добавить шаблон"), "template-new"));
     push(v);
 }
 } // namespace tmm

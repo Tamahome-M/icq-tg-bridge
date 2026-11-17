@@ -130,6 +130,7 @@ class Client {
     void start();
     void prefetchDns(); // startup DNS only; no OSCAR login, no Connecting event
     void stop();        // asynchronous cancellation; never waits for network I/O
+    bool stopAndWait(); // join before explicit destructive local-data reset
     int eventFd() const;
     uint32_t nextRequestId();
     uint32_t sessionGeneration() const;

@@ -33,6 +33,7 @@ struct View {
         Chat,
         History,
         Menu,
+        Popup,
         SettingsPage,
         Choice,
         Files,
@@ -65,6 +66,14 @@ struct ChatState {
     bool loaded;
     ChatState() : unread(0), typingUntil(0), stamp(0), loaded(false) {}
 };
+struct EditorState {
+    QString title, text;
+    std::string action, key;
+    uint32_t uin;
+    unsigned depth;
+    bool secret;
+    int maximum, cursorParagraph, cursorIndex;
+};
 class Window : public QWidget {
     Q_OBJECT
   public:
@@ -90,6 +99,7 @@ class Window : public QWidget {
     void captureError(const QString &);
     void captureCancelled();
     void mediaFinished();
+    void mediaReturn();
     void mediaPosition(unsigned int, unsigned int);
     void editorChanged();
     void inputStateChanged(int, bool);
@@ -99,6 +109,7 @@ class Window : public QWidget {
     friend class UiProbe;
     Client client_;
     Settings settings_;
+    Settings settingsDraft_;
     Storage *storage_;
     Platform platform_;
     MediaController player_;
@@ -110,24 +121,26 @@ class Window : public QWidget {
     SystemMenu *systemMenu_;
     SystemChrome *systemChrome_;
     std::string data_, editAction_, editKey_, pendingFileAction_, playPath_, downloadName_,
-        quoteId_, quoteText_, videoToken_, receivedPath_, receivedName_;
+        quoteId_, quoteText_, videoToken_, receivedPath_, receivedName_, settingsSection_;
     uint32_t editUin_, quoteUin_, captureUin_, pickUin_, videoUin_, videoSegment_, outgoingRequest_;
     unsigned connectionState_, captureKind_, pickKind_, playPosition_, playDuration_, generation_,
-        editDepth_, connectionProgress_;
-    bool loadedMediaReady_, editSecret_, captureOwned_;
-    bool connectionErrorShown_;
+        editDepth_, connectionProgress_, settingsDepth_;
+    bool loadedMediaReady_, editSecret_, captureOwned_, receivedDeferred_;
+    bool connectionErrorShown_, settingsEditing_, resetComplete_;
     bool locked_, closed_, editorWasVisible_, silent_, paused_, manualDisconnect_, lightOn_;
     unsigned long closedAt_, startedAt_, lastAlert_, lastActivity_, typingSentAt_;
     QString pin_, notice_, ticker_, editTitle_, connectionStage_;
     unsigned long noticeUntil_, tickerUntil_;
     int pictureZoom_, pictureRotation_;
-    QPixmap picture_, background_, frame_, statusIcons_;
+    QPixmap picture_, background_, frame_, statusIcons_, popupBackdrop_, infoAvatar_;
+    uint32_t infoAvatarUin_;
     std::vector<ContactRecord> contacts_;
     std::map<uint32_t, ChatState> chats_;
     std::vector<View> stack_;
+    std::vector<EditorState> editorParents_;
     std::map<std::string, bool> collapsed_;
     std::vector<std::string> log_;
-    std::vector<uint32_t> quiet_;
+    std::vector<uint32_t> quiet_, openChatOrder_;
     std::string capturePath_, savedMediaPurpose_, managedMediaPath_;
     std::map<uint32_t, std::string> pending_;
     std::map<uint32_t, uint32_t> pendingUin_;
@@ -150,6 +163,19 @@ class Window : public QWidget {
     void refreshBackground();
     void applySettings();
     void activate(const Row &);
+    bool activateJavaMenu(const Row &);
+    bool consumeJavaMenu(const Event &);
+    void continueJavaPrivacySave();
+    bool activateSettings(const Row &);
+    bool activateMedia(const Row &);
+    bool mediaKey(int);
+    bool javaKey(int);
+    void startVoiceRecording();
+    void beginCapture(unsigned, uint32_t);
+    void finishSettings(bool);
+    bool settingsPageActive() const;
+    void showHotkeys();
+    void templateMenu(bool);
     void activateSelected();
     void key(int);
     void rebuildRoster();
@@ -194,6 +220,7 @@ class Window : public QWidget {
     void nextVideo();
     void play(const std::string &, bool audioOnly = false);
     void openUrl(const std::string &);
+    void openDeferredMedia();
     void upload(const std::string &, unsigned, uint32_t);
     void attachmentMenu(uint32_t);
     void reviewAttachment(const std::string &, unsigned, uint32_t, bool);
@@ -206,6 +233,7 @@ class Window : public QWidget {
     void showTransfer(uint32_t, uint32_t, const QString &, const QString &, bool upload);
     bool showPicture(const std::string &, const QString &, const std::string &context = "");
     bool connectionProgressVisible() const;
+    void drawPlayer(QPainter &);
     void drawProgress(QPainter &, const QString &, const QString &, uint64_t, uint64_t);
     void drawAttachmentDetails(QPainter &);
     void copy(const QString &);

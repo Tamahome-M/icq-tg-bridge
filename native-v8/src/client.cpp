@@ -1553,6 +1553,20 @@ void Client::launch(bool prefetch) {
 void Client::stop() {
     impl_->stop();
 }
+bool Client::stopAndWait() {
+    impl_->stop();
+    pthread_mutex_lock(&impl_->mutex);
+    const bool join = impl_->joinable;
+    const pthread_t worker = impl_->thread;
+    pthread_mutex_unlock(&impl_->mutex);
+    if (join && pthread_join(worker, 0) != 0)
+        return false;
+    if (join) {
+        Guard guard(impl_->mutex);
+        impl_->joinable = false;
+    }
+    return true;
+}
 int Client::eventFd() const {
     return impl_->notify[0];
 }

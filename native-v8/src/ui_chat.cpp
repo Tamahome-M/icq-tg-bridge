@@ -1,6 +1,7 @@
 #include "window.h"
 #include "storage.h"
 #include "ui_settings.h"
+#include "ui_files.h"
 #include "ui_language.h"
 #include <ZMultiLineEdit.h>
 #include <qapplication.h>
@@ -50,6 +51,10 @@ bool Window::selectScope() {
     outgoingRequest_ = 0;
     discardAttachment();
     loadedMediaReady_ = false;
+    receivedDeferred_ = false;
+    openChatOrder_.clear();
+    infoAvatar_ = QPixmap();
+    infoAvatarUin_ = 0;
     savedMediaPurpose_.clear();
     playPath_.clear();
     receivedPath_.clear();
@@ -159,6 +164,8 @@ void Window::eventsReady() {
             unlink(events[i].path.c_str());
 }
 void Window::consume(const Event &e) {
+    if (consumeJavaMenu(e))
+        return;
     if (e.type == Event::State) {
         unsigned before = connectionState_;
         connectionState_ = e.state;
@@ -285,10 +292,13 @@ void Window::consume(const Event &e) {
         return;
     }
     if (e.type == Event::Typing) {
+        const std::string typingMode = settingValue(settings_, "typing_sound");
+        if (typingMode.empty())
+            return;
         if (chats_.find(e.uin) != chats_.end())
             chats_[e.uin].typingUntil = e.flag ? now() + 10000 : 0;
         if (e.flag && std::find(quiet_.begin(), quiet_.end(), e.uin) == quiet_.end() && !silent_ &&
-            now() - startedAt_ > 60000 && !settingValue(settings_, "typing_sound").empty())
+            now() - startedAt_ > 60000 && typingMode != "display")
             platform_.notifyMessage(u(settingValue(settings_, "typing_sound") == "tone"
                                           ? "tone"
                                           : "sounds/" + settingValue(settings_, "typing_sound")),
@@ -343,6 +353,7 @@ void Window::consume(const Event &e) {
         if (pending_[e.requestId] == "info")
             showInfo(e);
         pending_.erase(e.requestId);
+        pendingUin_.erase(e.requestId);
         if (view().kind == View::Roster)
             rebuildRoster();
         return;
@@ -378,6 +389,39 @@ void Window::consume(const Event &e) {
         return;
     }
     if (e.type == Event::Media) {
+        if (pending_.find(e.requestId) != pending_.end() &&
+            pending_[e.requestId] == "info-avatar") {
+            bool relevant = false;
+            for (size_t i = 0; i < stack_.size(); ++i)
+                relevant =
+                    relevant || (stack_[i].context == "contact-info" && stack_[i].uin == e.uin);
+            if (relevant) {
+                QImage image;
+                unsigned width = 0, height = 0;
+                std::string error;
+                if (imageDimensions(e.path, width, height, error) && width <= 256 &&
+                    height <= 256 && image.load(u(e.path))) {
+                    infoAvatar_.convertFromImage(image);
+                    infoAvatarUin_ = e.uin;
+                    for (size_t i = 0; i < stack_.size(); ++i)
+                        if (stack_[i].context == "contact-info" && stack_[i].uin == e.uin) {
+                            View &info = stack_[i];
+                            if (info.rows.empty() || info.rows[0].action != "info-avatar-view") {
+                                info.rows.insert(info.rows.begin(),
+                                                 Row(QString::null, "info-avatar-view", e.uin));
+                                ++info.selected;
+                            }
+                        }
+                }
+            }
+            const std::string prefix = storage_->accountDir() + "/cache/";
+            if (e.path.compare(0, prefix.size(), prefix) == 0)
+                unlink(e.path.c_str());
+            pending_.erase(e.requestId);
+            pendingUin_.erase(e.requestId);
+            update();
+            return;
+        }
         if (pending_.find(e.requestId) != pending_.end()) {
             removeTransfer(e.requestId);
             showMedia(e);
@@ -416,6 +460,27 @@ void Window::consume(const Event &e) {
             completeAttachment(false, u(e.text));
             return;
         }
+        bool mediaFailure = false;
+        for (size_t i = 0; i < stack_.size(); ++i)
+            if (stack_[i].kind == View::Transfer && stack_[i].request == e.requestId) {
+                View &failed = stack_[i];
+                failed.request = 0;
+                failed.context = "media-error";
+                failed.status = u(failed.directory == "photo"   ? "Фото недоступно"
+                                  : failed.directory == "voice" ? "Голосовое недоступно"
+                                  : failed.directory == "video" && videoSegment_
+                                      ? "Дальше нечего: ролик кончился"
+                                      : "Вложение недоступно");
+                failed.details = u(e.text);
+                mediaFailure = true;
+            }
+        if (mediaFailure) {
+            pending_.erase(e.requestId);
+            pendingUin_.erase(e.requestId);
+            note(e.text);
+            update();
+            return;
+        }
         removeTransfer(e.requestId);
         note(e.text);
         for (size_t i = 0; i < stack_.size(); ++i)
@@ -445,6 +510,8 @@ void Window::consume(const Event &e) {
     }
 }
 void Window::incoming(const MessageRecord &m) {
+    if (std::find(openChatOrder_.begin(), openChatOrder_.end(), m.uin) == openChatOrder_.end())
+        openChatOrder_.push_back(m.uin);
     ChatState &chat = chats_[m.uin];
     chat.stamp = now();
     if (!chat.loaded) {
@@ -586,10 +653,11 @@ void Window::rebuildRoster() {
                                                         : g->first.find_last_of('/') + 1);
             QString indent;
             indent.fill(' ', depth * 2);
-            v.rows.push_back(Row(indent + u(collapsed_[g->first] ? "+ " : "- ") + u(shortName) +
-                                     " (" + QString::number(on[g->first]) + "/" +
-                                     QString::number(total[g->first]) + ")",
-                                 "group-toggle:" + g->first));
+            QString label = indent + u(collapsed_[g->first] ? "+ " : "- ") + u(shortName);
+            if (on[g->first] && !settingFlag(settings_, "hide_offline"))
+                label += " (" + QString::number(on[g->first]) + "/" +
+                         QString::number(total[g->first]) + ")";
+            v.rows.push_back(Row(label, "group-toggle:" + g->first));
             if (collapsed_[g->first])
                 continue;
         }
@@ -613,8 +681,6 @@ void Window::rebuildRoster() {
             ContactRecord &c = contacts_[items[k]];
             QString label = u(c.name);
             std::map<uint32_t, ChatState>::const_iterator chat = chats_.find(c.uin);
-            if (chat != chats_.end() && chat->second.unread)
-                label += " [" + QString::number(chat->second.unread) + "]";
             v.rows.push_back(Row(label, "open", c.uin));
             if (c.uin == old)
                 v.selected = v.rows.size() - 1;
@@ -664,6 +730,8 @@ void Window::openChat(uint32_t id) {
     View chat(View::Chat, name(id));
     chat.uin = id;
     push(chat);
+    if (std::find(openChatOrder_.begin(), openChatOrder_.end(), id) == openChatOrder_.end())
+        openChatOrder_.push_back(id);
     ChatState &state = chats_[id];
     state.stamp = now();
     if (!state.loaded) {
@@ -701,15 +769,14 @@ void Window::showHistory(View &v) {
     for (size_t i = 0; i < v.messages.size(); ++i)
         if (v.directory.empty() || u(v.messages[i].text).lower().find(u(v.directory).lower()) >= 0)
             v.rows.push_back(Row(messageText(v.messages[i]), "message-menu", v.uin, i));
-    if (v.more)
-        v.rows.push_back(Row(u("Ещё сообщения"), "history-more", v.uin));
+    v.title = name(v.uin) + " (" + QString::number(v.messages.size()) + ")";
 }
 void Window::history(bool server, bool more) {
     uint32_t id = view().uin;
     if (!id)
         return;
     if (!more) {
-        View v(View::History, (server ? u("История сервера: ") : u("История: ")) + name(id));
+        View v(View::History, name(id));
         v.uin = id;
         v.context = server ? "server" : "local";
         push(v);
@@ -725,7 +792,7 @@ void Window::history(bool server, bool more) {
     Command c(Command::History);
     c.uin = id;
     c.offset = view().offset;
-    c.limit = 10;
+    c.limit = std::max(1, std::min(100, settingNumber(settings_, "server_history_count")));
     c.requestId = client_.nextRequestId();
     if (send(c)) {
         view().request = c.requestId;
@@ -805,16 +872,59 @@ void Window::showResults(const Event &e) {
     update();
 }
 void Window::showInfo(const Event &e) {
-    QString text = name(e.uin) + "\nUIN: " + QString::number(e.uin) + "\n";
-    ContactRecord *c = contact(e.uin);
-    if (c)
-        text += status(c->status) + "\n" + u(c->group) + "\n";
-    for (std::map<std::string, std::string>::const_iterator i = e.fields.begin();
-         i != e.fields.end(); ++i)
-        text += u(i->first) + ": " + u(i->second) + "\n";
-    if (!e.text.empty())
-        text += u(e.text);
-    showText(u("Информация"), text);
+    View info(View::Text, QString::number(e.uin));
+    info.context = "contact-info";
+    info.uin = e.uin;
+    info.rows.push_back(Row(name(e.uin), "info-field"));
+    info.rows.push_back(Row("UIN: " + QString::number(e.uin), "info-field"));
+    ContactRecord *entry = contact(e.uin);
+    if (entry) {
+        info.rows.push_back(Row(status(entry->status), "info-field"));
+        if (!entry->group.empty())
+            info.rows.push_back(Row(u(entry->group), "info-field"));
+    }
+    const char *keys[] = {"name",   "kind",  "last",    "username", "members",
+                          "region", "phone", "fax",     "address",  "mobile",
+                          "age",    "url",   "network", "marks",    "about"};
+    const char *labels[] = {"Имя",        "Тип",        "Фамилия", "Логин",
+                            "Участников", "Область",    "Телефон", "Факс",
+                            "Адрес",      "Мобильный",  "Возраст", "Домашняя страница",
+                            "Сеть",       "Примечания", "О себе"};
+    for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
+        std::map<std::string, std::string>::const_iterator field = e.fields.find(keys[i]);
+        if (field != e.fields.end() && !field->second.empty() &&
+            !(std::string(keys[i]) == "age" && field->second == "0"))
+            info.rows.push_back(Row(u(labels[i]) + ": " + u(field->second), "info-field"));
+    }
+    if (!e.text.empty() && e.text != std::string(name(e.uin).utf8()) &&
+        (e.fields.find("name") == e.fields.end() || e.fields.find("name")->second != e.text))
+        info.rows.push_back(Row(u(e.text), "info-field"));
+    if (infoAvatarUin_ == e.uin && !infoAvatar_.isNull())
+        info.rows.insert(info.rows.begin(), Row(QString::null, "info-avatar-view", e.uin));
+    bool replaced = false;
+    for (size_t i = 0; i < stack_.size(); ++i)
+        if (stack_[i].context == "contact-info" && stack_[i].request == e.requestId) {
+            stack_[i] = info;
+            replaced = true;
+            break;
+        }
+    if (!replaced)
+        push(info);
+    else
+        update();
+    if (entry && !entry->avatarHash.empty() && connectionState_ == Event::Online &&
+        infoAvatarUin_ != e.uin) {
+        infoAvatar_ = QPixmap();
+        infoAvatarUin_ = 0;
+        Command avatar(Command::Avatar);
+        avatar.uin = e.uin;
+        avatar.token = entry->avatarHash;
+        avatar.requestId = client_.nextRequestId();
+        if (send(avatar)) {
+            pending_[avatar.requestId] = "info-avatar";
+            pendingUin_[avatar.requestId] = e.uin;
+        }
+    }
 }
 void Window::trimChats() {
     size_t loaded = 0;
@@ -840,6 +950,9 @@ void Window::trimChats() {
         }
         if (oldest == chats_.end())
             break;
+        openChatOrder_.erase(
+            std::remove(openChatOrder_.begin(), openChatOrder_.end(), oldest->first),
+            openChatOrder_.end());
         std::vector<MessageRecord>().swap(oldest->second.messages);
         oldest->second.loaded = false;
         --loaded;

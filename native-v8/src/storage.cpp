@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <algorithm>
 #include <set>
 #include <sys/stat.h>
@@ -183,6 +184,179 @@ bool cleanupCachedMedia(const std::string &base, std::string &error) {
     closedir(root);
     if (!ok)
         error = "Cannot remove some old media cache files";
+    return ok;
+}
+namespace {
+bool resetRandom(const std::string &s) {
+    return s.size() == 6 &&
+           s.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") ==
+               std::string::npos;
+}
+bool resetDigits(const std::string &s) {
+    return !s.empty() && s.find_first_not_of("0123456789") == std::string::npos;
+}
+bool resetMedia(const std::string &name) {
+    if (name.size() < 12 || name.compare(0, 6, "media-") != 0 || !resetRandom(name.substr(6, 6)))
+        return false;
+    const std::string suffix = name.substr(12);
+    return suffix.empty() || suffix == ".jpg" || suffix == ".3gp" || suffix == ".amr" ||
+           suffix == ".bin";
+}
+bool resetRecord(std::string name) {
+    // atomicWrite creates exactly six random characters after this suffix.
+    size_t temporary = name.rfind(".new-");
+    if (temporary != std::string::npos) {
+        if (!resetRandom(name.substr(temporary + 5)))
+            return false;
+        name.erase(temporary);
+    }
+    if (name == "roster.dat" || name == "templates.dat" || name == "quiet.dat")
+        return true;
+    if (name.size() < 5 || name.substr(name.size() - 4) != ".dat")
+        return false;
+    size_t prefix = name.compare(0, 8, "history-") == 0 ? 8
+                    : name.compare(0, 6, "draft-") == 0 ? 6
+                                                        : 0;
+    if (!prefix)
+        return false;
+    const std::string id = name.substr(prefix, name.size() - prefix - 4);
+    if (!resetDigits(id) || id.size() > 10)
+        return false;
+    errno = 0;
+    char *end = 0;
+    unsigned long n = strtoul(id.c_str(), &end, 10);
+    return errno != ERANGE && !*end && n > 0 && n <= 4294967295UL;
+}
+bool resetCapture(const std::string &name) {
+    if (name.compare(0, 8, "capture-") != 0)
+        return false;
+    const size_t dot = name.rfind('.'), dash = name.find('-', 8);
+    if (dot == std::string::npos || dash == std::string::npos || dash >= dot)
+        return false;
+    const std::string suffix = name.substr(dot);
+    return (suffix == ".jpg" || suffix == ".3gp" || suffix == ".amr") &&
+           resetDigits(name.substr(8, dash - 8)) &&
+           resetDigits(name.substr(dash + 1, dot - dash - 1));
+}
+bool resetOpen(const std::string &path, DIR *&dir, std::string &error) {
+    dir = 0;
+    struct stat before, opened;
+    if (lstat(path.c_str(), &before) < 0) {
+        if (errno == ENOENT)
+            return true;
+        error = "Cannot inspect local data: " + path;
+        return false;
+    }
+    if (!S_ISDIR(before.st_mode)) {
+        error = "Local data path is not a directory: " + path;
+        return false;
+    }
+    dir = opendir(path.c_str());
+    if (!dir || fstat(dirfd(dir), &opened) < 0 || !S_ISDIR(opened.st_mode) ||
+        opened.st_dev != before.st_dev || opened.st_ino != before.st_ino) {
+        if (dir)
+            closedir(dir);
+        dir = 0;
+        error = "Cannot open local data directory: " + path;
+        return false;
+    }
+    return true;
+}
+bool resetFile(const std::string &path, std::string &error) {
+    struct stat st;
+    if (lstat(path.c_str(), &st) < 0) {
+        if (errno == ENOENT)
+            return true;
+        error = "Cannot inspect local file: " + path;
+        return false;
+    }
+    // Never follow links or remove user directories, even if a name matches.
+    if (!S_ISREG(st.st_mode))
+        return true;
+    if (unlink(path.c_str()) == 0 || errno == ENOENT)
+        return true;
+    error = "Cannot remove local file: " + path;
+    return false;
+}
+bool resetDirectoryFiles(const std::string &path, bool cache, std::string &error) {
+    DIR *dir = 0;
+    if (!resetOpen(path, dir, error))
+        return false;
+    if (!dir)
+        return true;
+    bool ok = true;
+    for (;;) {
+        errno = 0;
+        struct dirent *entry = readdir(dir);
+        if (!entry) {
+            if (errno) {
+                error = "Cannot enumerate local data: " + path;
+                ok = false;
+            }
+            break;
+        }
+        const std::string name = entry->d_name;
+        if (cache ? resetMedia(name) : (resetRecord(name) || resetCapture(name)))
+            if (!resetFile(path + "/" + name, error))
+                ok = false;
+    }
+    closedir(dir);
+    return ok;
+}
+} // namespace
+bool Storage::resetAll(std::string &error) {
+    error.clear();
+    DIR *base = 0;
+    if (!resetOpen(base_, base, error))
+        return false;
+    if (!base)
+        return true;
+    closedir(base);
+    DIR *root = 0;
+    const std::string accounts = base_ + "/accounts";
+    if (!resetOpen(accounts, root, error))
+        return false;
+    if (!root)
+        return true;
+    bool ok = true;
+    for (;;) {
+        errno = 0;
+        struct dirent *entry = readdir(root);
+        if (!entry) {
+            if (errno) {
+                error = "Cannot enumerate local accounts";
+                ok = false;
+            }
+            break;
+        }
+        const std::string name = entry->d_name;
+        if (name.size() != 64 || name.find_first_not_of("0123456789abcdef") != std::string::npos)
+            continue;
+        const std::string path = accounts + "/" + name;
+        struct stat st;
+        if (lstat(path.c_str(), &st) < 0) {
+            if (errno != ENOENT) {
+                error = "Cannot inspect local account";
+                ok = false;
+            }
+            continue;
+        }
+        if (!S_ISDIR(st.st_mode))
+            continue;
+        if (!resetDirectoryFiles(path, false, error))
+            ok = false;
+        const std::string cache = path + "/cache";
+        if (lstat(cache.c_str(), &st) < 0) {
+            if (errno != ENOENT) {
+                error = "Cannot inspect local cache";
+                ok = false;
+            }
+            continue;
+        }
+        if (S_ISDIR(st.st_mode) && !resetDirectoryFiles(cache, true, error))
+            ok = false;
+    }
+    closedir(root);
     return ok;
 }
 void Storage::setHistoryLimit(unsigned count) {

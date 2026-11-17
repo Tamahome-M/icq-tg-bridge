@@ -1,6 +1,7 @@
 #include "capture.h"
 #include "capture_codec.h"
 #include "capture_media.h"
+#include "camera_ui_v8.h"
 #include <qdialog.h>
 #include <qimage.h>
 #include <qfileinfo.h>
@@ -408,7 +409,9 @@ void CaptureController::camera(const QString &path, bool video, int seconds) {
         dialog_, video ? 320 : width, video ? 240 : height);
     if (video)
         timer_.start(100);
+    CameraUiV8 cameraUi(dialog_, cameraLibrary_, video);
     int result = dialog_->exec();
+    cameraUi.detach();
     timer_.stop();
     QString recorded = cameraFileName(dialog_);
     fn<void (*)(void *)>(dlsym(cameraLibrary_, "DestroyCameraDlg"))(dialog_);

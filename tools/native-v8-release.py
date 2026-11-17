@@ -33,7 +33,8 @@ def source_hash(source):
     files = [p for name in ("src", "tools", "VERSION", "Makefile", "telemotomax.lin", "collect-log.lin", "README.md", "features.tsv")
              for p in ((native / name).rglob("*") if (native / name).is_dir() else [native / name]) if p.is_file()]
     files += [source / f"telemotomax/res/MIDP2/sounds/{n}.mp3" for n in ("message", "msg_low", "tg", "typing")]
-    files += [source / "telemotomax/COPYING", source / "telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png"]
+    files += [source / "telemotomax/COPYING"]
+    files += [source / f"telemotomax/res/GRAPHICS_32BIT/COMMON/{n}.png" for n in ("icon", "back")]
     files += [source / "telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png"]
     files += [source / f"telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/{n}" for n in ("smiles.png", "smiles.txt")]
     digest = hashlib.sha256()

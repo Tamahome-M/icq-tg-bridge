@@ -5,6 +5,7 @@
 #include <qfontmetrics.h>
 #include <algorithm>
 #include <stdio.h>
+#include <sys/stat.h>
 
 namespace tmm {
 namespace {
@@ -55,14 +56,21 @@ QString byteCount(uint64_t bytes) {
     snprintf(value, sizeof(value), "%llu", (unsigned long long)bytes);
     return QString::fromLatin1(value);
 }
+QString mediaTime(unsigned milliseconds) {
+    const unsigned seconds = milliseconds / 1000;
+    char clock[32];
+    snprintf(clock, sizeof(clock), "%u:%02u", seconds / 60, seconds % 60);
+    return QString::fromLatin1(clock);
+}
 } // namespace
 
 void Window::drawProgress(QPainter &p, const QString &details, const QString &status,
                           uint64_t bytes, uint64_t total) {
     p.save();
-    const bool dark = settingValue(settings_, "theme") == "dark";
-    const QColor ink = dark ? QColor(Qt::white) : QColor(Qt::black);
-    const QColor track = dark ? QColor(64, 68, 72) : QColor(210, 216, 222);
+    const QColor ink(interfaceColor(settings_, 2));
+    const QColor track(interfaceColor(settings_, 4));
+    const QColor accent(interfaceColor(settings_, 3));
+    const QColor border(interfaceColor(settings_, 8));
     const int left = 12, bodyTop = 34;
     const int banner = !notice_.isEmpty() ? 52 : !ticker_.isEmpty() ? 25 : 0;
     const int bodyBottom = height() - 32 - banner;
@@ -106,13 +114,80 @@ void Window::drawProgress(QPainter &p, const QString &details, const QString &st
         p.fillRect(left, top, textWidth, barHeight, track);
         const int fill = static_cast<unsigned long>(textWidth - 2) * std::min(100U, percent) / 100;
         if (fill)
-            p.fillRect(left + 1, top + 1, fill, barHeight - 2, QColor(75, 123, 159));
-        p.setPen(ink);
+            p.fillRect(left + 1, top + 1, fill, barHeight - 2, accent);
+        p.setPen(border);
         p.drawRect(left, top, textWidth, barHeight);
         top += barHeight + 6;
+        p.setPen(ink);
         drawLines(p, captionLines, left, top, textWidth, lineHeight, Qt::AlignHCenter);
     } else if (!captionLines.empty())
         drawLines(p, captionLines, left, top, textWidth, lineHeight, Qt::AlignHCenter);
+    p.restore();
+}
+
+void Window::drawPlayer(QPainter &p) {
+    p.save();
+    const int banner = !notice_.isEmpty() ? 52 : !ticker_.isEmpty() ? 25 : 0;
+    const QRect body(0, 29, width(), std::max(1, height() - 56));
+    p.setClipRect(body);
+    if (view().context == "player-video") {
+        // Java gives the complete Canvas to video. The Motorola video child
+        // shares this body geometry; native softkeys already offer Back/Next.
+        p.fillRect(body, Qt::black);
+        p.restore();
+        return;
+    }
+    // The audio Canvas owns its background, independently of chat wallpaper.
+    p.fillRect(body, QColor(interfaceColor(settings_, 1)));
+    const int left = 10, textWidth = std::max(1, width() - 2 * left);
+    const QColor ink(interfaceColor(settings_, 2));
+    const QColor accent(interfaceColor(settings_, 3));
+    const QColor track(interfaceColor(settings_, 4));
+    const QColor border(interfaceColor(settings_, 8));
+    const bool finished = view().more;
+    const unsigned elapsed = finished && playDuration_ ? playDuration_ : playPosition_;
+    const QFont small("Helvetica", 14), clockFont("Helvetica", 18);
+    const QFontMetrics smallMetrics(small), clockMetrics(clockFont);
+    const int lineHeight = std::max(18, smallMetrics.height() + 2);
+    const int clockHeight = std::max(22, clockMetrics.height() + 2);
+    const QString status = uiText(finished ? "Проиграно" : paused_ ? "Пауза" : "Играет");
+    const QString keys =
+        uiText(finished ? "выбор — ещё раз, 0 — закрыть" : "выбор — пауза, 4 — сначала");
+    const std::vector<QString> keyLines = wrapped(keys, smallMetrics, textWidth, 2);
+    struct stat file;
+    const bool hasSize = !playPath_.empty() && !stat(playPath_.c_str(), &file) &&
+                         S_ISREG(file.st_mode) && file.st_size > 0;
+    const int barHeight = 7;
+    const int contentHeight = lineHeight + clockHeight + barHeight +
+                              int(keyLines.size()) * lineHeight + (hasSize ? lineHeight : 0) + 26;
+    const int bodyBottom = height() - 32 - banner;
+    int top = 34 + std::max(0, (bodyBottom - 34 - contentHeight) / 2);
+    p.setFont(small);
+    p.setPen(ink);
+    p.drawText(left, top, textWidth, lineHeight, Qt::AlignCenter | Qt::SingleLine, status);
+    top += lineHeight + 4;
+    p.setFont(clockFont);
+    QString clock = mediaTime(elapsed);
+    if (playDuration_)
+        clock += " / " + mediaTime(playDuration_);
+    p.drawText(left, top, textWidth, clockHeight, Qt::AlignCenter | Qt::SingleLine, clock);
+    top += clockHeight + 6;
+    p.fillRect(left, top, textWidth, barHeight, track);
+    if (playDuration_) {
+        const int fill = uint64_t(textWidth - 2) * std::min(elapsed, playDuration_) / playDuration_;
+        if (fill)
+            p.fillRect(left + 1, top + 1, fill, barHeight - 2, accent);
+    }
+    p.setPen(border);
+    p.drawRect(left, top, textWidth, barHeight);
+    top += barHeight + 8;
+    p.setFont(small);
+    p.setPen(ink);
+    drawLines(p, keyLines, left, top, textWidth, lineHeight, Qt::AlignHCenter);
+    top += keyLines.size() * lineHeight + 4;
+    if (hasSize)
+        p.drawText(left, top, textWidth, lineHeight, Qt::AlignCenter | Qt::SingleLine,
+                   byteCount(file.st_size / 1024) + uiText(" КБ"));
     p.restore();
 }
 
@@ -120,7 +195,7 @@ void Window::drawAttachmentDetails(QPainter &p) {
     p.save();
     p.setClipRect(8, 33, std::max(1, width() - 16), 104);
     p.setFont(QFont("Helvetica", 14));
-    p.setPen(palette().active().foreground());
+    p.setPen(QColor(interfaceColor(settings_, 2)));
     QFontMetrics metrics(p.font());
     const int lineHeight = std::max(18, metrics.height() + 2);
     const unsigned count = std::max(1, 104 / lineHeight);

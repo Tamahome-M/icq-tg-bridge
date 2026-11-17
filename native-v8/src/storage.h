@@ -25,6 +25,9 @@ class Storage {
     bool saveHistory(uint32_t uin, const std::vector<MessageRecord> &messages, std::string &error);
     bool clearHistory(uint32_t uin, std::string &error);
     bool clearAllHistory(std::string &error);
+    // Remove only this application's known files in all account namespaces.
+    // Unknown files and symlinks are retained, including under custom data roots.
+    bool resetAll(std::string &error);
     std::string loadDraft(uint32_t uin) const;
     bool saveDraft(uint32_t uin, const std::string &text, std::string &error);
     std::vector<std::string> templates() const;

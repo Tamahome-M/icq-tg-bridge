@@ -2,10 +2,10 @@ name: TeleMotoMax Native V8
 on:
   push:
     branches: [main]
-    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
+    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/res/GRAPHICS_32BIT/COMMON/back.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
   pull_request:
     branches: [main]
-    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
+    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/res/GRAPHICS_32BIT/COMMON/back.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
   workflow_dispatch:
 permissions:
   contents: read
@@ -36,6 +36,8 @@ jobs:
           "$RUNNER_TEMP/ui-settings-test"
           g++ -std=c++98 -Inative-v8/src native-v8/tests/ui_files_test.cpp native-v8/src/ui_files.cpp -o "$RUNNER_TEMP/ui-files-test"
           "$RUNNER_TEMP/ui-files-test"
+          g++ -std=c++98 -Wall -Wextra -Werror -Inative-v8/src native-v8/tests/ui_content_test.cpp native-v8/src/{ui_links,ui_smileys}.cpp -o "$RUNNER_TEMP/ui-content-test"
+          "$RUNNER_TEMP/ui-content-test" telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/smiles.txt
       - name: Check native version
         run: python3 tools/native-v8-release.py check --repo "$GITHUB_REPOSITORY"
       - name: Prepare ARM compiler

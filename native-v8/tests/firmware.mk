@@ -20,10 +20,10 @@ $(BUILD)/moc_capture_test_observer.cpp: tests/capture_test_observer.h | $(BUILD)
 	$(MOC) $< -o $@
 $(BUILD)/moc_capture_test_observer.o: $(BUILD)/moc_capture_test_observer.cpp tests/capture_test_observer.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -Itests -c $< -o $@
-$(BUILD)/capture-lifecycle-test: tests/capture_lifecycle_test.cpp tests/capture_test_observer.h $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o $(BUILD)/moc_capture_test_observer.o $(BUILD)/sdk-link/.ready
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -Wl,-E $< $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o $(BUILD)/moc_capture_test_observer.o -lezxsound -lqte-mt -ldl -lpthread -o $@
-$(BUILD)/camera-filename-test: tests/camera_filename_test.cpp $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o $(BUILD)/sdk-link/.ready
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/capture.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o -lezxsound -lqte-mt -ldl -lpthread -o $@
+$(BUILD)/capture-lifecycle-test: tests/capture_lifecycle_test.cpp tests/capture_test_observer.h $(BUILD)/capture.o $(BUILD)/camera_ui_v8.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o $(BUILD)/moc_capture_test_observer.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -Wl,-E $< $(BUILD)/capture.o $(BUILD)/camera_ui_v8.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o $(BUILD)/moc_capture_test_observer.o -lezxsound -lqte-mt -ldl -lpthread -o $@
+$(BUILD)/camera-filename-test: tests/camera_filename_test.cpp $(BUILD)/capture.o $(BUILD)/camera_ui_v8.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/capture.o $(BUILD)/camera_ui_v8.o $(BUILD)/capture_codec.o $(BUILD)/capture_media.o $(BUILD)/moc_capture.o -lezxsound -lqte-mt -ldl -lpthread -o $@
 $(BUILD)/media-lifecycle-test: tests/media_lifecycle_test.cpp $(BUILD)/media.o $(BUILD)/moc_media.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/media.o $(BUILD)/moc_media.o -lezxsound -lqte-mt -ldl -o $@
 $(BUILD)/platform-firmware-test: tests/platform_firmware_test.cpp $(BUILD)/sdk-link/.ready
@@ -40,3 +40,10 @@ firmware-check: firmware-tests
 	$(FW_RUN) $(BUILD)/platform-firmware-test
 	$(FW_RUN) $(BUILD)/toolchain-vector-test
 	@echo 'platform-widget-test requires the isolated QWS/framebuffer runner; see VALIDATION.md'
+
+# Native camera widget flow requires QWS; run with tests/run_qws.py.
+$(BUILD)/camera-ui-v8-test: tests/camera_ui_v8_test.cpp $(BUILD)/camera_ui_v8.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/camera_ui_v8.o -lqte-mt -lezxappbase -ldl -o $@
+
+.PHONY: camera-ui-v8-test
+camera-ui-v8-test: $(BUILD)/camera-ui-v8-test

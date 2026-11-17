@@ -193,6 +193,10 @@ int main(int argc, char **argv) {
                 client.stop();
                 continue;
             }
+            if (line == "stop-wait") {
+                std::cout << "{\"joined\":" << client.stopAndWait() << "}" << std::endl;
+                continue;
+            }
             if (line == "arm-send-failure" || line == "clear-send-failure" ||
                 line == "send-fault-count") {
                 pthread_mutex_lock(&sendFaultMutex);

@@ -153,6 +153,49 @@ int main() {
     assert(access((first + "/cache/media-Ab12xZ.jpg").c_str(), F_OK) < 0);
     assert(access((first + "/cache/my-photo.jpg").c_str(), F_OK) == 0);
     assert(access((first + "/capture-123.jpg").c_str(), F_OK) == 0);
-    printf("storage/settings OK (%s)\n", root);
+    // Reset spans every managed account, but never a user file or link target.
+    assert(atomicWrite(first + "/cache/media-Ab12xZ.3gp", "download", error));
+    assert(atomicWrite(first + "/cache/media-not-random.jpg", "unknown", error));
+    assert(atomicWrite(first + "/capture-123-1.jpg", "owned capture", error));
+    assert(atomicWrite(first + "/notes.txt", "user note", error));
+    assert(atomicWrite(first + "/history-1000001.dat.new-Ab12xZ", "interrupted save", error));
+    assert(atomicWrite(base + "/outside.dat", "external target", error));
+    assert(unlink((first + "/roster.dat").c_str()) == 0);
+    assert(symlink((base + "/outside.dat").c_str(), (first + "/roster.dat").c_str()) == 0);
+    assert(a.setAccount("other.example", 5190, 123456, error));
+    const std::string second = a.accountDir();
+    assert(a.saveDraft(m.uin, "Another draft", error));
+    assert(a.saveTemplates(templates, error));
+    assert(a.appendHistory(m.uin, m, error));
+    assert(ensureDirectory(base + "/accounts/not-an-account", error));
+    assert(atomicWrite(base + "/accounts/not-an-account/history-1.dat", "user file", error));
+    const std::string linked = base + "/accounts/" + std::string(64, 'f');
+    assert(symlink((base + "/accounts/not-an-account").c_str(), linked.c_str()) == 0);
+    assert(a.resetAll(error));
+    assert(access((first + "/draft-1000001.dat").c_str(), F_OK) < 0);
+    assert(access((first + "/templates.dat").c_str(), F_OK) < 0);
+    assert(access((first + "/quiet.dat").c_str(), F_OK) < 0);
+    assert(access((first + "/capture-123-1.jpg").c_str(), F_OK) < 0);
+    assert(access((first + "/history-1000001.dat.new-Ab12xZ").c_str(), F_OK) < 0);
+    assert(access((first + "/cache/media-Ab12xZ.3gp").c_str(), F_OK) < 0);
+    assert(access((second + "/history-1000001.dat").c_str(), F_OK) < 0);
+    assert(access((second + "/draft-1000001.dat").c_str(), F_OK) < 0);
+    assert(access((second + "/templates.dat").c_str(), F_OK) < 0);
+    assert(access((first + "/cache/my-photo.jpg").c_str(), F_OK) == 0);
+    assert(access((first + "/cache/media-not-random.jpg").c_str(), F_OK) == 0);
+    assert(access((first + "/capture-123.jpg").c_str(), F_OK) == 0);
+    assert(access((first + "/notes.txt").c_str(), F_OK) == 0);
+    assert(readBounded(base + "/outside.dat", contents, 100) && contents == "external target");
+    assert(lstat((first + "/roster.dat").c_str(), &st) == 0 && S_ISLNK(st.st_mode));
+    assert(lstat(linked.c_str(), &st) == 0 && S_ISLNK(st.st_mode));
+    assert(readBounded(base + "/accounts/not-an-account/history-1.dat", contents, 100) &&
+           contents == "user file");
+    // A redirected accounts root must fail instead of traversing its target.
+    assert(ensureDirectory(base + "/redirected", error));
+    assert(symlink((base + "/accounts").c_str(), (base + "/redirected/accounts").c_str()) == 0);
+    Storage redirected(base + "/redirected");
+    assert(!redirected.resetAll(error) && !error.empty());
+    assert(access((base + "/accounts/not-an-account/history-1.dat").c_str(), F_OK) == 0);
+    printf("storage/settings and constrained all-account reset OK (%s)\n", root);
     return 0;
 }

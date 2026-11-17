@@ -83,7 +83,7 @@ class UiProbe {
                     setting->getSubItemText(0, 1) ==
                         QString::fromUtf8(w.settings_.get("uin").c_str()),
                 "settings use native label and value regions");
-        w.chooseSetting("password");
+        w.chooseSetting("account.0.password");
         require(!list->isVisible() && w.editor_->isVisible(),
                 "editor replaces native settings list");
         w.hide();
@@ -92,10 +92,22 @@ class UiProbe {
                 "background updates do not show a menu over the hidden editor");
         w.show();
         w.editorMenu();
-        require(list->isVisible(), "editor commands use native menu");
+        if (w.view().kind != View::Popup || !list->isVisible())
+            fprintf(stderr,
+                    "UI popup diagnostic: kind=%d context=%s editorHidden=%d editorVisible=%d "
+                    "action=%s menu=%d listHidden=%d listVisible=%d parentVisible=%d locked=%d "
+                    "rows=%u\n",
+                    int(w.view().kind), w.view().context.c_str(), w.editor_->isHidden(),
+                    w.editor_->isVisible(), w.editAction_.c_str(), w.systemMenuVisible(),
+                    list->isHidden(), list->isVisible(), w.isVisible(), w.locked_,
+                    unsigned(w.view().rows.size()));
+        require(w.view().kind == View::Popup && list->isVisible(),
+                "editor commands use bottom Motorola contextual popup");
         w.back();
         require(!list->isVisible() && w.editor_->isVisible(), "back restores original editor");
         w.finishEdit(false);
+        w.finishSettings(false);
+        w.showSettings("media");
         w.chooseSetting("video_kbps");
         int chosen = w.view().selected;
         require(list->isVisible() && list->currentItem() == chosen,
@@ -123,13 +135,15 @@ class UiProbe {
         require(w.view().selected == 20 &&
                     list->item(list->currentItem())->getSubItemText(0, 0) == "20",
                 "reverse navigation crosses native pages correctly");
+        w.finishSettings(false);
         w.home();
         w.showSettings("media");
         require(list->isVisible() && list->count() < 32, "settings replace a large file page");
         setting = static_cast<ZSettingItem *>(list->firstItem());
         require(setting->getSubItemText(0, 0) == uiText("Фото: размер") &&
-                    setting->getSubItemText(0, 1) == uiText("Мост"),
+                    setting->getSubItemText(0, 1) == uiText("как в профиле моста"),
                 "native settings preserve colon-containing label separately from value");
+        w.finishSettings(false);
         w.home();
         require(!list->isVisible(), "returning to contacts removes menu overlay");
         w.lastActivity_ = 0;
@@ -172,6 +186,7 @@ class UiProbe {
         w.settings_.set("host", "127.0.0.1");
         w.settings_.set("uin", "123456");
         w.settings_.set("password", "dummy");
+        w.settings_.set("psk", "test-code");
         w.settings_.setInt("auto_connect", 0);
         w.settings_.setInt("auto_reconnect", 0);
         w.settings_.setInt("encryption", 0);
@@ -182,6 +197,7 @@ class UiProbe {
         w.activate(w.view().rows[0]);
         require(w.view().kind == View::SettingsPage && w.view().context == "account",
                 "connect menu keeps missing account settings visible");
+        w.finishSettings(false);
         w.settings_.set("uin", "123456");
         w.home();
         w.settings_.set("host", "");
@@ -192,6 +208,7 @@ class UiProbe {
         w.back();
         require(w.view().kind == View::SettingsPage && w.view().context == "network",
                 "back from configuration error opens network settings");
+        w.finishSettings(false);
         w.settings_.set("host", "127.0.0.1");
         w.home();
         scheduleNetworkWorker(0);
@@ -218,8 +235,8 @@ class UiProbe {
         require(w.view().rows[0].action == "disconnect", "reconnecting menu offers cancellation");
         w.activate(w.view().rows[0]);
         require(w.connectionState_ == Event::Disconnected && w.manualDisconnect_ &&
-                    w.view().kind != View::Menu,
-                "cancel reconnect returns to application");
+                    w.view().context == "main-menu" && w.view().rows[0].action == "connect",
+                "cancel reconnect keeps Java main menu with connect action");
         require(w.selectScope(), "test account scope");
         w.storage_->clearAllHistory(initialError);
         w.chats_.clear();
@@ -231,6 +248,7 @@ class UiProbe {
         w.settings_.set("external_preview", "0");
         w.settings_.setInt("history_count", 200);
         w.settings_.setInt("chat_messages", 15);
+        w.settings_.setInt("use_groups", 1);
         w.settings_.setInt("auto_connect", 0);
         w.applySettings();
         Event roster;
@@ -330,11 +348,14 @@ class UiProbe {
         require(w.chats_[a.uin].unread == 0 && w.view().kind == View::Chat,
                 "opening chat clears unread");
         w.key(KEYCODE_RSK);
-        bool attachments = false;
-        for (size_t i = 0; i < w.view().rows.size(); ++i)
+        bool camera = false, attachments = false;
+        for (size_t i = 0; i < w.view().rows.size(); ++i) {
+            camera = camera || w.view().rows[i].action == "capture-photo";
             attachments = attachments || w.view().rows[i].action == "attachments";
-        require(w.view().kind == View::Menu && attachments && w.view().uin == a.uin,
-                "chat menu opens with attachments for the selected recipient");
+        }
+        require(w.view().kind == View::Popup && camera && !attachments && w.view().uin == a.uin &&
+                    w.view().selected == int(w.view().rows.size()) - 1,
+                "chat uses Java bottom popup with direct camera action for recipient");
         w.back();
         w.edit(QString::fromLatin1("Message"), "message", "Draft survives PIN", a.uin);
         require(w.editor_->text() == "Draft survives PIN", "native editor draft");
@@ -366,7 +387,7 @@ class UiProbe {
         require(!w.inputIndicator_->isVisible(), "closing editor hides input status");
         require(w.storage_->loadDraft(a.uin) == "Draft survives PIN", "cancel preserves draft");
         w.showSettings("account");
-        w.chooseSetting("password");
+        w.chooseSetting("account.0.password");
         require(w.editSecret_ && w.editor_->echoMode() == ZMultiLineEdit::Password &&
                     w.editor_->getInputField()->getType() == ZKbInputField::FIELD_TYPE_PASSWORD,
                 "password uses native secret field semantics, not only masking");
@@ -374,46 +395,49 @@ class UiProbe {
         w.editor_->setText(dummyPassword);
         w.editor_->setCursorPosition(0, 3);
         w.editorMenu();
-        require(w.view().rows[0].action == "editor-secret", "password menu offers visibility");
-        w.activate(w.view().rows[0]);
+        bool exposesPassword = false;
+        for (size_t i = 0; i < w.view().rows.size(); ++i)
+            exposesPassword = exposesPassword || w.view().rows[i].action == "editor-copy" ||
+                              w.view().rows[i].action == "editor-copy-all" ||
+                              w.view().rows[i].action == "editor-cut";
+        require(w.view().kind == View::Popup && !exposesPassword,
+                "secret editor popup does not copy or cut password text");
+        w.back();
         int line = -1, column = -1;
         w.editor_->getCursorPosition(&line, &column);
-        require(w.editor_->isVisible() && w.editor_->echoMode() == ZMultiLineEdit::Normal &&
+        require(w.editor_->isVisible() && w.editor_->echoMode() == ZMultiLineEdit::Password &&
                     w.editor_->text() == dummyPassword && line == 0 && column == 3 &&
                     w.editor_->getInputField()->getType() == ZKbInputField::FIELD_TYPE_PASSWORD,
-                "show password preserves text, cursor and native input rules");
-        w.editorMenu();
-        w.activate(w.view().rows[0]);
-        require(w.editor_->echoMode() == ZMultiLineEdit::Password,
-                "password menu can hide the text again");
-        w.editorMenu();
-        w.activate(w.view().rows[0]);
+                "password popup round trip preserves text, cursor and native input rules");
         w.suspend();
+        w.resume();
         require(w.editor_->echoMode() == ZMultiLineEdit::Password,
-                "background remasks a revealed password");
-        w.editorMenu();
-        w.activate(w.view().rows[0]);
+                "background keeps password masked");
         w.flipChanged(true);
         w.flipChanged(false);
         require(w.editor_->echoMode() == ZMultiLineEdit::Password,
-                "closing the flip remasks a revealed password");
-        w.editorMenu();
-        w.activate(w.view().rows[0]);
+                "closing the flip keeps password masked");
         w.lock();
         w.unlock();
         require(w.editor_->echoMode() == ZMultiLineEdit::Password &&
                     w.editor_->text() == dummyPassword,
-                "PIN remasks a revealed password without changing it");
+                "PIN preserves masked password and its text");
         w.finishEdit(true);
+        require(w.settingsDraft_.get("account.0.password") == std::string(dummyPassword.utf8()) &&
+                    w.settings_.get("password") != std::string(dummyPassword.utf8()),
+                "account password edits stay in the settings draft until Save");
+        w.finishSettings(true);
         Settings reloaded;
         require(reloaded.load(w.settings_.path(), initialError) &&
                     reloaded.get("password") == std::string(dummyPassword.utf8()),
                 "saved account password preserves case, spaces and UTF-8 after reload");
-        w.chooseSetting("password");
+        w.showSettings("account");
+        w.chooseSetting("account.0.password");
         require(w.editor_->text() == dummyPassword &&
                     w.editor_->echoMode() == ZMultiLineEdit::Password,
                 "reopening password starts masked with the exact saved value");
         w.finishEdit(false);
+        w.finishSettings(false);
         w.openChat(a.uin);
         w.edit(QString::fromLatin1("Message"), "message", "Before ", a.uin);
         require(!w.editSecret_ &&
@@ -483,12 +507,15 @@ class UiProbe {
         w.chooseSetting("video_kbps");
         require(w.view().kind == View::Choice && w.view().rows.size() > 4, "media uses choices");
         w.back();
+        w.finishSettings(false);
         w.home();
         w.activate(Row(QString::null, "settings"));
         w.activate(Row(QString::null, "settings:network"));
         w.chooseSetting("encryption");
-        w.activate(Row(QString::null, "set:encryption:1"));
-        require(w.settings_.getBool("encryption"), "setting choice persists");
+        require(w.settingsDraft_.getBool("encryption") && !w.settings_.getBool("encryption"),
+                "network toggle remains staged until Save");
+        w.finishSettings(true);
+        require(w.settings_.getBool("encryption"), "saved network setting persists");
         w.settings_.set("language", "en");
         w.applySettings();
         require(uiText("Настройки") == "Settings", "English UI translation");

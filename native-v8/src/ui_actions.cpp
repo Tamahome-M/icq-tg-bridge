@@ -3,6 +3,7 @@
 #include "ui_settings.h"
 #include "ui_language.h"
 #include "ui_files.h"
+#include "ui_smileys.h"
 #include "network_profile.h"
 #include <unistd.h>
 #include <sys/stat.h>
@@ -30,246 +31,6 @@ static void row(View &v, const char *text, const char *action, uint32_t id = 0,
                 unsigned value = 0) {
     v.rows.push_back(Row(u(text), action, id, value));
 }
-static std::vector<std::string> split(const std::string &s, char separator) {
-    std::vector<std::string> r;
-    size_t at = 0;
-    for (;;) {
-        size_t n = s.find(separator, at);
-        r.push_back(s.substr(at, n == std::string::npos ? n : n - at));
-        if (n == std::string::npos)
-            break;
-        at = n + 1;
-    }
-    return r;
-}
-void Window::mainMenu() {
-    View v(View::Menu, u("TeleMotoMax Native"));
-    const bool connecting =
-        connectionState_ == Event::Connecting || connectionState_ == Event::Reconnecting;
-    row(v,
-        connectionState_ == Event::Online ? "Отключиться"
-        : connecting                      ? "Отменить подключение"
-                                          : "Подключиться",
-        connectionState_ == Event::Online || connecting ? "disconnect" : "connect");
-    row(v, "Статус", "status");
-    row(v, "Контакты", "home");
-    row(v, "Контакт-лист", "contact-list");
-    if (loadedMediaReady_)
-        row(v, "Полученное вложение", "media-received");
-    if (!capturePath_.empty() && !outgoingRequest_)
-        row(v, "Неотправленное вложение", "attachment-pending");
-    row(v, "Настройки", "settings");
-    row(v, silent_ ? "Включить оповещения" : "Без звука", "silent");
-    row(v, "Блокировать", "lock");
-    row(v, "Журнал связи", "log");
-    row(v, "О программе", "about");
-    row(v, "Свернуть", "minimize");
-    row(v, "Выход", "exit");
-    push(v);
-}
-void Window::contactListMenu() {
-    View v(View::Menu, u("Контакт-лист"));
-    row(v, "Все чаты", "all-chats");
-    row(v, "Добавить контакт", "add-contact");
-    row(v, "Поиск", "search");
-    row(v, "Добавить группу", "add-group");
-    row(v, "Переименовать группу", "group-rename-list");
-    row(v, "Удалить группу", "group-delete-list");
-    row(v, "Списки приватности", "privacy-lists");
-    push(v);
-}
-void Window::contactMenu(uint32_t id) {
-    if (!id)
-        return;
-    View v(View::Menu, name(id));
-    v.uin = id;
-    row(v, "Написать", "compose", id);
-    ContactRecord *entry = contact(id);
-    if (entry && !entry->inRoster)
-        row(v, "Добавить контакт", "add-existing", id);
-    row(v, "Информация", "info", id);
-    row(v, "Локальные данные", "local-info", id);
-    row(v, "Аватар", "avatar", id);
-    row(v, "Переименовать", "rename-contact", id);
-    row(v, "Переместить в группу", "move-contact", id);
-    row(v, "Приватность", "privacy", id);
-    row(v, "Запросить авторизацию", "auth-request", id);
-    row(v, "Разрешить авторизацию", "auth-grant", id);
-    row(v, "Отказать в авторизации", "auth-deny", id);
-    row(v, "Удалить чат", "delete-confirm", id);
-    row(v, "Удалиться из его КЛ", "remove-confirm", id);
-    push(v);
-}
-void Window::chatMenu() {
-    uint32_t id = view().uin;
-    View v(View::Menu, name(id));
-    v.uin = id;
-    row(v, "Написать", "compose", id);
-    row(v, "История с сервера", "history", id);
-    row(v, "Локальная история", "local-history", id);
-    if (!quoteId_.empty())
-        row(v, "Цитировать сюда", "quote-here", id);
-    row(v, "Получать без оповещений", "quiet", id);
-    row(v, "Прикрепить", "attachments", id);
-    row(v, "Контакт", "contact-menu", id);
-    row(v, "Очистить этот чат", "clear-chat-confirm", id);
-    row(v, "Очистить локальную историю", "clear-history-confirm", id);
-    row(v, "Закрыть чат", "close-chat", id);
-    push(v);
-}
-void Window::messageMenu() {
-    const MessageRecord *m = selectedMessage();
-    if (!m)
-        return;
-    View v(View::Menu, u("Сообщение"));
-    v.uin = m->uin;
-    row(v, "Полный текст", "message-text");
-    row(v, "Копировать", "copy-message");
-    if (!m->nativeId.empty())
-        row(v, "Цитировать", "quote-select");
-    if (m->discussionUin)
-        row(v, "Обсуждение", "discussion", m->discussionUin);
-    if (m->kind == 1 || m->kind == 2)
-        row(v, "Смотреть фото", "photo");
-    if (m->kind == 2 || !m->url.empty())
-        row(v, "Смотреть видео", "video-menu");
-    if (m->kind == 3)
-        row(v, "Прослушать", "voice");
-    if (m->kind == 4)
-        row(v, "Получить файл", "file");
-    if (m->text.find("http://") != std::string::npos ||
-        m->text.find("https://") != std::string::npos || !m->url.empty())
-        row(v, "Открыть ссылку", "urls");
-    push(v);
-}
-void Window::playerMenu() {
-    View v(View::Menu, u("Плеер"));
-    row(v, paused_ ? "Продолжить" : "Пауза", "player-pause");
-    if (view().context != "outgoing-preview")
-        row(v, "Сохранить в папку", "save-media-file");
-    if (view().context != "outgoing-preview" && !videoToken_.empty())
-        row(v, "Следующий фрагмент", "player-next");
-    row(v, "Остановить и закрыть", "player-stop");
-    push(v);
-}
-void Window::settingsMenu() {
-    View v(View::Menu, u("Настройки"));
-    row(v, "Учётные записи", "accounts");
-    row(v, "Сеть", "settings:network");
-    row(v, "Интерфейс", "settings:interface");
-    row(v, "Чат и история", "settings:chat");
-    row(v, "Цветовая схема", "settings:theme");
-    row(v, "Фоновая картинка", "settings:background");
-    row(v, "Камера", "settings:camera");
-    row(v, "Медиа", "settings:media");
-    row(v, "Telegram", "settings:telegram");
-    row(v, "MAX", "settings:max");
-    row(v, "eXpress", "settings:express");
-    row(v, "Оповещения", "settings:notifications");
-    row(v, "Горячие клавиши", "hotkeys");
-    row(v, "Часовой пояс", "settings:timezone");
-    row(v, "Подсветка", "settings:backlight");
-    row(v, "Шаблоны", "templates");
-    row(v, "Сброс данных", "reset-confirm");
-    push(v);
-}
-void Window::showSettings(const std::string &section) {
-    View v(View::SettingsPage, u("Настройки"));
-    v.context = section;
-    const std::vector<SettingField> &fields = settingFields();
-    for (size_t i = 0; i < fields.size(); ++i) {
-        const SettingField &f = fields[i];
-        if (section != f.section)
-            continue;
-        std::string value = settingValue(settings_, f.key), display = value;
-        if (f.secret)
-            display = std::string(value.size(), '*');
-        else if (*f.choices) {
-            std::vector<std::string> choices = split(f.choices, '|');
-            for (size_t j = 0; j < choices.size(); ++j) {
-                size_t n = choices[j].find('=');
-                if (choices[j].substr(0, n) == value)
-                    display = n == std::string::npos ? choices[j] : choices[j].substr(n + 1);
-            }
-        }
-        v.rows.push_back(
-            Row(u(f.label) + ": " + u(display.c_str()), std::string("field:") + f.key));
-    }
-    if (view().kind == View::SettingsPage && view().context == section) {
-        v.selected = view().selected;
-        view() = v;
-        update();
-    } else
-        push(v);
-}
-void Window::chooseSetting(const std::string &key) {
-    const SettingField *f = settingField(key);
-    if (!f)
-        return;
-    if (key == "network_profile") {
-        std::vector<std::string> profiles;
-        std::string error;
-        View v(View::Choice, u(f->label));
-        v.context = key;
-        v.rows.push_back(Row(u("По умолчанию"), "set:network_profile:"));
-        if (!loadInternetProfiles(profiles, error))
-            info(u(error));
-        for (size_t i = 0; i < profiles.size(); ++i)
-            v.rows.push_back(Row(u(profiles[i]), "set:network_profile:" + profiles[i]));
-        push(v);
-        return;
-    }
-    if (key == "background_file") {
-        View v(View::Menu, u(f->label));
-        row(v, "Нет", "set:background_file:");
-        row(v, "Выбрать файл", "pick-background");
-        push(v);
-        return;
-    }
-    if (*f->choices) {
-        View v(View::Choice, u(f->label));
-        v.context = key;
-        std::vector<std::string> values = split(f->choices, '|');
-        for (size_t i = 0; i < values.size(); ++i) {
-            size_t p = values[i].find('=');
-            std::string value = values[i].substr(0, p),
-                        label = p == std::string::npos ? values[i] : values[i].substr(p + 1);
-            v.rows.push_back(Row(u(label.c_str()), "set:" + key + ":" + value));
-            if (value == settingValue(settings_, key))
-                v.selected = i;
-        }
-        push(v);
-    } else {
-        editKey_ = key;
-        edit(u(f->label), "setting", settingValue(settings_, key), 0, f->secret,
-             (key == "host" || key == "psk" || key == "password" || key == "dns_server" ||
-              key == "uin" || key == "lock_pin")
-                 ? f->maximum
-                 : 12);
-    }
-}
-void Window::commitSetting(const std::string &key, const std::string &value) {
-    const SettingField *f = settingField(key);
-    std::string error;
-    if (!f || !validateSetting(*f, value, error)) {
-        info(u(error));
-        return;
-    }
-    bool scope =
-        (key == "host" || key == "port" || key == "uin") && settingValue(settings_, key) != value;
-    if (scope) {
-        saveState();
-        disconnectClient();
-    }
-    settings_.set(key, value);
-    if (scope) {
-        selectScope();
-        home();
-        settingsMenu();
-        showSettings(f->section);
-    }
-    settingsChanged();
-}
 void Window::confirm(const QString &title, const std::string &action, uint32_t id, unsigned value) {
     View v(View::Menu, title);
     row(v, "Отмена", "back");
@@ -278,18 +39,40 @@ void Window::confirm(const QString &title, const std::string &action, uint32_t i
 }
 void Window::activateSelected() {
     if (view().kind == View::Text) {
-        if (!view().rows.empty())
-            copy(view().rows[0].text);
+        if (view().context == "contact-info" && view().selected >= 0 &&
+            view().selected < (int)view().rows.size() &&
+            view().rows[view().selected].action == "info-avatar-view" && !infoAvatar_.isNull()) {
+            picture_ = infoAvatar_;
+            pictureRotation_ = 0;
+            pictureZoom_ = 100;
+            push(View(View::Picture, u("Фото")));
+        }
+        return;
+    }
+    if (view().kind == View::Templates && view().context == "insert" && view().rows.empty()) {
+        activate(Row(QString::null, "template-return"));
         return;
     }
     if (view().kind == View::Chat || view().kind == View::History) {
-        if (view().selected < (int)view().rows.size() &&
-            view().rows[view().selected].action == "history-more")
-            history(true, true);
-        else
-            messageMenu();
+        const MessageRecord *m = selectedMessage();
+        if (!m)
+            return;
+        const bool historyView = view().kind == View::History;
+        const char *action = (m->kind == 2 || !m->url.empty()) ? "video-menu"
+                             : !historyView                    ? ""
+                             : m->kind == 1                    ? "photo"
+                             : m->kind == 3                    ? "voice"
+                             : m->kind == 4                    ? "file"
+                             : m->discussionUin                ? "discussion"
+                                                               : "";
+        if (*action)
+            activate(Row(QString::null, action,
+                         m->discussionUin && !m->kind ? m->discussionUin : m->uin));
         return;
     }
+    if (view().context == "privacy-editor" ||
+        (view().kind == View::Templates && view().context != "insert"))
+        return;
     if (view().selected >= 0 && view().selected < (int)view().rows.size())
         activate(view().rows[view().selected]);
 }
@@ -297,10 +80,44 @@ void Window::activate(const Row &chosen) {
     Row r = chosen;
     std::string action = r.action;
     uint32_t id = r.uin ? r.uin : view().uin;
+    r.uin = id;
     if (action == "back") {
         back();
         return;
     }
+    if (activateJavaMenu(r) || activateSettings(r))
+        return;
+    if (action == "editor-secret" || action == "editor-copy-all" || action == "editor-copy" ||
+        action == "editor-cut" || action == "editor-paste" || action == "editor-clear") {
+        // Dismiss only the command popup. Back on an underlying settings form
+        // means Cancel, so it must never be invoked a second time here.
+        if (view().kind == View::Popup)
+            stack_.pop_back();
+        if (action == "editor-secret" && editSecret_)
+            editor_->setEchoMode(editor_->echoMode() == ZMultiLineEdit::Password
+                                     ? ZMultiLineEdit::Normal
+                                     : ZMultiLineEdit::Password);
+        else if (action == "editor-copy-all")
+            copy(editor_->text());
+        else if (action == "editor-copy")
+            editor_->copy();
+        else if (action == "editor-cut")
+            editor_->cut();
+        else if (action == "editor-paste")
+            editor_->paste();
+        else if (action == "editor-clear")
+            editor_->clear();
+        editor_->show();
+        editor_->setFocus();
+        update();
+        return;
+    }
+    if (view().kind == View::Popup) {
+        stack_.pop_back();
+        syncSystemMenu();
+    }
+    if (activateMedia(r))
+        return;
     if (action == "home") {
         home();
         return;
@@ -427,6 +244,17 @@ void Window::activate(const Row &chosen) {
                      (c ? "\n" + status(c->status) + "\n" + u(c->group) : QString::null));
         return;
     }
+    if (action == "info-copy" || action == "info-copy-all") {
+        QString text;
+        for (size_t i = 0; i < view().rows.size(); ++i)
+            if (action == "info-copy-all" || int(i) == view().selected) {
+                if (!text.isEmpty())
+                    text += "\n";
+                text += view().rows[i].text;
+            }
+        copy("[" + QString::number(view().uin) + "]\n" + text);
+        return;
+    }
     if (action == "copy-view") {
         if (!view().rows.empty())
             copy(view().rows[0].text);
@@ -481,50 +309,6 @@ void Window::activate(const Row &chosen) {
             push(v);
             pending_[c.requestId] = "history";
         }
-        return;
-    }
-    if (action == "video-menu") {
-        View v(View::Menu, u("Смотреть видео"));
-        row(v, "Смотреть", "video");
-        const MessageRecord *m = selectedMessage();
-        if (m && !m->url.empty())
-            row(v, "Открыть в браузере", "video-browser");
-        push(v);
-        return;
-    }
-    if (action == "photo" || action == "video" || action == "voice" || action == "file") {
-        requestMedia(action == "photo" ? 1 : action == "video" ? 2 : action == "voice" ? 3 : 4);
-        return;
-    }
-    if (action == "video-browser") {
-        const MessageRecord *m = selectedMessage();
-        if (m)
-            openUrl(m->url);
-        return;
-    }
-    if (action == "urls") {
-        const MessageRecord *m = selectedMessage();
-        if (!m)
-            return;
-        View v(View::Menu, u("Ссылки"));
-        if (!m->url.empty())
-            v.rows.push_back(Row(u(m->url), "url:" + m->url));
-        size_t at = 0;
-        while (at < m->text.size()) {
-            size_t h = m->text.find("http", at);
-            if (h == std::string::npos)
-                break;
-            size_t end = m->text.find_first_of(" \r\n\t<>", h);
-            std::string url = m->text.substr(h, end == std::string::npos ? end : end - h);
-            if (url.find("http://") == 0 || url.find("https://") == 0)
-                v.rows.push_back(Row(u(url), "url:" + url));
-            at = end == std::string::npos ? m->text.size() : end + 1;
-        }
-        push(v);
-        return;
-    }
-    if (action.compare(0, 4, "url:") == 0) {
-        openUrl(action.substr(4));
         return;
     }
     if (action == "quiet") {
@@ -720,199 +504,6 @@ void Window::activate(const Row &chosen) {
         rebuildRoster();
         return;
     }
-    if (action == "attachment-pending") {
-        showAttachmentReview();
-        return;
-    }
-    if (action == "attachments") {
-        attachmentMenu(id);
-        return;
-    }
-    if (action == "capture-photo" || action == "capture-voice" || action == "capture-video") {
-        if (capture_.busy() || !capturePath_.empty() || outgoingRequest_) {
-            if (!capturePath_.empty() && !outgoingRequest_)
-                showAttachmentReview();
-            else
-                info(u("Завершите текущую запись"));
-            return;
-        }
-        capture_.setProfile(u(settingValue(settings_, "camera_size")),
-                            u(settingValue(settings_, "camera_encoding")));
-        capture_.setVoiceBitrate(settingNumber(settings_, "voice_kbps10")
-                                     ? settingNumber(settings_, "voice_kbps10") * 100
-                                     : 6700);
-        captureUin_ = id;
-        captureKind_ = action == "capture-photo" ? 1 : action == "capture-video" ? 2 : 3;
-        std::string path = storage_->accountDir() + "/capture-" + num((unsigned)time(0)) +
-                           (captureKind_ == 1   ? ".jpg"
-                            : captureKind_ == 2 ? ".3gp"
-                                                : ".amr");
-        if (captureKind_ == 1) {
-            capture_.capturePhoto(u(path));
-            resume();
-        } else if (captureKind_ == 2) {
-            capture_.recordVideo(u(path), 30);
-            resume();
-        } else {
-            View v(View::Recording, u("Голосовое"));
-            v.context = "recording";
-            v.uin = id;
-            v.details = u("Кому: ") + name(id);
-            v.status = u("Запись: 0 с");
-            row(v, "Готово", "record-stop");
-            row(v, "Отмена", "record-cancel");
-            push(v);
-            capture_.recordVoice(u(path), settingNumber(settings_, "voice_seconds")
-                                              ? settingNumber(settings_, "voice_seconds")
-                                              : 60);
-        }
-        return;
-    }
-    if (action == "upload-file") {
-        pickUin_ = id;
-        pickKind_ = 4;
-        files("", "upload");
-        return;
-    }
-    if (action == "upload-media") {
-        View v(View::Menu, u("Отправить медиа"));
-        row(v, "Фото", "pick-photo", id);
-        row(v, "Видео", "pick-video", id);
-        row(v, "Звук", "pick-voice", id);
-        push(v);
-        return;
-    }
-    if (action == "pick-photo" || action == "pick-video" || action == "pick-voice") {
-        pickUin_ = id;
-        pickKind_ = action == "pick-photo" ? 1 : action == "pick-video" ? 2 : 3;
-        files("", "upload");
-        return;
-    }
-    if (action == "pick-background") {
-        files("", "background");
-        return;
-    }
-    if (action.compare(0, 10, "directory:") == 0 || action == "directory") {
-        view().directory = action == "directory" ? std::string(r.text.utf8()) : action.substr(10);
-        loadFiles();
-        return;
-    }
-    if (action == "file-select") {
-        std::string path = view().directory + "/" + std::string(r.text.utf8()),
-                    purpose = view().context;
-        if (purpose == "background") {
-            settings_.set("background_file", path);
-            back();
-            settingsChanged();
-        } else if (purpose == "upload")
-            reviewAttachment(path, pickKind_, pickUin_, false);
-        return;
-    }
-    if (action == "save-here") {
-        std::string path = view().directory + "/" + downloadName_, error;
-        if (!copyMediaFile(playPath_, path, error))
-            info(u(error.empty() ? "Не удалось сохранить файл" : error));
-        else {
-            back();
-            info(u("Сохранено: " + path));
-        }
-        return;
-    }
-    if (action == "record-stop") {
-        capture_.stop();
-        return;
-    }
-    if (action == "record-cancel") {
-        capture_.cancel();
-        back();
-        return;
-    }
-    if (action == "capture-send") {
-        if (capturePath_.empty()) {
-            info(u("Вложение недоступно"));
-            return;
-        }
-        upload(capturePath_, captureKind_, captureUin_);
-        return;
-    }
-    if (action == "capture-delete") {
-        back();
-        return;
-    }
-    if (action == "capture-preview") {
-        previewAttachment();
-        return;
-    }
-    if (action == "attachment-details") {
-        struct stat st;
-        QString details = u("Кому: ") + name(captureUin_) + "\n" + u(capturePath_);
-        if (!stat(capturePath_.c_str(), &st))
-            details += "\n" + QString::number((unsigned long)st.st_size) + u(" байт");
-        showText(u("Вложение"), details);
-        return;
-    }
-    if (action == "attachment-replace") {
-        uint32_t target = captureUin_;
-        unsigned kind = captureKind_;
-        bool owned = captureOwned_;
-        back();
-        if (!owned) {
-            if (view().kind != View::Files || view().context != "upload" || pickUin_ != target ||
-                pickKind_ != kind) {
-                pickUin_ = target;
-                pickKind_ = kind;
-                files("", "upload");
-            }
-        } else
-            activate(Row(QString::null,
-                         kind == 1   ? "capture-photo"
-                         : kind == 2 ? "capture-video"
-                                     : "capture-voice",
-                         target));
-        return;
-    }
-    if (action == "transfer-cancel") {
-        back();
-        return;
-    }
-    if (action == "player-pause") {
-        if (player_.pause(!paused_))
-            paused_ = !paused_;
-        back();
-        return;
-    }
-    if (action == "player-next") {
-        back();
-        nextVideo();
-        return;
-    }
-    if (action == "player-stop") {
-        back();
-        back();
-        return;
-    }
-    if (action == "file-details") {
-        showText(u("Файл"), u(downloadName_) + "\n" + u(playPath_));
-        return;
-    }
-    if (action == "save-media-file") {
-        files("", "save-media");
-        return;
-    }
-    if (action == "open-media-file") {
-        platform_.openFile(u(playPath_));
-        return;
-    }
-    if (action == "media-received") {
-        Event e;
-        e.path = receivedPath_;
-        e.filename = receivedName_;
-        e.requestId = client_.nextRequestId();
-        pending_[e.requestId] = savedMediaPurpose_;
-        showMedia(e);
-        pending_.erase(e.requestId);
-        return;
-    }
     if (action == "templates") {
         showTemplates(false);
         return;
@@ -965,51 +556,35 @@ void Window::activate(const Row &chosen) {
         }
         return;
     }
-    if (action == "editor-secret" && editSecret_) {
-        editor_->setEchoMode(editor_->echoMode() == ZMultiLineEdit::Password
-                                 ? ZMultiLineEdit::Normal
-                                 : ZMultiLineEdit::Password);
-        back();
-        return;
-    }
-    if (action == "editor-copy-all") {
-        copy(editor_->text());
-        return;
-    }
-    if (action == "editor-copy") {
-        editor_->copy();
-        return;
-    }
-    if (action == "editor-cut") {
-        editor_->cut();
-        return;
-    }
-    if (action == "editor-paste") {
-        editor_->paste();
-        back();
-        editor_->show();
-        return;
-    }
-    if (action == "editor-clear") {
-        editor_->clear();
-        back();
-        editor_->show();
-        return;
-    }
     if (action == "editor-back") {
         finishEdit(false);
         return;
     }
     if (action == "smileys") {
         View v(View::Menu, u("Смайлы"));
-        const char *codes[] = {":)", ":(", ";)", ":D", ":P", "*IN_LOVE*", "(y)", "*THUMBS_UP*"};
-        for (unsigned i = 0; i < 8; ++i)
-            v.rows.push_back(Row(u(codes[i]), std::string("insert:") + codes[i]));
+        v.context = "smileys";
+        std::vector<SmileyDefinition> smileys;
+        unsigned cellSize = 16;
+        std::string error;
+        if (!loadJavaSmileys("smiles.txt", smileys, cellSize, error)) {
+            info(u(error));
+            editor_->show();
+            editor_->setFocus();
+            return;
+        }
+        v.offset = cellSize;
+        for (size_t i = 0; i < smileys.size(); ++i)
+            v.rows.push_back(Row(u(smileys[i].code + "  " + smileys[i].label),
+                                 "insert:" + smileys[i].code, 0, smileys[i].index));
+        v.selected =
+            std::max(0, std::min(int(v.rows.size()) - 1, settings_.getInt("smiley_cursor", 0)));
         push(v);
         return;
     }
     if (action.compare(0, 7, "insert:") == 0) {
-        editor_->insert(u(action.substr(7)));
+        if (view().context == "smileys")
+            settings_.setInt("smiley_cursor", view().selected);
+        editor_->insert(u(" " + action.substr(7) + " "));
         while (stack_.size() > editDepth_)
             stack_.pop_back();
         editor_->show();
@@ -1191,9 +766,7 @@ void Window::hotkey(int code) {
         key = "call";
     else
         return;
-    std::string action = settings_.get("hotkey." + key, key == "#"      ? "lock"
-                                                        : key == "call" ? "compose"
-                                                                        : "none");
+    std::string action = settings_.get("hotkey." + key, javaHotkeyDefault(key));
     if (action == "none")
         return;
     if (action == "top")
@@ -1203,7 +776,7 @@ void Window::hotkey(int code) {
     else if (action == "page-up")
         view().selected = std::max(0, view().selected - 6);
     else if (action == "page-down")
-        view().selected = std::min((int)view().rows.size() - 1, view().selected + 6);
+        view().selected = std::max(0, std::min((int)view().rows.size() - 1, view().selected + 6));
     else if (action == "up")
         this->key(KEYCODE_UP);
     else if (action == "down")
@@ -1214,7 +787,10 @@ void Window::hotkey(int code) {
         this->key(KEYCODE_LEFT);
     else if (action == "select")
         activateSelected();
-    else if (action == "fullscreen") {
+    else if (action == "offline-toggle") {
+        settings_.setBool("hide_offline", !settingFlag(settings_, "hide_offline"));
+        rebuildRoster();
+    } else if (action == "fullscreen") {
         settings_.setBool("fullscreen", !settingFlag(settings_, "fullscreen"));
         applySettings();
     } else if (action == "groups") {

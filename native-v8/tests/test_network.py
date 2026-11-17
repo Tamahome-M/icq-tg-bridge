@@ -211,7 +211,9 @@ async def scenario(executable, folder, encryption, md5):
             if len(removed)==2:break
             await asyncio.sleep(.01)
         assert removed==[(second,False),(second,True)],removed
-        process.stdin.write(b'stop\nstart\n'); await process.stdin.drain()
+        process.stdin.write(b'stop-wait\n'); await process.stdin.drain()
+        assert (await phone.wait(lambda e: 'joined' in e))['joined']
+        process.stdin.write(b'start\n'); await process.stdin.drain()
         await phone.wait(lambda e:e.get('type')==0 and e.get('state')==2 and e.get('generation')==2)
         print('PASS native OSCAR', 'TMME' if encryption else 'plain', 'MD5' if md5 else 'XOR')
     finally:

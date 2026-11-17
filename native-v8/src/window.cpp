@@ -48,12 +48,13 @@ Window::Window(const std::string &dir)
       systemMenu_(0), systemChrome_(0), data_(dir), editUin_(0), quoteUin_(0), captureUin_(0),
       pickUin_(0), videoUin_(0), videoSegment_(0), outgoingRequest_(0),
       connectionState_(Event::Disconnected), captureKind_(0), pickKind_(0), playPosition_(0),
-      playDuration_(0), generation_(0), editDepth_(0), connectionProgress_(0),
-      loadedMediaReady_(false), editSecret_(false), captureOwned_(false),
-      connectionErrorShown_(false), locked_(false), closed_(false), editorWasVisible_(false),
-      silent_(false), paused_(false), manualDisconnect_(false), lightOn_(true), closedAt_(0),
-      startedAt_(now()), lastAlert_(0), lastActivity_(now()), typingSentAt_(0), noticeUntil_(0),
-      tickerUntil_(0), pictureZoom_(100), pictureRotation_(0) {
+      playDuration_(0), generation_(0), editDepth_(0), connectionProgress_(0), settingsDepth_(0),
+      loadedMediaReady_(false), editSecret_(false), captureOwned_(false), receivedDeferred_(false),
+      connectionErrorShown_(false), settingsEditing_(false), resetComplete_(false), locked_(false),
+      closed_(false), editorWasVisible_(false), silent_(false), paused_(false),
+      manualDisconnect_(false), lightOn_(true), closedAt_(0), startedAt_(now()), lastAlert_(0),
+      lastActivity_(now()), typingSentAt_(0), noticeUntil_(0), tickerUntil_(0), pictureZoom_(100),
+      pictureRotation_(0), infoAvatarUin_(0) {
     setCaption("TeleMotoMax Native");
     setFocusPolicy(StrongFocus);
     setBackgroundMode(NoBackground);
@@ -62,6 +63,11 @@ Window::Window(const std::string &dir)
     if (!settings_.load(dir + "/settings", error)) {
         note(error);
         info(u(error));
+    }
+    if (migrateJavaSettings(settings_)) {
+        std::string migrationError;
+        if (!settings_.save(migrationError))
+            note(migrationError);
     }
     setUiLanguage(settingValue(settings_, "language"));
     silent_ = settings_.getBool("silent", false);
@@ -132,6 +138,8 @@ Window::~Window() {
     delete storage_;
 }
 void Window::saveState() {
+    if (resetComplete_)
+        return;
     saveDraft();
     settings_.setBool("silent", silent_);
     std::string e;
@@ -155,8 +163,9 @@ bool Window::systemMenuVisible() const {
         (editor_ && !editor_->isHidden()))
         return false;
     View::Kind kind = view().kind;
-    return kind == View::Menu || kind == View::SettingsPage || kind == View::Choice ||
-           kind == View::Files || kind == View::Templates || kind == View::AttachmentReview;
+    return kind == View::Menu || kind == View::Popup || kind == View::SettingsPage ||
+           kind == View::Choice || kind == View::Files || kind == View::Templates ||
+           kind == View::AttachmentReview;
 }
 void Window::syncSystemMenu() {
     if (!systemMenu_ || stack_.empty())
@@ -183,6 +192,8 @@ void Window::syncVideoVisibility() {
         video->hide();
 }
 void Window::push(const View &v) {
+    if (v.kind == View::Popup && view().kind != View::Popup)
+        popupBackdrop_ = QPixmap::grabWidget(this);
     if (stack_.size() < 32)
         stack_.push_back(v);
     if (editor_)
@@ -193,6 +204,10 @@ void Window::push(const View &v) {
 void Window::back() {
     if (editor_ && editor_->isVisible()) {
         finishEdit(false);
+        return;
+    }
+    if (settingsPageActive()) {
+        finishSettings(false);
         return;
     }
     if (stack_.size() > 1) {
@@ -218,6 +233,11 @@ void Window::back() {
                 w->hide();
         }
         stack_.pop_back();
+        bool popup = false;
+        for (size_t i = 0; i < stack_.size(); ++i)
+            popup = popup || stack_[i].kind == View::Popup;
+        if (!popup)
+            popupBackdrop_ = QPixmap();
         if (view().kind == View::Chat)
             rebuildChat();
     } else
@@ -230,6 +250,7 @@ void Window::back() {
     update();
 }
 void Window::home() {
+    popupBackdrop_ = QPixmap();
     stack_.clear();
     stack_.push_back(View(View::Roster, u("Контакты")));
     syncVideoVisibility();
@@ -363,7 +384,7 @@ void Window::resizeEvent(QResizeEvent *) {
     syncSystemMenu();
     QWidget *w = player_.videoWidget();
     if (w && w->isVisible())
-        w->setGeometry(0, 30, width(), height() - 88);
+        w->setGeometry(0, 29, width(), std::max(1, height() - 56));
     refreshBackground();
 }
 void Window::showEvent(QShowEvent *) {
@@ -394,6 +415,7 @@ void Window::resume() {
         systemMenu_->focus();
     else
         setFocus();
+    openDeferredMedia();
     syncVideoVisibility();
     update();
 }
@@ -417,6 +439,7 @@ void Window::flipChanged(bool closed) {
                 (unsigned long)settingNumber(settings_, "flip_lock_minutes") * 60000)
             lock();
         closedAt_ = 0;
+        openDeferredMedia();
     }
     syncVideoVisibility();
     update();
@@ -446,6 +469,7 @@ void Window::unlock() {
         editor_->show();
     editorWasVisible_ = false;
     platform_.setBacklight(true);
+    openDeferredMedia();
     syncVideoVisibility();
     update();
 }
@@ -528,7 +552,7 @@ bool Window::eventFilter(QObject *object, QEvent *event) {
             return true;
         }
         if (code == KEYCODE_LSK) {
-            finishEdit(true);
+            finishEdit(false);
             return true;
         }
         if (code == KEYCODE_RSK) {
@@ -578,26 +602,8 @@ void Window::key(int code) {
         else if (code == KEYCODE_RSK)
             code = KEYCODE_LSK;
     }
-    if (connectionProgressVisible()) {
-        if (code == KEYCODE_LSK || code == KEYCODE_CLEAR)
-            disconnectClient();
-        else if (code == KEYCODE_RSK)
-            mainMenu();
+    if (javaKey(code))
         return;
-    }
-    if (view().kind == View::Transfer) {
-        if (code == KEYCODE_LSK || code == KEYCODE_RSK || code == KEYCODE_CLEAR ||
-            code == KEYCODE_CENTER_SELECT)
-            back();
-        return;
-    }
-    if (view().kind == View::Recording) {
-        if (code == KEYCODE_LSK || code == KEYCODE_CENTER_SELECT)
-            capture_.stop();
-        else if (code == KEYCODE_RSK || code == KEYCODE_CLEAR)
-            back();
-        return;
-    }
     if (view().kind == View::Text && (code == KEYCODE_UP || code == KEYCODE_DOWN)) {
         int max = 0;
         if (!view().rows.empty())
@@ -609,53 +615,6 @@ void Window::key(int code) {
                                   25);
         view().selected =
             std::max(0, std::min(max, view().selected + (code == KEYCODE_UP ? -1 : 1)));
-        update();
-        return;
-    }
-    if (view().kind == View::Picture) {
-        if (code == KEYCODE_UP) {
-            int zoom = std::min(400, pictureZoom_ + 25);
-            unsigned long pixels = (unsigned long)picture_.width() * picture_.height();
-            if (pixels / 100 * zoom / 100 * zoom <= 2000000UL)
-                pictureZoom_ = zoom;
-        } else if (code == KEYCODE_DOWN)
-            pictureZoom_ = std::max(1, pictureZoom_ - (pictureZoom_ > 25 ? 25 : 5));
-        else if (code == KEYCODE_RIGHT)
-            pictureRotation_ = (pictureRotation_ + 90) % 360;
-        else if (code == KEYCODE_LEFT)
-            pictureRotation_ = (pictureRotation_ + 270) % 360;
-        else if (code == KEYCODE_RSK || code == KEYCODE_CLEAR)
-            back();
-        else if (code == KEYCODE_LSK) {
-            if (view().context == "outgoing-preview")
-                back();
-            else
-                files("", "save-media");
-        }
-        update();
-        return;
-    }
-    if (view().kind == View::Player) {
-        if (code == KEYCODE_3 && view().context != "outgoing-preview" && !videoToken_.empty()) {
-            nextVideo();
-            return;
-        }
-        if (code == KEYCODE_CENTER_SELECT || code == KEYCODE_SEND) {
-            if (player_.pause(!paused_))
-                paused_ = !paused_;
-        } else if (code == KEYCODE_LEFT)
-            player_.seek(playPosition_ > 10000 ? playPosition_ - 10000 : 0);
-        else if (code == KEYCODE_RIGHT)
-            player_.seek(playPosition_ + 10000);
-        else if (code == KEYCODE_UP || code == KEYCODE_DOWN) {
-            int v = settings_.getInt("player_volume", 70) + (code == KEYCODE_UP ? 10 : -10);
-            v = std::max(0, std::min(100, v));
-            settings_.setInt("player_volume", v);
-            player_.setVolume(v);
-        } else if (code == KEYCODE_RSK || code == KEYCODE_CLEAR)
-            back();
-        else if (code == KEYCODE_LSK)
-            playerMenu();
         update();
         return;
     }
@@ -687,41 +646,17 @@ void Window::key(int code) {
         activateSelected();
         return;
     }
-    if (code == KEYCODE_RSK || code == KEYCODE_CLEAR) {
-        if (view().kind == View::Chat)
-            chatMenu();
-        else
-            back();
-        return;
-    }
-    if (code == KEYCODE_LSK) {
-        if (view().kind == View::Chat)
-            edit(u("Сообщение"), "message", storage_->loadDraft(view().uin), view().uin);
-        else if (view().kind == View::Roster)
-            mainMenu();
-        else if (view().kind == View::History) {
-            View menu(View::Menu, u("История"));
-            menu.uin = view().uin;
-            menu.rows.push_back(Row(u("Поиск"), "history-search"));
-            menu.rows.push_back(Row(u("Очистить поиск"), "history-search-clear"));
-            menu.rows.push_back(Row(u("К сообщению"), "back"));
-            push(menu);
-        } else
-            activateSelected();
-        return;
-    }
     if (code == KEYCODE_LEFT || code == KEYCODE_RIGHT) {
         if (view().kind == View::Chat) {
-            std::map<uint32_t, ChatState>::iterator i = chats_.find(view().uin);
-            if (code == KEYCODE_RIGHT) {
-                if (++i == chats_.end())
-                    i = chats_.begin();
-            } else {
-                if (i == chats_.begin())
-                    i = chats_.end();
-                --i;
+            std::vector<uint32_t> active;
+            for (size_t n = 0; n < openChatOrder_.size(); ++n)
+                if (chats_.find(openChatOrder_[n]) != chats_.end())
+                    active.push_back(openChatOrder_[n]);
+            if (!active.empty()) {
+                size_t at = std::find(active.begin(), active.end(), view().uin) - active.begin();
+                at = (at + (code == KEYCODE_RIGHT ? 1 : active.size() - 1)) % active.size();
+                openChat(active[at]);
             }
-            openChat(i->first);
         } else {
             int jump = std::max(1, (height() - 60) / 30);
             view().selected =
@@ -736,44 +671,89 @@ void Window::key(int code) {
 void Window::drawHeader(QPainter &p) {
     QString title = locked_ ? u("Заблокировано")
                             : (editor_ && editor_->isVisible() ? editTitle_ : view().title);
-    if (view().kind == View::Picture)
-        title += " " + number(pictureZoom_) + "%";
-    if (connectionProgressVisible())
-        title = u("Подключение");
-    if (unread() && view().kind != View::Transfer && view().kind != View::AttachmentReview &&
-        view().kind != View::Recording && !connectionProgressVisible())
-        title += " [" + number(unread()) + "]";
-    systemChrome_->drawHeader(p, QRect(0, 0, width(), 28), title,
-                              settingNumber(settings_, "caption_offset"));
-}
-void Window::drawFooter(QPainter &p) {
-    QString left = u("Выбрать"), right = u("Назад");
-    if (view().kind == View::Roster || view().kind == View::History)
-        left = u("Меню");
-    if (view().kind == View::Chat) {
-        left = u("Написать");
-        right = u("Меню");
+    bool roster = view().kind == View::Roster && !locked_;
+    if (roster) {
+        unsigned total = 0, on = 0;
+        for (size_t i = 0; i < contacts_.size(); ++i)
+            if (contacts_[i].type == 0 && contacts_[i].uin && !contacts_[i].deleted) {
+                ++total;
+                if (contacts_[i].status != 0xffffffffU && !(contacts_[i].status & 0x100))
+                    ++on;
+            }
+        title = QString::number(on) + "/" + QString::number(total);
+    } else if (view().kind == View::Chat && !locked_ && !(editor_ && editor_->isVisible())) {
+        title = name(view().uin);
+        unsigned index = 0, count = 0;
+        for (size_t i = 0; i < openChatOrder_.size(); ++i)
+            if (chats_.find(openChatOrder_[i]) != chats_.end()) {
+                ++count;
+                if (openChatOrder_[i] == view().uin)
+                    index = count;
+            }
+        if (count > 1)
+            title += " (" + QString::number(index) + "/" + QString::number(count) + ")";
     }
     if (view().kind == View::Picture)
-        left = u(view().context == "outgoing-preview" ? "Назад" : "Сохранить");
-    if (view().kind == View::Transfer) {
+        title += " " + number(pictureZoom_) + "%";
+    if (connectionProgressVisible()) {
+        title = u("Подключение");
+        roster = false;
+    }
+    int offset = settingNumber(settings_, "caption_offset") * width() / 100;
+    systemChrome_->drawHeader(p, QRect(0, 0, width(), 28), title, offset + (roster ? 20 : 0));
+    if (roster && !statusIcons_.isNull()) {
+        unsigned own =
+            connectionState_ == Event::Online ? settings_.getInt("status", 0) : 0xffffffffU;
+        p.drawPixmap(4, 6, statusIcons_, statusIcon(own) * 16, 0, 16, 16);
+    }
+}
+void Window::drawFooter(QPainter &p) {
+    QString left = u("Назад"), right = u("Выбрать");
+    const std::string &context = view().context;
+    if (view().kind == View::Roster) {
+        left = u("Меню");
+        right = u("Выбрать");
+    } else if (view().kind == View::Chat) {
+        left = u("Закрыть");
+        right = u("Меню");
+    } else if (view().kind == View::History || view().kind == View::Templates)
+        right = u("Меню");
+    else if (view().kind == View::Popup)
+        left = u("Отмена");
+    else if (view().kind == View::Text || view().kind == View::Picture)
+        right = QString::null;
+    if (view().kind == View::Templates && context == "insert")
+        left = u("Выбрать");
+    if (context == "main-menu")
+        left = contacts_.empty() ? QString::null : u("Чаты");
+    if (settingsPageActive() || context == "settings-theme")
+        right = (settingsSection_ == "account" ? u("Меню") : u("Сохр."));
+    if (context == "privacy-editor") {
+        left = u("Отмена");
+        right = u("Меню");
+    }
+    if (context == "contact-info" && !view().request)
+        right = u("Меню");
+    if (context == "quiet-settings") {
+        left = u("Сохр.");
+        right = u("Назад");
+    }
+    if (context == "chat-delete") {
+        left = u("Отмена");
+        right = u("ОК");
+    }
+    if (view().kind == View::Recording)
+        right = QString::null;
+    if (view().kind == View::Transfer)
+        right = QString::null;
+    if (view().kind == View::Player)
+        right = context == "player-video" && !videoToken_.empty() ? u("Дальше") : QString::null;
+    if (connectionProgressVisible()) {
         left = u("Отмена");
         right = QString::null;
     }
-    if (view().kind == View::Recording) {
-        left = u("Готово");
-        right = u("Отмена");
-    }
-    if (connectionProgressVisible()) {
-        left = u("Отмена");
-        right = u("Меню");
-    }
-    if (view().kind == View::Player)
-        left = u("Меню");
     if (editor_ && editor_->isVisible()) {
-        left = u("Отправить");
-        if (editAction_ != "message")
-            left = u("Сохранить");
+        left = u("Отмена");
         right = u("Меню");
     }
     if (locked_) {
@@ -789,7 +769,10 @@ void Window::drawFooter(QPainter &p) {
     systemChrome_->drawFooter(p, QRect(0, height() - 26, width(), 26), left, right);
 }
 int Window::rowHeight(const Row &r) const {
-    if (view().kind != View::Chat && view().kind != View::History)
+    if (view().context == "contact-info" && r.action == "info-avatar-view")
+        return infoAvatar_.isNull() ? 30 : infoAvatar_.height() + 8;
+    if (view().kind != View::Chat && view().kind != View::History &&
+        view().context != "contact-info")
         return 30;
     QFontMetrics metrics(QFont("Helvetica", settingNumber(settings_, "chat_font_size")));
     return std::max(
@@ -805,7 +788,8 @@ int Window::rowHeight(const Row &r) const {
 void Window::drawList(QPainter &p) {
     View &v = view();
     bool chat = v.kind == View::Chat || v.kind == View::History;
-    if (chat)
+    bool fields = v.context == "contact-info";
+    if (chat || fields)
         p.setFont(QFont("Helvetica", settingNumber(settings_, "chat_font_size")));
     int available = height() - 56;
     if (v.selected < v.top)
@@ -823,7 +807,7 @@ void Window::drawList(QPainter &p) {
         int h = rowHeight(v.rows[i]);
         bool selected = i == v.selected;
         if (selected)
-            p.fillRect(0, y, width(), std::min(h, available), QColor(75, 123, 159));
+            p.fillRect(0, y, width(), std::min(h, available), QColor(interfaceColor(settings_, 4)));
         const MessageRecord *m = 0;
         if (chat && v.rows[i].action == "message-menu") {
             if (v.kind == View::History && v.rows[i].value < v.messages.size())
@@ -834,10 +818,10 @@ void Window::drawList(QPainter &p) {
                     m = &c->second.messages[v.rows[i].value];
             }
         }
-        QColor text = settingValue(settings_, "theme") == "dark" ? Qt::white : Qt::black;
+        QColor text(interfaceColor(settings_, 2));
         if (m && settingFlag(settings_, "colored_text"))
-            text = m->outgoing ? QColor(25, 100, 55) : QColor(30, 60, 120);
-        QColor ink = selected ? Qt::white : text;
+            text = QColor(interfaceColor(settings_, m->outgoing ? 3 : 6));
+        QColor ink = text;
         p.setPen(ink);
         bool decorated = chat && (settingFlag(settings_, "show_icons") ||
                                   settingFlag(settings_, "show_receipts"));
@@ -893,9 +877,13 @@ void Window::drawList(QPainter &p) {
                 }
             }
         }
-        p.drawText(left, y + 4 - offset, width() - left - 7, h - 8,
-                   Qt::AlignLeft | (chat ? Qt::WordBreak : Qt::AlignVCenter | Qt::SingleLine),
-                   v.rows[i].text);
+        if (fields && v.rows[i].action == "info-avatar-view" && !infoAvatar_.isNull())
+            p.drawPixmap((width() - infoAvatar_.width()) / 2, y + 4 - offset, infoAvatar_);
+        else
+            p.drawText(left, y + 4 - offset, width() - left - 7, h - 8,
+                       Qt::AlignLeft |
+                           ((chat || fields) ? Qt::WordBreak : Qt::AlignVCenter | Qt::SingleLine),
+                       v.rows[i].text);
         y += std::min(h, available);
     }
     if (v.rows.empty()) {
@@ -924,13 +912,14 @@ void Window::paintEvent(QPaintEvent *event) {
     screen.drawPixmap(area.x(), area.y(), frame_, area.x(), area.y(), area.width(), area.height());
 }
 void Window::drawFrame(QPainter &p) {
-    bool dark = settingValue(settings_, "theme") == "dark";
+    if (view().kind == View::Popup && !locked_ && !popupBackdrop_.isNull()) {
+        p.drawPixmap(0, 0, popupBackdrop_);
+        drawFooter(p);
+        return;
+    }
     // Transparent native skin parts blend against the phone's palette in menus.
     p.fillRect(rect(), systemMenuVisible() ? palette().active().background()
-                       : dark              ? QColor(20, 22, 25)
-                       : settingValue(settings_, "theme") == "blue"  ? QColor(216, 235, 252)
-                       : settingValue(settings_, "theme") == "green" ? QColor(222, 246, 224)
-                                                                     : QColor(245, 246, 248));
+                                           : QColor(interfaceColor(settings_, 1)));
     if (!background_.isNull() && !locked_ && !systemMenuVisible() &&
         view().kind != View::Transfer && view().kind != View::Recording &&
         !connectionProgressVisible()) {
@@ -940,10 +929,12 @@ void Window::drawFrame(QPainter &p) {
             p.drawPixmap((width() - background_.width()) / 2,
                          28 + (height() - 56 - background_.height()) / 2, background_);
     }
-    drawHeader(p);
+    if (!(editor_ && editor_->isVisible() && editAction_ == "message" &&
+          settingFlag(settings_, "full_editor")))
+        drawHeader(p);
     drawFooter(p);
     if (locked_) {
-        p.setPen(dark ? Qt::white : Qt::black);
+        p.setPen(QColor(interfaceColor(settings_, 2)));
         QString stars;
         stars.fill('*', pin_.length());
         QString text = settingValue(settings_, "lock_pin").empty()
@@ -971,7 +962,7 @@ void Window::drawFrame(QPainter &p) {
         p.drawPixmap((width() - image.width()) / 2, area.y() + (area.height() - image.height()) / 2,
                      image);
         p.restore();
-        p.setPen(dark ? Qt::white : Qt::black);
+        p.setPen(QColor(interfaceColor(settings_, 2)));
         QFont hint = font();
         hint.setPointSize(12);
         p.setFont(hint);
@@ -979,14 +970,11 @@ void Window::drawFrame(QPainter &p) {
                    u("Вверх/вниз: масштаб\nВлево/вправо: поворот"));
         p.setFont(font());
     } else if (view().kind == View::Player) {
-        p.setPen(dark ? Qt::white : Qt::black);
-        p.drawText(8, height() - 85, width() - 16, 48, Qt::WordBreak,
-                   (paused_ ? u("Пауза") : u("Воспроизведение")) + " " +
-                       number(playPosition_ / 1000) + " / " + number(playDuration_ / 1000) +
-                       u(" с\n←/→ ±10с; ↑/↓ громкость"));
-    } else if (view().kind == View::Text && !view().rows.empty()) {
+        drawPlayer(p);
+    } else if (view().kind == View::Text && view().context != "contact-info" &&
+               !view().rows.empty()) {
         p.setClipRect(0, 29, width(), height() - 56);
-        p.setPen(dark ? Qt::white : Qt::black);
+        p.setPen(QColor(interfaceColor(settings_, 2)));
         p.drawText(5, 32 - view().selected * 25, width() - 10, 100000, Qt::WordBreak,
                    view().rows[0].text);
         p.setClipping(false);
@@ -1010,6 +998,9 @@ void Window::mediaPosition(unsigned int p, unsigned int d) {
 }
 void Window::mediaFinished() {
     paused_ = false;
-    info(u("Воспроизведение завершено"));
+    if (view().kind == View::Player) {
+        view().more = true;
+        update();
+    }
 }
 } // namespace tmm

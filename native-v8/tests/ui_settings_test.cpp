@@ -75,5 +75,62 @@ int main() {
     assert(!validateSetting(*settingField("video_kbps"), "9999", error));
     assert(!validateSetting(*settingField("camera_encoding"), "png", error));
     assert(validateSetting(*settingField("camera_size"), "960x1280", error));
-    puts("UI settings defaults, wire mapping, validation passed");
+    // Java form values do not reuse native history retention or font storage.
+    Settings defaults;
+    assert(settingNumber(defaults, "server_history_count") == 10);
+    assert(settingNumber(defaults, "history_count") == 200);
+    assert(settingNumber(defaults, "chat_messages") == 15);
+    assert(!validateSetting(*settingField("server_history_count"), "0", error));
+    assert(validateSetting(*settingField("server_history_count"), "100", error));
+    assert(!validateSetting(*settingField("server_history_count"), "101", error));
+    assert(validateSetting(*settingField("photo_quality"), "95", error));
+    assert(validateSetting(*settingField("camera_size"), "", error));
+    assert(validateSetting(*settingField("background_mode"), "center", error));
+    assert(validateSetting(*settingField("typing_sound"), "display", error));
+    assert(validateSetting(*settingField("sound_locked"), "custom.mp3", error));
+    assert(!validateSetting(*settingField("sound_locked"), "../outside.mp3", error));
+    assert(settingIsToggle("show_receipts") && settingIsToggle("telegram_on"));
+    assert(!settingIsToggle("startup_dns") && !settingIsToggle("sort_by"));
+    assert(std::string(settingField("async_transfer")->section) == "_native");
+    assert(settingField("account.2.uin") == settingField("uin"));
+    assert(settingField("account.2.password") == settingField("password"));
+    s.setBool("cp1251", false);
+    assert(clientSettings(s, "", quiet).ssiEncoding == "UTF-8");
+    s.setBool("cp1251", true);
+    assert(clientSettings(s, "", quiet).ssiEncoding == "CP1251");
+    // Existing native custom sizes/fonts/history survive a one-time migration.
+    Settings previous;
+    previous.setInt("font_size", 18);
+    previous.setInt("chat_font_size", 14);
+    previous.setInt("history_count", 500);
+    previous.setInt("caption_offset", 24);
+    previous.set("background_file", "/outside/custom.png");
+    previous.set("background_mode", "tile");
+    assert(migrateJavaSettings(previous));
+    assert(previous.getInt("font_size") == 18 && previous.getInt("chat_font_size") == 14);
+    assert(!settingFlag(previous, "small_font") && settingFlag(previous, "chat_small_font"));
+    assert(previous.getInt("caption_offset") == 10);
+    assert(previous.getInt("history_count") == 500 &&
+           settingNumber(previous, "server_history_count") == 10);
+    assert(previous.get("background_kind") == "legacy" &&
+           previous.get("background_mode") == "tile");
+    assert(previous.getInt("volume_locked") == 70 && previous.getInt("chat_messages") == 100);
+    assert(!settingFlag(previous, "full_editor"));
+    assert(!migrateJavaSettings(previous) && previous.getInt("caption_offset") == 10);
+    Settings fresh;
+    assert(migrateJavaSettings(fresh));
+    assert(settingNumber(fresh, "volume_locked") == 50 &&
+           settingNumber(fresh, "chat_messages") == 15);
+    assert(settingNumber(fresh, "ping_seconds") == 120);
+    assert(javaHotkeyActions().size() == 21);
+    assert(javaHotkeyDefault("0") == "info" && javaHotkeyDefault("*") == "light");
+    assert(javaHotkeyDefault("#") == "lock" && javaHotkeyDefault("4") == "none");
+    defaults.set("theme", "green");
+    assert(interfaceColor(defaults, 1) == 0xE0FFE0);
+    assert(interfaceColor(defaults, 6) == 0xFF0000);
+    assert(interfaceColorByTheme(17, 1) == 0x2D2D00);
+    for (unsigned theme = 0; theme < 18; ++theme)
+        for (unsigned color = 1; color <= 8; ++color)
+            assert(interfaceColorByTheme(theme, color) <= 0xFFFFFF);
+    puts("UI settings Java defaults, choices, migration, 18 schemes and wire mapping passed");
 }

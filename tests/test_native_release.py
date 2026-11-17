@@ -54,6 +54,22 @@ class NativeReleaseTests(unittest.TestCase):
         (self.root / "telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png").write_bytes(b"changed")
         with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
 
+    def test_every_packaged_shared_asset_is_bound_to_source_fingerprint(self):
+        before = release.source_hash(self.root)
+        for path in package.ASSETS.values():
+            relative = path.relative_to(ROOT)
+            staged = self.root / relative
+            original = staged.read_bytes()
+            with self.subTest(asset=relative):
+                try:
+                    staged.write_bytes(original + b"changed shared asset")
+                    self.assertNotEqual(before, release.source_hash(self.root))
+                    with self.assertRaises(ValueError):
+                        release.validate_manifest(self.root, self.manifest)
+                finally:
+                    staged.write_bytes(original)
+        self.assertEqual(before, release.source_hash(self.root))
+
     def test_manifest_rejects_wrong_source_assets_and_sizes(self):
         release.validate_manifest(self.root, self.manifest)
         cases = []
@@ -101,6 +117,9 @@ class NativeReleaseTests(unittest.TestCase):
                 self.assertIn("sounds/msg_low.mp3", "\n".join(archive.getnames()))
                 self.assertEqual(archive.extractfile(prefix+"statuses.png").read(),
                                  package.ASSETS["statuses.png"].read_bytes())
+                self.assertEqual(archive.extractfile(prefix+"back.png").read(),
+                                 package.ASSETS["back.png"].read_bytes())
+                self.assertEqual(archive.getmember(prefix+"back.png").mode, 0o644)
                 if name.endswith(".pep"):
                     ini = archive.extractfile("description.ini").read()
                     self.assertIn(b"Name = TeleMotoMax Native", ini)

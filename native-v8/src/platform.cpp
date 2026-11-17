@@ -238,8 +238,9 @@ void Platform::externalText(const QString &title, const QString &text, int secon
         external_->showText(title, text, seconds);
 }
 bool Platform::openUrl(const QString &url) {
-    if (!(url.startsWith("http://") || url.startsWith("https://")) || url.find('\n') >= 0 ||
-        url.find('\r') >= 0) {
+    if (!(url.startsWith("http://") || url.startsWith("https://") || url.startsWith("ftp://") ||
+          url.startsWith("mailto:")) ||
+        url.find('\n') >= 0 || url.find('\r') >= 0) {
         emit error(QString::fromUtf8("Неверный адрес"));
         return false;
     }
