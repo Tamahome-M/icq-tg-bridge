@@ -32,23 +32,31 @@ extern "C" int __wrap_connect(int fd, const struct sockaddr *address, socklen_t 
 }
 
 static pthread_mutex_t sendFaultMutex = PTHREAD_MUTEX_INITIALIZER;
-static unsigned sendFaultState = 0, sendsAfterFailure = 0;
+static unsigned sendFaultState = 0, sendsAfterFailure = 0, faultPrefixBytes = 0,
+                injectedSendFailures = 0;
 extern "C" ssize_t __real_send(int, const void *, size_t, int);
 extern "C" ssize_t __wrap_send(int fd, const void *data, size_t size, int flags) {
     pthread_mutex_lock(&sendFaultMutex);
     unsigned state = sendFaultState;
     if (state == 1)
         sendFaultState = 2;
-    else if (state == 2)
+    else if (state == 2) {
         sendFaultState = 3;
-    else if (state == 3)
+        ++injectedSendFailures;
+    } else if (state == 3)
         ++sendsAfterFailure;
     pthread_mutex_unlock(&sendFaultMutex);
     if (state >= 2) {
         errno = EIO;
         return -1;
     }
-    return __real_send(fd, data, state == 1 && size > 3 ? 3 : size, flags);
+    const ssize_t result = __real_send(fd, data, state == 1 && size > 3 ? 3 : size, flags);
+    if (state == 1 && result > 0) {
+        pthread_mutex_lock(&sendFaultMutex);
+        faultPrefixBytes += result;
+        pthread_mutex_unlock(&sendFaultMutex);
+    }
+    return result;
 }
 
 static std::string unhex(const std::string &s) {
@@ -151,7 +159,7 @@ int main(int argc, char **argv) {
     cfg.cacheDir = argv[4];
     cfg.autoReconnect = getenv("TMM_TEST_RECONNECT") != 0;
     cfg.reconnectSeconds = 1;
-    cfg.pingSeconds = 1;
+    cfg.pingSeconds = getenv("TMM_TEST_DISABLE_KEEPALIVE") ? 0 : 1;
     cfg.missedPings = 3;
     if (getenv("TMM_TEST_PREFETCH")) {
         cfg.host = "bridge.example.org";
@@ -203,11 +211,14 @@ int main(int argc, char **argv) {
                 if (line == "arm-send-failure") {
                     sendFaultState = 1;
                     sendsAfterFailure = 0;
+                    faultPrefixBytes = injectedSendFailures = 0;
                 } else if (line == "clear-send-failure")
                     sendFaultState = 0;
-                unsigned count = sendsAfterFailure;
+                unsigned count = sendsAfterFailure, prefix = faultPrefixBytes,
+                         failures = injectedSendFailures;
                 pthread_mutex_unlock(&sendFaultMutex);
-                std::cout << "{\"fault_count\":" << count << "}" << std::endl;
+                std::cout << "{\"fault_count\":" << count << ",\"fault_prefix_bytes\":" << prefix
+                          << ",\"fault_failures\":" << failures << "}" << std::endl;
                 continue;
             }
             if (line == "system-network") {
