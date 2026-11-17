@@ -1089,6 +1089,35 @@ class UiProbe {
         w.settings_.setBool("save_history", true);
         w.applySettings();
         reset(w);
+        View discussion(View::History, w.name(id));
+        discussion.context = "server";
+        discussion.uin = id;
+        discussion.offset = 17;
+        discussion.more = true;
+        m.nativeId = "comment-B";
+        discussion.messages.push_back(m);
+        w.showHistory(discussion);
+        w.push(discussion);
+        w.key(KEYCODE_RSK);
+        choose(w, "history-more");
+        require(w.view().kind == View::History && w.view().offset == 17 &&
+                    submitted.back().type == Command::History && submitted.back().offset == 17 &&
+                    w.pending_[submitted.back().requestId] == "history",
+                "discussion More retains the thread viewer and its own cursor");
+        Event comments(Event::History);
+        comments.requestId = submitted.back().requestId;
+        comments.uin = id;
+        comments.offset = 18;
+        comments.more = false;
+        m.nativeId = "comment-A";
+        comments.messages.push_back(m);
+        w.consume(comments);
+        require(
+            w.view().kind == View::History && w.view().offset == 18 && !w.view().request &&
+                !w.view().more && w.view().messages.size() == 2 &&
+                w.view().messages[0].nativeId == "comment-A",
+            "discussion continuation appends older context in its thread without opening a chat");
+        reset(w);
     }
     static void systemPresence(Window &w) {
         w.settings_.setInt("running_icon", 1);

@@ -926,6 +926,24 @@ void Window::history(bool server, bool more) {
     }
     while (view().kind == View::Popup)
         back();
+    if (more && view().kind == View::History && view().context == "server") {
+        // Discussion results own their thread cursor in the existing viewer.
+        // They must not restart ordinary chat history at offset zero.
+        if (view().request)
+            return;
+        Command request(Command::History);
+        request.uin = id;
+        request.offset = view().offset;
+        request.limit =
+            std::max(1, std::min(100, settingNumber(settings_, "server_history_count")));
+        request.requestId = client_.nextRequestId();
+        if (send(request)) {
+            view().request = request.requestId;
+            pending_[request.requestId] = "history";
+            pendingUin_[request.requestId] = id;
+        }
+        return;
+    }
     if (view().kind != View::Chat || view().uin != id)
         openChat(id, false);
     requestChatHistory(id);
