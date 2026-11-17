@@ -27,6 +27,9 @@ union ModelStorage {
 } model;
 unsigned accepted, cancelled;
 class FixtureDialog : public QDialog {
+    // Space for the native current-frame field in the detached-view test.
+    char nativeLayout_[400];
+
   public:
     void finish(bool acceptResult) {
         if (acceptResult)
@@ -310,10 +313,40 @@ int main(int argc, char **argv) {
         key(view, KEYCODE_RSK, false);
         assert(cancelled == 3 && !dialog.isVisible());
     }
-    fprintf(
-        stderr,
-        "CAMERA UI PASS: real native stop metadata, scoped Fire/5 start and Fire/5/RSK stop, "
-        "repeat "
-        "suppression, video-only preview and insert result accept, hide/delete/cancel guards\n");
+    {
+        FixtureDialog dialog;
+        VideoView detached(0);
+        dialog.show();
+        detached.show();
+        tmm::CameraUiV8 ui(&dialog, library, true);
+        enableFixture(ui, modelTable);
+        assert(sizeof(QDialog) <= 264 && sizeof(dialog) > 268);
+        void **actual = 0;
+        memcpy(&actual, &dialog, sizeof(actual));
+        ui.dialogVtable_ = actual;
+        void *frame[2] = {0, &detached};
+        void *framePointer = frame;
+        memcpy(reinterpret_cast<char *>(&dialog) + 264, &framePointer, 4);
+        assert(ui.activeView() == &detached && ui.owns(&detached));
+        key(detached, KEYCODE_5, true);
+        key(detached, KEYCODE_5, false);
+        key(detached, KEYCODE_RSK, true);
+        key(detached, KEYCODE_RSK, false);
+        assert(detached.stops == 1 && !ui.recording() && cancelled == 3);
+        VideoPreview preview(0);
+        preview.show();
+        // Native showFrame publishes the active view after Show is delivered.
+        frame[1] = &preview;
+        drain();
+        assert(accepted == 5 && dialog.result() == QDialog::Accepted);
+        ui.detach();
+        framePointer = 0;
+        memcpy(reinterpret_cast<char *>(&dialog) + 264, &framePointer, 4);
+    }
+    fprintf(stderr,
+            "CAMERA UI PASS: real native stop metadata, scoped Fire/5 start and Fire/5/RSK stop, "
+            "repeat "
+            "suppression, detached native frame ownership, preview/insert accept, "
+            "hide/delete/cancel guards\n");
     return 0;
 }

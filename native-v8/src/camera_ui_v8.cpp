@@ -8,6 +8,7 @@
 #include <ZKeyDef.h>
 #include <dlfcn.h>
 #include <cstring>
+#include <cstdio>
 namespace tmm {
 namespace {
 template <class T> T fn(void *value) {
@@ -31,7 +32,8 @@ bool fire(int key) {
 } // namespace
 CameraUiV8::CameraUiV8(QDialog *dialog, void *library, bool video)
     : QObject(0), dialog_(dialog), video_(video), valid_(false), sendingKey_(false),
-      finishing_(false), timer_(0), heldKey_(0), done_(0), cancel_(0), model_(0), modelVtable_(0) {
+      finishing_(false), timer_(0), heldKey_(0), done_(0), cancel_(0), model_(0), modelVtable_(0),
+      dialogVtable_(0) {
     if (!dialog || !library || sizeof(void *) != 4)
         return;
     void *create = dlsym(library, "CreateCameraDlg"),
@@ -55,6 +57,7 @@ CameraUiV8::CameraUiV8(QDialog *dialog, void *library, bool video)
     done_ = fn<void (*)(void *)>(done);
     cancel_ = fn<void (*)(void *)>(cancel);
     model_ = fn<void *(*)(void *)>(model);
+    dialogVtable_ = table + 2;
     valid_ = true;
     qApp->installEventFilter(this);
 }
@@ -74,16 +77,36 @@ bool CameraUiV8::valid() const {
     return valid_;
 }
 bool CameraUiV8::owns(QObject *object) const {
+    QWidget *active = activeView();
     for (QObject *current = object; current; current = current->parent())
-        if (current == dialog_)
+        if (current == dialog_ || current == active)
             return true;
     return false;
+}
+QWidget *CameraUiV8::activeView() const {
+    if (!dialog_ || !dialogVtable_)
+        return 0;
+    void **actual = 0;
+    std::memcpy(&actual, static_cast<QDialog *>(dialog_), sizeof(actual));
+    if (actual != dialogVtable_)
+        return 0;
+    // CAM_UI_Dlg::done reads the current CAM_UI_Frame at +264, and its
+    // CAM_UI_View pointer at +4. Native frames need not parent views to Dlg.
+    void *frame = 0;
+    std::memcpy(&frame, reinterpret_cast<char *>(static_cast<QDialog *>(dialog_)) + 264, 4);
+    QWidget *view = 0;
+    if (frame)
+        std::memcpy(&view, static_cast<char *>(frame) + 4, 4);
+    return view;
 }
 QWidget *CameraUiV8::viewfinder(QObject *object) const {
     const char *name = video_ ? "CAM_UI_VideoViewfinderView" : "CAM_UI_PhotoViewfinderView";
     for (QObject *current = object; current && current != dialog_; current = current->parent())
         if (named(current, name))
             return static_cast<QWidget *>(current);
+    QWidget *active = activeView();
+    if (named(active, name))
+        return active;
     if (!dialog_)
         return 0;
     QObjectList *matches = dialog_->queryList(name);
@@ -138,15 +161,20 @@ void CameraUiV8::timerEvent(QTimerEvent *event) {
     // Entered only after the native engine completed its saved-result view;
     // never infer capture completion from a growing/partially written file.
     finishing_ = true;
+    std::fprintf(stderr, "Camera UI: accepting completed %s\n", widget->className());
     done_(static_cast<QDialog *>(dialog_));
 }
 bool CameraUiV8::eventFilter(QObject *object, QEvent *event) {
-    if (!valid_ || !dialog_ || !owns(object) || sendingKey_)
+    if (!valid_ || !dialog_ || sendingKey_)
         return false;
     if (event->type() == QEvent::Show && resultView(object, video_)) {
+        // showFrame may publish its current-frame pointer after Show. Resolve
+        // ownership in the queued callback, once the native transition ends.
         queueInsert(static_cast<QWidget *>(object));
         return false;
     }
+    if (!owns(object))
+        return false;
     if (event->type() != QEvent::KeyPress && event->type() != QEvent::KeyRelease)
         return false;
     QKeyEvent *key = static_cast<QKeyEvent *>(event);

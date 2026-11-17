@@ -15,7 +15,11 @@
 #include <unistd.h>
 #include <dlfcn.h>
 #include <string.h>
-static const char *resources[] = {"im_icq_cli4", "im_icq_idle5"};
+static const char *resources[][2] = {{"im_offline_cli4", "im_offline_idle4"},
+                                     {"im_icq_cli4", "im_icq_idle5"},
+                                     {"im_icq_away_cli4", "im_icq_away_idle5"},
+                                     {"im_busy_cli4", "im_busy_idle4"},
+                                     {"im_icq_invisible_cli4", "im_icq_invisible_idle5"}};
 static void drain() {
     for (unsigned i = 0; i < 20; ++i) {
         qApp->processEvents();
@@ -41,12 +45,17 @@ static void registered(StatusIconObserver &observer, unsigned at, int slot) {
     QDataStream stream(observer.payloads[at], IO_ReadOnly);
     Q_INT8 kind, state;
     Q_INT32 count, priority;
-    stream >> kind >> count >> priority >> state;
-    assert(kind == slot && count == 1 && priority == 3 && state == 0);
-    for (unsigned i = 0; i < 4; ++i) {
-        QString resource;
-        stream >> resource;
-        assert(resource == resources[i / 2]);
+    stream >> kind >> count >> priority;
+    assert(kind == slot && count == 5 && priority == 3);
+    for (unsigned value = 0; value < 5; ++value) {
+        stream >> state;
+        assert(state == value);
+        for (unsigned i = 0; i < 4; ++i) {
+            QString resource;
+            stream >> resource;
+            assert(resource == resources[value][i / 2]);
+            assert(resource.length() <= 60); // Native shared-memory resource limit.
+        }
     }
     assert(stream.atEnd());
 }
@@ -86,15 +95,11 @@ int main(int argc, char **argv) {
     assert(library);
     nativeAreas(library);
     RES_ICON_Reader reader;
-    for (unsigned i = 0; i < 2; ++i) {
-        QPixmap icon = reader.getIcon(resources[i], false);
-        fprintf(stderr, "STATUS ICON native resource %s: %dx%d\n", resources[i], icon.width(),
-                icon.height());
-        assert(!icon.isNull() && icon.width() <= 64 && icon.height() <= 32);
-        char path[64];
-        snprintf(path, sizeof(path), "/state/status-icon-%u.png", i);
-        assert(icon.save(path, "PNG"));
-    }
+    for (unsigned state = 0; state < 5; ++state)
+        for (unsigned display = 0; display < 2; ++display) {
+            QPixmap icon = reader.getIcon(resources[state][display], false);
+            assert(!icon.isNull() && icon.width() <= 64 && icon.height() <= 32);
+        }
     StatusIconObserver observer;
     {
         tmm::StatusIconV8 unavailable;
@@ -109,7 +114,7 @@ int main(int argc, char **argv) {
     assert(QCopChannel::isRegistered("headerregister"));
     {
         tmm::StatusIconV8 icon;
-        assert(icon.show());
+        assert(icon.show()); // Starts grey/disconnected.
         drain();
         assert(observer.messages.size() == 2);
         registered(observer, 0, ZHeader::IM);
@@ -122,54 +127,68 @@ int main(int argc, char **argv) {
         drain();
         foreground.show();
         drain();
-        assert(observer.messages.size() == 2); // Backgrounding retains the icon.
-        tmm::StatusIconV8::configureApplication(2);
+        assert(observer.messages.size() == 2);
+        const uint32_t raw[] = {0,   32,     1,      4,      16,     2,      256,
+                                512, 0x3000, 0x4000, 0x5000, 0x6000, 0x2001, 0xffffffffU};
+        const unsigned mapped[] = {1, 1, 2, 2, 3, 3, 4, 4, 3, 2, 1, 1, 2, 0};
+        unsigned previous = 0;
+        for (unsigned i = 0; i < sizeof(raw) / sizeof(raw[0]); ++i) {
+            unsigned at = observer.messages.size();
+            tmm::StatusIconV8::configureApplication(1, raw[i]);
+            drain();
+            assert(observer.messages.size() == at + (mapped[i] != previous));
+            if (mapped[i] != previous)
+                changed(observer, at, ZHeader::IM, mapped[i]);
+            previous = mapped[i];
+        }
+        unsigned at = observer.messages.size();
+        tmm::StatusIconV8::configureApplication(2, 0);
         drain();
-        assert(observer.messages.size() == 6);
-        changed(observer, 2, ZHeader::IM, ZHeader::EMPTY_STATUS);
-        removed(observer, 3, ZHeader::IM);
-        registered(observer, 4, ZHeader::ICQ);
-        changed(observer, 5, ZHeader::ICQ, 0);
-        tmm::StatusIconV8::configureApplication(2);
+        assert(observer.messages.size() == at + 4);
+        changed(observer, at, ZHeader::IM, ZHeader::EMPTY_STATUS);
+        removed(observer, at + 1, ZHeader::IM);
+        registered(observer, at + 2, ZHeader::ICQ);
+        changed(observer, at + 3, ZHeader::ICQ, 1);
+        at = observer.messages.size();
+        tmm::StatusIconV8::configureApplication(2, 32);
         drain();
-        assert(observer.messages.size() == 6); // Unrelated settings saves do no IPC.
-        tmm::StatusIconV8::configureApplication(0);
+        assert(observer.messages.size() == at); // Equivalent state needs no IPC.
+        tmm::StatusIconV8::configureApplication(2, 0xffffffffU);
         drain();
-        assert(observer.messages.size() == 8);
-        changed(observer, 6, ZHeader::ICQ, ZHeader::EMPTY_STATUS);
-        removed(observer, 7, ZHeader::ICQ);
+        assert(observer.messages.size() == at + 1);
+        changed(observer, at, ZHeader::ICQ, 0);
+        at = observer.messages.size();
+        tmm::StatusIconV8::configureApplication(0, 0);
+        drain();
+        assert(observer.messages.size() == at + 2);
+        changed(observer, at, ZHeader::ICQ, ZHeader::EMPTY_STATUS);
+        removed(observer, at + 1, ZHeader::ICQ);
         icon.hide();
         drain();
-        assert(observer.messages.size() == 8);
+        assert(observer.messages.size() == at + 2);
     }
-    drain();
-    assert(observer.messages.size() == 8);
+    unsigned at = observer.messages.size();
     {
         tmm::StatusIconV8 icon;
-        tmm::StatusIconV8::configureApplication(1);
+        tmm::StatusIconV8::configureApplication(1, 0);
         drain();
-        assert(observer.messages.size() == 10);
-        registered(observer, 8, ZHeader::IM);
-        changed(observer, 9, ZHeader::IM, 0);
-        // Production destroys its registration after the main event loop exits.
+        assert(observer.messages.size() == at + 2);
+        registered(observer, at, ZHeader::IM);
+        changed(observer, at + 1, ZHeader::IM, 1);
         QTimer::singleShot(0, &app, SLOT(quit()));
         assert(app.QApplication::exec() == 0);
     }
-    // This fixture hosts both sides of QCop in the same process. Restart
-    // only the server event loop to observe packets sent after the client
-    // loop ended; the physical phone's server stays in its own process.
+    // The test hosts the QCop server too; restart it to drain normal-exit IPC.
     QTimer::singleShot(50, &app, SLOT(quit()));
     assert(app.QApplication::exec() == 0);
     drain();
-    fprintf(stderr, "STATUS ICON after stopped-loop cleanup packets=%u\n",
-            observer.messages.size());
-    assert(observer.messages.size() == 12);
-    changed(observer, 10, ZHeader::IM, ZHeader::EMPTY_STATUS);
-    removed(observer, 11, ZHeader::IM);
-    tmm::StatusIconV8::configureApplication(1); // No owner after destruction.
+    assert(observer.messages.size() == at + 4);
+    changed(observer, at + 2, ZHeader::IM, ZHeader::EMPTY_STATUS);
+    removed(observer, at + 3, ZHeader::IM);
+    tmm::StatusIconV8::configureApplication(1, 0); // No owner after destruction.
     drain();
-    assert(observer.messages.size() == 12);
-    puts("V8 status icon: real layout/resource tables and QCop packets, header/idle/off modes, "
-         "foreground independence, idempotence, exit cleanup and absent-service handling PASS");
+    assert(observer.messages.size() == at + 4);
+    puts("V8 status icon: native resources and QCop, grey offline, all presence mappings, "
+         "header/idle/off, background independence, idempotence and exit cleanup PASS");
     return 0;
 }

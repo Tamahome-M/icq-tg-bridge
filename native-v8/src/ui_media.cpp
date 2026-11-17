@@ -119,7 +119,7 @@ bool Window::showPicture(const std::string &path, const QString &title,
     pictureRotation_ = 0;
     pictureZoom_ =
         std::max(1, std::min(100, std::min((width() * 100) / std::max(1, image.width()),
-                                           ((height() - 94) * 100) / std::max(1, image.height()))));
+                                           ((height() - 56) * 100) / std::max(1, image.height()))));
     View v(View::Picture, title);
     v.context = context;
     push(v);
@@ -421,6 +421,7 @@ void Window::play(const std::string &path, bool audioOnly) {
     playPath_ = path;
     paused_ = false;
     playPosition_ = playDuration_ = 0;
+    platform_.stopNotificationSound();
     if (!player_.play(u(path), settings_.getInt("player_volume", 70), audioOnly))
         return;
     if (view().kind == View::Player)
@@ -482,10 +483,15 @@ void Window::upload(const std::string &path, unsigned kind, uint32_t target) {
     if (ext != std::string::npos)
         suffix = std::string(u(path.substr(ext)).lower().utf8());
     if (kind == 1)
-        c.text = suffix == ".png" ? "image/png" : "image/jpeg";
+        c.text = suffix == ".png"   ? "image/png"
+                 : suffix == ".gif" ? "image/gif"
+                 : suffix == ".bmp" ? "image/bmp"
+                                    : "image/jpeg";
     else if (kind == 2)
         c.text = suffix == ".mp4"   ? "video/mp4"
                  : suffix == ".mov" ? "video/quicktime"
+                 : suffix == ".avi" ? "video/x-msvideo"
+                 : suffix == ".3g2" ? "video/3gpp2"
                                     : "video/3gpp";
     else if (kind == 3)
         c.text = suffix == ".amr"   ? "audio/amr"
@@ -522,13 +528,13 @@ void Window::captureError(const QString &error) {
 }
 void Window::captureCancelled() {
     for (size_t i = stack_.size(); i > 1; --i)
-        if (stack_[i - 1].context == "recording")
+        if (stack_[i - 1].context == "recording" || stack_[i - 1].context == "recording-stopping")
             stack_.erase(stack_.begin() + i - 1);
     update();
 }
 void Window::captureReady(const QString &path, const QString &mime) {
     for (size_t i = stack_.size(); i > 1; --i)
-        if (stack_[i - 1].context == "recording")
+        if (stack_[i - 1].context == "recording" || stack_[i - 1].context == "recording-stopping")
             stack_.erase(stack_.begin() + i - 1);
     unsigned kind = mime.startsWith("image/") ? 1 : mime.startsWith("video/") ? 2 : 3;
     reviewAttachment(std::string(path.utf8()), kind, captureUin_, true);

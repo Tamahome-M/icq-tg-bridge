@@ -53,12 +53,10 @@ $(BUILD)/exception-test: tests/exception_test.cpp $(BUILD)/transport.o $(BUILD)/
 $(BUILD)/password-test: tests/password_test.cpp $(BUILD)/oscar.o $(BUILD)/crypto.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -fexceptions $(LDFLAGS) $< $(BUILD)/oscar.o $(BUILD)/crypto.o -o $@
 core-tests: $(BUILD)/crypto-driver $(BUILD)/storage-test $(BUILD)/toolchain-vector-test $(BUILD)/exception-test $(BUILD)/password-test
-ui-probe: $(BUILD)/ui-probe $(BUILD)/statuses.png $(BUILD)/messages.png $(BUILD)/back.png $(BUILD)/smiles.txt $(BUILD)/smiles.png
+ui-probe: $(BUILD)/ui-probe $(BUILD)/statuses.png $(BUILD)/messages.png $(BUILD)/smiles.txt $(BUILD)/smiles.png
 $(BUILD)/messages.png: ../telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png | $(BUILD)
 	cp $< $@
 $(BUILD)/statuses.png: ../telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png | $(BUILD)
-	cp $< $@
-$(BUILD)/back.png: ../telemotomax/res/GRAPHICS_32BIT/COMMON/back.png | $(BUILD)
 	cp $< $@
 $(BUILD)/smiles.txt: ../telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/smiles.txt | $(BUILD)
 	cp $< $@

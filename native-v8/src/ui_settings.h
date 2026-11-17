@@ -17,8 +17,6 @@ bool settingFlag(const Settings &, const std::string &key);
 bool settingIsToggle(const std::string &key);
 const char *settingGroup(const std::string &key);
 bool migrateJavaSettings(Settings &);
-uint32_t interfaceColor(const Settings &, unsigned javaColorIndex);
-uint32_t interfaceColorByTheme(unsigned themeIndex, unsigned javaColorIndex);
 struct HotkeySetting {
     const char *action;
     const char *label;

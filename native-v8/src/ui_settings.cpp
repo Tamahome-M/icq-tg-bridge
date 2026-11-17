@@ -35,7 +35,7 @@ static const SettingField fields[] = {
     {"interface", "running_icon", "Значок запущенного приложения", "1",
      "1=Строка статуса (вместо BT/USB)|2=Экран ожидания|0=Нет", 0, false},
     {"interface", "mirror_menu", "'Зеркальные' меню", "0", "0=Нет|1=Да", 0, false},
-    {"interface", "small_font", "Мелкий шрифт", "0", "0=Нет|1=Да", 0, false},
+    {"interface", "font_size", "Размер шрифта", "16", "12|14|16|18|20|22|24", 0, false},
     {"interface", "use_groups", "Группы контактов", "0", "0=Нет|1=Да", 0, false},
     {"interface", "hide_empty", "Скрывать пустые группы", "0", "0=Нет|1=Да", 0, false},
     {"interface", "hide_offline", "Скрывать отключившихся", "0", "0=Нет|1=Да", 0, false},
@@ -48,13 +48,12 @@ static const SettingField fields[] = {
     {"interface", "save_history", "Сохранять локальную историю", "1", "0=Нет|1=Да", 0, false},
     {"interface", "server_history_count", "Сообщений в истории с сервера", "10", "", 100, false},
     {"interface", "chat_messages", "Сообщений в чате", "15", "", 100, false},
-    {"interface", "chat_small_font", "Мелкий шрифт", "1", "0=Нет|1=Да", 0, false},
+    {"interface", "chat_font_size", "Размер шрифта в чате", "14", "12|14|16|18|20|22|24", 0, false},
     {"interface", "show_icons", "Иконка", "1", "0=Нет|1=Да", 0, false},
     {"interface", "show_sender", "Ник", "0", "0=Нет|1=Да", 0, false},
     {"interface", "show_time", "Время", "1", "0=Нет|1=Да", 0, false},
     {"interface", "show_newlines", "Перевод строки", "0", "0=Нет|1=Да", 0, false},
     {"interface", "show_smileys", "Смайлики", "1", "0=Нет|1=Да", 0, false},
-    {"interface", "colored_text", "Раскрашивать текст", "0", "0=Нет|1=Да", 0, false},
     {"interface", "full_editor", "Поле ввода текста без заголовка", "0", "0=Нет|1=Да", 0, false},
     {"interface", "light_seconds", "Время подсветки (сек)", "5", "", 99, false},
     {"interface", "manual_light", "Управлять подсветкой", "1", "0=Нет|1=Да", 0, false},
@@ -114,14 +113,6 @@ static const SettingField fields[] = {
     {"notifications", "disconnect_volume", "Громкость", "50", "0|10|20|30|40|50|60|70|80|90|100", 0,
      false},
     {"notifications", "ticker", "Бегущая строка", "0", "0=Нет|1=Да", 0, false},
-    {"background", "background_kind", "Фоновое изобр.", "none", "none=Нет|builtin=По умолчанию", 0,
-     false},
-    {"theme", "theme", "Цветовая схема", "light",
-     "light=Чёрная на белом|dark=Белая на чёрном|blue=Белая на "
-     "синем|pink=Розовая|green=Зеленая|sand=Песочная|hacker=Хакер :)|aqua=Аква|green-night=Зеленая "
-     "ночь|opera=Опера Мини|ergonomic=Эргономическая|golem=Бронзовый монстр|snowy=Снежная|bento=WA "
-     "Bento|quake=Quake 3|forest=Тёмный лес|silver=Серебряная|neon=Неон",
-     0, false},
     {"timezone", "timezone", "Часовой пояс", "3",
      "-12=GMT-12:00|-11=GMT-11:00|-10=GMT-10:00|-9=GMT-9:00|-8=GMT-8:00|-7=GMT-7:00|-6=GMT-6:00|-5="
      "GMT-5:00|-4=GMT-4:00|-3=GMT-3:00|-2=GMT-2:00|-1=GMT-1:00|0=GMT+0:00|1=GMT+1:00|2=GMT+2:00|3="
@@ -132,15 +123,10 @@ static const SettingField fields[] = {
     {"timezone", "daylight", "Летнее время", "0", "0=Стд время|1=Летнее время", 0, false},
     // Preserved native implementation preferences, not extra Java menu items.
     {"_native", "history_count", "Локальная история", "200", "", 999, false},
-    {"_native", "font_size", "Размер шрифта", "16", "12|14|16|18|20|22", 0, false},
-    {"_native", "chat_font_size", "Шрифт чата", "14", "12|14|16|18|20|22", 0, false},
     {"_native", "language", "Язык", "ru", "ru=Русский|en=English", 0, false},
     {"_native", "reconnect_seconds", "Интервал повторов, с", "5", "", 600, false},
     {"_native", "external_preview", "Текст на внешнем экране", "0",
      "0=Только число сообщений|1=Имя и текст", 0, false},
-    {"_native", "background_file", "Фоновая картинка", "", "", 4096, false},
-    {"_native", "background_mode", "Размещение фона", "fit",
-     "fit=Вписать|stretch=Растянуть|tile=Мозаика|center=По центру", 0, false},
     {"_native", "time_offset_minutes", "Поправка времени, минут", "0", "", 1440, false}};
 const std::vector<SettingField> &settingFields() {
     static std::vector<SettingField> v(fields, fields + sizeof(fields) / sizeof(fields[0]));
@@ -168,13 +154,13 @@ bool settingFlag(const Settings &s, const std::string &key) {
     return settingValue(s, key) == "1";
 }
 bool settingIsToggle(const std::string &key) {
-    const char *keys[] = {
-        "keepalive",     "auto_connect",  "md5_login",       "auto_reconnect", "encryption",
-        "display_date",  "fullscreen",    "mirror_menu",     "small_font",     "use_groups",
-        "hide_empty",    "hide_offline",  "show_deleted",    "cp1251",         "initial_caps",
-        "show_receipts", "save_history",  "chat_small_font", "show_icons",     "show_sender",
-        "show_time",     "show_newlines", "show_smileys",    "colored_text",   "full_editor",
-        "manual_light",  "telegram_on",   "max_on",          "express_on",     "ticker"};
+    const char *keys[] = {"keepalive",    "auto_connect", "md5_login",     "auto_reconnect",
+                          "encryption",   "display_date", "fullscreen",    "mirror_menu",
+                          "use_groups",   "hide_empty",   "hide_offline",  "show_deleted",
+                          "cp1251",       "initial_caps", "show_receipts", "save_history",
+                          "show_icons",   "show_sender",  "show_time",     "show_newlines",
+                          "show_smileys", "full_editor",  "manual_light",  "telegram_on",
+                          "max_on",       "express_on",   "ticker"};
     for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i)
         if (key == keys[i])
             return true;
@@ -187,7 +173,7 @@ const char *settingGroup(const std::string &key) {
         return "Контакт-лист";
     if (key == "cp1251")
         return "Настройки чата";
-    if (key == "chat_small_font")
+    if (key == "chat_font_size")
         return "Формат сообщения";
     if (key == "md5_login")
         return "Настройки подключения";
@@ -214,7 +200,21 @@ bool migrateJavaSettings(Settings &s) {
             s.set("password", s.get(std::string(prefix) + "password"));
         }
     }
-    bool changed = s.removePrefix("account.");
+    bool changed = false;
+    if (s.get("font_size").empty() && !s.get("small_font").empty()) {
+        s.setInt("font_size", s.getBool("small_font", false) ? 14 : 16);
+        changed = true;
+    }
+    if (s.get("chat_font_size").empty() && !s.get("chat_small_font").empty()) {
+        s.setInt("chat_font_size", s.getBool("chat_small_font", true) ? 14 : 16);
+        changed = true;
+    }
+    const char *removed[] = {"theme",           "background_kind", "background_file",
+                             "background_mode", "colored_text",    "small_font",
+                             "chat_small_font"};
+    for (unsigned i = 0; i < sizeof(removed) / sizeof(removed[0]); ++i)
+        changed = s.remove(removed[i]) || changed;
+    changed = s.removePrefix("account.") || changed;
     changed = s.remove("accounts") || changed;
     changed = s.remove("account_index") || changed;
     if (s.get("java_ui_version") == "1")
@@ -223,14 +223,14 @@ bool migrateJavaSettings(Settings &s) {
         // Old native files stored only changed fields. Materialize previous
         // defaults before switching the defaults for newly installed clients.
         static const char *previous[][2] = {
-            {"ping_seconds", "110"},     {"reconnect_attempts", "5"}, {"media_memory_kb", "8192"},
-            {"camera_size", "640x480"},  {"display_date", "1"},       {"fullscreen", "1"},
-            {"use_groups", "1"},         {"hide_empty", "1"},         {"show_deleted", "1"},
-            {"show_sender", "1"},        {"show_newlines", "1"},      {"colored_text", "1"},
-            {"chat_messages", "100"},    {"volume_unlocked", "10"},   {"volume_locked", "70"},
-            {"vibration_locked", "500"}, {"typing_sound", ""},        {"typing_volume", "10"},
-            {"disconnect_volume", "30"}, {"manual_light", "0"},       {"light_seconds", "15"},
-            {"font_size", "16"},         {"chat_font_size", "16"}};
+            {"ping_seconds", "110"},    {"reconnect_attempts", "5"}, {"media_memory_kb", "8192"},
+            {"camera_size", "640x480"}, {"display_date", "1"},       {"fullscreen", "1"},
+            {"use_groups", "1"},        {"hide_empty", "1"},         {"show_deleted", "1"},
+            {"show_sender", "1"},       {"show_newlines", "1"},      {"chat_messages", "100"},
+            {"volume_unlocked", "10"},  {"volume_locked", "70"},     {"vibration_locked", "500"},
+            {"typing_sound", ""},       {"typing_volume", "10"},     {"disconnect_volume", "30"},
+            {"manual_light", "0"},      {"light_seconds", "15"},     {"font_size", "16"},
+            {"chat_font_size", "16"}};
         for (unsigned i = 0; i < sizeof(previous) / sizeof(previous[0]); ++i)
             if (s.get(previous[i][0], "missing") == "missing")
                 s.set(previous[i][0], previous[i][1]);
@@ -238,50 +238,11 @@ bool migrateJavaSettings(Settings &s) {
         // full screen and this Java flag controls only the title visibility.
         s.setBool("full_editor", false);
     }
-    if (!s.get("font_size").empty() && s.get("small_font").empty())
-        s.setBool("small_font", s.getInt("font_size", 16) <= 14);
-    if (!s.get("chat_font_size").empty() && s.get("chat_small_font").empty())
-        s.setBool("chat_small_font", s.getInt("chat_font_size", 16) <= 14);
     if (!s.get("caption_offset").empty())
         s.setInt("caption_offset",
                  std::min(99, std::max(0, (s.getInt("caption_offset") * 100 + 120) / 240)));
-    if (s.get("background_kind").empty() && !s.get("background_file").empty())
-        s.set("background_kind", s.get("background_file") == "back.png" ? "builtin" : "legacy");
     s.set("java_ui_version", "1");
     return true;
-}
-static const char *themeIds[] = {"light",  "dark",  "blue",        "pink",   "green",     "sand",
-                                 "hacker", "aqua",  "green-night", "opera",  "ergonomic", "golem",
-                                 "snowy",  "bento", "quake",       "forest", "silver",    "neon"};
-uint32_t interfaceColorByTheme(unsigned theme, unsigned color) {
-    // Exactly the eight Java scheme roles, indexed 1..8 by callers.
-    static const uint32_t colors[][8] = {
-        {0xFFFFFF, 0x000000, 0x0000FF, 0xE8E8FF, 0xF0F0F0, 0xFF0000, 0x000000, 0x6060A0},
-        {0x000000, 0xFFFFFF, 0x00FFFF, 0x0000C0, 0x505050, 0xFF0000, 0xFFFFFF, 0x0000FF},
-        {0x000080, 0xFFFFFF, 0x00FFFF, 0x0000D0, 0x0000B0, 0xFF0000, 0xFFFFFF, 0x0000FF},
-        {0xFFA0C0, 0x000000, 0x4000C0, 0xFFE0D0, 0xFFE0D0, 0xC00040, 0x000000, 0xA02020},
-        {0xE0FFE0, 0x000000, 0x008000, 0xC0FFC0, 0xB0FFB0, 0xFF0000, 0x000000, 0x00A000},
-        {0xF9F3EF, 0xD60000, 0x3A6793, 0xE3BFA1, 0xC37D3F, 0xDB8941, 0xFFFFF0, 0xD26464},
-        {0x000000, 0x00D000, 0xD0D0D0, 0x005000, 0x007000, 0x00FF00, 0x80FF80, 0x008000},
-        {0xD5FDFD, 0x000000, 0x009090, 0xB0FFFF, 0x80FFFF, 0x0000FF, 0x000000, 0x00A0A0},
-        {0x8CB29C, 0x002250, 0x101080, 0xDBE1E7, 0x648C64, 0x801010, 0x8CFB6B, 0x5CCB3B},
-        {0xFFFFFF, 0x000000, 0x0000FF, 0xE8E8FF, 0xC00000, 0xFF0000, 0xFFFFFF, 0x9080C0},
-        {0xCCCCCC, 0x000000, 0x336699, 0xC0C0C0, 0xA5AECC, 0x336633, 0x000000, 0x666666},
-        {0xBAB190, 0x000000, 0x930A0A, 0xCCCC99, 0xCC9966, 0x336633, 0xFFFFFF, 0x666666},
-        {0xFFFFFF, 0x175A85, 0x336699, 0xCCEBFF, 0x175A85, 0x336633, 0xFFFFFF, 0x97B7C7},
-        {0x292E31, 0xCAA452, 0xC8C8C8, 0x616560, 0x636771, 0x448844, 0xFFFFFF, 0x31333B},
-        {0x000000, 0xFF0000, 0xFFF314, 0xFF5500, 0x000000, 0x448844, 0xFFFFFF, 0xFF0000},
-        {0x003300, 0xDA6600, 0xFF0000, 0xFF5500, 0x003300, 0x448844, 0xFFFFFF, 0xFF0000},
-        {0xCCCCCC, 0x000000, 0x000000, 0x425173, 0xCCCCCC, 0x336600, 0xFFFFFF, 0x425173},
-        {0x2D2D00, 0xFFC549, 0x00FFFF, 0x86006E, 0x00560A, 0x00FF1B, 0x30FF47, 0xFF00D2}};
-    return colors[theme < 18 ? theme : 0][color >= 1 && color <= 8 ? color - 1 : 0];
-}
-uint32_t interfaceColor(const Settings &s, unsigned color) {
-    const std::string id = settingValue(s, "theme");
-    for (unsigned i = 0; i < 18; ++i)
-        if (id == themeIds[i])
-            return interfaceColorByTheme(i, color);
-    return interfaceColorByTheme(0, color);
 }
 const std::vector<HotkeySetting> &javaHotkeyActions() {
     static const HotkeySetting entries[] = {{"none", "Нет"},
@@ -380,7 +341,7 @@ bool validateSetting(const SettingField &f, const std::string &v, std::string &e
             sound && !v.empty() && v.size() <= 128 && v.find(char(47)) == std::string::npos &&
             v.find(char(92)) == std::string::npos && v.find(char(13)) == std::string::npos &&
             v.find(char(10)) == std::string::npos;
-        if (!found && !custom && !(key == "background_kind" && v == "legacy")) {
+        if (!found && !custom) {
             e = "Значение отсутствует в списке";
             return false;
         }
@@ -404,7 +365,7 @@ bool validateSetting(const SettingField &f, const std::string &v, std::string &e
             }
         }
     } else if (f.maximum && key != "host" && key != "password" && key != "psk" &&
-               key != "dns_server" && key != "background_file" && key != "network_profile") {
+               key != "dns_server" && key != "network_profile") {
         char *end = 0;
         long n = strtol(v.c_str(), &end, 10);
         if (!numeric(v) || n > f.maximum || (n < 0 && key != "time_offset_minutes")) {

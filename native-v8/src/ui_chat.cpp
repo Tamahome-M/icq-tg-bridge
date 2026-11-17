@@ -1,5 +1,6 @@
 #include "window.h"
 #include "storage.h"
+#include "chat_history.h"
 #include "ui_settings.h"
 #include "ui_files.h"
 #include "ui_language.h"
@@ -123,6 +124,7 @@ void Window::connectClient() {
     client_.start();
     generation_ = client_.sessionGeneration();
     connectionState_ = Event::Connecting;
+    updateSystemStatusIcon();
     note("Подключение к " + cfg.host);
     notice_ = QString::null;
     update();
@@ -137,6 +139,8 @@ void Window::disconnectClient() {
     for (size_t i = 0; i < stack_.size(); ++i)
         stack_[i].request = 0;
     connectionState_ = Event::Disconnected;
+    resetServerHistory();
+    updateSystemStatusIcon();
     note("Отключено вручную");
     update();
 }
@@ -169,6 +173,7 @@ void Window::consume(const Event &e) {
     if (e.type == Event::State) {
         unsigned before = connectionState_;
         connectionState_ = e.state;
+        updateSystemStatusIcon();
         if (e.state == Event::Online) {
             connectionErrorShown_ = false;
             if (before != Event::Online)
@@ -178,6 +183,7 @@ void Window::consume(const Event &e) {
         }
         note(e.text);
         if (e.state == Event::Disconnected || e.state == Event::Reconnecting) {
+            resetServerHistory();
             retireTransfers();
             if (e.state == Event::Reconnecting) {
                 connectionProgress_ = 0;
@@ -189,8 +195,8 @@ void Window::consume(const Event &e) {
                 stack_[i].request = 0;
             for (size_t i = 0; i < contacts_.size(); ++i)
                 contacts_[i].status = 0xffffffffU;
-            if (before == Event::Online && !manualDisconnect_ && !silent_ &&
-                settingFlag(settings_, "disconnect_sound"))
+            if (before == Event::Online && !manualDisconnect_ && !silent_ && !player_.active() &&
+                !capture_.busy() && settingFlag(settings_, "disconnect_sound"))
                 platform_.notifyDisconnected(settingNumber(settings_, "disconnect_volume"));
         }
         if (view().kind == View::Roster)
@@ -300,7 +306,8 @@ void Window::consume(const Event &e) {
         if (chats_.find(e.uin) != chats_.end())
             chats_[e.uin].typingUntil = e.flag ? now() + 10000 : 0;
         if (e.flag && std::find(quiet_.begin(), quiet_.end(), e.uin) == quiet_.end() && !silent_ &&
-            now() - startedAt_ > 60000 && typingMode != "display")
+            now() - startedAt_ > 60000 && typingMode != "display" && !player_.active() &&
+            !capture_.busy())
             platform_.notifyMessage(u(settingValue(settings_, "typing_sound") == "tone"
                                           ? "tone"
                                           : "sounds/" + settingValue(settings_, "typing_sound")),
@@ -309,20 +316,62 @@ void Window::consume(const Event &e) {
         return;
     }
     if (e.type == Event::History) {
-        for (size_t v = 0; v < stack_.size(); ++v) {
-            if (stack_[v].request != e.requestId)
-                continue;
-            View &target = stack_[v];
-            target.request = 0;
-            target.more = e.more;
-            target.offset = e.offset;
-            target.messages.insert(target.messages.end(), e.messages.begin(), e.messages.end());
-            while (target.messages.size() > 200) {
-                target.messages.erase(target.messages.begin());
-                if (target.selected > 0)
-                    --target.selected;
+        std::map<uint32_t, std::string>::iterator pending = pending_.find(e.requestId);
+        if (pending == pending_.end())
+            return;
+        if (pending->second == "chat-history") {
+            const uint32_t id = pendingUin_[e.requestId];
+            std::map<uint32_t, ChatState>::iterator found = chats_.find(id);
+            if (found != chats_.end() && found->second.historyRequest == e.requestId) {
+                ChatState &chat = found->second;
+                HistoryMerge merge =
+                    mergeChatHistory(chat.messages, e.messages, chat.historyBoundary);
+                chat.historyRequest = 0;
+                chat.historyOffset = e.offset;
+                chat.historyStarted = true;
+                chat.historyLoaded = chat.historyLoaded || !e.messages.empty();
+                chat.historyMore = e.more;
+                chat.historyBoundary = merge.firstPage;
+                chat.stamp = now();
+                const unsigned trim = chat.messages.size() > 200 ? chat.messages.size() - 200 : 0;
+                if (trim)
+                    chat.messages.erase(chat.messages.begin(), chat.messages.begin() + trim);
+                chat.historyBoundary =
+                    chat.historyBoundary > trim ? chat.historyBoundary - trim : 0;
+                if (chat.messages.size() == 200)
+                    chat.historyMore = false;
+                for (size_t i = 0; i < stack_.size(); ++i) {
+                    View &target = stack_[i];
+                    if (target.kind != View::Chat || target.uin != id)
+                        continue;
+                    if (target.selected >= 0 &&
+                        unsigned(target.selected) < merge.oldPositions.size())
+                        target.selected =
+                            std::max(0, int(merge.oldPositions[target.selected]) - int(trim));
+                    else
+                        target.selected = std::max(0, int(chat.messages.size()) - 1);
+                    if (target.top >= 0 && unsigned(target.top) < merge.oldPositions.size())
+                        target.top = std::max(0, int(merge.oldPositions[target.top]) - int(trim));
+                    rebuildChat(target, false);
+                }
+                if (view().kind == View::Chat && view().uin == id)
+                    info(u(e.messages.empty() ? "Сообщений нет" : "История добавлена в чат"));
             }
-            showHistory(target);
+        } else if (pending->second == "history") {
+            // Local/legacy discussion views retain their existing viewer.
+            for (size_t v = 0; v < stack_.size(); ++v) {
+                if (stack_[v].request != e.requestId)
+                    continue;
+                View &target = stack_[v];
+                target.request = 0;
+                target.more = e.more;
+                target.offset = e.offset;
+                target.messages.insert(target.messages.begin(), e.messages.begin(),
+                                       e.messages.end());
+                if (target.messages.size() > 200)
+                    target.messages.resize(200);
+                showHistory(target);
+            }
         }
         if (pending_[e.requestId] == "last") {
             std::map<uint32_t, ChatState>::iterator chat = chats_.find(e.uin);
@@ -342,8 +391,15 @@ void Window::consume(const Event &e) {
                     rebuildChat();
             }
         }
+        const uint32_t target = pendingUin_[e.requestId];
+        const bool queued = pending->second == "last" && chats_.find(target) != chats_.end() &&
+                            chats_[target].historyQueued;
         pending_.erase(e.requestId);
         pendingUin_.erase(e.requestId);
+        if (queued) {
+            chats_[target].historyQueued = false;
+            requestChatHistory(target);
+        }
         update();
         return;
     }
@@ -466,6 +522,16 @@ void Window::consume(const Event &e) {
     if (e.type == Event::Error) {
         if (e.requestId && pending_.find(e.requestId) == pending_.end())
             return;
+        if (e.requestId && pending_[e.requestId] == "last") {
+            std::map<uint32_t, ChatState>::iterator chat = chats_.find(pendingUin_[e.requestId]);
+            if (chat != chats_.end())
+                chat->second.historyQueued = false;
+        }
+        if (e.requestId && pending_[e.requestId] == "chat-history") {
+            std::map<uint32_t, ChatState>::iterator chat = chats_.find(pendingUin_[e.requestId]);
+            if (chat != chats_.end() && chat->second.historyRequest == e.requestId)
+                chat->second.historyRequest = 0;
+        }
         if (e.requestId && e.requestId == outgoingRequest_) {
             pending_.erase(e.requestId);
             pendingUin_.erase(e.requestId);
@@ -544,9 +610,13 @@ void Window::incoming(const MessageRecord &m) {
             return;
     }
     chat.messages.push_back(m);
-    unsigned cap = std::max(1, settingNumber(settings_, "chat_messages"));
-    while (chat.messages.size() > cap)
-        chat.messages.erase(chat.messages.begin());
+    unsigned cap =
+        chat.historyLoaded ? 200 : std::max(1, settingNumber(settings_, "chat_messages"));
+    const unsigned trim = chat.messages.size() > cap ? chat.messages.size() - cap : 0;
+    if (trim) {
+        chat.messages.erase(chat.messages.begin(), chat.messages.begin() + trim);
+        chat.historyBoundary = chat.historyBoundary > trim ? chat.historyBoundary - trim : 0;
+    }
     std::string error;
     if (!storage_->appendHistory(m.uin, m, error))
         note(error);
@@ -561,14 +631,24 @@ void Window::incoming(const MessageRecord &m) {
         pending_[request.requestId] = "identity";
         send(request);
     }
+    for (size_t i = 0; i < stack_.size(); ++i) {
+        View &target = stack_[i];
+        if (target.kind != View::Chat || target.uin != m.uin)
+            continue;
+        const bool follow = target.rows.empty() || target.selected >= int(target.rows.size()) - 1;
+        if (follow)
+            target.selected = std::max(0, int(chat.messages.size()) - 1);
+        else
+            target.selected = std::max(0, target.selected - int(trim));
+        target.top = std::max(0, target.top - int(trim));
+        rebuildChat(target, false);
+    }
     bool visible =
         !locked_ && !closed_ && isVisible() && view().kind == View::Chat && view().uin == m.uin;
     if (!m.outgoing && !visible)
         ++chat.unread;
     if (!m.outgoing)
         notify(m);
-    if (view().kind == View::Chat && view().uin == m.uin)
-        rebuildChat();
     if (view().kind == View::Roster)
         rebuildRoster();
     trimChats();
@@ -585,6 +665,10 @@ void Window::notify(const MessageRecord &m) {
     bool quietProfile = locked_ || closed_;
     std::string sound = settingValue(settings_, quietProfile ? "sound_locked" : "sound_unlocked");
     int volume = settingNumber(settings_, quietProfile ? "volume_locked" : "volume_unlocked");
+    // Preserve vibration/unread/external notifications while the user owns
+    // audio for playback or recording; a second engine would compete for it.
+    if (player_.active() || capture_.busy())
+        volume = 0;
     int vibration =
         settingNumber(settings_, quietProfile ? "vibration_locked" : "vibration_unlocked");
     platform_.notifyMessage(sound.empty() ? QString::null
@@ -745,7 +829,7 @@ QString Window::messageText(const MessageRecord &m) const {
                                        : "[файл]");
     return text;
 }
-void Window::openChat(uint32_t id) {
+void Window::openChat(uint32_t id, bool preload) {
     if (!id)
         return;
     saveDraft();
@@ -765,7 +849,8 @@ void Window::openChat(uint32_t id) {
     markVisibleChatRead();
     trimChats();
     rebuildChat();
-    requestLastMessage(id);
+    if (preload)
+        requestLastMessage(id);
 }
 void Window::requestLastMessage(uint32_t id) {
     if (!id || connectionState_ != Event::Online)
@@ -776,7 +861,8 @@ void Window::requestLastMessage(uint32_t id) {
     for (std::map<uint32_t, std::string>::const_iterator pending = pending_.begin();
          pending != pending_.end(); ++pending) {
         std::map<uint32_t, uint32_t>::const_iterator target = pendingUin_.find(pending->first);
-        if ((pending->second == "last" || pending->second == "restore-chat") &&
+        if ((pending->second == "last" || pending->second == "restore-chat" ||
+             pending->second == "chat-history") &&
             target != pendingUin_.end() && target->second == id)
             return;
     }
@@ -793,15 +879,19 @@ void Window::requestLastMessage(uint32_t id) {
 void Window::rebuildChat() {
     if (view().kind != View::Chat)
         return;
-    View &v = view();
+    rebuildChat(view(), true);
+}
+void Window::rebuildChat(View &v, bool followNew) {
     ChatState &chat = chats_[v.uin];
     int old = v.rows.size();
     v.rows.clear();
     v.title = name(v.uin) + (chat.typingUntil ? u(" — печатает") : QString::null);
     for (size_t i = 0; i < chat.messages.size(); ++i)
         v.rows.push_back(Row(messageText(chat.messages[i]), "message-menu", v.uin, i));
-    if (v.selected >= old - 1)
+    if (followNew && v.selected >= old - 1)
         v.selected = std::max(0, (int)v.rows.size() - 1);
+    v.selected = std::max(0, std::min(v.selected, int(v.rows.size()) - 1));
+    v.top = std::max(0, std::min(v.top, v.selected));
     update();
 }
 void Window::showHistory(View &v) {
@@ -811,35 +901,65 @@ void Window::showHistory(View &v) {
             v.rows.push_back(Row(messageText(v.messages[i]), "message-menu", v.uin, i));
     v.title = name(v.uin) + " (" + QString::number(v.messages.size()) + ")";
 }
+void Window::resetServerHistory() {
+    for (std::map<uint32_t, ChatState>::iterator i = chats_.begin(); i != chats_.end(); ++i) {
+        i->second.historyRequest = i->second.historyOffset = i->second.historyBoundary = 0;
+        i->second.historyStarted = i->second.historyMore = i->second.historyQueued = false;
+    }
+}
 void Window::history(bool server, bool more) {
     uint32_t id = view().uin;
     if (!id)
         return;
-    if (!more) {
+    if (!server) {
         View v(View::History, name(id));
         v.uin = id;
-        v.context = server ? "server" : "local";
+        v.context = "local";
+        storage_->loadHistory(id, v.messages, settingNumber(settings_, "history_count"));
+        showHistory(v);
         push(v);
-    }
-    if (!server) {
-        storage_->loadHistory(id, view().messages, settingNumber(settings_, "history_count"));
-        showHistory(view());
-        update();
         return;
     }
-    if (view().request)
+    if (connectionState_ != Event::Online) {
+        info(u("Нет соединения"));
         return;
+    }
+    while (view().kind == View::Popup)
+        back();
+    if (view().kind != View::Chat || view().uin != id)
+        openChat(id, false);
+    requestChatHistory(id);
+    (void)more; // Both menu commands continue the same chat-owned cursor.
+}
+void Window::requestChatHistory(uint32_t id) {
+    ChatState &chat = chats_[id];
+    if (chat.historyRequest)
+        return;
+    if (chat.historyStarted && !chat.historyMore) {
+        info(u(chat.messages.size() >= 200 ? "В чате уже 200 сообщений истории"
+                                           : "История полностью загружена"));
+        return;
+    }
+    for (std::map<uint32_t, std::string>::const_iterator i = pending_.begin(); i != pending_.end();
+         ++i)
+        if (i->second == "last" && pendingUin_[i->first] == id) {
+            chat.historyQueued = true;
+            info(u("История загрузится после последнего сообщения"));
+            return;
+        }
     Command c(Command::History);
     c.uin = id;
-    c.offset = view().offset;
+    c.offset = chat.historyOffset;
     c.limit = std::max(1, std::min(100, settingNumber(settings_, "server_history_count")));
     c.requestId = client_.nextRequestId();
     if (send(c)) {
-        view().request = c.requestId;
-        pending_[c.requestId] = "history";
+        chat.historyRequest = c.requestId;
+        if (!chat.historyStarted)
+            chat.historyBoundary = chat.messages.size();
+        pending_[c.requestId] = "chat-history";
         pendingUin_[c.requestId] = id;
+        info(u("Загружаю историю…"));
     }
-    update();
 }
 const MessageRecord *Window::selectedMessage() const {
     const View *v = 0;

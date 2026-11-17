@@ -72,17 +72,27 @@ extern "C" int pthread_join(pthread_t, void **result) {
 }
 static volatile bool microphoneWaiting;
 static bool failRead;
-static unsigned inputOpened, inputClosed;
+static unsigned inputOpened, inputClosed, readCalls;
+static unsigned stopOnRead;
+static bool stopOnReady;
+static tmm::CaptureController *stopTarget;
 AM_NORMAL_DEV_INTERFACE::AM_NORMAL_DEV_INTERFACE(SOUNDM_AUDIO_NORMALDEV_TYPE_ENUM_T mode) {
     assert(static_cast<int>(mode) == 0x303);
     ++inputOpened;
 }
 AM_NORMAL_DEV_INTERFACE::~AM_NORMAL_DEV_INTERFACE() {}
 int AM_NORMAL_DEV_INTERFACE::canRead() {
+    if (stopOnReady && stopTarget) {
+        stopOnReady = false;
+        stopTarget->cancel();
+    }
     return microphoneWaiting ? 1 : 0;
 }
 int AM_NORMAL_DEV_INTERFACE::read(short *out, unsigned count) {
-    assert(count == 4000);
+    assert(count == 4000); // Preserve the stock VoiceNote packet size.
+    ++readCalls;
+    if (stopOnRead && readCalls == stopOnRead && stopTarget)
+        stopTarget->stop();
     if (failRead)
         return -1;
     std::memset(out, 0, count * sizeof(short));
@@ -107,7 +117,8 @@ int main(int argc, char **argv) {
             cancelled = QString(directory) + "/cancel.amr",
             failed = QString(directory) + "/failed.amr",
             retried = QString(directory) + "/retried.amr",
-            destroyed = QString(directory) + "/destroy.amr";
+            destroyed = QString(directory) + "/destroy.amr",
+            stopped = QString(directory) + "/stopped.amr";
     {
         tmm::CaptureController capture;
         CaptureTestObserver observer(capture);
@@ -169,6 +180,24 @@ int main(int argc, char **argv) {
         assert(observer.readyCount == 2 && observer.errorCount == 3 &&
                observer.cancelledCount == 1);
         assert(!observer.terminalWhileBusy && capture.destination_.isEmpty());
+        readCalls = 0;
+        stopTarget = &capture;
+        stopOnRead = 13; // Stop during the read immediately following six seconds.
+        capture.recordVoice(stopped, 60);
+        await(capture);
+        assert(readCalls == 13 && capture.durationSeconds() == 6 &&
+               tmm::captureDuration(stopped.local8Bit().data()) == 6);
+        assert(observer.readyCount == 3 && observer.errorCount == 3 &&
+               observer.cancelledCount == 1 && !observer.terminalWhileBusy);
+        stopOnRead = 0;
+        readCalls = 0;
+        stopOnReady = true;
+        capture.recordVoice(cancelled, 60);
+        await(capture);
+        assert(!readCalls && observer.cancelledCount == 2);
+        assert(access(cancelled.local8Bit().data(), F_OK) != 0);
+        stopTarget = 0;
+        assert(!unlink(stopped.local8Bit().data()));
         assert(!unlink(retried.local8Bit().data()));
     }
     {
@@ -180,6 +209,7 @@ int main(int argc, char **argv) {
     assert(!unlink(first.local8Bit().data()));
     assert(!rmdir(directory));
     std::puts("V8 capture unit: real AMR + scheduled-worker fixture, live duration, UI bitrate "
-              "normalization, ready/error/cancel signals, retry and shutdown cleanup PASS");
+              "normalization, Stop at six seconds/during readiness, signals, retry and shutdown "
+              "cleanup PASS");
     return 0;
 }

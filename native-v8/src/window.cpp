@@ -222,7 +222,7 @@ void Window::back() {
             if (outgoingRequest_ == c.requestId)
                 outgoingRequest_ = 0;
         }
-        if (view().context == "recording")
+        if (view().kind == View::Recording && capture_.busy())
             capture_.cancel();
         if (view().context == "attachment-review")
             discardAttachment();
@@ -337,10 +337,18 @@ ContactRecord *Window::contact(uint32_t id) {
             return &contacts_[i];
     return 0;
 }
+void Window::updateSystemStatusIcon() {
+    StatusIconV8::configureApplication(
+        settingNumber(settings_, "running_icon"),
+        connectionState_ == Event::Online ? settings_.getInt("status", 0) : 0xffffffffU);
+}
 void Window::applySettings() {
-    StatusIconV8::configureApplication(settingNumber(settings_, "running_icon"));
+    updateSystemStatusIcon();
     setUiLanguage(settingValue(settings_, "language"));
-    setFont(QFont("Helvetica", settingNumber(settings_, "font_size")));
+    QFont bodyFont = QApplication::font();
+    bodyFont.setPointSize(settingNumber(settings_, "font_size"));
+    setFont(bodyFont);
+    editor_->setFont(bodyFont);
     const unsigned history = settingFlag(settings_, "save_history")
                                  ? std::max(0, settingNumber(settings_, "history_count"))
                                  : 0;
@@ -358,34 +366,24 @@ void Window::applySettings() {
         else
             showNormal();
     }
-    refreshBackground();
     update();
 }
-void Window::refreshBackground() {
-    std::string f = settingValue(settings_, "background_file");
-    background_ = QPixmap();
-    if (!f.empty()) {
-        unsigned w, h;
-        std::string error;
-        if (imageDimensions(f, w, h, error)) {
-            QImage image;
-            if (image.load(u(f))) {
-                int bw = width(), bh = height() - 56;
-                if (settingValue(settings_, "background_mode") == "fit") {
-                    if (w * bh > h * bw)
-                        bh = std::max(1, (int)(h * bw / w));
-                    else
-                        bw = std::max(1, (int)(w * bh / h));
-                }
-                if (settingValue(settings_, "background_mode") != "tile")
-                    image = image.smoothScale(std::max(1, bw), std::max(1, bh));
-                background_.convertFromImage(image);
-            }
-        } else {
-            note(error);
-            info(u(error));
-        }
-    }
+QColor Window::bodyColor(unsigned role) const {
+    const QColorGroup &colors = palette().active();
+    if (role == 1)
+        return colors.base();
+    if (role == 3)
+        return colors.highlight();
+    if (role == 4)
+        return colors.button();
+    if (role == 8)
+        return colors.mid();
+    return colors.text();
+}
+QFont Window::chatFont() const {
+    QFont result = QApplication::font();
+    result.setPointSize(settingNumber(settings_, "chat_font_size"));
+    return result;
 }
 void Window::settingsChanged() {
     std::string error;
@@ -407,7 +405,6 @@ void Window::resizeEvent(QResizeEvent *) {
     QWidget *w = player_.videoWidget();
     if (w && w->isVisible())
         w->setGeometry(0, 29, width(), std::max(1, height() - 56));
-    refreshBackground();
 }
 void Window::showEvent(QShowEvent *) {
     if (closedAt_ && settingNumber(settings_, "flip_lock_minutes") > 0 &&
@@ -521,7 +518,7 @@ void Window::tick() {
         platform_.setBacklight(false);
         lightOn_ = false;
     }
-    if (!stack_.empty() && view().kind == View::Recording && capture_.busy()) {
+    if (!stack_.empty() && view().context == "recording" && capture_.busy()) {
         QString state = u("Запись: ") + number(capture_.durationSeconds()) + u(" с");
         if (view().status != state) {
             view().status = state;
@@ -540,6 +537,7 @@ void Window::inputStateChanged(int windowId, bool active) {
     inputIndicator_->activate(windowId, active);
 }
 void Window::systemThemeChanged() {
+    setPalette(QApplication::palette());
     if (systemChrome_)
         systemChrome_->refresh();
     update();
@@ -754,7 +752,7 @@ void Window::drawFooter(QPainter &p) {
         left = u("Выбрать");
     if (context == "main-menu")
         left = contacts_.empty() ? QString::null : u("Чаты");
-    if (settingsPageActive() || context == "settings-theme")
+    if (settingsPageActive())
         right = u("Сохр.");
     if (context == "privacy-editor") {
         left = u("Отмена");
@@ -801,8 +799,8 @@ int Window::rowHeight(const Row &r) const {
         return infoAvatar_.isNull() ? 30 : infoAvatar_.height() + 8;
     if (view().kind != View::Chat && view().kind != View::History &&
         view().context != "contact-info")
-        return 30;
-    QFontMetrics metrics(QFont("Helvetica", settingNumber(settings_, "chat_font_size")));
+        return std::max(30, fontMetrics().height() + 10);
+    QFontMetrics metrics(chatFont());
     return std::max(
         30, metrics.boundingRect(0, 0,
                                  std::max(1, width() - ((settingFlag(settings_, "show_icons") ||
@@ -818,7 +816,7 @@ void Window::drawList(QPainter &p) {
     bool chat = v.kind == View::Chat || v.kind == View::History;
     bool fields = v.context == "contact-info";
     if (chat || fields)
-        p.setFont(QFont("Helvetica", settingNumber(settings_, "chat_font_size")));
+        p.setFont(chatFont());
     int available = height() - 56;
     if (v.selected < v.top)
         v.top = v.selected;
@@ -835,7 +833,7 @@ void Window::drawList(QPainter &p) {
         int h = rowHeight(v.rows[i]);
         bool selected = i == v.selected;
         if (selected)
-            p.fillRect(0, y, width(), std::min(h, available), QColor(interfaceColor(settings_, 4)));
+            p.fillRect(0, y, width(), std::min(h, available), palette().active().highlight());
         const MessageRecord *m = 0;
         if (chat && v.rows[i].action == "message-menu") {
             if (v.kind == View::History && v.rows[i].value < v.messages.size())
@@ -846,10 +844,8 @@ void Window::drawList(QPainter &p) {
                     m = &c->second.messages[v.rows[i].value];
             }
         }
-        QColor text(interfaceColor(settings_, 2));
-        if (m && settingFlag(settings_, "colored_text"))
-            text = QColor(interfaceColor(settings_, m->outgoing ? 3 : 6));
-        QColor ink = text;
+        const QColor ink =
+            selected ? palette().active().highlightedText() : palette().active().text();
         p.setPen(ink);
         bool decorated = chat && (settingFlag(settings_, "show_icons") ||
                                   settingFlag(settings_, "show_receipts"));
@@ -958,23 +954,13 @@ void Window::drawFrame(QPainter &p) {
         return;
     }
     // Transparent native skin parts blend against the phone's palette in menus.
-    p.fillRect(rect(), systemMenuVisible() ? palette().active().background()
-                                           : QColor(interfaceColor(settings_, 1)));
-    if (!background_.isNull() && !locked_ && !systemMenuVisible() &&
-        view().kind != View::Transfer && view().kind != View::Recording &&
-        !connectionProgressVisible()) {
-        if (settingValue(settings_, "background_mode") == "tile")
-            p.drawTiledPixmap(rect(), background_);
-        else
-            p.drawPixmap((width() - background_.width()) / 2,
-                         28 + (height() - 56 - background_.height()) / 2, background_);
-    }
+    p.fillRect(rect(), systemMenuVisible() ? palette().active().background() : bodyColor(1));
     if (!(editor_ && editor_->isVisible() && editAction_ == "message" &&
           settingFlag(settings_, "full_editor")))
         drawHeader(p);
     drawFooter(p);
     if (locked_) {
-        p.setPen(QColor(interfaceColor(settings_, 2)));
+        p.setPen(bodyColor(2));
         QString stars;
         stars.fill('*', pin_.length());
         QString text = settingValue(settings_, "lock_pin").empty()
@@ -992,7 +978,7 @@ void Window::drawFrame(QPainter &p) {
         drawAttachmentDetails(p);
     } else if (view().kind == View::Picture && !picture_.isNull()) {
         p.save();
-        const QRect area(0, 29, width(), std::max(1, height() - 94));
+        const QRect area(0, 29, width(), std::max(1, height() - 56));
         p.setClipRect(area);
         QWMatrix matrix;
         double scale = (double)pictureZoom_ / 100;
@@ -1002,31 +988,24 @@ void Window::drawFrame(QPainter &p) {
         p.drawPixmap((width() - image.width()) / 2, area.y() + (area.height() - image.height()) / 2,
                      image);
         p.restore();
-        p.setPen(QColor(interfaceColor(settings_, 2)));
-        QFont hint = font();
-        hint.setPointSize(12);
-        p.setFont(hint);
-        p.drawText(4, height() - 62, width() - 8, 34, Qt::AlignCenter | Qt::WordBreak,
-                   u("Вверх/вниз: масштаб\nВлево/вправо: поворот"));
-        p.setFont(font());
     } else if (view().kind == View::Player) {
         drawPlayer(p);
     } else if (view().kind == View::Text && view().context != "contact-info" &&
                !view().rows.empty()) {
         p.setClipRect(0, 29, width(), height() - 56);
-        p.setPen(QColor(interfaceColor(settings_, 2)));
+        p.setPen(bodyColor(2));
         p.drawText(5, 32 - view().selected * 25, width() - 10, 100000, Qt::WordBreak,
                    view().rows[0].text);
         p.setClipping(false);
     } else if (!systemMenuVisible())
         drawList(p);
     if (!notice_.isEmpty()) {
-        p.fillRect(0, height() - 79, width(), 52, QColor(255, 245, 190));
-        p.setPen(Qt::black);
+        p.fillRect(0, height() - 79, width(), 52, palette().active().button());
+        p.setPen(palette().active().buttonText());
         p.drawText(5, height() - 78, width() - 10, 50, Qt::WordBreak, notice_);
     } else if (!ticker_.isEmpty()) {
-        p.fillRect(0, height() - 52, width(), 25, QColor(255, 245, 190));
-        p.setPen(Qt::black);
+        p.fillRect(0, height() - 52, width(), 25, palette().active().button());
+        p.setPen(palette().active().buttonText());
         p.drawText(4, height() - 52, width() - 8, 25, Qt::SingleLine | Qt::AlignVCenter, ticker_);
     }
 }

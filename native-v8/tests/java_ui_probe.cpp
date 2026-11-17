@@ -28,6 +28,13 @@ extern "C" void UTIL_SetFlipStatus(int);
 extern "C" void UTIL_SetKeypadLockStatus(bool);
 static std::vector<tmm::Command> submitted;
 static QString drawnLeft, drawnRight;
+static unsigned systemIconMode;
+static uint32_t systemIconStatus;
+extern "C" void __wrap__ZN3tmm12StatusIconV820configureApplicationEjj(unsigned mode,
+                                                                      uint32_t status) {
+    systemIconMode = mode;
+    systemIconStatus = status;
+}
 extern "C" bool __wrap__ZN3tmm6Client6submitERKNS_7CommandE(tmm::Client *, const tmm::Command &c) {
     submitted.push_back(c);
     return true;
@@ -126,8 +133,6 @@ const Expected fullHistory[] = {{"Обсуждение", "discussion"},     {"Е
 const Expected settings[] = {{"Учетная запись", "settings:account"},
                              {"Сеть", "settings:network"},
                              {"Интерфейс", "settings:interface"},
-                             {"Цветовая схема", "settings:theme"},
-                             {"Фоновое изобр.", "settings:background"},
                              {"Камера", "settings:camera"},
                              {"Медиа", "settings:media"},
                              {"Сеть Telegram", "settings:telegram"},
@@ -150,24 +155,6 @@ const unsigned statusValues[] = {0,   32,     1,      4,      16,     2,     256
 const Expected deleteChoices[] = {{"Этого контакта", "chat-delete-selection"},
                                   {"Всех кроме этого", "chat-delete-selection"},
                                   {"Всех контактов", "chat-delete-selection"}};
-const Expected themeChoices[] = {{"Чёрная на белом", "set:theme:light"},
-                                 {"Белая на чёрном", "set:theme:dark"},
-                                 {"Белая на синем", "set:theme:blue"},
-                                 {"Розовая", "set:theme:pink"},
-                                 {"Зеленая", "set:theme:green"},
-                                 {"Песочная", "set:theme:sand"},
-                                 {"Хакер :)", "set:theme:hacker"},
-                                 {"Аква", "set:theme:aqua"},
-                                 {"Зеленая ночь", "set:theme:green-night"},
-                                 {"Опера Мини", "set:theme:opera"},
-                                 {"Эргономическая", "set:theme:ergonomic"},
-                                 {"Бронзовый монстр", "set:theme:golem"},
-                                 {"Снежная", "set:theme:snowy"},
-                                 {"WA Bento", "set:theme:bento"},
-                                 {"Quake 3", "set:theme:quake"},
-                                 {"Тёмный лес", "set:theme:forest"},
-                                 {"Серебряная", "set:theme:silver"},
-                                 {"Неон", "set:theme:neon"}};
 } // namespace
 class UiProbe {
     static unsigned checks_;
@@ -513,23 +500,22 @@ class UiProbe {
         menu(w, settings, COUNT(settings), "settings top-level labels/order match Java V8");
         w.showSettings("interface");
         // Options.java: one form, four separator groups, no detached Chat/Light page.
-        const char *interfaceActions[] = {"field:lock_pin",        "field:flip_lock_minutes",
-                                          "settings-heading",      "field:display_date",
-                                          "field:fullscreen",      "field:running_icon",
-                                          "field:mirror_menu",     "field:small_font",
-                                          "settings-heading",      "field:use_groups",
-                                          "field:hide_empty",      "field:hide_offline",
-                                          "field:show_deleted",    "field:sort_by",
-                                          "settings-heading",      "field:cp1251",
-                                          "field:initial_caps",    "field:show_receipts",
-                                          "field:save_history",    "field:server_history_count",
-                                          "field:chat_messages",   "settings-heading",
-                                          "field:chat_small_font", "field:show_icons",
-                                          "field:show_sender",     "field:show_time",
-                                          "field:show_newlines",   "field:show_smileys",
-                                          "field:colored_text",    "field:full_editor",
-                                          "field:light_seconds",   "field:manual_light",
-                                          "field:caption_offset"};
+        const char *interfaceActions[] = {"field:lock_pin",       "field:flip_lock_minutes",
+                                          "settings-heading",     "field:display_date",
+                                          "field:fullscreen",     "field:running_icon",
+                                          "field:mirror_menu",    "field:font_size",
+                                          "settings-heading",     "field:use_groups",
+                                          "field:hide_empty",     "field:hide_offline",
+                                          "field:show_deleted",   "field:sort_by",
+                                          "settings-heading",     "field:cp1251",
+                                          "field:initial_caps",   "field:show_receipts",
+                                          "field:save_history",   "field:server_history_count",
+                                          "field:chat_messages",  "settings-heading",
+                                          "field:chat_font_size", "field:show_icons",
+                                          "field:show_sender",    "field:show_time",
+                                          "field:show_newlines",  "field:show_smileys",
+                                          "field:full_editor",    "field:light_seconds",
+                                          "field:manual_light",   "field:caption_offset"};
         bool interfaceOrder = w.view().rows.size() == COUNT(interfaceActions);
         for (size_t i = 0; i < COUNT(interfaceActions) && i < w.view().rows.size(); ++i)
             interfaceOrder = interfaceOrder && w.view().rows[i].action == interfaceActions[i];
@@ -597,25 +583,47 @@ class UiProbe {
         require(!w.settingsEditing_ && reloaded.load(w.settings_.path(), accountError) &&
                     reloaded.get("uin") == savedUin && reloaded.get("password") == "new-password",
                 "account Save persists exactly the single credentials");
-        w.showSettings("theme");
-        menu(w, themeChoices, COUNT(themeChoices), "all eighteen Java color schemes retain order");
-        const std::string oldTheme = settingValue(w.settings_, "theme");
-        const unsigned target = oldTheme == "dark" ? 2 : 1;
-        w.view().selected = target;
-        w.key(KEYCODE_CENTER_SELECT);
-        require(w.view().context == "settings-theme" && w.settingsEditing_ &&
-                    settingValue(w.settings_, "theme") == oldTheme,
-                "theme Select stages the choice without saving or leaving");
+        const int oldFont = settingNumber(w.settings_, "font_size");
+        const int oldChatFont = settingNumber(w.settings_, "chat_font_size");
+        w.showSettings("interface");
+        w.chooseSetting("font_size");
+        require(w.view().kind == View::Choice && w.view().rows.size() == 7 &&
+                    index(w, "set:font_size:12") >= 0 && index(w, "set:font_size:24") >= 0,
+                "interface font is a size dropdown rather than a small-font toggle");
+        w.activate(w.view().rows[index(w, "set:font_size:20")]);
+        w.chooseSetting("chat_font_size");
+        w.activate(w.view().rows[index(w, "set:chat_font_size:18")]);
+        require(settingNumber(w.settingsDraft_, "font_size") == 20 &&
+                    settingNumber(w.settingsDraft_, "chat_font_size") == 18 &&
+                    w.font().pointSize() == oldFont && w.chatFont().pointSize() == oldChatFont,
+                "font choices are staged until Save");
         w.key(KEYCODE_LSK);
-        require(!w.settingsEditing_ && settingValue(w.settings_, "theme") == oldTheme,
-                "theme Back discards selection");
-        w.showSettings("theme");
-        w.view().selected = target;
+        require(w.font().pointSize() == oldFont && w.chatFont().pointSize() == oldChatFont,
+                "Back preserves both current font sizes");
+        w.showSettings("interface");
+        w.commitSetting("font_size", "20");
+        w.commitSetting("chat_font_size", "18");
         w.key(KEYCODE_RSK);
-        require(!w.settingsEditing_ &&
-                    settingValue(w.settings_, "theme") == (target == 1 ? "dark" : "blue"),
-                "theme Save persists current selected scheme and closes the screen");
-        w.settings_.set("theme", oldTheme);
+        Settings fontReload;
+        require(fontReload.load(w.settings_.path(), accountError) &&
+                    fontReload.getInt("font_size") == 20 &&
+                    fontReload.getInt("chat_font_size") == 18 && w.font().pointSize() == 20 &&
+                    w.chatFont().pointSize() == 18 && w.editor_->font().pointSize() == 20,
+                "Save applies and persists separate interface/chat/editor font sizes");
+        QPixmap fontFrame(w.size());
+        QPainter fontPainter(&fontFrame);
+        w.drawFrame(fontPainter);
+        fontPainter.end();
+        const ZListBox::ListItemRegion firstRegion = static_cast<ZListBox::ListItemRegion>(0);
+        require(w.systemMenu_->list()->getItemFont(firstRegion, false).pointSize() == 20 &&
+                    w.systemMenu_->list()->getItemFont(firstRegion, true).pointSize() == 20,
+                "native menu region fonts follow the saved interface size");
+        require(w.bodyColor(1) == w.palette().active().base() &&
+                    w.bodyColor(2) == w.palette().active().text() &&
+                    w.bodyColor(3) == w.palette().active().highlight(),
+                "chat colors come from the native system palette");
+        w.settings_.setInt("font_size", oldFont);
+        w.settings_.setInt("chat_font_size", oldChatFont);
         w.applySettings();
         w.showSettings("network");
         w.chooseSetting("host");
@@ -964,6 +972,147 @@ class UiProbe {
         w.applySettings();
         reset(w);
     }
+    static void inlineHistory(Window &w, uint32_t id) {
+        reset(w);
+        w.pending_.clear();
+        w.pendingUin_.clear();
+        w.chats_[id] = ChatState();
+        w.chats_[id].loaded = true;
+        w.connectionState_ = Event::Online;
+        w.settings_.setBool("save_history", false);
+        w.applySettings();
+        submitted.clear();
+        w.openChat(id);
+        require(submitted.size() == 1 && submitted.back().limit == 1,
+                "empty chat starts its single-message preload");
+        const uint32_t lastRequest = submitted.back().requestId;
+        w.history(true);
+        require(w.view().kind == View::Chat && submitted.size() == 1 && w.chats_[id].historyQueued,
+                "history stays in chat and queues behind an active preload");
+        MessageRecord m = message(id);
+        m.nativeId = "C";
+        m.text = "third";
+        m.cookie = 0;
+        m.time = 0;
+        Event last(Event::History);
+        last.requestId = lastRequest;
+        last.uin = id;
+        last.messages.push_back(m);
+        w.consume(last);
+        require(submitted.size() == 2 && submitted.back().type == Command::History &&
+                    submitted.back().limit ==
+                        unsigned(settingNumber(w.settings_, "server_history_count")) &&
+                    w.chats_[id].historyRequest == submitted.back().requestId,
+                "preload completion starts the queued page exactly once");
+        const uint32_t request = submitted.back().requestId;
+        w.history(true);
+        require(submitted.size() == 2, "repeat history taps do not duplicate the pending request");
+        m.nativeId = "D";
+        m.text = "live fourth";
+        m.cookie = 777;
+        m.time = 1700000020;
+        w.incoming(m);
+        w.view().selected = 1;
+        w.view().top = 1;
+        w.view().scroll = 8;
+        Event page(Event::History);
+        page.requestId = request;
+        page.uin = id;
+        page.more = true;
+        page.offset = 3;
+        m.cookie = 0;
+        m.time = 0;
+        m.nativeId = "A";
+        m.text = "first";
+        page.messages.push_back(m);
+        m.nativeId = "B";
+        m.text = "second";
+        page.messages.push_back(m);
+        m.nativeId = "C";
+        m.text = "third";
+        page.messages.push_back(m);
+        w.consume(page);
+        require(
+            w.view().kind == View::Chat && w.chats_[id].messages.size() == 4 &&
+                w.chats_[id].messages[0].nativeId == "A" &&
+                w.chats_[id].messages[3].nativeId == "D" && w.chats_[id].unread == 0 &&
+                w.view().selected == 3 && w.view().top == 3 && w.view().scroll == 8,
+            "server page merges before live arrival, preserving selection, scroll and read state");
+        w.chatMenu();
+        require(index(w, "history-more") >= 0, "chat menu exposes the next server page");
+        w.back();
+        w.history(true, true);
+        require(submitted.back().type == Command::History && submitted.back().offset == 3 &&
+                    w.view().kind == View::Chat,
+                "next history page uses its chat cursor without another window");
+        const uint32_t older = submitted.back().requestId;
+        w.openChat(id + 1, false);
+        page.requestId = older;
+        page.offset = 4;
+        page.more = false;
+        page.messages.clear();
+        m.nativeId = "0";
+        m.text = "oldest";
+        page.messages.push_back(m);
+        w.consume(page);
+        require(w.view().uin == id + 1 && w.chats_[id].messages.size() == 5 &&
+                    w.chats_[id].messages[0].nativeId == "0",
+                "background history updates only its owning chat");
+        w.openChat(id, false);
+        const size_t doneCount = submitted.size();
+        w.history(true);
+        require(submitted.size() == doneCount, "end-of-history blocks redundant requests");
+        w.resetServerHistory();
+        w.settings_.setInt("chat_messages", 1);
+        m.nativeId = "E";
+        m.cookie = 778;
+        m.time = 1700000030;
+        w.incoming(m);
+        require(w.chats_[id].messages.size() == 6 && w.chats_[id].historyLoaded,
+                "reconnect retains already loaded server history beyond the live-chat cap");
+        w.history(true);
+        Event error(Event::Error);
+        error.requestId = submitted.back().requestId;
+        error.uin = id;
+        error.text = "try history later";
+        w.consume(error);
+        require(!w.chats_[id].historyRequest && w.view().kind == View::Chat &&
+                    w.notice_ == QString::fromLatin1("try history later"),
+                "history error is visible in chat and releases its request for retry");
+        w.history(true);
+        require(w.chats_[id].historyRequest && w.chats_[id].messages.size() == 6,
+                "history retry does not clear the conversation");
+        w.resetServerHistory();
+        w.pending_.clear();
+        w.pendingUin_.clear();
+        w.settings_.setInt("chat_messages", 15);
+        w.settings_.setBool("save_history", true);
+        w.applySettings();
+        reset(w);
+    }
+    static void systemPresence(Window &w) {
+        w.settings_.setInt("running_icon", 1);
+        w.settings_.setInt("status", 16);
+        w.connectionState_ = Event::Disconnected;
+        w.applySettings();
+        require(systemIconMode == 1 && systemIconStatus == 0xffffffffU,
+                "disconnected system icon receives the grey offline status");
+        Event state(Event::State);
+        state.state = Event::Connecting;
+        w.consume(state);
+        require(systemIconStatus == 0xffffffffU, "connecting keeps the system icon offline");
+        state.state = Event::Online;
+        w.consume(state);
+        require(systemIconStatus == 16, "online system icon receives the selected presence");
+        w.activate(Row(QString::null, "status-set", 0, 32));
+        require(systemIconStatus == 32, "changing presence updates the system icon immediately");
+        state.state = Event::Reconnecting;
+        w.consume(state);
+        require(systemIconStatus == 0xffffffffU, "reconnect immediately greys the system icon");
+        w.settings_.setInt("status", 0);
+        w.connectionState_ = Event::Online;
+        w.applySettings();
+    }
     static void scene(Window &w, uint32_t id) {
         reset(w);
         w.connectionState_ = Event::Online;
@@ -1056,6 +1205,8 @@ class UiProbe {
         smileys(w, 1000001);
         privacy(w, 1000001);
         localHistory(w, 1000001);
+        inlineHistory(w, 1000001);
+        systemPresence(w);
         scene(w, 1000001);
         fprintf(stderr, "JAVA UI PASS %u checks\n", checks_);
     }

@@ -18,11 +18,6 @@ static QString u(const char *s) {
 static QString u(const std::string &s) {
     return QString::fromUtf8(s.c_str());
 }
-static std::string num(unsigned n) {
-    char b[32];
-    snprintf(b, sizeof(b), "%u", n);
-    return b;
-}
 void Window::layoutEditor() {
     if (!editor_ || !inputIndicator_)
         return;
@@ -72,8 +67,7 @@ void Window::edit(const QString &title, const std::string &action, const std::st
     const std::string fieldKey = setting ? setting->key : "";
     const bool numeric = action == "add-contact" || fieldKey == "uin" || fieldKey == "lock_pin" ||
                          (setting && setting->maximum && !setting->secret && fieldKey != "host" &&
-                          fieldKey != "dns_server" && fieldKey != "network_profile" &&
-                          fieldKey != "background_file");
+                          fieldKey != "dns_server" && fieldKey != "network_profile");
     field->setType(
         numeric
             ? (secret ? ZKbInputField::FIELD_TYPE_NUMPASSWORD : ZKbInputField::FIELD_TYPE_NUMERIC)

@@ -45,8 +45,6 @@ std::string choiceLabel(const SettingField &f, const std::string &value) {
         if (choices[i].substr(0, equal) == value)
             return equal == std::string::npos ? choices[i] : choices[i].substr(equal + 1);
     }
-    if (std::string(f.key) == "background_kind" && value == "legacy")
-        return "Сохраненное изображение";
     return value;
 }
 void fieldRow(View &v, const Settings &s, const SettingField &f, const std::string &key,
@@ -63,8 +61,6 @@ void Window::settingsMenu() {
     row(v, "Учетная запись", "settings:account");
     row(v, "Сеть", "settings:network");
     row(v, "Интерфейс", "settings:interface");
-    row(v, "Цветовая схема", "settings:theme");
-    row(v, "Фоновое изобр.", "settings:background");
     row(v, "Камера", "settings:camera");
     row(v, "Медиа", "settings:media");
     row(v, "Сеть Telegram", "settings:telegram");
@@ -78,8 +74,7 @@ void Window::settingsMenu() {
     push(v);
 }
 bool Window::settingsPageActive() const {
-    return settingsEditing_ && !stack_.empty() &&
-           (view().kind == View::SettingsPage || view().context == "settings-theme");
+    return settingsEditing_ && !stack_.empty() && view().kind == View::SettingsPage;
 }
 void Window::showSettings(const std::string &requested) {
     std::string section = requested == "chat" || requested == "backlight" ? "interface" : requested;
@@ -99,25 +94,6 @@ void Window::showSettings(const std::string &requested) {
             struct tm *local = gmtime(&stamp);
             settingsDraft_.setInt("local_hour", local ? local->tm_hour : 0);
         }
-    }
-    if (section == "theme") {
-        View v(View::Choice, u("Цветовая схема"));
-        v.context = "settings-theme";
-        const SettingField &f = *settingField("theme");
-        std::vector<std::string> choices = split(f.choices, '|');
-        for (size_t i = 0; i < choices.size(); ++i) {
-            size_t equal = choices[i].find('=');
-            const std::string value = choices[i].substr(0, equal);
-            v.rows.push_back(Row(u(choices[i].substr(equal + 1)), "set:theme:" + value, 0, i));
-            if (value == settingValue(settingsDraft_, "theme"))
-                v.selected = i;
-        }
-        if (view().context == v.context) {
-            view() = v;
-            update();
-        } else
-            push(v);
-        return;
     }
     View v(View::SettingsPage, u("Настройки"));
     v.context = section;
@@ -225,10 +201,7 @@ void Window::chooseSetting(const std::string &key) {
         }
         if (!found) {
             v.selected = v.rows.size();
-            v.rows.push_back(
-                Row(u(key == "background_kind" && current == "legacy" ? "Сохраненное изображение"
-                                                                      : current),
-                    "set:" + key + ":" + current));
+            v.rows.push_back(Row(u(current), "set:" + key + ":" + current));
         }
     } else {
         editKey_ = key;
@@ -284,11 +257,6 @@ void Window::finishSettings(bool accept) {
         return;
     std::string error;
     if (accept) {
-        if (settingsSection_ == "theme" && view().context == "settings-theme" &&
-            !view().rows.empty()) {
-            std::string action = view().rows[view().selected].action;
-            settingsDraft_.set("theme", action.substr(std::string("set:theme:").size()));
-        }
         const std::vector<SettingField> &fields = settingFields();
         for (size_t i = 0; i < fields.size(); ++i) {
             const SettingField &f = fields[i];
@@ -305,19 +273,6 @@ void Window::finishSettings(bool accept) {
         if (settingsSection_ == "network" && !validateNetworkSettings(settingsDraft_, error)) {
             info(u(error));
             return;
-        }
-        if (settingFlag(settingsDraft_, "small_font") != settingFlag(settings_, "small_font"))
-            settingsDraft_.setInt("font_size", settingFlag(settingsDraft_, "small_font") ? 14 : 16);
-        if (settingFlag(settingsDraft_, "chat_small_font") !=
-            settingFlag(settings_, "chat_small_font"))
-            settingsDraft_.setInt("chat_font_size",
-                                  settingFlag(settingsDraft_, "chat_small_font") ? 14 : 16);
-        if (settingValue(settingsDraft_, "background_kind") !=
-            settingValue(settings_, "background_kind")) {
-            std::string kind = settingValue(settingsDraft_, "background_kind");
-            settingsDraft_.set("background_file", kind == "builtin" ? "back.png" : "");
-            if (kind == "builtin")
-                settingsDraft_.set("background_mode", "center");
         }
         if (settingsSection_ == "timezone") {
             int offset = settingNumber(settingsDraft_, "local_hour") -
@@ -411,8 +366,7 @@ bool Window::activateSettings(const Row &chosen) {
         size_t colon = action.find(':', 4);
         if (colon != std::string::npos) {
             const std::string key = action.substr(4, colon - 4), value = action.substr(colon + 1);
-            if (view().context != "settings-theme")
-                back();
+            back();
             commitSetting(key, value);
         }
         return true;

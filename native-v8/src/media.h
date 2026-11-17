@@ -9,7 +9,7 @@ namespace tmm {
 class MediaController : public QObject {
     Q_OBJECT
   public:
-    explicit MediaController(QObject *parent = 0);
+    explicit MediaController(QObject *parent = 0, bool notification = false);
     ~MediaController();
     bool play(const QString &path, int volume = 70, bool audioOnly = false);
     void stop();
@@ -44,7 +44,7 @@ class MediaController : public QObject {
     QString pendingError_;
     unsigned elapsed_, duration_;
     int pending_;
-    bool active_, failed_, videoActive_;
+    bool active_, failed_, videoActive_, notification_;
     int volume_;
 };
 } // namespace tmm

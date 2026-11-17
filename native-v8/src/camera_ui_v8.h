@@ -20,6 +20,7 @@ class CameraUiV8 : public QObject {
 
   private:
     bool owns(QObject *) const;
+    QWidget *activeView() const;
     QWidget *viewfinder(QObject *) const;
     bool recording() const;
     static bool invoke(QObject *, const char *);
@@ -32,6 +33,7 @@ class CameraUiV8 : public QObject {
     void (*cancel_)(void *);
     void *(*model_)(void *);
     void **modelVtable_;
+    void **dialogVtable_;
 };
 } // namespace tmm
 #endif

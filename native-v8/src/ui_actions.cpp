@@ -382,6 +382,7 @@ void Window::activate(const Row &chosen) {
             settings_.setInt("status", r.value);
             std::string e;
             settings_.save(e);
+            updateSystemStatusIcon();
             back();
         }
         return;
@@ -499,8 +500,16 @@ void Window::activate(const Row &chosen) {
     if (action == "clear-chat" || action == "clear-history") {
         std::string e;
         if (action == "clear-chat") {
-            chats_[id].messages.clear();
-            chats_[id].unread = 0;
+            ChatState &chat = chats_[id];
+            if (chat.historyRequest) {
+                Command cancel(Command::CancelRequest);
+                cancel.requestId = chat.historyRequest;
+                client_.submit(cancel);
+                pending_.erase(chat.historyRequest);
+                pendingUin_.erase(chat.historyRequest);
+            }
+            chat = ChatState();
+            chat.loaded = true;
         } else if (!storage_->clearHistory(id, e))
             info(u(e));
         back();

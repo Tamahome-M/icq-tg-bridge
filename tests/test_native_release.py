@@ -119,9 +119,7 @@ class NativeReleaseTests(unittest.TestCase):
                                  package.ASSETS["statuses.png"].read_bytes())
                 self.assertEqual(archive.extractfile(prefix+"messages.png").read(),
                                  package.ASSETS["messages.png"].read_bytes())
-                self.assertEqual(archive.extractfile(prefix+"back.png").read(),
-                                 package.ASSETS["back.png"].read_bytes())
-                self.assertEqual(archive.getmember(prefix+"back.png").mode, 0o644)
+                self.assertNotIn(prefix+"back.png", archive.getnames())
                 if name.endswith(".pep"):
                     ini = archive.extractfile("description.ini").read()
                     self.assertIn(b"Name = TeleMotoMax Native", ini)

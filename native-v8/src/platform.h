@@ -22,6 +22,7 @@ class Platform : public QObject {
     void vibrate(int milliseconds);
     void notifyMessage(const QString &audioFile, int volume, int vibrationMs);
     void notifyDisconnected(int volume);
+    void stopNotificationSound();
     void clearExternalText();
     void externalText(const QString &title, const QString &text, int durationSeconds = 10);
   signals:

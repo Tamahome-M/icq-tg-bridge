@@ -43,6 +43,19 @@ void SystemMenu::sync(View &v, bool visible, int top, int bottom) {
     const int count = std::min(pageSize, int(v.rows.size()) - first);
     const bool privacy = v.context == "privacy-editor";
     const bool settings = v.kind == View::SettingsPage || privacy;
+    // QWidget font inheritance can already match while ZListBox's separately
+    // cached region fonts still have the previous size.
+    const ZListBox::ListItemRegion firstRegion = static_cast<ZListBox::ListItemRegion>(0);
+    const bool fontChanged = list_->getItemFont(firstRegion, false) != parent_->font() ||
+                             list_->getItemFont(firstRegion, true) != parent_->font();
+    if (fontChanged) {
+        QFont body = parent_->font();
+        list_->setFont(body);
+        for (int region = 0; region < 3; ++region) {
+            list_->setItemFont(static_cast<ZListBox::ListItemRegion>(region), body, false);
+            list_->setItemFont(static_cast<ZListBox::ListItemRegion>(region), body, true);
+        }
+    }
     std::vector<QString> signatures;
     for (int i = 0; i < count; ++i) {
         const Row &row = v.rows[first + i];
@@ -51,7 +64,8 @@ void SystemMenu::sync(View &v, bool visible, int top, int bottom) {
             signature += ":" + QString::number(row.value) + ":" + QString::number(v.offset);
         signatures.push_back(signature);
     }
-    bool changed = first_ != first || settings_ != settings || int(labels_.size()) != count;
+    bool changed =
+        fontChanged || first_ != first || settings_ != settings || int(labels_.size()) != count;
     for (int i = 0; !changed && i < count; ++i)
         changed = labels_[i] != signatures[i];
     if (changed) {

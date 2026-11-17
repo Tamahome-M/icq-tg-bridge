@@ -13,6 +13,7 @@ template <class T> T function(void *p) {
     return result;
 }
 typedef QObject *(*Create)(void *, void *);
+typedef QObject *(*CreateRingtone)(void *);
 typedef void (*Delete)(QObject *);
 typedef bool (*Open)(QObject *, const char *, int);
 typedef bool (*Play)(QObject *, int);
@@ -25,10 +26,10 @@ int bounded(int v) {
     return v < 0 ? 0 : (v > 100 ? 100 : v);
 }
 } // namespace
-MediaController::MediaController(QObject *parent)
+MediaController::MediaController(QObject *parent, bool notification)
     : QObject(parent), library_(0), videoLibrary_(0), engine_(0), video_(0), device_(0), table_(0),
       elapsed_(0), duration_(0), pending_(0), active_(false), failed_(false), videoActive_(false),
-      volume_(70) {
+      notification_(notification), volume_(70) {
     connect(&startup_, SIGNAL(timeout()), this, SLOT(startupTimeout()));
     connect(&completion_, SIGNAL(timeout()), this, SLOT(dispatch()));
 }
@@ -51,8 +52,8 @@ bool MediaController::load() {
         return false;
     }
     void *vtable = dlsym(library_, "_ZTV17MediaPlayerEngine");
-    if (!vtable || !dlsym(library_, "MP_CreateMediaPlayer") ||
-        !dlsym(library_, "MP_DeleteMediaPlayer")) {
+    if (!vtable || !dlsym(library_, notification_ ? "MP_CreateRingtone" : "MP_CreateMediaPlayer") ||
+        !dlsym(library_, notification_ ? "MP_DeleteRingtone" : "MP_DeleteMediaPlayer")) {
         emit error(QString::fromUtf8("Несовместимый плеер Motorola"));
         return false;
     }
@@ -108,6 +109,10 @@ QWidget *MediaController::ensureVideoWidget() {
     return video_;
 }
 bool MediaController::play(const QString &path, int volume, bool audioOnly) {
+    // A second alert must not close and immediately reopen the same device.
+    // The native sound service may still be releasing it and return MPError 7.
+    if (notification_ && active_)
+        return true;
     stop();
     if (!load())
         return false;
@@ -116,7 +121,8 @@ bool MediaController::play(const QString &path, int volume, bool audioOnly) {
         emit error(QString::fromUtf8("Файл не найден"));
         return false;
     }
-    bool video = !audioOnly && (path.lower().right(4) == ".3gp" || path.lower().right(4) == ".mp4");
+    bool video = !notification_ && !audioOnly &&
+                 (path.lower().right(4) == ".3gp" || path.lower().right(4) == ".mp4");
     if (video && !ensureVideoWidget()) {
         emit error(QString::fromUtf8("Недоступен видеовыход V8"));
         return false;
@@ -124,8 +130,12 @@ bool MediaController::play(const QString &path, int volume, bool audioOnly) {
     device_ = new AM_NORMAL_DEV_INTERFACE;
     device_->flush();
     device_->close();
-    engine_ = function<Create>(dlsym(library_, "MP_CreateMediaPlayer"))(
-        device_, video ? reinterpret_cast<char *>(video_) + 196 : 0);
+    // Motorola has a separate short-alert backend. It shares the verified
+    // MediaPlayerEngine ABI but does not start the full media playback path.
+    engine_ = notification_
+                  ? function<CreateRingtone>(dlsym(library_, "MP_CreateRingtone"))(device_)
+                  : function<Create>(dlsym(library_, "MP_CreateMediaPlayer"))(
+                        device_, video ? reinterpret_cast<char *>(video_) + 196 : 0);
     if (!engine_) {
         release();
         emit error(QString::fromUtf8("Не удалось создать плеер"));
@@ -173,7 +183,8 @@ void MediaController::release() {
     startup_.stop();
     if (engine_) {
         disconnect(engine_, 0, this, 0);
-        function<Delete>(dlsym(library_, "MP_DeleteMediaPlayer"))(engine_);
+        function<Delete>(
+            dlsym(library_, notification_ ? "MP_DeleteRingtone" : "MP_DeleteMediaPlayer"))(engine_);
         engine_ = 0;
     }
     delete device_;
@@ -238,8 +249,10 @@ void MediaController::playbackError() {
         return;
     failed_ = true;
     startup_.stop();
-    pendingError_ = QString::fromUtf8("Ошибка плеера Motorola: ") +
-                    QString::number(function<Code>(table_[0xbc / 4])(engine_));
+    unsigned code = function<Code>(table_[0xbc / 4])(engine_);
+    pendingError_ = code == 7
+                        ? QString::fromUtf8("Звуковое устройство занято (Motorola: 7)")
+                        : QString::fromUtf8("Ошибка плеера Motorola: ") + QString::number(code);
     pending_ = 3;
     completion_.start(0, true);
 }

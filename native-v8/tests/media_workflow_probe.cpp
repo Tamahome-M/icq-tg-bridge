@@ -69,6 +69,11 @@ class UiProbe {
         window.activate(Row(QString::null, action, target));
         require(window.view().kind == View::Files && window.view().title == "Root",
                 "Java file action opens Root directly");
+        bool fullRoot = false;
+        for (size_t i = 0; i < window.view().rows.size(); ++i)
+            if (window.view().rows[i].action == "directory:/")
+                fullRoot = true;
+        require(fullRoot, "filesystem root stays available alongside the phone media root");
         require(choose(window, "directory:/state/phone"), "Root contains an actual phone root");
         bool selected = false;
         for (size_t i = 0; i < window.view().rows.size(); ++i)
@@ -126,6 +131,23 @@ class UiProbe {
         ack(window, window.outgoingRequest_, true);
         require(window.view().kind == View::Chat && access("/state/phone/Photo.JPEG", F_OK) == 0,
                 "photo ACK returns to the original chat without deleting its source");
+        put("/state/phone/Photo.GIF");
+        pick(window, contact.uin, "upload-media", "Photo.GIF");
+        require(submitted.back().type == Command::UploadFile && submitted.back().mode == 1 &&
+                    submitted.back().text == "image/gif",
+                "GIF photos are sent as photos rather than unrecognized documents");
+        ack(window, window.outgoingRequest_, true);
+        require(ensureDirectory("/state/outside", error), "photo outside mystuff fixture");
+        put("/state/outside/Photo.BMP");
+        window.activate(Row(QString::null, "upload-media", contact.uin));
+        require(choose(window, "directory:/") && choose(window, "directory:/state") &&
+                    choose(window, "directory:/state/outside"),
+                "root browsing reaches media outside the predefined phone folders");
+        window.activate(Row(QString::fromLatin1("Photo.BMP"), "file-select"));
+        require(submitted.back().mode == 1 && submitted.back().text == "image/bmp" &&
+                    submitted.back().path == "/state/outside/Photo.BMP",
+                "outside BMP photo retains its actual path and photo media kind");
+        ack(window, window.outgoingRequest_, true);
         put("/state/phone/movie.MOV");
         pick(window, contact.uin, "upload-media", "movie.MOV");
         require(submitted.back().type == Command::UploadFile && submitted.back().mode == 2,

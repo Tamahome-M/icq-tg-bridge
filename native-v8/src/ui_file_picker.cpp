@@ -17,8 +17,10 @@ static std::vector<std::string> phoneRoots() {
     if (configured && *configured)
         roots.push_back(configured);
     roots.push_back("/ezxlocal/download/mystuff");
+    roots.push_back("/ezxlocal");
     roots.push_back("/mmc/mmca1");
     roots.push_back("/mnt/mmc/mmca1");
+    roots.push_back("/");
     return roots;
 }
 static bool isPhoneRoot(const std::string &directory) {
@@ -58,11 +60,8 @@ void Window::loadFiles() {
             std::string canonical;
             if (!readableMediaDirectory(roots[i], canonical) || !seen.insert(canonical).second)
                 continue;
-            size_t slash = roots[i].find_last_of('/');
-            std::string label = roots[i].substr(slash == std::string::npos ? 0 : slash + 1);
-            if (label.empty())
-                label = roots[i];
-            v.rows.push_back(Row(u(label + "/"), "directory:" + canonical));
+            v.rows.push_back(
+                Row(u(roots[i] == "/" ? "/" : roots[i] + "/"), "directory:" + canonical));
         }
         if (v.rows.empty())
             v.rows.push_back(Row(u("/"), "directory:/"));

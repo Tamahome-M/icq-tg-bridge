@@ -65,8 +65,9 @@ bool copyFile(const QString &from, const QString &to) {
     return ok && total > 0;
 }
 } // namespace
-// The stock VoiceNote code uses this same input device (0x303), 4000-sample
-// PCM reads and 160-sample AMR frames. Only this worker owns native handles.
+// Use the stock VoiceNote input device (0x303) and 160-sample AMR frames.
+// Keep the native 4000-sample packet size. Only the worker touches the AAL
+// handle: pause/close share AAL_read's mutex and cannot safely cancel it from UI.
 class VoiceCapture {
   public:
     VoiceCapture(const char *path, int seconds, unsigned bitrate)
@@ -129,7 +130,8 @@ class VoiceCapture {
         if (stopped())
             return;
         AM_NORMAL_DEV_INTERFACE input(static_cast<SOUNDM_AUDIO_NORMALDEV_TYPE_ENUM_T>(0x303));
-        short samples[4000], frame[160];
+        const unsigned chunk = 4000; // Stock VoiceNote PCM packet at 8 kHz.
+        short samples[chunk], frame[160];
         unsigned filled = 0, deadline = now() + 5000;
         while (!stopped() && frames_ < static_cast<unsigned>(seconds_) * 50) {
             if (input.canRead() != 0) {
@@ -140,8 +142,14 @@ class VoiceCapture {
                 usleep(20000);
                 continue;
             }
-            int count = input.read(samples, 4000);
-            if (count < 0 || count > 4000) {
+            // canRead may wait for the audio service. A Stop received during
+            // that wait must not start another blocking PCM read afterward.
+            if (stopped())
+                break;
+            int count = input.read(samples, chunk);
+            if (stopped())
+                break;
+            if (count < 0 || count > static_cast<int>(chunk)) {
                 error_ = 202;
                 break;
             }
@@ -288,14 +296,18 @@ void CaptureController::recordVoice(const QString &path, int seconds) {
     timer_.start(100);
 }
 void CaptureController::stop() {
-    if (voice_)
+    if (voice_) {
+        std::fprintf(stderr, "Voice recording: stop requested at %u AMR frames\n",
+                     voice_->frames());
         voice_->stop();
-    else if (dialog_)
+    } else if (dialog_)
         cancel();
 }
 void CaptureController::cancel() {
     if (!busy_)
         return;
+    if (dialog_ && dialog_->result() == QDialog::Accepted)
+        return; // A late AM/background notification cannot discard a saved shot.
     cancelled_ = true;
     if (voice_)
         voice_->stop();
@@ -307,6 +319,8 @@ void CaptureController::poll() {
     if (voice_ && voice_->done()) {
         timer_.stop();
         unsigned code = voice_->error(), frames = voice_->frames();
+        std::fprintf(stderr, "Voice recording: completed, %u AMR frames, error %u, cancelled %d\n",
+                     frames, code, cancelled_ ? 1 : 0);
         delete voice_;
         voice_ = 0;
         busy_ = false;
@@ -410,15 +424,37 @@ void CaptureController::camera(const QString &path, bool video, int seconds) {
     if (video)
         timer_.start(100);
     CameraUiV8 cameraUi(dialog_, cameraLibrary_, video);
+    if (!cameraUi.valid()) {
+        timer_.stop();
+        fn<void (*)(void *)>(dlsym(cameraLibrary_, "DestroyCameraDlg"))(dialog_);
+        dialog_ = 0;
+        busy_ = false;
+        videoSeconds_ = 0;
+        destination_ = QString::null;
+        unlink(path.local8Bit().data());
+        emit error(QString::fromUtf8("Несовместимый интерфейс камеры V8"));
+        return;
+    }
     int result = dialog_->exec();
     cameraUi.detach();
     timer_.stop();
     QString recorded = cameraFileName(dialog_);
+    // A service dialog owns its temporary result. Preserve it before the
+    // native destructor removes temporary camera files.
+    const QString staged = path + ".captured";
+    bool ownsStaged =
+        result == QDialog::Accepted && !cancelled_ && !recorded.isEmpty() && reserve(staged);
+    bool ok = ownsStaged && copyFile(recorded, staged);
+    std::fprintf(stderr, "Camera %s: result %d, cancelled %d, result path %s, copied %d\n",
+                 video ? "video" : "photo", result, cancelled_ ? 1 : 0,
+                 recorded.isEmpty() ? "empty" : "present", ok ? 1 : 0);
     fn<void (*)(void *)>(dlsym(cameraLibrary_, "DestroyCameraDlg"))(dialog_);
     dialog_ = 0;
     videoSeconds_ = 0;
-    bool ok = result == QDialog::Accepted && !cancelled_ && !recorded.isEmpty() &&
-              copyFile(recorded, path);
+    if (ok)
+        ok = ::rename(staged.local8Bit().data(), path.local8Bit().data()) == 0;
+    if (ownsStaged)
+        unlink(staged.local8Bit().data());
     if (ok && !video) {
         QImage image(path);
         ok = !image.isNull();

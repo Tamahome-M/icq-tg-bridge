@@ -125,6 +125,9 @@ void Window::chatMenu() {
     if (entry && !entry->inRoster)
         row(v, "Добавить контакт...", "add-existing", id); // 5
     row(v, "История с сервера", "history", id);
+    std::map<uint32_t, ChatState>::const_iterator chat = chats_.find(id);
+    if (chat != chats_.end() && chat->second.historyStarted && chat->second.historyMore)
+        row(v, "Ещё с сервера", "history-more", id);
     row(v, "Получать без оповещений", "quiet", id);
     row(v, "Копировать", "copy-message", id); // 4
     row(v, "Снять фото", "capture-photo", id);
@@ -243,6 +246,7 @@ bool Window::activateJavaMenu(const Row &chosen) {
             info(u(error));
             return true;
         }
+        updateSystemStatusIcon();
         if (connectionState_ == Event::Online) {
             Command c(Command::Status);
             c.status = r.value;

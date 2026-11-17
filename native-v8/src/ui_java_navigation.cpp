@@ -60,7 +60,7 @@ bool Window::javaKey(int code) {
             return false;
         return true;
     }
-    if (settingsPageActive() || view().context == "settings-theme") {
+    if (settingsPageActive()) {
         if (left || clear)
             finishSettings(false);
         else if (right)

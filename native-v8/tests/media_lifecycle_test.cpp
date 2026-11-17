@@ -69,6 +69,21 @@ int main(int argc, char **argv) {
         &events);
     assert(!media.pending_);
     assert(media.videoWidget() == 0);
+    tmm::MediaController alert(0, true);
+    assert(alert.load() && alert.notification_);
+    // Coalescing preserves the running engine; no path/hardware operation.
+    alert.active_ = true;
+    assert(alert.play("/not-a-file.mp3", 50, true) && alert.active());
+    alert.unavailable();
+    assert(alert.pending_ == 3);
+    alert.dispatch();
+    assert(!alert.active() && !alert.pending_);
+    // An unavailable device is released, not permanently disabled.
+    assert(!alert.play("/not-a-file.mp3", 50, true) && !alert.active());
+    alert.active_ = true;
+    alert.ended();
+    alert.dispatch();
+    assert(!alert.active() && !alert.pending_);
     std::puts("V8 media: native metadata, events deferred, finish teardown, stop discards queued "
               "callback PASS");
     return 0;

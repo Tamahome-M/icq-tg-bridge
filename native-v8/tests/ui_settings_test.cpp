@@ -92,7 +92,19 @@ int main() {
     assert(!validateSetting(*settingField("server_history_count"), "101", error));
     assert(validateSetting(*settingField("photo_quality"), "95", error));
     assert(validateSetting(*settingField("camera_size"), "", error));
-    assert(validateSetting(*settingField("background_mode"), "center", error));
+    const char *removed[] = {"theme",           "background_kind", "background_mode",
+                             "background_file", "colored_text",    "small_font",
+                             "chat_small_font"};
+    for (unsigned i = 0; i < sizeof(removed) / sizeof(removed[0]); ++i)
+        assert(!settingField(removed[i]));
+    assert(!settingIsToggle("font_size") && !settingIsToggle("chat_font_size"));
+    const char *sizes[] = {"12", "14", "16", "18", "20", "22", "24"};
+    for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i) {
+        assert(validateSetting(*settingField("font_size"), sizes[i], error));
+        assert(validateSetting(*settingField("chat_font_size"), sizes[i], error));
+    }
+    assert(!validateSetting(*settingField("font_size"), "0", error));
+    assert(!validateSetting(*settingField("chat_font_size"), "1000", error));
     assert(validateSetting(*settingField("typing_sound"), "display", error));
     assert(validateSetting(*settingField("sound_locked"), "custom.mp3", error));
     assert(!validateSetting(*settingField("sound_locked"), "../outside.mp3", error));
@@ -120,12 +132,23 @@ int main() {
     previous.set("background_mode", "tile");
     assert(migrateJavaSettings(previous));
     assert(previous.getInt("font_size") == 18 && previous.getInt("chat_font_size") == 14);
-    assert(!settingFlag(previous, "small_font") && settingFlag(previous, "chat_small_font"));
+
     assert(previous.getInt("caption_offset") == 10);
     assert(previous.getInt("history_count") == 500 &&
            settingNumber(previous, "server_history_count") == 10);
-    assert(previous.get("background_kind") == "legacy" &&
-           previous.get("background_mode") == "tile");
+    for (unsigned i = 0; i < sizeof(removed) / sizeof(removed[0]); ++i)
+        assert(previous.get(removed[i], "missing") == "missing");
+    Settings javaFonts;
+    javaFonts.set("java_ui_version", "1");
+    javaFonts.setBool("small_font", true);
+    javaFonts.setBool("chat_small_font", false);
+    javaFonts.set("theme", "dark");
+    javaFonts.set("background_file", "old.png");
+    assert(migrateJavaSettings(javaFonts));
+    assert(javaFonts.getInt("font_size") == 14 && javaFonts.getInt("chat_font_size") == 16);
+    for (unsigned i = 0; i < sizeof(removed) / sizeof(removed[0]); ++i)
+        assert(javaFonts.get(removed[i], "missing") == "missing");
+    assert(!migrateJavaSettings(javaFonts));
     assert(previous.getInt("volume_locked") == 70 && previous.getInt("chat_messages") == 100);
     assert(!settingFlag(previous, "full_editor"));
     assert(!migrateJavaSettings(previous) && previous.getInt("caption_offset") == 10);
@@ -165,12 +188,6 @@ int main() {
     assert(javaHotkeyActions().size() == 21);
     assert(javaHotkeyDefault("0") == "info" && javaHotkeyDefault("*") == "light");
     assert(javaHotkeyDefault("#") == "lock" && javaHotkeyDefault("4") == "none");
-    defaults.set("theme", "green");
-    assert(interfaceColor(defaults, 1) == 0xE0FFE0);
-    assert(interfaceColor(defaults, 6) == 0xFF0000);
-    assert(interfaceColorByTheme(17, 1) == 0x2D2D00);
-    for (unsigned theme = 0; theme < 18; ++theme)
-        for (unsigned color = 1; color <= 8; ++color)
-            assert(interfaceColorByTheme(theme, color) <= 0xFFFFFF);
-    puts("UI settings Java defaults, choices, migration, 18 schemes and wire mapping passed");
+    puts("UI settings: defaults, choices, single account and font migration, obsolete visuals "
+         "removed, wire mapping PASS");
 }

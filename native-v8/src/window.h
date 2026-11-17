@@ -61,10 +61,13 @@ struct View {
 };
 struct ChatState {
     std::vector<MessageRecord> messages;
-    unsigned unread;
+    unsigned unread, historyRequest, historyOffset, historyBoundary;
     unsigned long typingUntil, stamp;
-    bool loaded;
-    ChatState() : unread(0), typingUntil(0), stamp(0), loaded(false) {}
+    bool loaded, historyStarted, historyMore, historyLoaded, historyQueued;
+    ChatState()
+        : unread(0), historyRequest(0), historyOffset(0), historyBoundary(0), typingUntil(0),
+          stamp(0), loaded(false), historyStarted(false), historyMore(false), historyLoaded(false),
+          historyQueued(false) {}
 };
 struct EditorState {
     QString title, text;
@@ -132,7 +135,7 @@ class Window : public QWidget {
     QString pin_, notice_, ticker_, editTitle_, connectionStage_;
     unsigned long noticeUntil_, tickerUntil_;
     int pictureZoom_, pictureRotation_;
-    QPixmap picture_, background_, frame_, statusIcons_, messageIcons_, popupBackdrop_, infoAvatar_;
+    QPixmap picture_, frame_, statusIcons_, messageIcons_, popupBackdrop_, infoAvatar_;
     uint32_t infoAvatarUin_;
     std::vector<ContactRecord> contacts_;
     std::map<uint32_t, ChatState> chats_;
@@ -160,8 +163,10 @@ class Window : public QWidget {
     void showSettings(const std::string &);
     void chooseSetting(const std::string &);
     void commitSetting(const std::string &, const std::string &);
-    void refreshBackground();
+    QColor bodyColor(unsigned role) const;
+    QFont chatFont() const;
     void applySettings();
+    void updateSystemStatusIcon();
     void activate(const Row &);
     bool activateJavaMenu(const Row &);
     bool consumeJavaMenu(const Event &);
@@ -180,8 +185,11 @@ class Window : public QWidget {
     void key(int);
     void rebuildRoster();
     void rebuildChat();
-    void openChat(uint32_t);
+    void rebuildChat(View &, bool followNew);
+    void openChat(uint32_t, bool preload = true);
     void requestLastMessage(uint32_t);
+    void resetServerHistory();
+    void requestChatHistory(uint32_t id);
     void history(bool server, bool more = false);
     void showHistory(View &);
     void search(bool all = false, bool more = false);

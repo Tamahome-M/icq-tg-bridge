@@ -67,10 +67,10 @@ QString mediaTime(unsigned milliseconds) {
 void Window::drawProgress(QPainter &p, const QString &details, const QString &status,
                           uint64_t bytes, uint64_t total) {
     p.save();
-    const QColor ink(interfaceColor(settings_, 2));
-    const QColor track(interfaceColor(settings_, 4));
-    const QColor accent(interfaceColor(settings_, 3));
-    const QColor border(interfaceColor(settings_, 8));
+    const QColor ink(bodyColor(2));
+    const QColor track(bodyColor(4));
+    const QColor accent(bodyColor(3));
+    const QColor border(bodyColor(8));
     const int left = 12, bodyTop = 34;
     const int banner = !notice_.isEmpty() ? 52 : !ticker_.isEmpty() ? 25 : 0;
     const int bodyBottom = height() - 32 - banner;
@@ -138,12 +138,12 @@ void Window::drawPlayer(QPainter &p) {
         return;
     }
     // The audio Canvas owns its background, independently of chat wallpaper.
-    p.fillRect(body, QColor(interfaceColor(settings_, 1)));
+    p.fillRect(body, QColor(bodyColor(1)));
     const int left = 10, textWidth = std::max(1, width() - 2 * left);
-    const QColor ink(interfaceColor(settings_, 2));
-    const QColor accent(interfaceColor(settings_, 3));
-    const QColor track(interfaceColor(settings_, 4));
-    const QColor border(interfaceColor(settings_, 8));
+    const QColor ink(bodyColor(2));
+    const QColor accent(bodyColor(3));
+    const QColor track(bodyColor(4));
+    const QColor border(bodyColor(8));
     const bool finished = view().more;
     const unsigned elapsed = finished && playDuration_ ? playDuration_ : playPosition_;
     const QFont small("Helvetica", 14), clockFont("Helvetica", 18);
@@ -195,7 +195,7 @@ void Window::drawAttachmentDetails(QPainter &p) {
     p.save();
     p.setClipRect(8, 33, std::max(1, width() - 16), 104);
     p.setFont(QFont("Helvetica", 14));
-    p.setPen(QColor(interfaceColor(settings_, 2)));
+    p.setPen(QColor(bodyColor(2)));
     QFontMetrics metrics(p.font());
     const int lineHeight = std::max(18, metrics.height() + 2);
     const unsigned count = std::max(1, 104 / lineHeight);

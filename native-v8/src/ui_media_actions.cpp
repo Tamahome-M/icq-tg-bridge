@@ -19,7 +19,8 @@ static QString u(const std::string &s) {
 }
 static unsigned mediaKind(const std::string &path) {
     QString lower = u(path).lower();
-    if (lower.right(4) == ".jpg" || lower.right(5) == ".jpeg" || lower.right(4) == ".png")
+    if (lower.right(4) == ".jpg" || lower.right(5) == ".jpeg" || lower.right(4) == ".png" ||
+        lower.right(4) == ".gif" || lower.right(4) == ".bmp")
         return 1;
     if (lower.right(4) == ".3gp" || lower.right(4) == ".mp4" || lower.right(4) == ".3g2" ||
         lower.right(4) == ".avi" || lower.right(4) == ".mov")
@@ -63,6 +64,8 @@ void Window::beginCapture(unsigned kind, uint32_t target) {
         return;
     }
     const std::string path = captureFile(*storage_, kind);
+    platform_.stopNotificationSound();
+    player_.stop();
     if (kind == 1)
         capture_.capturePhoto(u(path));
     else
@@ -75,6 +78,8 @@ void Window::startVoiceRecording() {
     view().context = "recording";
     view().status = u("Идёт запись...");
     view().details = u("Нажмите «выбор» — стоп");
+    platform_.stopNotificationSound();
+    player_.stop();
     capture_.recordVoice(u(captureFile(*storage_, 3)), 60);
     update();
 }
@@ -87,9 +92,12 @@ bool Window::mediaKey(int code) {
     const bool fire = code == KEYCODE_CENTER_SELECT || code == Key_Enter || code == KEYCODE_5;
     if (view().kind == View::Recording) {
         if (fire) {
-            if (capture_.busy())
+            if (capture_.busy() && view().context != "recording-stopping") {
+                view().context = "recording-stopping";
+                view().details = u("Сохраняю запись...");
                 capture_.stop();
-            else
+                update();
+            } else if (!capture_.busy())
                 startVoiceRecording();
         } else if (code == KEYCODE_LSK || code == KEYCODE_RSK || code == KEYCODE_CLEAR)
             back();
@@ -215,22 +223,15 @@ bool Window::activateMedia(const Row &chosen) {
         files("", "upload");
         return true;
     }
-    if (action == "pick-background") {
-        files("", "background");
-        return true;
-    }
     if (action.compare(0, 10, "directory:") == 0 || action == "directory") {
         view().directory = action == "directory" ? std::string(r.text.utf8()) : action.substr(10);
         loadFiles();
         return true;
     }
     if (action == "file-select") {
-        std::string path = view().directory + "/" + std::string(r.text.utf8());
-        if (view().context == "background") {
-            settings_.set("background_file", path);
-            back();
-            settingsChanged();
-        } else if (view().context == "upload") {
+        std::string path =
+            view().directory + (view().directory == "/" ? "" : "/") + std::string(r.text.utf8());
+        if (view().context == "upload") {
             const unsigned kind = pickKind_ == 5 ? mediaKind(path) : 4;
             const uint32_t target = pickUin_;
             back();

@@ -97,7 +97,7 @@ bool launch(const QString &document) {
 }
 } // namespace
 Platform::Platform(QObject *p)
-    : QObject(p), window_(0), sound_(new MediaController(this)),
+    : QObject(p), window_(0), sound_(new MediaController(this, true)),
       external_(new ExternalDisplay(this)),
       soundLibrary_(dlopen("libezxsound.so", RTLD_NOW | RTLD_LOCAL)), vibrationHandle_(0),
       backlightHandle_(0), closed_(UTIL_GetFlipStatus() == SYSTEM_FLIP_CLOSE) {
@@ -212,7 +212,7 @@ void Platform::endVibration() {
 }
 void Platform::notifyMessage(const QString &file, int volume, int ms) {
     vibrate(ms);
-    if (volume <= 0 || file.isEmpty())
+    if (volume <= 0 || file.isEmpty() || sound_->active())
         return;
     if (file == "tone")
         notifyDisconnected(volume);
@@ -220,7 +220,7 @@ void Platform::notifyMessage(const QString &file, int volume, int ms) {
         sound_->play(file, volume, true);
 }
 void Platform::notifyDisconnected(int volume) {
-    if (volume <= 0)
+    if (volume <= 0 || sound_->active())
         return;
     if (tonePath_.isEmpty())
         tonePath_ = makeTone();
@@ -229,6 +229,9 @@ void Platform::notifyDisconnected(int volume) {
         return;
     }
     sound_->play(tonePath_, volume, true);
+}
+void Platform::stopNotificationSound() {
+    sound_->stop();
 }
 void Platform::clearExternalText() {
     external_->clear();

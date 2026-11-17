@@ -11,7 +11,6 @@ ASSETS = {
     **{f"sounds/{name}.mp3": ROOT.parent / f"telemotomax/res/MIDP2/sounds/{name}.mp3"
        for name in ("message", "msg_low", "tg", "typing")},
     "icon.png": ROOT.parent / "telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png",
-    "back.png": ROOT.parent / "telemotomax/res/GRAPHICS_32BIT/COMMON/back.png",
     "messages.png": ROOT.parent / "telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png",
     "statuses.png": ROOT.parent / "telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png",
     "smiles.png": ROOT.parent / "telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/smiles.png",
