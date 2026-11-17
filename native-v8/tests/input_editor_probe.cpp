@@ -43,7 +43,7 @@ class UiProbe : public QObject {
     void password() {
         if (tick_ == 1) {
             w_.showSettings("account");
-            w_.chooseSetting("account.0.password");
+            w_.chooseSetting("password");
         }
         if (tick_ == 3)
             require(events_ >= 4 && !state_[0].isEmpty(), "input mode visible before first key");
@@ -78,7 +78,7 @@ class UiProbe : public QObject {
         }
         if (tick_ == 25) {
             w_.finishEdit(true);
-            require(w_.settingsDraft_.get("account.0.password") == "a2*3" &&
+            require(w_.settingsDraft_.get("password") == "a2*3" &&
                         w_.settings_.get("password") != "a2*3",
                     "real typed password stays in account draft before Save");
             w_.finishSettings(true);

@@ -8,10 +8,12 @@ FIRMWARE_LIBS ?= /tmp/yam-firmware-link
 TEST_HARDWARE_LIBS ?=
 FW_LIBRARY_PATH := $(TEST_HARDWARE_LIBS):$(FIRMWARE_LIBS):$(FIRMWARE_ROOT)/usr/lib/ezx/lib:$(FIRMWARE_ROOT)/usr/lib:$(FIRMWARE_ROOT)/lib
 FW_RUN = $(QEMU_ARM) -L $(FIRMWARE_ROOT) -E LD_LIBRARY_PATH=$(FW_LIBRARY_PATH)
-FW_TESTS := capture-codec-test capture-media-test capture-lifecycle-test camera-filename-test media-lifecycle-test platform-firmware-test platform-widget-test toolchain-vector-test
+FW_TESTS := notification-audio-test capture-codec-test capture-media-test capture-lifecycle-test camera-filename-test media-lifecycle-test platform-firmware-test platform-widget-test toolchain-vector-test
 
 .PHONY: firmware-tests firmware-check
 firmware-tests: $(addprefix $(BUILD)/,$(FW_TESTS))
+$(BUILD)/notification-audio-test: tests/notification_audio_test.cpp $(BUILD)/platform.o $(BUILD)/media.o $(BUILD)/external_display.o $(BUILD)/moc_platform.o $(BUILD)/moc_media.o $(BUILD)/moc_external_display.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -Wl,--wrap=_ZN3tmm15MediaController4playERK7QStringib $< $(BUILD)/platform.o $(BUILD)/media.o $(BUILD)/external_display.o $(BUILD)/moc_platform.o $(BUILD)/moc_media.o $(BUILD)/moc_external_display.o -lezxsound -lezxappbase -lqte-mt -ldl -lm -o $@
 $(BUILD)/capture-codec-test: tests/capture_codec_test.cpp $(BUILD)/capture_codec.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/capture_codec.o -ldl -o $@
 $(BUILD)/capture-media-test: tests/capture_media_test.cpp $(BUILD)/capture_media.o $(BUILD)/sdk-link/.ready
@@ -32,6 +34,7 @@ $(BUILD)/platform-widget-test: tests/platform_widget_test.cpp $(BUILD)/sdk-link/
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< -lezxappbase -lqte-mt -ldl -o $@
 firmware-check: firmware-tests
 	@test -n "$(TEST_HARDWARE_LIBS)" || { echo 'Set TEST_HARDWARE_LIBS to the emulator-only OTP stub directory; never distribute it'; exit 1; }
+	$(FW_RUN) $(BUILD)/notification-audio-test
 	$(FW_RUN) $(BUILD)/capture-codec-test $(abspath $(BUILD))/test-codec.amr
 	$(FW_RUN) $(BUILD)/capture-media-test $(abspath $(BUILD))/test-codec.amr
 	$(FW_RUN) $(BUILD)/capture-lifecycle-test

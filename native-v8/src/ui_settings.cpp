@@ -1,5 +1,6 @@
 #include "ui_settings.h"
 #include <stdlib.h>
+#include <stdio.h>
 #include <errno.h>
 #include <limits.h>
 #include <algorithm>
@@ -144,16 +145,6 @@ const std::vector<SettingField> &settingFields() {
     return v;
 }
 const SettingField *settingField(const std::string &key) {
-    if (key.compare(0, 8, "account.") == 0) {
-        size_t dot = key.find('.', 8);
-        if (dot != std::string::npos && dot > 8 &&
-            key.substr(8, dot - 8).find_first_not_of("0123456789") == std::string::npos) {
-            const std::string field = key.substr(dot + 1);
-            if (field == "uin" || field == "password")
-                return settingField(field);
-        }
-        return 0;
-    }
     const std::vector<SettingField> &v = settingFields();
     for (size_t i = 0; i < v.size(); ++i)
         if (key == v[i].key)
@@ -205,12 +196,27 @@ const char *settingGroup(const std::string &key) {
     return "";
 }
 bool migrateJavaSettings(Settings &s) {
-    if (s.get("java_ui_version") == "1")
-        return false;
     const bool existing = !s.get("host").empty() || !s.get("uin").empty() ||
                           !s.get("accounts").empty() || !s.get("font_size").empty() ||
                           !s.get("chat_font_size").empty() ||
                           s.get("status", "missing") != "missing";
+    // The global credentials are the currently selected account. Only very
+    // old files lacking them need the selected slot as a fallback. Preserve
+    // an intentionally empty password and erase every obsolete credential.
+    if (s.get("uin", "missing") == "missing") {
+        int selected = std::max(0, std::min(4, s.getInt("account_index", 0)));
+        char prefix[32];
+        snprintf(prefix, sizeof(prefix), "account.%d.", selected);
+        if (s.get(std::string(prefix) + "uin", "missing") != "missing") {
+            s.set("uin", s.get(std::string(prefix) + "uin"));
+            s.set("password", s.get(std::string(prefix) + "password"));
+        }
+    }
+    bool changed = s.removePrefix("account.");
+    changed = s.remove("accounts") || changed;
+    changed = s.remove("account_index") || changed;
+    if (s.get("java_ui_version") == "1")
+        return changed;
     if (existing) {
         // Old native files stored only changed fields. Materialize previous
         // defaults before switching the defaults for newly installed clients.

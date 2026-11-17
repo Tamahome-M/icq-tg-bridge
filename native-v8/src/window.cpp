@@ -59,6 +59,7 @@ Window::Window(const std::string &dir)
     setFocusPolicy(StrongFocus);
     setBackgroundMode(NoBackground);
     statusIcons_.load("statuses.png");
+    messageIcons_.load("messages.png");
     std::string error;
     if (!settings_.load(dir + "/settings", error)) {
         note(error);
@@ -238,8 +239,10 @@ void Window::back() {
             popup = popup || stack_[i].kind == View::Popup;
         if (!popup)
             popupBackdrop_ = QPixmap();
-        if (view().kind == View::Chat)
+        if (view().kind == View::Chat) {
+            markVisibleChatRead();
             rebuildChat();
+        }
     } else
         mainMenu();
     if (!editAction_.empty() && stack_.size() == editDepth_) {
@@ -293,6 +296,13 @@ unsigned Window::unread() const {
     for (std::map<uint32_t, ChatState>::const_iterator i = chats_.begin(); i != chats_.end(); ++i)
         count += i->second.unread;
     return count;
+}
+void Window::markVisibleChatRead() {
+    if (stack_.empty() || locked_ || closed_ || !isVisible() || view().kind != View::Chat)
+        return;
+    std::map<uint32_t, ChatState>::iterator chat = chats_.find(view().uin);
+    if (chat != chats_.end())
+        chat->second.unread = 0;
 }
 QString Window::name(uint32_t id) const {
     for (size_t i = 0; i < contacts_.size(); ++i)
@@ -419,6 +429,7 @@ void Window::resume() {
         return;
     lastActivity_ = now();
     lightOn_ = true;
+    markVisibleChatRead();
     if (!locked_ && editor_ && !editor_->isHidden())
         editor_->setFocus();
     else if (systemMenuVisible())
@@ -449,6 +460,7 @@ void Window::flipChanged(bool closed) {
                 (unsigned long)settingNumber(settings_, "flip_lock_minutes") * 60000)
             lock();
         closedAt_ = 0;
+        markVisibleChatRead();
         openDeferredMedia();
     }
     syncVideoVisibility();
@@ -478,6 +490,7 @@ void Window::unlock() {
     if (editorWasVisible_)
         editor_->show();
     editorWasVisible_ = false;
+    markVisibleChatRead();
     platform_.setBacklight(true);
     openDeferredMedia();
     syncVideoVisibility();
@@ -709,6 +722,9 @@ void Window::drawHeader(QPainter &p) {
         title = u("Подключение");
         roster = false;
     }
+    // Keep unread deliveries visible even inside another chat, a menu or PIN.
+    if (unread())
+        title = "[" + number(unread()) + "] " + title;
     int offset = settingNumber(settings_, "caption_offset") * width() / 100;
     systemChrome_->drawHeader(p, QRect(0, 0, width(), 28), title, offset + (roster ? 20 : 0));
     if (roster && !statusIcons_.isNull()) {
@@ -737,7 +753,7 @@ void Window::drawFooter(QPainter &p) {
     if (context == "main-menu")
         left = contacts_.empty() ? QString::null : u("Чаты");
     if (settingsPageActive() || context == "settings-theme")
-        right = (settingsSection_ == "account" ? u("Меню") : u("Сохр."));
+        right = u("Сохр.");
     if (context == "privacy-editor") {
         left = u("Отмена");
         right = u("Меню");
@@ -861,7 +877,19 @@ void Window::drawList(QPainter &p) {
             }
             p.setPen(ink);
         }
-        if (v.kind == View::Roster && v.rows[i].uin) {
+        bool unreadRow = v.kind == View::Roster && v.rows[i].value > 0;
+        if (unreadRow) {
+            left = 24;
+            if (!messageIcons_.isNull())
+                p.drawPixmap(4, y + (h - 16) / 2, messageIcons_, 0, 0, 16, 16);
+            else {
+                int top = y + (h - 12) / 2;
+                p.drawRect(4, top, 15, 12);
+                p.drawLine(4, top, 11, top + 6);
+                p.drawLine(11, top + 6, 18, top);
+            }
+        }
+        if (v.kind == View::Roster && v.rows[i].uin && !unreadRow) {
             ContactRecord *c = contact(v.rows[i].uin);
             if (c) {
                 left = 24;

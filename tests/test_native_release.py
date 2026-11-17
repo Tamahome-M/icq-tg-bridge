@@ -117,6 +117,8 @@ class NativeReleaseTests(unittest.TestCase):
                 self.assertIn("sounds/msg_low.mp3", "\n".join(archive.getnames()))
                 self.assertEqual(archive.extractfile(prefix+"statuses.png").read(),
                                  package.ASSETS["statuses.png"].read_bytes())
+                self.assertEqual(archive.extractfile(prefix+"messages.png").read(),
+                                 package.ASSETS["messages.png"].read_bytes())
                 self.assertEqual(archive.extractfile(prefix+"back.png").read(),
                                  package.ASSETS["back.png"].read_bytes())
                 self.assertEqual(archive.getmember(prefix+"back.png").mode, 0o644)

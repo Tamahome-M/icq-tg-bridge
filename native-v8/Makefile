@@ -53,7 +53,9 @@ $(BUILD)/exception-test: tests/exception_test.cpp $(BUILD)/transport.o $(BUILD)/
 $(BUILD)/password-test: tests/password_test.cpp $(BUILD)/oscar.o $(BUILD)/crypto.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -fexceptions $(LDFLAGS) $< $(BUILD)/oscar.o $(BUILD)/crypto.o -o $@
 core-tests: $(BUILD)/crypto-driver $(BUILD)/storage-test $(BUILD)/toolchain-vector-test $(BUILD)/exception-test $(BUILD)/password-test
-ui-probe: $(BUILD)/ui-probe $(BUILD)/statuses.png $(BUILD)/back.png $(BUILD)/smiles.txt $(BUILD)/smiles.png
+ui-probe: $(BUILD)/ui-probe $(BUILD)/statuses.png $(BUILD)/messages.png $(BUILD)/back.png $(BUILD)/smiles.txt $(BUILD)/smiles.png
+$(BUILD)/messages.png: ../telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png | $(BUILD)
+	cp $< $@
 $(BUILD)/statuses.png: ../telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png | $(BUILD)
 	cp $< $@
 $(BUILD)/back.png: ../telemotomax/res/GRAPHICS_32BIT/COMMON/back.png | $(BUILD)
@@ -72,7 +74,7 @@ UI_TEST_OBJECTS := $(patsubst tests/%.cpp,$(BUILD)/test_%.o,$(UI_TESTS))
 $(BUILD)/test_%.o: tests/%.cpp | $(BUILD)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
 $(BUILD)/ui-probe: $(UI_TEST_OBJECTS) $(filter-out $(BUILD)/main.o,$(OBJECTS)) $(MOC_OBJECTS) $(BUILD)/sdk-link/.ready Makefile
-	$(CXX) $(LDFLAGS) $(UI_TEST_OBJECTS) $(filter-out $(BUILD)/main.o,$(OBJECTS)) $(MOC_OBJECTS) -Wl,--wrap=_ZN8QPainter8fillRectEiiiiRK6QBrush,--wrap=_ZN8QPainter10drawPixmapEiiRK7QPixmapiiii,--wrap=pthread_create,--wrap=pthread_join,--wrap=connect,--wrap=dlsym -lezxsound -lqte-mt -lezxappbase -lezxpm -lm -ldl -lpthread -lrt -lresolv -o $@
+	$(CXX) $(LDFLAGS) $(UI_TEST_OBJECTS) $(filter-out $(BUILD)/main.o,$(OBJECTS)) $(MOC_OBJECTS) -Wl,--wrap=_ZN3tmm8Platform13notifyMessageERK7QStringii,--wrap=_ZN8QPainter8fillRectEiiiiRK6QBrush,--wrap=_ZN8QPainter10drawPixmapEiiRK7QPixmapiiii,--wrap=pthread_create,--wrap=pthread_join,--wrap=connect,--wrap=dlsym -lezxsound -lqte-mt -lezxappbase -lezxpm -lm -ldl -lpthread -lrt -lresolv -o $@
 package: all
 	python3 tools/package.py --binary $(BUILD)/telemotomax-native --output dist
 clean:

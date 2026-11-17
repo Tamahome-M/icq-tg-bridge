@@ -63,12 +63,9 @@ bool Window::javaKey(int code) {
     if (settingsPageActive() || view().context == "settings-theme") {
         if (left || clear)
             finishSettings(false);
-        else if (right) {
-            if (settingsSection_ == "account")
-                activate(Row(QString::null, "settings-commands"));
-            else
-                finishSettings(true);
-        } else
+        else if (right)
+            finishSettings(true);
+        else
             return false;
         return true;
     }

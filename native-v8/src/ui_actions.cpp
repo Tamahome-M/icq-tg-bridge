@@ -600,61 +600,6 @@ void Window::activate(const Row &chosen) {
         editor_->setFocus();
         return;
     }
-    if (action == "accounts") {
-        View v(View::Menu, u("Учётные записи"));
-        int count = settings_.getInt("accounts", 1);
-        for (int i = 0; i < count; ++i) {
-            std::string key = "account." + num(i) + ".uin",
-                        label = settings_.get(key, i == 0 ? settingValue(settings_, "uin") : "");
-            v.rows.push_back(
-                Row(u(label.empty() ? "Учётная запись" : label), "account-switch", 0, i));
-        }
-        row(v, "Добавить", "account-add");
-        row(v, "Изменить текущую", "settings:account");
-        row(v, "Удалить текущую", "account-delete-confirm");
-        push(v);
-        return;
-    }
-    if (action == "account-switch") {
-        switchAccount(r.value);
-        back();
-        return;
-    }
-    if (action == "account-add") {
-        if (settings_.getInt("accounts", 1) >= 5) {
-            info(u("Не больше пяти учётных записей"));
-            return;
-        }
-        edit(u("UIN новой учётной записи"), "account-add", "");
-        return;
-    }
-    if (action == "account-delete-confirm") {
-        confirm(u("Удалить настройки учётной записи?"), "account-delete");
-        return;
-    }
-    if (action == "account-delete") {
-        int count = settings_.getInt("accounts", 1), at = settings_.getInt("account_index", 0);
-        if (count < 2) {
-            info(u("Нельзя удалить единственную учётную запись"));
-            return;
-        }
-        disconnectClient();
-        saveState();
-        for (int i = at; i < count - 1; ++i) {
-            settings_.set("account." + num(i) + ".uin",
-                          settings_.get("account." + num(i + 1) + ".uin"));
-            settings_.set("account." + num(i) + ".password",
-                          settings_.get("account." + num(i + 1) + ".password"));
-        }
-        settings_.setInt("accounts", count - 1);
-        settings_.set("uin", settings_.get("account.0.uin"));
-        settings_.set("password", settings_.get("account.0.password"));
-        settings_.setInt("account_index", 0);
-        selectScope();
-        home();
-        settingsChanged();
-        return;
-    }
     if (action == "hotkeys") {
         View v(View::Menu, u("Горячие клавиши"));
         const char *keys[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "#", "call"};
@@ -747,21 +692,6 @@ void Window::requestExit() {
         confirm(u("Есть непрочитанные сообщения. Выйти?"), "exit-now");
     else
         activate(Row(QString::null, "exit-now"));
-}
-void Window::switchAccount(int target) {
-    int previous = settings_.getInt("account_index", 0);
-    if (target == previous)
-        return;
-    saveState();
-    disconnectClient();
-    settings_.set("account." + num(previous) + ".uin", settingValue(settings_, "uin"));
-    settings_.set("account." + num(previous) + ".password", settingValue(settings_, "password"));
-    settings_.setInt("account_index", target);
-    settings_.set("uin", settings_.get("account." + num(target) + ".uin"));
-    settings_.set("password", settings_.get("account." + num(target) + ".password"));
-    selectScope();
-    home();
-    settingsChanged();
 }
 void Window::hotkey(int code) {
     std::string key;

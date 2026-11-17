@@ -258,6 +258,18 @@ bool Settings::getBool(const std::string &key, bool fallback) const {
     std::string s = get(key);
     return s.empty() ? fallback : s == "1" || s == "true";
 }
+bool Settings::remove(const std::string &key) {
+    return values_.erase(key) != 0;
+}
+bool Settings::removePrefix(const std::string &prefix) {
+    bool changed = false;
+    std::map<std::string, std::string>::iterator i = values_.lower_bound(prefix);
+    while (i != values_.end() && i->first.compare(0, prefix.size(), prefix) == 0) {
+        values_.erase(i++);
+        changed = true;
+    }
+    return changed;
+}
 void Settings::set(const std::string &key, const std::string &value) {
     values_[key] = value;
 }

@@ -2,10 +2,10 @@ name: TeleMotoMax Native V8
 on:
   push:
     branches: [main]
-    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/res/GRAPHICS_32BIT/COMMON/back.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
+    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/res/GRAPHICS_32BIT/COMMON/back.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
   pull_request:
     branches: [main]
-    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/res/GRAPHICS_32BIT/COMMON/back.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
+    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/res/GRAPHICS_32BIT/COMMON/back.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
   workflow_dispatch:
 permissions:
   contents: read

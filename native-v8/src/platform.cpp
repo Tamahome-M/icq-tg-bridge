@@ -217,7 +217,7 @@ void Platform::notifyMessage(const QString &file, int volume, int ms) {
     if (file == "tone")
         notifyDisconnected(volume);
     else
-        sound_->play(file, volume);
+        sound_->play(file, volume, true);
 }
 void Platform::notifyDisconnected(int volume) {
     if (volume <= 0)
@@ -228,7 +228,7 @@ void Platform::notifyDisconnected(int volume) {
         emit error(QString::fromUtf8("Не удалось создать сигнал"));
         return;
     }
-    sound_->play(tonePath_, volume);
+    sound_->play(tonePath_, volume, true);
 }
 void Platform::clearExternalText() {
     external_->clear();

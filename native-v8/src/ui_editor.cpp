@@ -274,23 +274,6 @@ void Window::finishEdit(bool accept) {
         showTemplates(insertion);
         return;
     }
-    if (action == "account-add") {
-        const SettingField *f = settingField("uin");
-        std::string error;
-        if (value.empty() || !validateSetting(*f, value, error)) {
-            info(u("Некорректный UIN"));
-            return;
-        }
-        int n = settings_.getInt("accounts", 1);
-        settings_.set("account." + num(n) + ".uin", value);
-        settings_.set("account." + num(n) + ".password", "");
-        settings_.setInt("accounts", n + 1);
-        switchAccount(n);
-        showSettings("account");
-        editKey_ = "password";
-        edit(u("Пароль новой учётной записи"), "setting", "", 0, true, 64);
-        return;
-    }
     update();
 }
 void Window::editorMenu() {

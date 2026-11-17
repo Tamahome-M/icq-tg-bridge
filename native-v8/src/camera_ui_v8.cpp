@@ -18,8 +18,12 @@ template <class T> T fn(void *value) {
 bool named(QObject *object, const char *name) {
     return object && std::strcmp(object->className(), name) == 0;
 }
-bool insertView(QObject *object) {
-    return named(object, "CAM_UI_PhotoInsertView") || named(object, "CAM_UI_VideoInsertView");
+bool resultView(QObject *object, bool video) {
+    // Video-only service dialogs finish through frame 4 / VideoPreviewView.
+    // The MMS-style VideoInsertView (frame 10) is another native path.
+    // Both are shown only after the recorder has stopped and saved the file.
+    return named(object, "CAM_UI_PhotoInsertView") || named(object, "CAM_UI_VideoInsertView") ||
+           (video && named(object, "CAM_UI_VideoPreviewView"));
 }
 bool fire(int key) {
     return key == KEYCODE_CENTER_SELECT || key == KEYCODE_5;
@@ -128,7 +132,7 @@ void CameraUiV8::timerEvent(QTimerEvent *event) {
     timer_ = 0;
     QWidget *widget = pendingInsert_;
     pendingInsert_ = 0;
-    if (!valid_ || !dialog_ || !widget || !widget->isVisible() || !insertView(widget) ||
+    if (!valid_ || !dialog_ || !widget || !widget->isVisible() || !resultView(widget, video_) ||
         !owns(widget) || finishing_)
         return;
     // Entered only after the native engine completed its saved-result view;
@@ -139,7 +143,7 @@ void CameraUiV8::timerEvent(QTimerEvent *event) {
 bool CameraUiV8::eventFilter(QObject *object, QEvent *event) {
     if (!valid_ || !dialog_ || !owns(object) || sendingKey_)
         return false;
-    if (event->type() == QEvent::Show && insertView(object)) {
+    if (event->type() == QEvent::Show && resultView(object, video_)) {
         queueInsert(static_cast<QWidget *>(object));
         return false;
     }

@@ -829,9 +829,12 @@ class Client::Impl : public Cancellation {
             while (r.left()) {
                 ContactRecord c;
                 c.uin = uin(r.p8());
+                // Both online and offline user-info records include the
+                // warning level and TLV count. Leaving the offline trailer
+                // unread treats its zero bytes as another (empty) UIN.
+                r.u16();
+                Tlvs t = tlvs(r, r.u16());
                 if (s.subtype == 11) {
-                    r.u16();
-                    Tlvs t = tlvs(r, r.u16());
                     if (t[6].size() == 4) {
                         Reader status(t[6]);
                         c.status = status.u32();

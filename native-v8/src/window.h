@@ -132,7 +132,7 @@ class Window : public QWidget {
     QString pin_, notice_, ticker_, editTitle_, connectionStage_;
     unsigned long noticeUntil_, tickerUntil_;
     int pictureZoom_, pictureRotation_;
-    QPixmap picture_, background_, frame_, statusIcons_, popupBackdrop_, infoAvatar_;
+    QPixmap picture_, background_, frame_, statusIcons_, messageIcons_, popupBackdrop_, infoAvatar_;
     uint32_t infoAvatarUin_;
     std::vector<ContactRecord> contacts_;
     std::map<uint32_t, ChatState> chats_;
@@ -202,7 +202,6 @@ class Window : public QWidget {
     void note(const std::string &);
     void connectClient();
     void disconnectClient();
-    void switchAccount(int);
     bool selectScope();
     bool send(Command);
     void consume(const Event &);
@@ -242,6 +241,7 @@ class Window : public QWidget {
     void hotkey(int);
     void settingsChanged();
     unsigned unread() const;
+    void markVisibleChatRead();
     QString name(uint32_t) const;
     QString status(uint32_t) const;
     QString messageText(const MessageRecord &) const;

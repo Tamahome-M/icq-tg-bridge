@@ -21,6 +21,18 @@ extern "C" void UTIL_SetPowerOnHandleStatus(int);
 extern "C" void UTIL_SetFlipStatus(int);
 extern "C" void UTIL_SetKeypadLockStatus(bool);
 void checkPaint(QWidget &, const char *);
+void checkUnreadPaint(QWidget &, unsigned);
+struct NotificationCall {
+    QString file;
+    int volume, vibration;
+    NotificationCall(const QString &f, int v, int b) : file(f), volume(v), vibration(b) {}
+};
+static std::vector<NotificationCall> notifications;
+extern "C" void __wrap__ZN3tmm8Platform13notifyMessageERK7QStringii(tmm::Platform *,
+                                                                    const QString &file, int volume,
+                                                                    int vibration) {
+    notifications.push_back(NotificationCall(file, volume, vibration));
+}
 void checkInputIndicator(tmm::InputIndicator &);
 void scheduleNetworkWorker(int);
 void runNetworkWorker();
@@ -48,6 +60,61 @@ class UiProbe {
         m.silent = silent;
         m.nativeId = std::string(8, (char)serial);
         return m;
+    }
+    static void notificationPolicy(Window &w, uint32_t id) {
+        MessageRecord m = message(id, 300, false);
+        size_t before = notifications.size();
+        struct timespec stamp;
+        clock_gettime(CLOCK_MONOTONIC, &stamp);
+        w.startedAt_ = (unsigned long)stamp.tv_sec * 1000 + stamp.tv_nsec / 1000000;
+        w.lastAlert_ = 0;
+        w.notify(m);
+        require(notifications.size() == before, "startup's first minute suppresses audio API");
+        w.startedAt_ = 0;
+        w.settings_.set("sound_unlocked", "tg.mp3");
+        w.settings_.setInt("volume_unlocked", 30);
+        w.settings_.setInt("vibration_unlocked", 100);
+        w.notify(m);
+        require(notifications.size() == before + 1 &&
+                    notifications.back().file == "sounds/tg.mp3" &&
+                    notifications.back().volume == 30 && notifications.back().vibration == 100,
+                "normal notification reaches audio API with selected file, level and vibration");
+        w.notify(m);
+        require(notifications.size() == before + 1, "burst gate suppresses repeated audio calls");
+        w.settings_.set("sound_locked", "message.mp3");
+        w.settings_.setInt("volume_locked", 70);
+        w.settings_.setInt("vibration_locked", 500);
+        w.locked_ = true;
+        w.lastAlert_ = 0;
+        w.notify(m);
+        require(notifications.size() == before + 2 &&
+                    notifications.back().file == "sounds/message.mp3" &&
+                    notifications.back().volume == 70 && notifications.back().vibration == 500,
+                "PIN lock uses the separate locked notification profile");
+        w.locked_ = false;
+        w.closed_ = true;
+        w.lastAlert_ = 0;
+        w.notify(m);
+        require(notifications.size() == before + 3 &&
+                    notifications.back().file == "sounds/message.mp3" &&
+                    notifications.back().volume == 70,
+                "closed flip uses the locked notification profile");
+        w.closed_ = false;
+        w.lastAlert_ = 0;
+        m.silent = true;
+        w.notify(m);
+        m.silent = false;
+        w.quiet_.push_back(id);
+        w.notify(m);
+        w.quiet_.pop_back();
+        w.silent_ = true;
+        w.notify(m);
+        w.silent_ = false;
+        require(notifications.size() == before + 3 && w.lastAlert_ == 0,
+                "bridge silence, quiet whitelist and global mute never enter audio API");
+        w.settings_.set("sound_unlocked", "");
+        w.settings_.setInt("vibration_unlocked", 0);
+        w.lastAlert_ = 0;
     }
     static void menus(Window &w) {
         w.home();
@@ -83,7 +150,7 @@ class UiProbe {
                     setting->getSubItemText(0, 1) ==
                         QString::fromUtf8(w.settings_.get("uin").c_str()),
                 "settings use native label and value regions");
-        w.chooseSetting("account.0.password");
+        w.chooseSetting("password");
         require(!list->isVisible() && w.editor_->isVisible(),
                 "editor replaces native settings list");
         w.hide();
@@ -321,6 +388,10 @@ class UiProbe {
         w.incoming(message(a.uin, 1, true));
         require(w.unread() == 1 && w.lastAlert_ == 0,
                 "silent arrival keeps unread without burst gate");
+        require(w.messageIcons_.width() == 96 && w.messageIcons_.height() == 16 &&
+                    w.view().rows[0].value == 1 && w.view().rows[0].text.find("[1]") >= 0,
+                "silent delivery marks its collapsed parent group unread");
+        checkUnreadPaint(w, 1);
         w.incoming(message(a.uin, 2, false));
         require(w.unread() == 2 && w.lastAlert_ != 0, "next normal arrival alerts");
         w.incoming(message(a.uin, 2, false));
@@ -344,9 +415,30 @@ class UiProbe {
         w.incoming(seed);
         require(w.chats_[a.uin].messages.size() == before + 3,
                 "native id fallback preserves distinct text");
+        notificationPolicy(w, a.uin);
+        w.activate(w.view().rows[0]);
+        require(w.view().rows.size() == 3 && w.view().rows[1].uin == a.uin &&
+                    w.view().rows[1].value == w.chats_[a.uin].unread,
+                "expanded chat keeps unread count and envelope independently of status");
+        checkUnreadPaint(w, 2);
         w.openChat(a.uin);
         require(w.chats_[a.uin].unread == 0 && w.view().kind == View::Chat,
                 "opening chat clears unread");
+        w.lock();
+        w.incoming(message(a.uin, 301, true));
+        require(w.chats_[a.uin].unread == 1, "message in covered chat stays unread behind PIN");
+        w.unlock();
+        require(w.chats_[a.uin].unread == 0, "unlocking visible chat clears its unread marker");
+        w.hide();
+        w.incoming(message(a.uin, 302, true));
+        require(w.chats_[a.uin].unread == 1, "background chat keeps unread marker");
+        w.resume();
+        require(w.chats_[a.uin].unread == 0, "foreground chat clears the unread marker");
+        w.chatMenu();
+        w.incoming(message(a.uin, 303, true));
+        require(w.chats_[a.uin].unread == 1, "chat menu retains the unread marker until dismissed");
+        w.back();
+        require(w.chats_[a.uin].unread == 0, "returning from a menu marks the visible chat read");
         w.key(KEYCODE_RSK);
         bool camera = false, attachments = false;
         for (size_t i = 0; i < w.view().rows.size(); ++i) {
@@ -387,7 +479,7 @@ class UiProbe {
         require(!w.inputIndicator_->isVisible(), "closing editor hides input status");
         require(w.storage_->loadDraft(a.uin) == "Draft survives PIN", "cancel preserves draft");
         w.showSettings("account");
-        w.chooseSetting("account.0.password");
+        w.chooseSetting("password");
         require(w.editSecret_ && w.editor_->echoMode() == ZMultiLineEdit::Password &&
                     w.editor_->getInputField()->getType() == ZKbInputField::FIELD_TYPE_PASSWORD,
                 "password uses native secret field semantics, not only masking");
@@ -423,7 +515,7 @@ class UiProbe {
                     w.editor_->text() == dummyPassword,
                 "PIN preserves masked password and its text");
         w.finishEdit(true);
-        require(w.settingsDraft_.get("account.0.password") == std::string(dummyPassword.utf8()) &&
+        require(w.settingsDraft_.get("password") == std::string(dummyPassword.utf8()) &&
                     w.settings_.get("password") != std::string(dummyPassword.utf8()),
                 "account password edits stay in the settings draft until Save");
         w.finishSettings(true);
@@ -432,7 +524,7 @@ class UiProbe {
                     reloaded.get("password") == std::string(dummyPassword.utf8()),
                 "saved account password preserves case, spaces and UTF-8 after reload");
         w.showSettings("account");
-        w.chooseSetting("account.0.password");
+        w.chooseSetting("password");
         require(w.editor_->text() == dummyPassword &&
                     w.editor_->echoMode() == ZMultiLineEdit::Password,
                 "reopening password starts masked with the exact saved value");

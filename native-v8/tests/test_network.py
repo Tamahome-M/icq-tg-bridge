@@ -120,6 +120,27 @@ async def scenario(executable, folder, encryption, md5):
         roster = await phone.wait(lambda e: e.get('type') == 1)
         assert any(c['uin'] == who and c['name'] == 'Мама' and c['group'] == 'Telegram/Семья' for c in roster['contacts']), roster
         await phone.wait(lambda e: e.get('type') == 2 and e.get('uin') == second)
+        # The four-byte user-info trailer also belongs to departed records.
+        # A stale parser read it as an empty next UIN and reconnected.
+        icon_hash_of = server.icon_hash
+        server.icon_hash = lambda _: None
+        try:
+            await server.notify_status(who, C.STATUS_OFFLINE)
+        finally:
+            server.icon_hash = icon_hash_of
+        departed = await phone.wait(lambda e: e.get('type') == 2 and e.get('uin') == who
+                                    and any(c['status'] == 0xffffffff for c in e.get('contacts', [])))
+        assert departed['generation'] == 1, departed
+        await server.session.send_snac(C.BUDDY, C.BUDDY_DEPARTED,
+                                       blocks.buddy_departed(second) + blocks.buddy_departed(who))
+        for ident in (second, who):
+            departed = await phone.wait(lambda e: e.get('type') == 2 and e.get('uin') == ident
+                                        and any(c['status'] == 0xffffffff for c in e.get('contacts', [])))
+            assert departed['generation'] == 1, departed
+        await server.notify_status(who, C.STATUS_ONLINE)
+        arrived = await phone.wait(lambda e: e.get('type') == 2 and e.get('uin') == who
+                                   and any(c['status'] == C.STATUS_ONLINE for c in e.get('contacts', [])))
+        assert arrived['generation'] == 1, arrived
         await server.deliver(who, 'Входящее 😀')
         incoming = await phone.wait(lambda e: e.get('type') == 3 and e.get('messages') and not e['messages'][0]['out'])
         assert incoming['messages'][0]['text'] == 'Входящее 😀', incoming

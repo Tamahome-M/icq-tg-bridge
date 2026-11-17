@@ -123,7 +123,7 @@ const Expected fullChat[] = {{"Открыть ссылку", "urls"},
 const Expected fullHistory[] = {{"Обсуждение", "discussion"},     {"Ещё", "history-more"},
                                 {"Цитировать", "quote-select"},   {"Цитировать сюда", "quote-here"},
                                 {"Смотреть видео", "video-menu"}, {"Показать фото", "photo"}};
-const Expected settings[] = {{"Учетная запись", "accounts"},
+const Expected settings[] = {{"Учетная запись", "settings:account"},
                              {"Сеть", "settings:network"},
                              {"Интерфейс", "settings:interface"},
                              {"Цветовая схема", "settings:theme"},
@@ -566,59 +566,34 @@ class UiProbe {
         w.key(KEYCODE_RSK);
         require(!w.settingsEditing_ && settingFlag(w.settings_, "display_date") != previous,
                 "interface Save commits staged changes and closes the form");
-        w.settings_.setInt("accounts", 1);
-        w.settings_.setInt("account_index", 0);
+        const std::string savedUin = settingValue(w.settings_, "uin");
+        const std::string savedPassword = settingValue(w.settings_, "password");
         w.showSettings("account");
-        footer(w, "Назад", "Меню", "account form has Back / Menu softkeys");
-        w.activate(Row(QString::null, "account-add"));
-        w.activate(Row(QString::null, "account-add"));
-        require(w.settingsDraft_.getInt("accounts") == 3 && w.settings_.getInt("accounts") == 1 &&
-                    index(w, "field:account.0.password") >= 0 &&
-                    index(w, "field:account.1.password") >= 0 &&
-                    index(w, "field:account.2.password") >= 0,
-                "three accounts have distinct staged password fields");
-        ZSettingItem *accountUin = nativeSetting(w, index(w, "field:account.0.uin"));
-        ZSettingItem *accountPassword = nativeSetting(w, index(w, "field:account.0.password"));
-        require(accountUin->getSubItemText(0, 0) == uiText("UIN-1") &&
-                    accountUin->getSubItemText(0, 1) == "123456" &&
-                    accountPassword->getSubItemText(0, 0) == uiText("Пароль-1") &&
-                    accountPassword->getSubItemText(0, 1) == "*****",
-                "native account regions keep numbered labels separate from UIN and secret value");
-        w.activate(Row(QString::null, "account-add"));
-        require(w.settingsDraft_.getInt("accounts") == 3,
-                "account count is capped at Java's three");
-        w.notice_ = QString::null;
+        footer(w, "Назад", "Сохр.", "single account uses Back / Save softkeys");
+        require(w.view().rows.size() == 2 && index(w, "field:uin") == 0 &&
+                    index(w, "field:password") == 1 && index(w, "account-add") < 0 &&
+                    index(w, "account-choose") < 0,
+                "only UIN and password remain in the account form");
+        ZSettingItem *accountUin = nativeSetting(w, index(w, "field:uin"));
+        ZSettingItem *accountPassword = nativeSetting(w, index(w, "field:password"));
+        require(accountUin->getSubItemText(0, 0) == uiText("UIN") &&
+                    accountUin->getSubItemText(0, 1) == QString::fromUtf8(savedUin.c_str()) &&
+                    accountPassword->getSubItemText(0, 0) == uiText("Пароль") &&
+                    accountPassword->getSubItemText(0, 1) ==
+                        QString::fromLatin1(std::string(savedPassword.size(), '*').c_str()),
+                "single credentials keep native label and secret regions");
+        w.commitSetting("password", "cancelled-password");
+        w.key(KEYCODE_LSK);
+        require(!w.settingsEditing_ && settingValue(w.settings_, "password") == savedPassword,
+                "account Back discards staged password");
+        w.showSettings("account");
+        w.commitSetting("password", "new-password");
         w.key(KEYCODE_RSK);
-        require(w.view().kind == View::Popup && index(w, "account-add") < 0 &&
-                    index(w, "account-delete-list") >= 0 && index(w, "settings-save") >= 0,
-                "three-account commands omit New and keep Delete / Save");
-        w.key(KEYCODE_LSK);
-        w.key(KEYCODE_LSK);
-        require(!w.settingsEditing_ && w.settings_.getInt("accounts") == 1,
-                "account Back cancels new account drafts");
-        w.showSettings("account");
-        w.activate(Row(QString::null, "account-add"));
-        w.activate(Row(QString::null, "account-add"));
-        w.settingsDraft_.set("account.1.uin", "234567");
-        w.settingsDraft_.set("account.1.password", "second-password");
-        w.settingsDraft_.set("account.2.uin", "345678");
-        w.settingsDraft_.set("account.2.password", "third-password");
-        w.finishSettings(true);
-        require(!w.settingsEditing_ && w.settings_.getInt("accounts") == 3 &&
-                    w.settings_.get("account.2.password") == "third-password",
-                "account Save persists three separate credential drafts");
-        w.showSettings("account");
-        w.activate(Row(QString::null, "account-delete-list"));
-        w.activate(w.view().rows[1]);
-        require(w.settingsDraft_.getInt("accounts") == 2 && w.settings_.getInt("accounts") == 3 &&
-                    w.settingsDraft_.get("account.1.uin") == "345678",
-                "deleting account shifts later credentials only in draft");
-        w.finishSettings(true);
-        require(w.settings_.getInt("accounts") == 2 &&
-                    w.settings_.get("account.1.password") == "third-password" &&
-                    w.settings_.get("account.2.uin").empty() &&
-                    w.settings_.get("account.2.password").empty(),
-                "saving account deletion clears obsolete last-slot credentials");
+        Settings reloaded;
+        std::string accountError;
+        require(!w.settingsEditing_ && reloaded.load(w.settings_.path(), accountError) &&
+                    reloaded.get("uin") == savedUin && reloaded.get("password") == "new-password",
+                "account Save persists exactly the single credentials");
         w.showSettings("theme");
         menu(w, themeChoices, COUNT(themeChoices), "all eighteen Java color schemes retain order");
         const std::string oldTheme = settingValue(w.settings_, "theme");

@@ -99,8 +99,7 @@ int main() {
     assert(settingIsToggle("show_receipts") && settingIsToggle("telegram_on"));
     assert(!settingIsToggle("startup_dns") && !settingIsToggle("sort_by"));
     assert(std::string(settingField("async_transfer")->section) == "_native");
-    assert(settingField("account.2.uin") == settingField("uin"));
-    assert(settingField("account.2.password") == settingField("password"));
+    assert(!settingField("account.2.uin") && !settingField("account.2.password"));
     s.setBool("cp1251", false);
     assert(clientSettings(s, "", quiet).ssiEncoding == "UTF-8");
     s.setBool("cp1251", true);
@@ -124,6 +123,34 @@ int main() {
     assert(previous.getInt("volume_locked") == 70 && previous.getInt("chat_messages") == 100);
     assert(!settingFlag(previous, "full_editor"));
     assert(!migrateJavaSettings(previous) && previous.getInt("caption_offset") == 10);
+    Settings selected;
+    selected.set("java_ui_version", "1");
+    selected.setInt("accounts", 3);
+    selected.setInt("account_index", 2);
+    selected.set("uin", "345678");
+    selected.set("password", "");
+    selected.set("account.0.uin", "123456");
+    selected.set("account.0.password", "first");
+    selected.set("account.2.uin", "345678");
+    selected.set("account.2.password", "old-password");
+    selected.set("account.99.password", "obsolete");
+    assert(migrateJavaSettings(selected));
+    assert(selected.get("uin") == "345678" && selected.get("password", "missing").empty());
+    assert(selected.get("accounts", "missing") == "missing" &&
+           selected.get("account_index", "missing") == "missing" &&
+           selected.get("account.0.password", "missing") == "missing" &&
+           selected.get("account.2.uin", "missing") == "missing" &&
+           selected.get("account.99.password", "missing") == "missing");
+    assert(!migrateJavaSettings(selected));
+    Settings slots;
+    slots.setInt("accounts", 2);
+    slots.setInt("account_index", 1);
+    slots.set("account.0.uin", "123456");
+    slots.set("account.1.uin", "234567");
+    slots.set("account.1.password", "selected-password");
+    assert(migrateJavaSettings(slots));
+    assert(slots.get("uin") == "234567" && slots.get("password") == "selected-password");
+    assert(slots.get("account.1.password", "missing") == "missing");
     Settings fresh;
     assert(migrateJavaSettings(fresh));
     assert(settingNumber(fresh, "volume_locked") == 50 &&

@@ -610,7 +610,7 @@ void Window::rebuildRoster() {
         old = v.rows[v.selected].uin;
     v.rows.clear();
     std::map<std::string, std::vector<size_t> > groups;
-    std::map<std::string, unsigned> total, on;
+    std::map<std::string, unsigned> total, on, unreadCount;
     bool grouped = settingFlag(settings_, "use_groups");
     for (size_t i = 0; i < contacts_.size(); ++i) {
         const ContactRecord &c = contacts_[i];
@@ -629,6 +629,8 @@ void Window::rebuildRoster() {
         for (;;) {
             groups[parent];
             ++total[parent];
+            if (unread)
+                unreadCount[parent] += chat->second.unread;
             if (online(c.status))
                 ++on[parent];
             size_t slash = parent.find_last_of('/');
@@ -670,7 +672,9 @@ void Window::rebuildRoster() {
             if (on[g->first] && !settingFlag(settings_, "hide_offline"))
                 label += " (" + QString::number(on[g->first]) + "/" +
                          QString::number(total[g->first]) + ")";
-            v.rows.push_back(Row(label, "group-toggle:" + g->first));
+            if (unreadCount[g->first])
+                label += " [" + QString::number(unreadCount[g->first]) + "]";
+            v.rows.push_back(Row(label, "group-toggle:" + g->first, 0, unreadCount[g->first]));
             if (collapsed_[g->first])
                 continue;
         }
@@ -694,7 +698,10 @@ void Window::rebuildRoster() {
             ContactRecord &c = contacts_[items[k]];
             QString label = u(c.name);
             std::map<uint32_t, ChatState>::const_iterator chat = chats_.find(c.uin);
-            v.rows.push_back(Row(label, "open", c.uin));
+            unsigned count = chat == chats_.end() ? 0 : chat->second.unread;
+            if (count)
+                label += " [" + QString::number(count) + "]";
+            v.rows.push_back(Row(label, "open", c.uin, count));
             if (c.uin == old)
                 v.selected = v.rows.size() - 1;
         }
@@ -755,7 +762,7 @@ void Window::openChat(uint32_t id) {
         storage_->loadHistory(id, state.messages, settingNumber(settings_, "chat_messages"));
         state.loaded = true;
     }
-    state.unread = 0;
+    markVisibleChatRead();
     trimChats();
     rebuildChat();
     requestLastMessage(id);

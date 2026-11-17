@@ -106,6 +106,13 @@ class InsertView : public QWidget {
         return video_ ? "CAM_UI_VideoInsertView" : "CAM_UI_PhotoInsertView";
     }
 };
+class VideoPreview : public QWidget {
+  public:
+    explicit VideoPreview(QWidget *parent) : QWidget(parent) {}
+    const char *className() const {
+        return "CAM_UI_VideoPreviewView";
+    }
+};
 void key(QWidget &widget, int code, bool pressed, bool repeat = false) {
     QKeyEvent event(pressed ? QEvent::KeyPress : QEvent::KeyRelease, code, 0, 0, QString::null,
                     repeat);
@@ -151,6 +158,8 @@ int main(int argc, char **argv) {
     assert(nativeMeta(library, "_ZTV22CAM_UI_PhotoInsertView")->slot("insertSlot()", true));
     assert(!strcmp(nativeMeta(library, "_ZTV22CAM_UI_VideoInsertView")->className(),
                    "CAM_UI_VideoInsertView"));
+    assert(!strcmp(nativeMeta(library, "_ZTV23CAM_UI_VideoPreviewView")->className(),
+                   "CAM_UI_VideoPreviewView"));
     void **modelTable = static_cast<void **>(dlsym(library, "_ZTV18CAM_UI_GlobalModel"));
     assert(modelTable);
     memset(model.bytes, 0xa5, sizeof(model.bytes));
@@ -236,7 +245,44 @@ int main(int argc, char **argv) {
         drain();
         assert(accepted == 2); // A cancelled capture cannot become an upload.
     }
-    fprintf(stderr, "CAMERA UI PASS: real native stop metadata, scoped Fire/5 start/stop, repeat "
-                    "suppression, deferred saved-result accept, hide/delete/cancel guards\n");
+    {
+        FixtureDialog dialog;
+        VideoView view(&dialog);
+        dialog.show();
+        view.show();
+        tmm::CameraUiV8 ui(&dialog, library, true);
+        enableFixture(ui, modelTable);
+        key(view, KEYCODE_5, true);
+        key(view, KEYCODE_5, false);
+        assert(ui.recording());
+        key(view, KEYCODE_5, true);
+        key(view, KEYCODE_5, false);
+        assert(view.stops == 1 && !ui.recording());
+        // This is the actual video-only frame used by CAM_UI_Dlg mode 2.
+        VideoPreview saved(&dialog);
+        saved.show();
+        assert(accepted == 2 && cancelled == 1);
+        drain();
+        assert(accepted == 3 && cancelled == 1 && dialog.result() == QDialog::Accepted);
+    }
+    {
+        FixtureDialog dialog;
+        PhotoView view(&dialog);
+        dialog.show();
+        view.show();
+        tmm::CameraUiV8 ui(&dialog, library, false);
+        enableFixture(ui, modelTable);
+        VideoPreview unrelated(&dialog);
+        unrelated.show();
+        drain();
+        assert(accepted == 3 && dialog.isVisible());
+        key(view, KEYCODE_CLEAR, true);
+        key(view, KEYCODE_CLEAR, false);
+        assert(cancelled == 2);
+    }
+    fprintf(
+        stderr,
+        "CAMERA UI PASS: real native stop metadata, scoped Fire/5 start/stop, repeat "
+        "suppression, video-only preview and insert result accept, hide/delete/cancel guards\n");
     return 0;
 }

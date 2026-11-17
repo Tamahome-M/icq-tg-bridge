@@ -19,6 +19,19 @@ int main() {
              tlv(0x9001, std::string(1, 2) + std::string(16, 'T')) + tlv(0x9002, be64(123456)) +
              tlv(0x9004, "Имя") + tlv(0x9005, std::string(1, 1));
     std::string ack;
+    Snac departed;
+    departed.family = 3;
+    departed.subtype = 12;
+    departed.data = p8("1000001") + be16(0) + be16(0);
+    assert(presence(departed).uin == 1000001 && presence(departed).status == 0xffffffffU);
+    departed.data = p8("1000001");
+    bool invalidPresence = false;
+    try {
+        presence(departed);
+    } catch (const Error &) {
+        invalidPresence = true;
+    }
+    assert(invalidPresence);
     MessageRecord m = incoming(s, ack);
     assert(m.text == text && m.silent && m.kind == 2 && m.nativeId == be64(123456) &&
            m.senderName == "Имя" && ack.empty());

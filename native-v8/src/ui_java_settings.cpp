@@ -56,29 +56,11 @@ void fieldRow(View &v, const Settings &s, const SettingField &f, const std::stri
                                : u(*f.choices ? choiceLabel(f, value) : value);
     v.rows.push_back(Row((label.isEmpty() ? u(f.label) : label) + ": " + display, "field:" + key));
 }
-unsigned accountCount(const Settings &s) {
-    return std::max(1, std::min(5, s.getInt("accounts", 1)));
-}
-void seedAccounts(Settings &draft, const Settings &live) {
-    unsigned count = accountCount(live);
-    unsigned active = std::min(count - 1, (unsigned)std::max(0, live.getInt("account_index", 0)));
-    draft.setInt("accounts", count);
-    draft.setInt("account_index", active);
-    for (unsigned i = 0; i < count; ++i) {
-        const std::string prefix = "account." + num(i) + ".";
-        draft.set(prefix + "uin",
-                  live.get(prefix + "uin", i == active ? settingValue(live, "uin") : ""));
-        draft.set(prefix + "password",
-                  live.get(prefix + "password", i == active ? settingValue(live, "password") : ""));
-    }
-    draft.set("account." + num(active) + ".uin", settingValue(live, "uin"));
-    draft.set("account." + num(active) + ".password", settingValue(live, "password"));
-}
 } // namespace
 void Window::settingsMenu() {
     View v(View::Menu, u("Настройки"));
     v.context = "settings-menu";
-    row(v, "Учетная запись", "accounts");
+    row(v, "Учетная запись", "settings:account");
     row(v, "Сеть", "settings:network");
     row(v, "Интерфейс", "settings:interface");
     row(v, "Цветовая схема", "settings:theme");
@@ -108,8 +90,6 @@ void Window::showSettings(const std::string &requested) {
         settingsSection_ = section;
         settingsDepth_ = stack_.size();
         settingsEditing_ = true;
-        if (section == "account")
-            seedAccounts(settingsDraft_, settings_);
         if (section == "timezone") {
             time_t stamp =
                 time(0) +
@@ -141,25 +121,7 @@ void Window::showSettings(const std::string &requested) {
     }
     View v(View::SettingsPage, u("Настройки"));
     v.context = section;
-    if (section == "account") {
-        unsigned count = accountCount(settingsDraft_);
-        if (count > 1) {
-            unsigned active = std::min(
-                count - 1, (unsigned)std::max(0, settingsDraft_.getInt("account_index", 0)));
-            const std::string value = settingsDraft_.get("account." + num(active) + ".uin");
-            v.rows.push_back(Row(u("Учетная запись") + ": " + u(value.empty() ? "---" : value),
-                                 "account-choose"));
-        }
-        for (unsigned i = 0; i < count; ++i) {
-            const std::string suffix = count > 1 ? "-" + num(i + 1) : "";
-            if (count > 1)
-                row(v, "---", "settings-heading");
-            fieldRow(v, settingsDraft_, *settingField("uin"), "account." + num(i) + ".uin",
-                     u("UIN") + u(suffix));
-            fieldRow(v, settingsDraft_, *settingField("password"),
-                     "account." + num(i) + ".password", u("Пароль") + u(suffix));
-        }
-    } else if (section == "hotkeys") {
+    if (section == "hotkeys") {
         v.title = u("Список клавиш");
         const char *keys[] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "#"};
         for (unsigned i = 0; i < 12; ++i) {
@@ -344,24 +306,6 @@ void Window::finishSettings(bool accept) {
             info(u(error));
             return;
         }
-        if (settingsSection_ == "account") {
-            unsigned count = accountCount(settingsDraft_);
-            unsigned active = std::min(
-                count - 1, (unsigned)std::max(0, settingsDraft_.getInt("account_index", 0)));
-            for (unsigned i = 0; i < count; ++i) {
-                std::string prefix = "account." + num(i) + ".";
-                if (!validateSetting(*settingField("uin"), settingsDraft_.get(prefix + "uin"),
-                                     error) ||
-                    !validateSetting(*settingField("password"),
-                                     settingsDraft_.get(prefix + "password"), error)) {
-                    info(u(error));
-                    return;
-                }
-            }
-            settingsDraft_.set("uin", settingsDraft_.get("account." + num(active) + ".uin"));
-            settingsDraft_.set("password",
-                               settingsDraft_.get("account." + num(active) + ".password"));
-        }
         if (settingFlag(settingsDraft_, "small_font") != settingFlag(settings_, "small_font"))
             settingsDraft_.setInt("font_size", settingFlag(settingsDraft_, "small_font") ? 14 : 16);
         if (settingFlag(settingsDraft_, "chat_small_font") !=
@@ -451,10 +395,6 @@ bool Window::activateSettings(const Row &chosen) {
         finishSettings(false);
         return true;
     }
-    if (action == "accounts") {
-        showSettings("account");
-        return true;
-    }
     if (action == "hotkeys") {
         showHotkeys();
         return true;
@@ -481,12 +421,7 @@ bool Window::activateSettings(const Row &chosen) {
         View v(View::Popup, u("Настройки"));
         v.context = "settings-commands";
         row(v, "Сохр.", "settings-save");
-        if (settingsSection_ == "account") {
-            if (accountCount(settingsDraft_) < 3)
-                row(v, "Новая учетная запись", "account-add");
-            if (accountCount(settingsDraft_) > 1)
-                row(v, "Удалить учетную запись", "account-delete-list");
-        } else if (settingsSection_ == "hotkeys")
+        if (settingsSection_ == "hotkeys")
             row(v, "Выбрать", "settings-choose");
         row(v, "Назад", "settings-cancel");
         push(v);
@@ -496,66 +431,6 @@ bool Window::activateSettings(const Row &chosen) {
         back();
         if (!view().rows.empty())
             activate(view().rows[view().selected]);
-        return true;
-    }
-    if (action == "account-add") {
-        if (!settingsEditing_)
-            showSettings("account");
-        unsigned count = accountCount(settingsDraft_);
-        if (count >= 3) {
-            info(u("Не больше трех учетных записей"));
-            return true;
-        }
-        settingsDraft_.set("account." + num(count) + ".uin", "");
-        settingsDraft_.set("account." + num(count) + ".password", "");
-        settingsDraft_.setInt("accounts", count + 1);
-        while (stack_.size() > settingsDepth_ + 1)
-            stack_.pop_back();
-        showSettings("account");
-        return true;
-    }
-    if (action == "account-choose" || action == "account-delete-list" ||
-        action == "account-delete-confirm") {
-        if (!settingsEditing_)
-            showSettings("account");
-        View v(View::Choice, u(action == "account-choose" ? "Учетная запись" : "Удалить"));
-        v.context = "account-choice";
-        unsigned count = accountCount(settingsDraft_);
-        for (unsigned i = 0; i < count; ++i) {
-            std::string value = settingsDraft_.get("account." + num(i) + ".uin");
-            v.rows.push_back(
-                Row(u(value.empty() ? "---" : value),
-                    action == "account-choose" ? "account-draft-select" : "account-draft-delete", 0,
-                    i));
-        }
-        v.selected =
-            std::min(count - 1, (unsigned)std::max(0, settingsDraft_.getInt("account_index", 0)));
-        push(v);
-        return true;
-    }
-    if (action == "account-draft-select" || action == "account-draft-delete") {
-        if (action == "account-draft-select")
-            settingsDraft_.setInt("account_index", r.value);
-        else {
-            unsigned count = accountCount(settingsDraft_);
-            if (count <= 1 || r.value >= count)
-                return true;
-            for (unsigned i = r.value; i + 1 < count; ++i) {
-                settingsDraft_.set("account." + num(i) + ".uin",
-                                   settingsDraft_.get("account." + num(i + 1) + ".uin"));
-                settingsDraft_.set("account." + num(i) + ".password",
-                                   settingsDraft_.get("account." + num(i + 1) + ".password"));
-            }
-            settingsDraft_.set("account." + num(count - 1) + ".uin", "");
-            settingsDraft_.set("account." + num(count - 1) + ".password", "");
-            unsigned active = std::max(0, settingsDraft_.getInt("account_index", 0));
-            if (active > r.value)
-                --active;
-            settingsDraft_.setInt("accounts", count - 1);
-            settingsDraft_.setInt("account_index", std::min(count - 2, active));
-        }
-        back();
-        showSettings("account");
         return true;
     }
     if (action.compare(0, 7, "hotkey:") == 0) {
