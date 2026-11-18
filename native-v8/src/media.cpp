@@ -19,7 +19,6 @@ typedef bool (*Open)(QObject *, const char *, int);
 typedef bool (*Play)(QObject *, int);
 typedef bool (*Call)(QObject *);
 typedef unsigned int (*Volume)(QObject *, unsigned int);
-typedef bool (*Mute)(QObject *, bool);
 typedef bool (*Seek)(QObject *, unsigned int);
 typedef unsigned short (*Code)(QObject *);
 int bounded(int v) {
@@ -58,9 +57,9 @@ bool MediaController::load() {
         return false;
     }
     void **candidate = static_cast<void **>(vtable) + 2;
-    const unsigned offsets[] = {0x54, 0x68, 0x6c, 0x70, 0x80, 0x84, 0x8c, 0xb4, 0xbc};
-    const unsigned long addresses[] = {0x41f93a70, 0x41f929f8, 0x41f8e2a0, 0x41f8e5b8, 0x41f8e84c,
-                                       0x41f8eacc, 0x41f8ebf4, 0x41f8f114, 0x41f8f910};
+    const unsigned offsets[] = {0x54, 0x68, 0x6c, 0x70, 0x80, 0x84, 0xb4, 0xbc};
+    const unsigned long addresses[] = {0x41f93a70, 0x41f929f8, 0x41f8e2a0, 0x41f8e5b8,
+                                       0x41f8e84c, 0x41f8eacc, 0x41f8f114, 0x41f8f910};
     for (unsigned i = 0; i < sizeof(offsets) / sizeof(offsets[0]); ++i)
         if (reinterpret_cast<unsigned long>(candidate[offsets[i] / 4]) -
                 reinterpret_cast<unsigned long>(vtable) !=
@@ -127,9 +126,9 @@ bool MediaController::play(const QString &path, int volume, bool audioOnly) {
         emit error(QString::fromUtf8("Недоступен видеовыход V8"));
         return false;
     }
+    // The default constructor already opens the output. Stock V8 VoiceNote
+    // passes it straight to the engine; closing here adds a hardware cycle.
     device_ = new AM_NORMAL_DEV_INTERFACE;
-    device_->flush();
-    device_->close();
     // Motorola has a separate short-alert backend. It shares the verified
     // MediaPlayerEngine ABI but does not start the full media playback path.
     engine_ = notification_
@@ -151,7 +150,7 @@ bool MediaController::play(const QString &path, int volume, bool audioOnly) {
     if (!connect(engine_, SIGNAL(positionChanged(unsigned int, unsigned int)), this,
                  SLOT(position(unsigned int, unsigned int))) ||
         !connect(engine_, SIGNAL(playFinished()), this, SLOT(ended())) ||
-        !connect(engine_, SIGNAL(errorOccurred(MPError)), this, SLOT(playbackError())) ||
+        !connect(engine_, SIGNAL(errorOccurred(MPError)), this, SLOT(playbackError(MPError))) ||
         !connect(engine_, SIGNAL(audioDeviceUnavailable()), this, SLOT(unavailable()))) {
         release();
         emit error(QString::fromUtf8("Нет событий плеера"));
@@ -163,34 +162,38 @@ bool MediaController::play(const QString &path, int volume, bool audioOnly) {
     elapsed_ = duration_ = 0;
     volume_ = bounded(volume);
     bool ok = function<Open>(table_[0x54 / 4])(engine_, resolved, 0);
-    if (ok && !failed_) {
-        function<Mute>(table_[0x8c / 4])(engine_, false);
+    if (ok && !failed_ && pending_ != 2) {
+        // A fresh engine is unmuted. Explicit unmute would first restore its
+        // default level 7, before the user's volume, and post another event.
         setVolume(volume_);
-        ok = function<Play>(table_[0x6c / 4])(engine_, 1);
+        if (!failed_ && pending_ != 2)
+            ok = function<Play>(table_[0x6c / 4])(engine_, 1);
     }
-    if (!ok || failed_) {
+    if ((!ok && pending_ != 2) || failed_) {
         if (!failed_)
-            playbackError();
+            playbackError(function<Code>(table_[0xbc / 4])(engine_));
         release();
         return false;
     }
     if (video)
         video_->show();
-    startup_.start(15000, true);
+    if (pending_ != 2 && !elapsed_)
+        startup_.start(15000, true);
     return true;
 }
 void MediaController::release() {
     startup_.stop();
+    active_ = false;
+    videoActive_ = false;
     if (engine_) {
-        disconnect(engine_, 0, this, 0);
-        function<Delete>(
-            dlsym(library_, notification_ ? "MP_DeleteRingtone" : "MP_DeleteMediaPlayer"))(engine_);
+        QObject *engine = engine_;
         engine_ = 0;
+        disconnect(engine, 0, this, 0);
+        function<Delete>(
+            dlsym(library_, notification_ ? "MP_DeleteRingtone" : "MP_DeleteMediaPlayer"))(engine);
     }
     delete device_;
     device_ = 0;
-    active_ = false;
-    videoActive_ = false;
     if (video_)
         video_->hide();
 }
@@ -203,15 +206,15 @@ void MediaController::stop() {
 }
 void MediaController::setVolume(int value) {
     volume_ = bounded(value);
-    if (engine_)
+    if (engine_ && !failed_ && pending_ != 2)
         function<Volume>(table_[0x84 / 4])(engine_, (volume_ * 7 + 50) / 100);
 }
 bool MediaController::pause(bool paused) {
-    if (!active_ || !engine_)
+    if (!active_ || !engine_ || failed_ || pending_ == 2)
         return false;
     bool ok = paused ? function<Call>(table_[0x70 / 4])(engine_)
                      : function<Play>(table_[0x6c / 4])(engine_, 1);
-    if (ok && !failed_) {
+    if (ok && !failed_ && pending_ != 2) {
         if (paused)
             startup_.stop();
         else if (!elapsed_)
@@ -220,21 +223,24 @@ bool MediaController::pause(bool paused) {
     return ok && !failed_;
 }
 bool MediaController::seek(unsigned int ms) {
-    return active_ && engine_ && function<Call>(table_[0xb4 / 4])(engine_) &&
+    return active_ && engine_ && !failed_ && pending_ != 2 &&
+           function<Call>(table_[0xb4 / 4])(engine_) &&
            function<Seek>(table_[0x80 / 4])(engine_, ms);
 }
 bool MediaController::active() const {
     return active_;
 }
 void MediaController::ended() {
-    if (active_ && !failed_) {
+    // Keep the first terminal result until dispatch releases the engine.
+    // Native callbacks must return before its destructor is called.
+    if (active_ && !failed_ && pending_ != 2) {
         startup_.stop();
         pending_ = 2;
         completion_.start(0, true);
     }
 }
 void MediaController::position(unsigned int elapsed, unsigned int duration) {
-    if (active_ && !failed_) {
+    if (active_ && !failed_ && pending_ != 2) {
         if (elapsed)
             startup_.stop();
         elapsed_ = elapsed;
@@ -244,12 +250,11 @@ void MediaController::position(unsigned int elapsed, unsigned int duration) {
         completion_.start(0, true);
     }
 }
-void MediaController::playbackError() {
-    if (!engine_ || failed_)
+void MediaController::playbackError(MPError code) {
+    if (!active_ || !engine_ || failed_ || pending_ == 2)
         return;
     failed_ = true;
     startup_.stop();
-    unsigned code = function<Code>(table_[0xbc / 4])(engine_);
     pendingError_ = code == 7
                         ? QString::fromUtf8("Звуковое устройство занято (Motorola: 7)")
                         : QString::fromUtf8("Ошибка плеера Motorola: ") + QString::number(code);
@@ -257,7 +262,7 @@ void MediaController::playbackError() {
     completion_.start(0, true);
 }
 void MediaController::unavailable() {
-    if (active_ && !failed_) {
+    if (active_ && !failed_ && pending_ != 2) {
         failed_ = true;
         startup_.stop();
         pendingError_ = QString::fromUtf8("Звуковое устройство занято");
@@ -266,7 +271,7 @@ void MediaController::unavailable() {
     }
 }
 void MediaController::startupTimeout() {
-    if (active_) {
+    if (active_ && !failed_ && pending_ != 2) {
         failed_ = true;
         pendingError_ = QString::fromUtf8("Плеер не подтвердил запуск");
         pending_ = 3;

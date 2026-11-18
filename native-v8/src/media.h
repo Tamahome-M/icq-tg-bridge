@@ -6,6 +6,8 @@
 class QWidget;
 class AM_NORMAL_DEV_INTERFACE;
 namespace tmm {
+// V8 exports MP_PlayerEngine::errorOccurred(unsigned short) with this Qt name.
+typedef unsigned short MPError;
 class MediaController : public QObject {
     Q_OBJECT
   public:
@@ -24,7 +26,7 @@ class MediaController : public QObject {
     void positionChanged(unsigned int elapsed, unsigned int duration);
   private slots:
     void ended();
-    void playbackError();
+    void playbackError(MPError code);
     void unavailable();
     void position(unsigned int elapsed, unsigned int duration);
     void startupTimeout();
