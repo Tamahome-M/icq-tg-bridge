@@ -6,8 +6,7 @@
 
 // Observe the real ARM Qt painter. No alternate renderer or artificial delay.
 static const QPaintDevice *screen;
-static unsigned fills, copies, envelopes;
-static bool observeUnread;
+static unsigned fills, copies;
 extern "C" void realFill(QPainter *, int, int, int, int,
                          const QBrush &) asm("__real__ZN8QPainter8fillRectEiiiiRK6QBrush");
 extern "C" void wrapFill(QPainter *, int, int, int, int,
@@ -25,9 +24,6 @@ extern "C" void wrapCopy(QPainter *p, int x, int y, const QPixmap &image, int sx
                          int h) {
     if (p->device() == screen)
         ++copies;
-    if (observeUnread && image.width() == 96 && image.height() == 16 && sx == 0 && sy == 0 &&
-        w == 16 && h == 16)
-        ++envelopes;
     realCopy(p, x, y, image, sx, sy, w, h);
 }
 void checkPaint(QWidget &window, const char *scene) {
@@ -41,16 +37,4 @@ void checkPaint(QWidget &window, const char *scene) {
         fprintf(stderr, "UI FAIL: repaint exposes intermediate drawing\n");
         exit(2);
     }
-}
-
-void checkUnreadPaint(QWidget &window, unsigned expected) {
-    envelopes = 0;
-    observeUnread = true;
-    window.repaint(false);
-    observeUnread = false;
-    if (envelopes != expected) {
-        fprintf(stderr, "UI FAIL: unread envelopes painted=%u expected=%u\n", envelopes, expected);
-        exit(2);
-    }
-    fprintf(stderr, "UI PASS: %u real unread envelope sprites painted\n", envelopes);
 }

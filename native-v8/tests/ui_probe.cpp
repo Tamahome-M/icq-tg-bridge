@@ -11,6 +11,7 @@
 #include <ZKbInputField.h>
 #include <ZKeyDef.h>
 #include <qapplication.h>
+#include <qimage.h>
 #include <qtimer.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,7 +22,6 @@ extern "C" void UTIL_SetPowerOnHandleStatus(int);
 extern "C" void UTIL_SetFlipStatus(int);
 extern "C" void UTIL_SetKeypadLockStatus(bool);
 void checkPaint(QWidget &, const char *);
-void checkUnreadPaint(QWidget &, unsigned);
 struct NotificationCall {
     QString file;
     int volume, vibration;
@@ -60,6 +60,18 @@ class UiProbe {
         m.silent = silent;
         m.nativeId = std::string(8, (char)serial);
         return m;
+    }
+    static void rosterIcon(Window &w, int row, const QPixmap &atlas, unsigned sprite) {
+        ZListBox *list = w.systemMenu_->list();
+        require(w.systemMenuVisible() && list->isVisible() && row < list->count(),
+                "roster uses the same visible native list as menus");
+        ZListBoxItem *item = static_cast<ZListBoxItem *>(list->item(row));
+        QList<QPixmap> icons = item->getSubItemIcon(0, 0);
+        QPixmap expected;
+        expected.convertFromImage(atlas.convertToImage().copy(sprite * 16, 0, 16, 16));
+        require(icons.count() == 1 && icons.first() &&
+                    icons.first()->convertToImage() == expected.convertToImage(),
+                "native roster item retains the exact status/unread sprite");
     }
     static void rosterSorting(Window &w, uint32_t alice, uint32_t bob) {
         const std::string sort = settingValue(w.settings_, "sort_by"),
@@ -401,7 +413,12 @@ class UiProbe {
         require(w.collapsed_["Telegram"] && w.view().rows.size() == 1 &&
                     w.view().rows[0].action == "group-toggle:Telegram",
                 "initial contact groups start collapsed");
-        w.activate(w.view().rows[0]);
+        ZListBox *rosterList = w.systemMenu_->list();
+        require(rosterList->isVisible() && rosterList->count() == 1 &&
+                    rosterList->item(0)->getSubItemText(0, 0) == w.view().rows[0].text,
+                "collapsed roster is rendered by the Motorola menu widget");
+        QKeyEvent chooseGroup(QEvent::KeyPress, KEYCODE_CENTER_SELECT, 0, 0);
+        QApplication::sendEvent(rosterList->viewport(), &chooseGroup);
         require(!w.collapsed_["Telegram"] && w.view().rows.size() == 2,
                 "collapsed group opens on selection");
         Event incremental;
@@ -414,6 +431,30 @@ class UiProbe {
         require(w.contact(a.uin) && w.contact(b.uin), "incremental roster preserves existing");
         require(!w.collapsed_["Telegram"] && w.view().rows.size() == 3,
                 "roster refresh preserves an opened group");
+        rosterIcon(w, 2, w.statusIcons_, 6);
+        ZListItem *firstCell = rosterList->item(1), *secondCell = rosterList->item(2);
+        w.view().selected = 2;
+        w.update();
+        Event buddyStatus(Event::Presence);
+        buddyStatus.uin = b.uin;
+        buddyStatus.status = 0;
+        w.consume(buddyStatus);
+        require(w.view().rows[1].uin == b.uin && rosterList->currentItem() == 1 &&
+                    rosterList->item(1) == firstCell && rosterList->item(2) == secondCell,
+                "status reorder preserves cursor and reuses native roster cells");
+        rosterIcon(w, 1, w.statusIcons_, 7);
+        const unsigned rosterRevision = w.systemMenu_->revision();
+        w.consume(buddyStatus);
+        require(w.systemMenu_->revision() == rosterRevision,
+                "unchanged presence reuses the native roster without repaint rebuild");
+        buddyStatus.status = 0xffffffffU;
+        w.consume(buddyStatus);
+        w.view().selected = 0;
+        w.update();
+        QKeyEvent up(QEvent::KeyPress, KEYCODE_UP, 0, 0);
+        QApplication::sendEvent(rosterList->viewport(), &up);
+        require(w.view().selected == 0 && rosterList->currentItem() == 0,
+                "native roster keeps its first-row navigation boundary");
         Event online;
         online.type = Event::State;
         online.state = Event::Online;
@@ -453,7 +494,7 @@ class UiProbe {
         require(w.messageIcons_.width() == 96 && w.messageIcons_.height() == 16 &&
                     w.view().rows[0].value == 1 && w.view().rows[0].text.find("[1]") >= 0,
                 "silent delivery marks its collapsed parent group unread");
-        checkUnreadPaint(w, 1);
+        rosterIcon(w, 0, w.messageIcons_, 0);
         w.incoming(message(a.uin, 2, false));
         require(w.unread() == 2 && w.lastAlert_ != 0, "next normal arrival alerts");
         w.incoming(message(a.uin, 2, false));
@@ -482,7 +523,8 @@ class UiProbe {
         require(w.view().rows.size() == 3 && w.view().rows[1].uin == a.uin &&
                     w.view().rows[1].value == w.chats_[a.uin].unread,
                 "expanded chat keeps unread count and envelope independently of status");
-        checkUnreadPaint(w, 2);
+        rosterIcon(w, 0, w.messageIcons_, 0);
+        rosterIcon(w, 1, w.messageIcons_, 0);
         w.openChat(a.uin);
         require(w.chats_[a.uin].unread == 0 && w.view().kind == View::Chat,
                 "opening chat clears unread");
@@ -766,6 +808,15 @@ class UiProbe {
             w.collapsed_["Telegram"] = w.collapsed_["Telegram/Каналы"] = w.collapsed_["MAX"] =
                 false;
             w.home();
+            bool nested = false;
+            for (unsigned i = 0; i < w.view().rows.size(); ++i)
+                if (w.view().rows[i].action == "group-toggle:Telegram/Каналы") {
+                    nested = true;
+                    require(
+                        w.systemMenu_->list()->item(i)->getSubItemText(0, 0).left(2) == "| ",
+                        "native roster preserves nested group depth despite whitespace trimming");
+                }
+            require(nested, "native roster keeps the nested Telegram group");
         } else if (selectedScene == "settings") {
             w.settings_.set("photo_size", "176x220");
             w.settings_.set("photo_kb", "20");

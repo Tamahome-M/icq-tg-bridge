@@ -35,7 +35,8 @@ bool Window::javaKey(int code) {
         return true;
     }
     // Java TextLists wrap the menu cursor and never select section headers.
-    if (systemMenuVisible() && (code == KEYCODE_UP || code == KEYCODE_DOWN)) {
+    if (systemMenuVisible() && view().kind != View::Roster &&
+        (code == KEYCODE_UP || code == KEYCODE_DOWN)) {
         const int count = view().rows.size();
         for (int i = 0; i < count; ++i) {
             view().selected = (view().selected + (code == KEYCODE_DOWN ? 1 : count - 1)) % count;

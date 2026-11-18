@@ -94,7 +94,7 @@ Window::Window(const std::string &dir)
     connect(inputIndicator_->stateSource(), SIGNAL(signalKbStateChanged(int, bool)), this,
             SLOT(inputStateChanged(int, bool)));
     editor_ = new ZMultiLineEdit(this, true, 8);
-    systemMenu_ = new SystemMenu(this);
+    systemMenu_ = new SystemMenu(this, contacts_, statusIcons_, messageIcons_);
     systemChrome_ = new SystemChrome(*this);
     connect(qApp, SIGNAL(signalAppThemeChange()), this, SLOT(systemThemeChanged()));
     connect(qApp, SIGNAL(signalThemeChange()), this, SLOT(systemThemeChanged()));
@@ -165,9 +165,9 @@ bool Window::systemMenuVisible() const {
         (editor_ && !editor_->isHidden()))
         return false;
     View::Kind kind = view().kind;
-    return kind == View::Menu || kind == View::Popup || kind == View::SettingsPage ||
-           kind == View::Choice || kind == View::Files || kind == View::Templates ||
-           kind == View::AttachmentReview;
+    return kind == View::Roster || kind == View::Menu || kind == View::Popup ||
+           kind == View::SettingsPage || kind == View::Choice || kind == View::Files ||
+           kind == View::Templates || kind == View::AttachmentReview;
 }
 void Window::syncSystemMenu() {
     if (!systemMenu_ || stack_.empty())
@@ -874,44 +874,6 @@ void Window::drawList(QPainter &p) {
                 p.drawLine(tip, iy + 4, base, iy + 8);
             }
             p.setPen(ink);
-        }
-        bool unreadRow = v.kind == View::Roster && v.rows[i].value > 0;
-        if (unreadRow) {
-            left = 24;
-            if (!messageIcons_.isNull())
-                p.drawPixmap(4, y + (h - 16) / 2, messageIcons_, 0, 0, 16, 16);
-            else {
-                int top = y + (h - 12) / 2;
-                p.drawRect(4, top, 15, 12);
-                p.drawLine(4, top, 11, top + 6);
-                p.drawLine(11, top + 6, 18, top);
-            }
-        }
-        if (v.kind == View::Roster && v.rows[i].uin && !unreadRow) {
-            ContactRecord *c = contact(v.rows[i].uin);
-            if (c) {
-                left = 24;
-                if (!statusIcons_.isNull()) {
-                    p.drawPixmap(4, y + (h - 16) / 2, statusIcons_, statusIcon(c->status) * 16, 0,
-                                 16, 16);
-                } else {
-                    QColor presence = selected                   ? Qt::white
-                                      : c->status == 0xffffffffU ? Qt::gray
-                                      : (c->status & 0x100)      ? QColor(190, 50, 45)
-                                                                 : QColor(35, 145, 60);
-                    p.setPen(QPen(presence, 2));
-                    if (c->status != 0xffffffffU && (c->status & 0x100)) {
-                        p.drawLine(5, y + 10, 12, y + 17);
-                        p.drawLine(12, y + 10, 5, y + 17);
-                    } else {
-                        if (c->status != 0xffffffffU)
-                            p.setBrush(presence);
-                        p.drawEllipse(5, y + 10, 8, 8);
-                        p.setBrush(Qt::NoBrush);
-                    }
-                    p.setPen(ink);
-                }
-            }
         }
         if (fields && v.rows[i].action == "info-avatar-view" && !infoAvatar_.isNull())
             p.drawPixmap((width() - infoAvatar_.width()) / 2, y + 4 - offset, infoAvatar_);
