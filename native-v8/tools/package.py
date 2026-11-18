@@ -32,6 +32,7 @@ def inputs(binary):
     result = dict(ASSETS)
     result.update({"telemotomax-native": binary, "telemotomax.lin": ROOT / "telemotomax.lin",
                    "collect-log.lin": ROOT / "collect-log.lin",
+                   "collect-log-xp.cmd": ROOT / "collect-log-xp.cmd",
                    "features.tsv": ROOT / "features.tsv",
                    "README.md": ROOT / "README.md", "COPYING": ROOT.parent / "telemotomax/COPYING"})
     return result

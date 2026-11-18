@@ -35,6 +35,7 @@ class CaptureController : public QObject {
   private:
     void camera(const QString &destination, bool video, int seconds);
     QString cameraFileName(QDialog *) const;
+    bool saveCameraResult(QDialog *, const QString &destination) const;
     static void fitPhotoSize(int &width, int &height, int maximumWidth, int maximumHeight);
     QWidget *window_;
     QDialog *dialog_;

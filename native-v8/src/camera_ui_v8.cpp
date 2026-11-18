@@ -22,7 +22,7 @@ bool named(QObject *object, const char *name) {
 bool resultView(QObject *object, bool video) {
     // Video-only service dialogs finish through frame 4 / VideoPreviewView.
     // The MMS-style VideoInsertView (frame 10) is another native path.
-    // Both are shown only after the recorder has stopped and saved the file.
+    // Photo mode 1 can return a byte buffer without any saved filename.
     return named(object, "CAM_UI_PhotoInsertView") || named(object, "CAM_UI_VideoInsertView") ||
            (video && named(object, "CAM_UI_VideoPreviewView"));
 }
@@ -158,14 +158,22 @@ void CameraUiV8::timerEvent(QTimerEvent *event) {
     if (!valid_ || !dialog_ || !widget || !widget->isVisible() || !resultView(widget, video_) ||
         !owns(widget) || finishing_)
         return;
-    // Entered only after the native engine completed its saved-result view;
+    // Leave the native Show transition before accepting its result view;
     // never infer capture completion from a growing/partially written file.
     finishing_ = true;
     std::fprintf(stderr, "Camera UI: accepting completed %s\n", widget->className());
-    done_(static_cast<QDialog *>(dialog_));
+    if (named(widget, "CAM_UI_PhotoInsertView")) {
+        // Follow the native Insert action, including the size check and the
+        // view's completion signal, before the manager accepts the dialog.
+        if (!invoke(widget, "insertSlot()"))
+            std::fprintf(stderr, "Camera UI: photo insert slot unavailable\n");
+        if (dialog_ && dialog_->isVisible())
+            finishing_ = false; // Native size checks can leave a retryable view.
+    } else
+        done_(static_cast<QDialog *>(dialog_));
 }
 bool CameraUiV8::eventFilter(QObject *object, QEvent *event) {
-    if (!valid_ || !dialog_ || sendingKey_)
+    if (!valid_ || !dialog_ || sendingKey_ || finishing_)
         return false;
     if (event->type() == QEvent::Show && resultView(object, video_)) {
         // showFrame may publish its current-frame pointer after Show. Resolve
@@ -173,12 +181,19 @@ bool CameraUiV8::eventFilter(QObject *object, QEvent *event) {
         queueInsert(static_cast<QWidget *>(object));
         return false;
     }
-    if (!owns(object))
-        return false;
     if (event->type() != QEvent::KeyPress && event->type() != QEvent::KeyRelease)
+        return false;
+    // During native transitions/deletion the current-frame pointer can be
+    // changing. Only key routing needs to inspect it, not arbitrary Qt events.
+    if (!owns(object))
         return false;
     QKeyEvent *key = static_cast<QKeyEvent *>(event);
     const int code = key->key();
+    if (code == KEYCODE_LSK && named(object, "CAM_UI_PhotoInsertView")) {
+        if (event->type() == QEvent::KeyPress && !key->isAutoRepeat())
+            queueInsert(static_cast<QWidget *>(object));
+        return true;
+    }
     // The stock right softkey is Stop while recording, not Cancel. Keep
     // owning its release after stop changes the native recording state.
     bool stopKey = video_ && code == KEYCODE_RSK && (heldKey_ == code || recording());

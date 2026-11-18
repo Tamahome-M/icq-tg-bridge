@@ -25,7 +25,7 @@ union ModelStorage {
     void *alignment;
     unsigned char bytes[640];
 } model;
-unsigned accepted, cancelled;
+unsigned accepted, cancelled, photoInserts;
 class FixtureDialog : public QDialog {
     // Space for the native current-frame field in the detached-view test.
     char nativeLayout_[400];
@@ -107,6 +107,21 @@ class InsertView : public QWidget {
     InsertView(QWidget *parent, bool video) : QWidget(parent), video_(video) {}
     const char *className() const {
         return video_ ? "CAM_UI_VideoInsertView" : "CAM_UI_PhotoInsertView";
+    }
+    QMetaObject *metaObject() const {
+        static QMetaObject *meta = 0;
+        if (!meta) {
+            QWidget::staticMetaObject();
+            QMetaData *method = QMetaObject::new_metadata(1);
+            method[0].name = "insertSlot()";
+            method[0].ptr = static_cast<QMember>(&InsertView::insert);
+            meta = QMetaObject::new_metaobject("CameraInsertFixture", "QWidget", method, 1, 0, 0);
+        }
+        return meta;
+    }
+    void insert() {
+        ++photoInserts;
+        acceptDialog(parent());
     }
 };
 class VideoPreview : public QWidget {
@@ -204,7 +219,7 @@ int main(int argc, char **argv) {
         saved.show();
         assert(!accepted); // Must leave the native show/capture stack first.
         drain();
-        assert(accepted == 1 && !dialog.isVisible());
+        assert(accepted == 1 && photoInserts == 1 && !dialog.isVisible());
         ui.detach();
         key(view, KEYCODE_5, true);
         key(view, KEYCODE_5, false);
@@ -342,6 +357,24 @@ int main(int argc, char **argv) {
         ui.detach();
         framePointer = 0;
         memcpy(reinterpret_cast<char *>(&dialog) + 264, &framePointer, 4);
+    }
+    {
+        FixtureDialog dialog;
+        tmm::CameraUiV8 ui(&dialog, library, false);
+        enableFixture(ui, modelTable);
+        void **actual = 0;
+        memcpy(&actual, &dialog, sizeof(actual));
+        ui.dialogVtable_ = actual;
+        // A transient/retired native frame must not be inspected for generic
+        // Qt events, or for keys once native completion is in progress.
+        void *frame = reinterpret_cast<void *>(1);
+        memcpy(reinterpret_cast<char *>(&dialog) + 264, &frame, 4);
+        QEvent other(QEvent::User);
+        QApplication::sendEvent(&dialog, &other);
+        ui.finishing_ = true;
+        key(dialog, KEYCODE_5, true);
+        frame = 0;
+        memcpy(reinterpret_cast<char *>(&dialog) + 264, &frame, 4);
     }
     fprintf(stderr,
             "CAMERA UI PASS: real native stop metadata, scoped Fire/5 start and Fire/5/RSK stop, "

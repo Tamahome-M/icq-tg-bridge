@@ -114,6 +114,11 @@ class NativeReleaseTests(unittest.TestCase):
                 prefix = "app/" if name.endswith(".pep") else "TeleMotoMax-Native/"
                 self.assertEqual(archive.getmember(prefix+"telemotomax.lin").mode, 0o755)
                 self.assertEqual(archive.getmember(prefix+"collect-log.lin").mode, 0o755)
+                xp_script = archive.extractfile(prefix+"collect-log-xp.cmd").read()
+                self.assertEqual(xp_script, (ROOT/"native-v8/collect-log-xp.cmd").read_bytes())
+                self.assertTrue(xp_script.isascii())
+                self.assertIn(b"\r\n", xp_script)
+                self.assertNotIn(b"\n", xp_script.replace(b"\r\n", b""))
                 self.assertIn("sounds/msg_low.mp3", "\n".join(archive.getnames()))
                 self.assertEqual(archive.extractfile(prefix+"statuses.png").read(),
                                  package.ASSETS["statuses.png"].read_bytes())
@@ -146,8 +151,12 @@ class NativeReleaseTests(unittest.TestCase):
             self.assertNotIn("must-not-appear", report)
             self.assertIn("test:launcher.previous.log" if have_logs else "missing or unreadable", report)
             self.assertFalse(list(directory.glob(".tmm-log-*")))
-        (self.root/"native-v8/collect-log.lin").write_text("changed")
-        with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
+        for name in ("collect-log.lin", "collect-log-xp.cmd"):
+            path = self.root/"native-v8"/name
+            previous = path.read_bytes()
+            path.write_text("changed")
+            with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
+            path.write_bytes(previous)
 
     def test_launcher_discards_firmware_input_echo_but_keeps_errors_and_exit_status(self):
         directory = Path(self.tmp.name)/"phone files"; directory.mkdir()

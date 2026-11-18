@@ -3,6 +3,7 @@
 #include "capture_media.h"
 #include "camera_ui_v8.h"
 #include <qdialog.h>
+#include <qarray.h>
 #include <qimage.h>
 #include <qfileinfo.h>
 #include <ezxsound.h>
@@ -376,6 +377,7 @@ void CaptureController::camera(const QString &path, bool video, int seconds) {
                              "DestroyCameraDlg",
                              "SetCameraFileName",
                              "GetCameraFileName",
+                             "GetCameraData",
                              "SetCameraPhotoMaxLimitation",
                              "SetCameraVideoMaxLimitation",
                              "_ZN10CAM_UI_Dlg6cancelEv",
@@ -435,21 +437,24 @@ void CaptureController::camera(const QString &path, bool video, int seconds) {
         emit error(QString::fromUtf8("Несовместимый интерфейс камеры V8"));
         return;
     }
+    std::fprintf(stderr, "Camera %s: entering native dialog\n", video ? "video" : "photo");
     int result = dialog_->exec();
+    std::fprintf(stderr, "Camera %s: native dialog returned %d, cancelled %d\n",
+                 video ? "video" : "photo", result, cancelled_ ? 1 : 0);
     cameraUi.detach();
     timer_.stop();
-    QString recorded = cameraFileName(dialog_);
-    // A service dialog owns its temporary result. Preserve it before the
-    // native destructor removes temporary camera files.
+    // Mode 1 returns photo bytes; mode 2 also exposes the recorded video as
+    // data. The result belongs to the dialog, not necessarily to a filename.
+    // Persist it before DestroyCameraDlg releases its QByteArray/temp file.
     const QString staged = path + ".captured";
-    bool ownsStaged =
-        result == QDialog::Accepted && !cancelled_ && !recorded.isEmpty() && reserve(staged);
-    bool ok = ownsStaged && copyFile(recorded, staged);
-    std::fprintf(stderr, "Camera %s: result %d, cancelled %d, result path %s, copied %d\n",
-                 video ? "video" : "photo", result, cancelled_ ? 1 : 0,
-                 recorded.isEmpty() ? "empty" : "present", ok ? 1 : 0);
-    fn<void (*)(void *)>(dlsym(cameraLibrary_, "DestroyCameraDlg"))(dialog_);
+    bool ownsStaged = result == QDialog::Accepted && !cancelled_ && reserve(staged);
+    bool ok = ownsStaged && saveCameraResult(dialog_, staged);
+    std::fprintf(stderr, "Camera %s: result saved %d, closing native dialog\n",
+                 video ? "video" : "photo", ok ? 1 : 0);
+    QDialog *completed = dialog_;
     dialog_ = 0;
+    fn<void (*)(void *)>(dlsym(cameraLibrary_, "DestroyCameraDlg"))(completed);
+    std::fprintf(stderr, "Camera %s: native dialog destroyed\n", video ? "video" : "photo");
     videoSeconds_ = 0;
     if (ok)
         ok = ::rename(staged.local8Bit().data(), path.local8Bit().data()) == 0;
@@ -491,5 +496,28 @@ QString CaptureController::cameraFileName(QDialog *dialog) const {
     const QString *actual =
         fn<const QString *(*)(void *)>(dlsym(cameraLibrary_, "GetCameraFileName"))(dialog);
     return actual ? *actual : QString::null;
+}
+bool CaptureController::saveCameraResult(QDialog *dialog, const QString &destination) const {
+    // GetCameraData -> CAM_UI_Dlg::data returns const QByteArray& (dialog+384),
+    // not a char buffer or a by-value QByteArray with a hidden return argument.
+    const QByteArray *data =
+        fn<const QByteArray *(*)(void *)>(dlsym(cameraLibrary_, "GetCameraData"))(dialog);
+    if (data && data->size()) {
+        const unsigned size = data->size();
+        std::fprintf(stderr, "Camera result: %u bytes from native buffer\n", size);
+        if (size > 4 * 1024 * 1024)
+            return false;
+        FILE *out = std::fopen(destination.local8Bit().data(), "wb");
+        if (!out)
+            return false;
+        bool ok = std::fwrite(data->data(), 1, size, out) == size && !std::ferror(out);
+        if (std::fclose(out))
+            ok = false;
+        return ok;
+    }
+    const QString recorded = cameraFileName(dialog);
+    std::fprintf(stderr, "Camera result: empty native buffer, filename %s\n",
+                 recorded.isEmpty() ? "empty" : "present");
+    return !recorded.isEmpty() && copyFile(recorded, destination);
 }
 } // namespace tmm
