@@ -61,6 +61,68 @@ class UiProbe {
         m.nativeId = std::string(8, (char)serial);
         return m;
     }
+    static void rosterSorting(Window &w, uint32_t alice, uint32_t bob) {
+        const std::string sort = settingValue(w.settings_, "sort_by"),
+                          grouped = settingValue(w.settings_, "use_groups"),
+                          hidden = settingValue(w.settings_, "hide_offline");
+        const uint32_t aliceStatus = w.contact(alice)->status, bobStatus = w.contact(bob)->status;
+        w.settings_.set("sort_by", "status");
+        w.settings_.setInt("use_groups", 1);
+        w.settings_.setInt("hide_offline", 0);
+        w.contact(alice)->status = 0;
+        w.contact(bob)->status = 0xffffffffU;
+        w.home();
+        require(w.view().rows.size() == 3 && w.view().rows[1].uin == alice &&
+                    w.view().rows[2].uin == bob,
+                "read chats retain status order within their group");
+        w.view().selected = 1;
+        const unsigned long alert = w.lastAlert_;
+        w.incoming(message(bob, 304, true));
+        require(w.view().rows[1].uin == bob && w.view().rows[1].value == 1 &&
+                    w.view().rows[2].uin == alice && w.lastAlert_ == alert,
+                "silent unread offline chat moves above read online chat in its group");
+        require(w.view().selected == 2 && w.view().rows[w.view().selected].uin == alice,
+                "unread reorder preserves the selected contact");
+        w.settings_.set("sort_by", "name");
+        w.rebuildRoster();
+        require(w.view().rows[1].uin == bob && w.view().rows[2].uin == alice,
+                "unread priority precedes alphabetical sorting");
+        w.settings_.setInt("hide_offline", 1);
+        w.rebuildRoster();
+        require(w.view().rows.size() == 3 && w.view().rows[1].uin == bob,
+                "hidden offline chat remains visible at top while unread");
+        w.settings_.setInt("use_groups", 0);
+        w.rebuildRoster();
+        require(w.view().rows.size() == 2 && w.view().rows[0].uin == bob &&
+                    w.view().rows[1].uin == alice,
+                "flat contact list also puts unread chats first");
+        w.settings_.setInt("use_groups", 1);
+        w.settings_.set("sort_by", "status");
+        w.incoming(message(alice, 305, true));
+        require(w.view().rows[1].uin == alice && w.view().rows[2].uin == bob &&
+                    w.view().rows[1].value == 1 && w.view().rows[2].value == 1,
+                "unread chats retain status order among themselves");
+        w.openChat(alice, false);
+        w.home();
+        require(w.view().rows[1].uin == bob && w.view().rows[2].uin == alice,
+                "reading one chat leaves the remaining unread chat first");
+        w.openChat(bob, false);
+        w.home();
+        require(w.view().rows.size() == 2 && w.view().rows[1].uin == alice,
+                "read offline chat is hidden again after opening it");
+        w.settings_.setInt("hide_offline", 0);
+        w.rebuildRoster();
+        require(w.view().rows.size() == 3 && w.view().rows[1].uin == alice &&
+                    w.view().rows[2].uin == bob,
+                "reading restores the ordinary contact order");
+        w.settings_.set("sort_by", sort);
+        w.settings_.set("use_groups", grouped);
+        w.settings_.set("hide_offline", hidden);
+        w.contact(alice)->status = aliceStatus;
+        w.contact(bob)->status = bobStatus;
+        w.home();
+        w.openChat(alice, false);
+    }
     static void notificationPolicy(Window &w, uint32_t id) {
         MessageRecord m = message(id, 300, false);
         size_t before = notifications.size();
@@ -424,6 +486,7 @@ class UiProbe {
         w.openChat(a.uin);
         require(w.chats_[a.uin].unread == 0 && w.view().kind == View::Chat,
                 "opening chat clears unread");
+        rosterSorting(w, a.uin, b.uin);
         w.lock();
         w.incoming(message(a.uin, 301, true));
         require(w.chats_[a.uin].unread == 1, "message in covered chat stays unread behind PIN");

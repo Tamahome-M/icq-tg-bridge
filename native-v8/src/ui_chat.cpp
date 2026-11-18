@@ -696,6 +696,7 @@ void Window::rebuildRoster() {
     std::map<std::string, std::vector<size_t> > groups;
     std::map<std::string, unsigned> total, on, unreadCount;
     bool grouped = settingFlag(settings_, "use_groups");
+    const bool sortByName = settingValue(settings_, "sort_by") == "name";
     for (size_t i = 0; i < contacts_.size(); ++i) {
         const ContactRecord &c = contacts_[i];
         if (c.type == 1 && grouped && !c.deleted) {
@@ -767,27 +768,32 @@ void Window::rebuildRoster() {
             size_t b = a;
             while (b) {
                 const ContactRecord &left = contacts_[items[b]], &right = contacts_[items[b - 1]];
-                bool before =
-                    settingValue(settings_, "sort_by") == "name"
-                        ? left.name < right.name
-                        : (online(left.status) != online(right.status) ? online(left.status)
-                                                                       : left.name < right.name);
+                bool before = sortByName ? left.name < right.name
+                                         : (online(left.status) != online(right.status)
+                                                ? online(left.status)
+                                                : left.name < right.name);
                 if (!before)
                     break;
                 std::swap(items[b], items[b - 1]);
                 --b;
             }
         }
-        for (size_t k = 0; k < items.size(); ++k) {
-            ContactRecord &c = contacts_[items[k]];
-            QString label = u(c.name);
-            std::map<uint32_t, ChatState>::const_iterator chat = chats_.find(c.uin);
-            unsigned count = chat == chats_.end() ? 0 : chat->second.unread;
-            if (count)
-                label += " [" + QString::number(count) + "]";
-            v.rows.push_back(Row(label, "open", c.uin, count));
-            if (c.uin == old)
-                v.selected = v.rows.size() - 1;
+        // Unread chats lead each group; both passes retain the selected
+        // status/name order without allocating a second contact list.
+        for (unsigned pass = 0; pass < 2; ++pass) {
+            for (size_t k = 0; k < items.size(); ++k) {
+                const ContactRecord &c = contacts_[items[k]];
+                std::map<uint32_t, ChatState>::const_iterator chat = chats_.find(c.uin);
+                unsigned count = chat == chats_.end() ? 0 : chat->second.unread;
+                if ((count != 0) != (pass == 0))
+                    continue;
+                QString label = u(c.name);
+                if (count)
+                    label += " [" + QString::number(count) + "]";
+                v.rows.push_back(Row(label, "open", c.uin, count));
+                if (c.uin == old)
+                    v.selected = v.rows.size() - 1;
+            }
         }
     }
     v.selected = std::max(0, std::min(v.selected, (int)v.rows.size() - 1));
