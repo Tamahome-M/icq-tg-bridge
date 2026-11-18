@@ -120,7 +120,13 @@ int main(int argc, char **argv) {
             destroyed = QString(directory) + "/destroy.amr",
             stopped = QString(directory) + "/stopped.amr";
     {
-        tmm::CaptureController capture;
+        QObject owner;
+        tmm::CaptureController capture(&owner);
+        assert(!capture.signalsBlocked());
+        capture.blockSignals(true);
+        assert(capture.signalsBlocked());
+        capture.blockSignals(false);
+        assert(!capture.signalsBlocked());
         CaptureTestObserver observer(capture);
         const int source[][2] = {{640, 480}, {480, 640}, {320, 240}, {960, 1280}, {1280, 960}};
         const int bounds[][2] = {{480, 640}, {640, 480}, {640, 480}, {480, 640}, {960, 1280}};

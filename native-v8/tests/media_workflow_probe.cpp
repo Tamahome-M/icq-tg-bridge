@@ -7,6 +7,7 @@
 #include "ui_language.h"
 #include <ZKeyDef.h>
 #include <qimage.h>
+#include <qmetaobject.h>
 #include <qtimer.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -54,6 +55,15 @@ class UiProbe {
         event.flag = ok;
         event.text = ok ? "confirmed" : "rejected";
         window.consume(event);
+    }
+    static void captured(Window &window, const char *path, const char *mime) {
+        QMetaData *signal =
+            window.capture_.metaObject()->signal("ready(const QString&,const QString&)", true);
+        require(signal && !window.capture_.signalsBlocked(),
+                "parented camera controller has an unblocked native Qt ready signal");
+        typedef void (QObject::*Ready)(const QString &, const QString &);
+        (window.capture_.*reinterpret_cast<Ready>(signal->ptr))(QString::fromLatin1(path),
+                                                                QString::fromLatin1(mime));
     }
     static void received(Window &window, const std::string &path, const char *purpose,
                          const char *name = "same-name.bin") {
@@ -160,9 +170,18 @@ class UiProbe {
         ack(window, window.outgoingRequest_, true);
         // A supplied result tests only the GUI boundary; it does not simulate
         // successful physical shooting/recording or validate camera hardware.
+        put("/state/owned-photo.jpg");
+        window.captureUin_ = contact.uin;
+        captured(window, "/state/owned-photo.jpg", "image/jpeg");
+        require(window.outgoingRequest_ && submitted.back().type == Command::UploadPhoto &&
+                    submitted.back().uin == contact.uin,
+                "actual Qt ready signal starts photo upload to the selected chat");
+        ack(window, window.outgoingRequest_, true);
+        require(access("/state/owned-photo.jpg", F_OK) != 0 && window.view().kind == View::Chat,
+                "successful photo ACK retires the owned camera result");
         put("/state/owned-circle.3gp");
         window.captureUin_ = contact.uin;
-        window.captureReady(QString::fromLatin1("/state/owned-circle.3gp"), "video/3gpp");
+        captured(window, "/state/owned-circle.3gp", "video/3gpp");
         require(window.outgoingRequest_ && submitted.back().type == Command::UploadVideo,
                 "provided camera result starts circle upload without a review screen");
         ack(window, window.outgoingRequest_, false);
