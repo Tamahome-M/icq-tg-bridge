@@ -23,7 +23,7 @@ MOCS := window platform media capture external_display
 MOC_OBJECTS := $(addprefix $(BUILD)/moc_,$(addsuffix .o,$(MOCS)))
 CORE := $(BUILD)/crypto.o $(BUILD)/settings.o $(BUILD)/storage.o
 $(BUILD)/client.o $(BUILD)/transport.o $(BUILD)/oscar.o $(BUILD)/dns.o $(BUILD)/main.o: CXXFLAGS += -fexceptions
-$(BUILD)/main.o $(BUILD)/window.o $(BUILD)/ui_actions.o $(BUILD)/ui_java_menus.o: VERSION
+$(BUILD)/main.o $(BUILD)/window.o $(BUILD)/ui_actions.o $(BUILD)/ui_java_menus.o $(BUILD)/ui_progress.o: VERSION
 
 .PHONY: all clean package check-sdk core-tests ui-probe input-probe
 all: check-sdk $(BUILD)/telemotomax-native
@@ -55,8 +55,12 @@ $(BUILD)/exception-test: tests/exception_test.cpp $(BUILD)/transport.o $(BUILD)/
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -fexceptions $(LDFLAGS) $< $(BUILD)/transport.o $(BUILD)/oscar.o $(BUILD)/crypto.o -lrt -o $@
 $(BUILD)/password-test: tests/password_test.cpp $(BUILD)/oscar.o $(BUILD)/crypto.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -fexceptions $(LDFLAGS) $< $(BUILD)/oscar.o $(BUILD)/crypto.o -o $@
-core-tests: $(BUILD)/crypto-driver $(BUILD)/storage-test $(BUILD)/toolchain-vector-test $(BUILD)/exception-test $(BUILD)/password-test
-ui-probe: $(BUILD)/ui-probe $(BUILD)/statuses.png $(BUILD)/messages.png $(BUILD)/smiles.txt $(BUILD)/smiles.png
+$(BUILD)/media-cache-test: tests/media_cache_test.cpp $(BUILD)/media_cache.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/media_cache.o -o $@
+core-tests: $(BUILD)/crypto-driver $(BUILD)/storage-test $(BUILD)/toolchain-vector-test $(BUILD)/exception-test $(BUILD)/password-test $(BUILD)/media-cache-test
+ui-probe: $(BUILD)/ui-probe $(BUILD)/logo.png $(BUILD)/statuses.png $(BUILD)/messages.png $(BUILD)/smiles.txt $(BUILD)/smiles.png
+$(BUILD)/logo.png: ../telemotomax/res/GRAPHICS_32BIT/COMMON/logo.png | $(BUILD)
+	cp $< $@
 $(BUILD)/messages.png: ../telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png | $(BUILD)
 	cp $< $@
 $(BUILD)/statuses.png: ../telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png | $(BUILD)

@@ -64,14 +64,36 @@ class UiProbe {
     static void rosterIcon(Window &w, int row, const QPixmap &atlas, unsigned sprite) {
         ZListBox *list = w.systemMenu_->list();
         require(w.systemMenuVisible() && list->isVisible() && row < list->count(),
-                "roster uses the same visible native list as menus");
+                "icon row uses the visible native system list");
         ZListBoxItem *item = static_cast<ZListBoxItem *>(list->item(row));
         QList<QPixmap> icons = item->getSubItemIcon(0, 0);
         QPixmap expected;
         expected.convertFromImage(atlas.convertToImage().copy(sprite * 16, 0, 16, 16));
         require(icons.count() == 1 && icons.first() &&
                     icons.first()->convertToImage() == expected.convertToImage(),
-                "native roster item retains the exact status/unread sprite");
+                "native item retains the exact Java sprite");
+    }
+    static void statusMenu(Window &w) {
+        const unsigned saved = w.settings_.getInt("status", 0);
+        w.settings_.setInt("status", 0x2001);
+        w.home();
+        w.mainMenu();
+        unsigned statusRow = 0;
+        while (statusRow < w.view().rows.size() && w.view().rows[statusRow].action != "status")
+            ++statusRow;
+        require(statusRow < w.view().rows.size(), "main menu exposes Status");
+        rosterIcon(w, statusRow, w.statusIcons_, 12);
+        w.activate(w.view().rows[statusRow]);
+        require(w.view().context == "status-menu" && w.view().rows.size() == 13 &&
+                    w.view().selected == 12,
+                "Java status chooser selects the current status");
+        for (unsigned i = 0; i < w.view().rows.size(); ++i)
+            rosterIcon(w, i, w.statusIcons_, statusIcon(w.view().rows[i].value));
+        w.activate(w.view().rows[4]);
+        require(w.view().context == "main-menu", "choosing status returns to main menu");
+        rosterIcon(w, statusRow, w.statusIcons_, 5);
+        w.settings_.setInt("status", saved);
+        w.home();
     }
     static void rosterSorting(Window &w, uint32_t alice, uint32_t bob) {
         const std::string sort = settingValue(w.settings_, "sort_by"),
@@ -333,6 +355,7 @@ class UiProbe {
         w.settings_.setInt("encryption", 0);
         w.settings_.set("network", "system");
         menus(w);
+        statusMenu(w);
         w.settings_.set("uin", "");
         w.mainMenu();
         w.activate(w.view().rows[0]);
@@ -570,6 +593,19 @@ class UiProbe {
         require(w.locked_ && !w.editor_->isVisible(), "PIN hides native editor");
         require(!w.inputIndicator_->isVisible(), "PIN hides input status");
         checkPaint(w, "PIN");
+        require(!w.splashLogo_.isNull(), "Java splash logo is available in the native package");
+        w.key(KEYCODE_9);
+        w.key(KEYCODE_9);
+        w.key(KEYCODE_9);
+        w.key(KEYCODE_9);
+        require(w.locked_ && w.pinWrong_ && w.pin_.isEmpty(),
+                "wrong PIN remains in the protected prompt");
+        w.key(KEYCODE_1);
+        w.key(KEYCODE_2);
+        w.key(KEYCODE_STAR);
+        require(!w.pinWrong_ && w.pin_ == "1", "Java star deletes a PIN digit and clears error");
+        w.key(KEYCODE_LSK);
+        require(w.locked_ && w.pin_.isEmpty(), "PIN Back clears input without unlocking");
         w.minimize();
         require(!w.isVisible() && w.locked_, "minimize preserves PIN lock");
         w.platform_.requestForeground();
@@ -581,6 +617,13 @@ class UiProbe {
         require(!w.locked_ && w.editor_->isVisible() && w.editor_->text() == "Draft survives PIN",
                 "PIN restores same editor and draft");
         w.finishEdit(false);
+        w.settings_.set("lock_pin", "");
+        w.lock();
+        w.key(KEYCODE_1);
+        require(w.locked_, "without PIN only hash unlocks");
+        w.key(KEYCODE_POUND);
+        require(!w.locked_, "Java hash unlock remains available without PIN");
+        w.settings_.set("lock_pin", "1234");
         require(!w.inputIndicator_->isVisible(), "closing editor hides input status");
         require(w.storage_->loadDraft(a.uin) == "Draft survives PIN", "cancel preserves draft");
         w.showSettings("account");
@@ -804,7 +847,31 @@ class UiProbe {
         w.openChat(a.uin);
         if (selectedScene == "menu")
             w.mainMenu();
-        else if (selectedScene == "statuses") {
+        else if (selectedScene == "status-menu") {
+            w.mainMenu();
+            w.activate(Row(QString::null, "status"));
+        } else if (selectedScene == "pin" || selectedScene == "pin-error" ||
+                   selectedScene == "lock") {
+            w.settings_.set("lock_pin", selectedScene == "lock" ? "" : "1234");
+            w.lock();
+            if (selectedScene == "pin-error") {
+                w.key(KEYCODE_9);
+                w.key(KEYCODE_9);
+                w.key(KEYCODE_9);
+                w.key(KEYCODE_9);
+            } else if (selectedScene == "pin") {
+                w.key(KEYCODE_1);
+                w.key(KEYCODE_2);
+            }
+        } else if (selectedScene == "connection") {
+            w.home();
+            w.connectionState_ = Event::Connecting;
+            w.connectionProgress_ = 65;
+            w.connectionStage_ = uiText("Согласование протокола");
+            w.update();
+            require(!w.systemMenuVisible() && !w.systemMenu_->list()->isVisible(),
+                    "connection splash hides the roster widget");
+        } else if (selectedScene == "statuses") {
             w.collapsed_["Telegram"] = w.collapsed_["Telegram/Каналы"] = w.collapsed_["MAX"] =
                 false;
             w.home();

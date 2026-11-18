@@ -53,9 +53,9 @@ Window::Window(const std::string &dir)
       loadedMediaReady_(false), editSecret_(false), captureOwned_(false), receivedDeferred_(false),
       connectionErrorShown_(false), settingsEditing_(false), resetComplete_(false), locked_(false),
       closed_(false), editorWasVisible_(false), silent_(false), paused_(false),
-      manualDisconnect_(false), lightOn_(true), closedAt_(0), startedAt_(now()), lastAlert_(0),
-      lastActivity_(now()), typingSentAt_(0), noticeUntil_(0), tickerUntil_(0), pictureZoom_(100),
-      pictureRotation_(0), infoAvatarUin_(0) {
+      manualDisconnect_(false), lightOn_(true), pinWrong_(false), closedAt_(0), startedAt_(now()),
+      lastAlert_(0), lastActivity_(now()), typingSentAt_(0), noticeUntil_(0), tickerUntil_(0),
+      splashMinute_(0), pictureZoom_(100), pictureRotation_(0), infoAvatarUin_(0) {
     setCaption("TeleMotoMax Native");
     setFocusPolicy(StrongFocus);
     setBackgroundMode(NoBackground);
@@ -129,6 +129,7 @@ Window::~Window() {
     capture_.cancel();
     outgoingRequest_ = 0;
     discardAttachment();
+    mediaCache_.clear();
     if (!managedMediaPath_.empty())
         unlink(managedMediaPath_.c_str());
     // The native input field holds a non-owning observer pointer. End its
@@ -162,7 +163,7 @@ const View &Window::view() const {
 }
 bool Window::systemMenuVisible() const {
     if (!systemMenu_ || stack_.empty() || view().rows.empty() || locked_ ||
-        (editor_ && !editor_->isHidden()))
+        connectionProgressVisible() || (editor_ && !editor_->isHidden()))
         return false;
     View::Kind kind = view().kind;
     return kind == View::Roster || kind == View::Menu || kind == View::Popup ||
@@ -219,6 +220,7 @@ void Window::back() {
             client_.submit(c);
             pending_.erase(c.requestId);
             pendingUin_.erase(c.requestId);
+            mediaRequests_.erase(c.requestId);
             if (outgoingRequest_ == c.requestId)
                 outgoingRequest_ = 0;
         }
@@ -416,6 +418,8 @@ void Window::closeEvent(QCloseEvent *e) {
     minimize();
 }
 void Window::suspend() {
+    pin_ = QString::null;
+    pinWrong_ = false;
     if (editSecret_)
         editor_->setEchoMode(ZMultiLineEdit::Password);
     saveDraft();
@@ -473,6 +477,7 @@ void Window::lock() {
         editor_->setEchoMode(ZMultiLineEdit::Password);
     platform_.clearExternalText();
     pin_ = QString::null;
+    pinWrong_ = false;
     editorWasVisible_ = editor_ && editor_->isVisible();
     saveDraft();
     if (editor_)
@@ -486,6 +491,7 @@ void Window::lock() {
 void Window::unlock() {
     locked_ = false;
     pin_ = QString::null;
+    pinWrong_ = false;
     if (editorWasVisible_)
         editor_->show();
     editorWasVisible_ = false;
@@ -499,6 +505,11 @@ void Window::tick() {
     if (takeActivationRequest())
         resume();
     unsigned long ms = now();
+    if ((locked_ || connectionProgressVisible()) && isVisible() && !closed_ &&
+        splashMinute_ != time(0) / 60) {
+        splashMinute_ = time(0) / 60;
+        update();
+    }
     if (closed_ && closedAt_ && settingNumber(settings_, "flip_lock_minutes") > 0 &&
         ms - closedAt_ >= (unsigned long)settingNumber(settings_, "flip_lock_minutes") * 60000)
         lock();
@@ -606,15 +617,22 @@ void Window::key(int code) {
                 unlock();
             return;
         }
-        if (code >= KEYCODE_0 && code <= KEYCODE_9 && pin_.length() < 8)
+        if (code >= KEYCODE_0 && code <= KEYCODE_9 && pin_.length() < 8) {
+            pinWrong_ = false;
             pin_ += QChar((char)code);
-        else if (code == KEYCODE_CLEAR && pin_.length())
-            pin_.truncate(pin_.length() - 1);
+        } else if (code == KEYCODE_CLEAR || code == KEYCODE_STAR) {
+            pinWrong_ = false;
+            if (pin_.length())
+                pin_.truncate(pin_.length() - 1);
+        } else if (code == KEYCODE_LSK || code == KEYCODE_RSK) {
+            pinWrong_ = false;
+            pin_ = QString::null;
+        }
         if (std::string(pin_.utf8()) == pin)
             unlock();
         else if ((size_t)pin_.length() >= pin.size()) {
             pin_ = QString::null;
-            info(u("Неверный PIN"));
+            pinWrong_ = true;
         }
         update();
         return;
@@ -910,6 +928,11 @@ void Window::paintEvent(QPaintEvent *event) {
     screen.drawPixmap(area.x(), area.y(), frame_, area.x(), area.y(), area.width(), area.height());
 }
 void Window::drawFrame(QPainter &p) {
+    if (locked_ || connectionProgressVisible()) {
+        drawSplash(p);
+        return;
+    }
+    splashLogo_ = QPixmap();
     if (view().kind == View::Popup && !locked_ && !popupBackdrop_.isNull()) {
         p.drawPixmap(0, 0, popupBackdrop_);
         drawFooter(p);
@@ -921,20 +944,7 @@ void Window::drawFrame(QPainter &p) {
           settingFlag(settings_, "full_editor")))
         drawHeader(p);
     drawFooter(p);
-    if (locked_) {
-        p.setPen(bodyColor(2));
-        QString stars;
-        stars.fill('*', pin_.length());
-        QString text = settingValue(settings_, "lock_pin").empty()
-                           ? u("Нажмите # для разблокировки")
-                           : u("Введите PIN\n") + stars;
-        p.drawText(10, 55, width() - 20, height() - 100, Qt::AlignCenter | Qt::WordBreak, text);
-        return;
-    }
-    if (connectionProgressVisible()) {
-        drawProgress(p, u(settingValue(settings_, "host")), connectionStage_, connectionProgress_,
-                     100);
-    } else if (view().kind == View::Transfer || view().kind == View::Recording) {
+    if (view().kind == View::Transfer || view().kind == View::Recording) {
         drawProgress(p, view().details, view().status, view().bytes, view().total);
     } else if (view().kind == View::AttachmentReview) {
         drawAttachmentDetails(p);

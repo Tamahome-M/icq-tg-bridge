@@ -225,11 +225,13 @@ void Window::requestMedia(unsigned kind) {
         videoSegment_ = 0;
     } else
         videoToken_.clear();
+    const char *purpose = kind == 1 ? "photo" : kind == 2 ? "video" : kind == 3 ? "voice" : "file";
+    if ((kind == 1 || kind == 2) && openCachedMedia(c, purpose))
+        return;
     if (send(c)) {
-        pending_[c.requestId] = kind == 1   ? "photo"
-                                : kind == 2 ? "video"
-                                : kind == 3 ? "voice"
-                                            : "file";
+        pending_[c.requestId] = purpose;
+        if (kind == 1 || kind == 2)
+            mediaRequests_[c.requestId] = MediaCache::requestKey(c);
         pendingUin_[c.requestId] = c.uin;
         showTransfer(c.requestId, c.uin, attachmentType(kind, false), QString::null, false);
         view().directory = kind == 1 ? "photo" : kind == 2 ? "video" : kind == 3 ? "voice" : "file";
@@ -239,6 +241,16 @@ void Window::requestMedia(unsigned kind) {
                                       : "Скачиваю файл...");
         update();
     }
+}
+bool Window::openCachedMedia(const Command &command, const std::string &purpose) {
+    Event received(Event::Media);
+    if (!mediaCache_.find(MediaCache::requestKey(command), received.path, received.filename))
+        return false;
+    received.requestId = command.requestId;
+    pending_[received.requestId] = purpose;
+    showMedia(received);
+    pending_.erase(received.requestId);
+    return true;
 }
 static bool saveDownloadedFile(const std::string &source, const std::string &name,
                                std::string &destination, std::string &error) {
@@ -293,10 +305,16 @@ void Window::showMedia(const Event &e) {
     if (e.path.compare(0, prefix.size(), prefix) == 0) {
         if (managedMediaPath_ != e.path) {
             player_.stop();
-            if (!managedMediaPath_.empty())
+            if (!managedMediaPath_.empty() && !mediaCache_.owns(managedMediaPath_))
                 unlink(managedMediaPath_.c_str());
             managedMediaPath_ = e.path;
         }
+    }
+    std::map<uint32_t, std::string>::iterator cacheRequest = mediaRequests_.find(e.requestId);
+    if (cacheRequest != mediaRequests_.end()) {
+        if (purpose == "photo" || purpose == "video")
+            mediaCache_.store(cacheRequest->second, e.path, e.filename);
+        mediaRequests_.erase(cacheRequest);
     }
     playPath_ = e.path;
     downloadName_ = e.filename;
@@ -395,12 +413,17 @@ void Window::nextVideo() {
     c.uin = videoUin_;
     c.offset = videoSegment_ + 1;
     c.requestId = client_.nextRequestId();
+    c.media = mediaSettings(settings_);
     int rotate = settingNumber(settings_, "video_rotate");
     c.mode = rotate == 1 ? 0x20 : rotate == 2 ? 0x10 : 0;
+    const unsigned previousSegment = videoSegment_;
+    videoSegment_ = c.offset;
+    if (openCachedMedia(c, "video"))
+        return;
     if (send(c)) {
-        ++videoSegment_;
         player_.stop();
         pending_[c.requestId] = "video";
+        mediaRequests_[c.requestId] = MediaCache::requestKey(c);
         pendingUin_[c.requestId] = c.uin;
         // Java replaces the segment screen, rather than stacking another
         // completed Player underneath every requested part.
@@ -411,7 +434,8 @@ void Window::nextVideo() {
         view().status =
             u("Мост готовит видео...") + " (" + QString::number(videoSegment_ + 1) + ")";
         update();
-    }
+    } else
+        videoSegment_ = previousSegment;
 }
 void Window::play(const std::string &path, bool audioOnly) {
     if (locked_ || closed_ || !isVisible()) {

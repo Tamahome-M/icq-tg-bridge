@@ -18,6 +18,34 @@ size_t urlCharacter(const std::string &text, size_t at) {
     return 0;
 }
 } // namespace
+std::string videoMessageText(const std::string &text, const std::string &browserUrl) {
+    std::string display = text;
+    const std::string marker = "[видео](";
+    size_t at = 0;
+    while ((at = display.find(marker, at)) != std::string::npos) {
+        const size_t start = at + marker.size();
+        const size_t end = display.find(')', start);
+        if (end != std::string::npos && (display.compare(start, 7, "http://") == 0 ||
+                                         display.compare(start, 8, "https://") == 0))
+            display.erase(start - 1, end - start + 2);
+        at += marker.size() - 1;
+    }
+    if (!browserUrl.empty()) {
+        at = 0;
+        while ((at = display.find(browserUrl, at)) != std::string::npos) {
+            const size_t end = at + browserUrl.size();
+            if ((at == 0 || static_cast<unsigned char>(display[at - 1]) <= ' ') &&
+                (end == display.size() || static_cast<unsigned char>(display[end]) <= ' '))
+                display.erase(at, browserUrl.size());
+            else
+                at = end;
+        }
+    }
+    const size_t first = display.find_first_not_of(" \t\r\n");
+    return first == std::string::npos
+               ? ""
+               : display.substr(first, display.find_last_not_of(" \t\r\n") - first + 1);
+}
 std::vector<std::string> javaMessageUrls(const std::string &text) {
     std::vector<std::string> result;
     size_t start = 0;

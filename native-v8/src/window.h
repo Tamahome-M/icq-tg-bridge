@@ -10,8 +10,10 @@
 #include "platform.h"
 #include "media.h"
 #include "capture.h"
+#include "media_cache.h"
 #include <map>
 #include <vector>
+#include <time.h>
 class ZMultiLineEdit;
 namespace tmm {
 class Storage;
@@ -117,6 +119,7 @@ class Window : public QWidget {
     Platform platform_;
     MediaController player_;
     CaptureController capture_;
+    MediaCache mediaCache_;
     QSocketNotifier *notifier_;
     QTimer timer_;
     ZMultiLineEdit *editor_;
@@ -130,12 +133,14 @@ class Window : public QWidget {
         editDepth_, connectionProgress_, settingsDepth_;
     bool loadedMediaReady_, editSecret_, captureOwned_, receivedDeferred_;
     bool connectionErrorShown_, settingsEditing_, resetComplete_;
-    bool locked_, closed_, editorWasVisible_, silent_, paused_, manualDisconnect_, lightOn_;
+    bool locked_, closed_, editorWasVisible_, silent_, paused_, manualDisconnect_, lightOn_,
+        pinWrong_;
     unsigned long closedAt_, startedAt_, lastAlert_, lastActivity_, typingSentAt_;
     QString pin_, notice_, ticker_, editTitle_, connectionStage_;
     unsigned long noticeUntil_, tickerUntil_;
+    time_t splashMinute_;
     int pictureZoom_, pictureRotation_;
-    QPixmap picture_, frame_, statusIcons_, messageIcons_, popupBackdrop_, infoAvatar_;
+    QPixmap picture_, frame_, statusIcons_, messageIcons_, popupBackdrop_, infoAvatar_, splashLogo_;
     uint32_t infoAvatarUin_;
     std::vector<ContactRecord> contacts_;
     std::map<uint32_t, ChatState> chats_;
@@ -146,6 +151,7 @@ class Window : public QWidget {
     std::vector<uint32_t> quiet_, openChatOrder_;
     std::string capturePath_, savedMediaPurpose_, managedMediaPath_;
     std::map<uint32_t, std::string> pending_;
+    std::map<uint32_t, std::string> mediaRequests_;
     std::map<uint32_t, uint32_t> pendingUin_;
     View &view();
     const View &view() const;
@@ -224,6 +230,7 @@ class Window : public QWidget {
     void files(const std::string &, const std::string &);
     void loadFiles();
     void requestMedia(unsigned);
+    bool openCachedMedia(const Command &, const std::string &purpose);
     void showMedia(const Event &);
     void nextVideo();
     void play(const std::string &, bool audioOnly = false);
@@ -242,6 +249,7 @@ class Window : public QWidget {
     bool showPicture(const std::string &, const QString &, const std::string &context = "");
     bool connectionProgressVisible() const;
     void drawPlayer(QPainter &);
+    void drawSplash(QPainter &);
     void drawProgress(QPainter &, const QString &, const QString &, uint64_t, uint64_t);
     void drawAttachmentDetails(QPainter &);
     void copy(const QString &);

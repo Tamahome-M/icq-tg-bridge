@@ -1,11 +1,13 @@
 #include "window.h"
 #include "ui_language.h"
 #include "ui_settings.h"
+#include "status_icon.h"
 #include <qpainter.h>
 #include <qfontmetrics.h>
 #include <algorithm>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <time.h>
 
 namespace tmm {
 namespace {
@@ -63,6 +65,100 @@ QString mediaTime(unsigned milliseconds) {
     return QString::fromLatin1(clock);
 }
 } // namespace
+
+void Window::drawSplash(QPainter &p) {
+    p.save();
+    const QColor background(bodyColor(1)), ink(bodyColor(2));
+    const QFontMetrics metrics(font());
+    const int line = metrics.height() + 2;
+    p.fillRect(rect(), background);
+    p.setFont(font());
+    p.setPen(ink);
+    const int textWidth = std::max(1, width() - 16);
+    const std::vector<QString> title =
+        wrapped("TeleMotoMax " TMM_NATIVE_VERSION, metrics, textWidth, 2);
+    drawLines(p, title, 8, 2, textWidth, line, Qt::AlignHCenter);
+    if (settingFlag(settings_, "display_date")) {
+        const time_t stamp =
+            time(0) +
+            (settingNumber(settings_, "timezone") + settingNumber(settings_, "daylight")) * 3600 +
+            settingNumber(settings_, "time_offset_minutes") * 60;
+        const struct tm *date = gmtime(&stamp);
+        if (date) {
+            char clock[32];
+            strftime(clock, sizeof(clock), "%d.%m.%Y %H:%M", date);
+            const char *days[] = {"Воскресенье", "Понедельник", "Вторник", "Среда",
+                                  "Четверг",     "Пятница",     "Суббота"};
+            const int top = 4 + title.size() * line;
+            p.drawText(8, top, textWidth, line, Qt::AlignCenter | Qt::SingleLine, clock);
+            p.drawText(8, top + line, textWidth, line, Qt::AlignCenter | Qt::SingleLine,
+                       uiText(days[date->tm_wday]));
+        }
+    }
+    if (splashLogo_.isNull())
+        splashLogo_.load("logo.png");
+    if (!splashLogo_.isNull())
+        p.drawPixmap((width() - splashLogo_.width()) / 2, (height() - splashLogo_.height()) / 2,
+                     splashLogo_);
+    else
+        p.drawText(8, height() / 2 - line / 2, textWidth, line, Qt::AlignCenter, "TeleMotoMax");
+
+    // The same fullscreen bottom bar as Java; Cancel remains a key action.
+    const QString stage = locked_ ? uiText("Блокировка включена") : connectionStage_;
+    const std::vector<QString> stages = wrapped(stage, metrics, std::max(1, width() - 36), 2);
+    const int barHeight = std::max(20, int(stages.size()) * line) + 6;
+    const int barTop = height() - barHeight;
+    const int fill = locked_ ? width() : width() * std::min(100U, connectionProgress_) / 100;
+    p.fillRect(0, barTop, width(), barHeight, palette().active().button());
+    if (fill) {
+        const QColor accent = palette().active().highlight();
+        for (int y = 0; y < barHeight; ++y)
+            p.fillRect(0, barTop + y, fill, 1,
+                       accent.light(120 - 40 * y / std::max(1, barHeight - 1)));
+    }
+    const int sprite =
+        statusIcon(connectionState_ == Event::Online ? settings_.getInt("status", 0) : 0xffffffffU);
+    if (!statusIcons_.isNull())
+        p.drawPixmap(4, barTop + (barHeight - 16) / 2, statusIcons_, sprite * 16, 0, 16, 16);
+    p.setPen(palette().active().buttonText());
+    drawLines(p, stages, 24, barTop + 3, std::max(1, width() - 28), line, Qt::AlignHCenter);
+    p.setClipRect(24, barTop, std::max(0, fill - 24), barHeight);
+    p.setPen(palette().active().highlightedText());
+    drawLines(p, stages, 24, barTop + 3, std::max(1, width() - 28), line, Qt::AlignHCenter);
+    p.setClipping(false);
+    p.setPen(ink);
+    if (locked_) {
+        const bool hasPin = !settingValue(settings_, "lock_pin").empty();
+        if (hasPin) {
+            const int boxHeight = line * 4 + 16;
+            const int top = (height() - boxHeight) / 2;
+            p.fillRect(8, top, textWidth, boxHeight, background);
+            p.drawRect(8, top, textWidth, boxHeight);
+            QString stars;
+            stars.fill('*', pin_.length());
+            p.drawText(12, top + 4, width() - 24, line, Qt::AlignCenter,
+                       uiText(pinWrong_ ? "Неверный PIN" : "Введите PIN"));
+            p.drawText(12, top + line + 6, width() - 24, line, Qt::AlignCenter, stars);
+            p.drawText(12, top + line * 2 + 8, width() - 24, line, Qt::AlignCenter,
+                       uiText("*: стереть цифру"));
+            p.drawText(12, top + line * 3 + 8, width() - 24, line, Qt::AlignCenter,
+                       uiText("Назад: очистить"));
+        } else {
+            const std::vector<QString> hint =
+                wrapped(uiText("Нажмите # для разблокировки"), metrics, textWidth, 2);
+            drawLines(p, hint, 8, barTop - (hint.size() + 1) * line - 8, textWidth, line,
+                      Qt::AlignHCenter);
+        }
+        if (unread()) {
+            const int y = barTop - line - 3;
+            if (!messageIcons_.isNull())
+                p.drawPixmap(2, y + (line - 16) / 2, messageIcons_, 0, 0, 16, 16);
+            p.drawText(22, y, width() - 24, line, Qt::AlignLeft | Qt::AlignVCenter,
+                       "# " + QString::number(unread()));
+        }
+    }
+    p.restore();
+}
 
 void Window::drawProgress(QPainter &p, const QString &details, const QString &status,
                           uint64_t bytes, uint64_t total) {

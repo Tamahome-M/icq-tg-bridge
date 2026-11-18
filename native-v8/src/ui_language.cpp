@@ -6,6 +6,16 @@ void setUiLanguage(const std::string &language) {
     english = language == "en";
 }
 static const char *translations[][2] = {
+    {"Блокировка включена", "Keylock enabled"},
+    {"*: стереть цифру", "*: delete digit"},
+    {"Назад: очистить", "Back: clear"},
+    {"Воскресенье", "Sunday"},
+    {"Понедельник", "Monday"},
+    {"Вторник", "Tuesday"},
+    {"Среда", "Wednesday"},
+    {"Четверг", "Thursday"},
+    {"Пятница", "Friday"},
+    {"Суббота", "Saturday"},
     {"Прикрепить", "Attach"},
     {"Вложение", "Attachment"},
     {"Снять фото", "Take photo"},

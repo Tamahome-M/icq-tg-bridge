@@ -104,8 +104,12 @@ void SystemMenu::sync(View &v, bool visible, int top, int bottom) {
         QString signature = row.text;
         if (privacy)
             signature += ":" + QString::number(row.value) + ":" + QString::number(v.offset);
-        iconKeys[i] = roster ? rosterIconKey(row) : -1;
+        iconKeys[i] = -1;
         if (roster)
+            iconKeys[i] = rosterIconKey(row);
+        else if (row.action == "status-set" || row.action == "status")
+            iconKeys[i] = int(statusIcon(row.value));
+        if (roster || iconKeys[i] >= 0)
             signature += ":icon:" + QString::number(iconKeys[i]);
         signatures.push_back(signature);
     }
@@ -184,7 +188,7 @@ void SystemMenu::sync(View &v, bool visible, int top, int bottom) {
                     // The single wrapped-text variant clips the last glyph of
                     // short numbers on this firmware (e.g. 128 in video choices).
                     QPixmap icon;
-                    if (roster && iconKeys[i] >= 0)
+                    if (iconKeys[i] >= 0)
                         icon = rosterIcon(iconKeys[i]);
                     if (!smileys.isNull() && v.offset && v.offset <= 64 &&
                         smileys.width() >= int(v.offset)) {

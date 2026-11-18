@@ -34,7 +34,7 @@ def source_hash(source):
              for p in ((native / name).rglob("*") if (native / name).is_dir() else [native / name]) if p.is_file()]
     files += [source / "telemotomax/res/MIDP2/sounds/tg.mp3"]
     files += [source / "telemotomax/COPYING"]
-    files += [source / f"telemotomax/res/GRAPHICS_32BIT/COMMON/{n}.png" for n in ("icon",)]
+    files += [source / f"telemotomax/res/GRAPHICS_32BIT/COMMON/{n}.png" for n in ("icon", "logo")]
     files += [source / f"telemotomax/res/GRAPHICS_8BIT/COMMON/{n}.png" for n in ("statuses", "messages")]
     files += [source / f"telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/{n}" for n in ("smiles.png", "smiles.txt")]
     digest = hashlib.sha256()

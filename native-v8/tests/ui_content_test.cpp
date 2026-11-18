@@ -53,5 +53,14 @@ int main(int argc, char **argv) {
         tmm::javaMessageUrls("http://abc,https://def\"www.ghi http://abc");
     assert(links.size() == 3 && links[0] == "http://abc" && links[1] == "https://def" &&
            links[2] == "http://www.ghi");
-    puts("Java URLs and full32 smiley manifest: host checks passed");
+    const std::string video = "[видео](http://bridge.test/v/1234567890abcdef?key=secret) 0:08\n"
+                              "Caption with https://example.test";
+    assert(tmm::videoMessageText(video, "") == "[видео] 0:08\nCaption with https://example.test");
+    assert(tmm::javaMessageUrls(video).size() == 2); // Browser actions keep original URLs.
+    assert(
+        tmm::videoMessageText("\nhttp://bridge.test/v/123\n", "http://bridge.test/v/123").empty());
+    assert(tmm::videoMessageText("Caption https://example.test", "") ==
+           "Caption https://example.test");
+    assert(tmm::videoMessageText("[видео](broken", "") == "[видео](broken");
+    puts("Java URLs, hidden video links and full32 smiley manifest: host checks passed");
 }

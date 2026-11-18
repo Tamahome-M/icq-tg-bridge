@@ -38,7 +38,7 @@ void Window::mainMenu() {
         row(v, "Отменить подключение", "disconnect");
     else
         row(v, "Подключиться", "connect");
-    row(v, "Статус", "status");
+    row(v, "Статус", "status", 0, settings_.getInt("status", 0));
     row(v, "Контакты", "contact-list");
     bool haveContacts = false;
     for (size_t i = 0; i < contacts_.size(); ++i)
@@ -253,6 +253,8 @@ bool Window::activateJavaMenu(const Row &chosen) {
             send(c);
         }
         back();
+        if (view().context == "main-menu")
+            mainMenu();
         return true;
     }
     if (action == "chat-delete") {

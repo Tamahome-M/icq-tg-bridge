@@ -280,8 +280,105 @@ class UiProbe {
                 "Watch closes the chooser and starts the selected video's download");
         window.back();
         window.notice_ = QString::null;
+        cacheReopen(window, cache, contact.uin);
         fprintf(stderr, "MEDIA UI COMPLETE: %u checks\n", checks_);
         scene(window, contact.uin);
+    }
+    static void cacheReopen(Window &window, const std::string &cache, uint32_t target) {
+        window.openChat(target, false);
+        window.chats_[target].messages.clear();
+        MessageRecord photo;
+        photo.uin = target;
+        photo.kind = 1;
+        photo.token = std::string(16, 'p');
+        window.chats_[target].messages.push_back(photo);
+        window.rebuildChat();
+        size_t before = submitted.size();
+        window.requestMedia(1);
+        require(submitted.size() == before + 1 && submitted.back().type == Command::Photo,
+                "first photo open requests the bridge");
+        const Command first = submitted.back();
+        QImage jpeg(80, 60, 32);
+        jpeg.fill(0xff224488);
+        Event ready(Event::Media);
+        ready.requestId = first.requestId;
+        ready.path = cache + "media-photo-a.jpg";
+        ready.filename = "photo.jpg";
+        require(jpeg.save(QString::fromLatin1(ready.path.c_str()), "JPEG"),
+                "cache fixture is a real JPEG");
+        window.consume(ready);
+        require(window.view().kind == View::Picture && window.mediaCache_.owns(ready.path),
+                "completed photo enters disk cache and the real Qt viewer");
+        window.back();
+        require(window.picture_.isNull(), "closing a cached photo releases decoded pixels");
+        before = submitted.size();
+        window.requestMedia(1);
+        require(submitted.size() == before && window.view().kind == View::Picture &&
+                    window.playPath_ == ready.path,
+                "reopening a photo reads the cache without submitting a download");
+        window.back();
+        photo.token.assign(16, 'q');
+        window.chats_[target].messages.push_back(photo);
+        window.rebuildChat();
+        window.view().selected = 1;
+        window.requestMedia(1);
+        ready.requestId = submitted.back().requestId;
+        const std::string firstPath = ready.path;
+        ready.path = cache + "media-photo-b.jpg";
+        require(jpeg.save(QString::fromLatin1(ready.path.c_str()), "JPEG"),
+                "second cache JPEG fixture");
+        window.consume(ready);
+        window.back();
+        window.view().selected = 0;
+        before = submitted.size();
+        window.requestMedia(1);
+        require(submitted.size() == before && window.playPath_ == firstPath,
+                "viewing another photo preserves the earlier cached photo");
+        window.back();
+        unlink(firstPath.c_str());
+        before = submitted.size();
+        window.requestMedia(1);
+        require(submitted.size() == before + 1 && window.view().kind == View::Transfer,
+                "a cache file removed from disk is downloaded again");
+        const unsigned cancelled = submitted.back().requestId;
+        window.back();
+        require(window.mediaRequests_.find(cancelled) == window.mediaRequests_.end(),
+                "cancel removes the pending cache entry");
+        photo.kind = 2;
+        photo.token.assign(16, 'v');
+        photo.text = "[видео](http://bridge.test/v/1234567890abcdef) 0:08\nVideo caption";
+        window.chats_[target].messages.clear();
+        window.chats_[target].messages.push_back(photo);
+        window.rebuildChat();
+        window.view().selected = 0;
+        require(window.view().rows[0].text.find("http://") < 0 &&
+                    window.view().rows[0].text.find("Video caption") >= 0 &&
+                    window.chats_[target].messages[0].text == photo.text,
+                "video display hides its URL while preserving caption and original message");
+        window.requestMedia(2);
+        const Command video = submitted.back();
+        ready.requestId = video.requestId;
+        ready.path = cache + "media-video.3gp";
+        ready.filename = "video.3gp";
+        put(ready.path);
+        window.lock();
+        window.consume(ready);
+        require(window.receivedDeferred_ && window.mediaCache_.owns(ready.path),
+                "complete background video is retained on disk without starting hardware playback");
+        before = submitted.size();
+        window.requestMedia(2);
+        require(submitted.size() == before && window.receivedPath_ == ready.path,
+                "reopening complete video uses cache without requesting the bridge");
+        window.nextVideo();
+        require(submitted.back().type == Command::Video && submitted.back().offset == 1 &&
+                    submitted.back().media == video.media,
+                "next video segment uses the same conversion profile and a distinct cache key");
+        window.back();
+        window.receivedDeferred_ = false;
+        window.unlock();
+        window.home();
+        require(window.selectScope() && access(ready.path.c_str(), F_OK) != 0,
+                "changing account scope removes only the owned media cache");
     }
     static void scene(Window &window, uint32_t target) {
         const char *scene = getenv("TMM_NATIVE_MEDIA_SCENE");
@@ -313,6 +410,7 @@ unsigned UiProbe::checks_ = 0;
 int main(int argc, char **argv) {
     if (!getenv("V8_QWS_LOCAL_ONLY"))
         return 3;
+    chdir("/work"); // Match the launcher resource directory, as ui-probe does.
     tmm::Application app(argc, argv, QApplication::GuiServer);
     UTIL_SetPowerOnHandleStatus(10);
     UTIL_SetFlipStatus(SYSTEM_FLIP_OPEN);

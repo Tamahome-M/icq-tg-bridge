@@ -4,6 +4,7 @@
 #include "ui_settings.h"
 #include "ui_files.h"
 #include "ui_language.h"
+#include "ui_links.h"
 #include <ZMultiLineEdit.h>
 #include <qapplication.h>
 #include <qimage.h>
@@ -45,6 +46,7 @@ static bool online(uint32_t s) {
 bool Window::selectScope() {
     capture_.cancel();
     player_.stop();
+    mediaCache_.setDirectory("");
     if (!managedMediaPath_.empty()) {
         unlink(managedMediaPath_.c_str());
         managedMediaPath_.clear();
@@ -63,6 +65,7 @@ bool Window::selectScope() {
     pickUin_ = captureUin_ = 0;
     pending_.clear();
     pendingUin_.clear();
+    mediaRequests_.clear();
     quoteId_.clear();
     quoteText_.clear();
     quoteUin_ = 0;
@@ -86,6 +89,7 @@ bool Window::selectScope() {
             info(u(e));
         return false;
     }
+    mediaCache_.setDirectory(storage_->accountDir() + "/cache");
     storage_->loadRoster(contacts_);
     for (size_t i = 0; i < contacts_.size(); ++i)
         contacts_[i].status = 0xffffffffU;
@@ -136,6 +140,7 @@ void Window::disconnectClient() {
     retireTransfers();
     pending_.clear();
     pendingUin_.clear();
+    mediaRequests_.clear();
     for (size_t i = 0; i < stack_.size(); ++i)
         stack_[i].request = 0;
     connectionState_ = Event::Disconnected;
@@ -150,6 +155,7 @@ bool Window::send(Command c) {
     if (!client_.submit(c)) {
         pending_.erase(c.requestId);
         pendingUin_.erase(c.requestId);
+        mediaRequests_.erase(c.requestId);
         info(u("Нет соединения или очередь запросов заполнена"));
         return false;
     }
@@ -191,6 +197,7 @@ void Window::consume(const Event &e) {
             }
             pending_.clear();
             pendingUin_.clear();
+            mediaRequests_.clear();
             for (size_t i = 0; i < stack_.size(); ++i)
                 stack_[i].request = 0;
             for (size_t i = 0; i < contacts_.size(); ++i)
@@ -275,6 +282,7 @@ void Window::consume(const Event &e) {
         if (e.requestId) {
             pending_.erase(e.requestId);
             pendingUin_.erase(e.requestId);
+            mediaRequests_.erase(e.requestId);
         }
         for (size_t i = 0; i < e.messages.size(); ++i)
             incoming(e.messages[i]);
@@ -396,6 +404,7 @@ void Window::consume(const Event &e) {
                             chats_[target].historyQueued;
         pending_.erase(e.requestId);
         pendingUin_.erase(e.requestId);
+        mediaRequests_.erase(e.requestId);
         if (queued) {
             chats_[target].historyQueued = false;
             requestChatHistory(target);
@@ -423,6 +432,7 @@ void Window::consume(const Event &e) {
             showInfo(e);
         pending_.erase(e.requestId);
         pendingUin_.erase(e.requestId);
+        mediaRequests_.erase(e.requestId);
         if (view().kind == View::Roster)
             rebuildRoster();
         return;
@@ -488,6 +498,7 @@ void Window::consume(const Event &e) {
                 unlink(e.path.c_str());
             pending_.erase(e.requestId);
             pendingUin_.erase(e.requestId);
+            mediaRequests_.erase(e.requestId);
             update();
             return;
         }
@@ -496,6 +507,7 @@ void Window::consume(const Event &e) {
             showMedia(e);
             pending_.erase(e.requestId);
             pendingUin_.erase(e.requestId);
+            mediaRequests_.erase(e.requestId);
         } else if (!e.path.empty())
             unlink(e.path.c_str());
         return;
@@ -506,6 +518,7 @@ void Window::consume(const Event &e) {
         bool outgoing = e.requestId && e.requestId == outgoingRequest_;
         pending_.erase(e.requestId);
         pendingUin_.erase(e.requestId);
+        mediaRequests_.erase(e.requestId);
         QString message =
             u(e.text.empty() ? (e.flag ? "Готово" : "Операция не выполнена") : e.text);
         if (outgoing) {
@@ -535,6 +548,7 @@ void Window::consume(const Event &e) {
         if (e.requestId && e.requestId == outgoingRequest_) {
             pending_.erase(e.requestId);
             pendingUin_.erase(e.requestId);
+            mediaRequests_.erase(e.requestId);
             note(e.text);
             completeAttachment(false, u(e.text));
             return;
@@ -556,6 +570,7 @@ void Window::consume(const Event &e) {
         if (mediaFailure) {
             pending_.erase(e.requestId);
             pendingUin_.erase(e.requestId);
+            mediaRequests_.erase(e.requestId);
             note(e.text);
             update();
             return;
@@ -567,6 +582,7 @@ void Window::consume(const Event &e) {
                 stack_[i].request = 0;
         pending_.erase(e.requestId);
         pendingUin_.erase(e.requestId);
+        mediaRequests_.erase(e.requestId);
         if (!e.requestId) {
             fprintf(stderr, "Connection error: %s\n", e.text.c_str());
             fflush(stderr);
@@ -822,13 +838,14 @@ QString Window::messageText(const MessageRecord &m) const {
         if (settingFlag(settings_, "show_newlines"))
             text += "\n";
     }
-    text += u(m.text);
+    const std::string display = m.kind == 2 ? videoMessageText(m.text, m.url) : m.text;
+    text += u(display);
     if (settingFlag(settings_, "show_smileys")) {
         replaceText(text, "*IN_LOVE*", "<3");
         replaceText(text, "*THUMBS_UP*", "(y)");
         replaceText(text, "*ROFL*", ":D");
     }
-    if (m.kind)
+    if (m.kind && !(m.kind == 2 && display.find("[видео]") != std::string::npos))
         text += "\n" + u(m.kind == 1   ? "[фото]"
                          : m.kind == 2 ? "[видео]"
                          : m.kind == 3 ? "[голосовое]"
