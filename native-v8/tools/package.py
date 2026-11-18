@@ -8,14 +8,28 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = {
-    **{f"sounds/{name}.mp3": ROOT.parent / f"telemotomax/res/MIDP2/sounds/{name}.mp3"
-       for name in ("message", "msg_low", "tg", "typing")},
+    **{f"sounds/{name}.mp3": ROOT / f"sounds/{name}.mp3"
+       for name in ("message", "msg_low", "typing")},
+    "sounds/tg.mp3": ROOT.parent / "telemotomax/res/MIDP2/sounds/tg.mp3",
     "icon.png": ROOT.parent / "telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png",
     "messages.png": ROOT.parent / "telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png",
     "statuses.png": ROOT.parent / "telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png",
     "smiles.png": ROOT.parent / "telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/smiles.png",
     "smiles.txt": ROOT.parent / "telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/smiles.txt",
 }
+
+
+def check_sound(path):
+    # V8's ringtone MP3 reader requires a full 4096-byte initial read after
+    # skipping ID3v2. A short read returns MPError 2 even for a valid MP3.
+    data = path.read_bytes()
+    offset = 0
+    if data[:3] == b"ID3":
+        if len(data) < 10 or any(value & 0x80 for value in data[6:10]):
+            raise ValueError(f"Invalid MP3 tag: {path.name}")
+        offset = 10 + sum(data[6+i] << (7 * (3-i)) for i in range(4))
+    if len(data) - offset < 4096:
+        raise ValueError(f"V8 MP3 reader needs 4096 bytes after ID3: {path.name}")
 
 
 def version():
@@ -29,6 +43,9 @@ def inputs(binary):
     header = binary.read_bytes()[:52]
     if len(header) < 52 or header[:6] != b"\x7fELF\x01\x01" or header[18:20] != b"\x28\x00":
         raise ValueError("Expected a little-endian ELF32 ARM executable")
+    for name, path in ASSETS.items():
+        if name.endswith(".mp3"):
+            check_sound(path)
     result = dict(ASSETS)
     result.update({"telemotomax-native": binary, "telemotomax.lin": ROOT / "telemotomax.lin",
                    "collect-log.lin": ROOT / "collect-log.lin",

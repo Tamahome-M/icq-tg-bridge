@@ -50,6 +50,30 @@ class NativeReleaseTests(unittest.TestCase):
         (self.root / "telemotomax/res/MIDP2/sounds/tg.mp3").write_bytes(b"changed")
         with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
 
+    def test_all_native_alerts_meet_reader_minimum_and_keep_working_tg(self):
+        for name, path in package.ASSETS.items():
+            if name.endswith(".mp3"):
+                with self.subTest(name=name):
+                    package.check_sound(path)
+        self.assertEqual(package.ASSETS["sounds/tg.mp3"],
+                         ROOT/"telemotomax/res/MIDP2/sounds/tg.mp3")
+        for name in ("message", "msg_low", "typing"):
+            self.assertEqual(package.ASSETS[f"sounds/{name}.mp3"],
+                             ROOT/f"native-v8/sounds/{name}.mp3")
+
+    def test_packaging_rejects_short_audio_even_when_tags_make_file_bigger(self):
+        binary = Path(self.tmp.name)/"arm"
+        header = bytearray(52); header[:6] = b"\x7fELF\x01\x01"; header[18:20] = b"\x28\x00"
+        binary.write_bytes(header)
+        for name in ("message", "msg_low", "typing"):
+            original = ROOT/f"telemotomax/res/MIDP2/sounds/{name}.mp3"
+            if name == "typing":
+                self.assertGreater(original.stat().st_size, 4096)
+            with self.subTest(name=name), patch.dict(package.ASSETS,
+                    {f"sounds/{name}.mp3": original}):
+                with self.assertRaisesRegex(ValueError, "4096"):
+                    package.inputs(binary)
+
     def test_status_sprite_change_requires_native_version(self):
         (self.root / "telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png").write_bytes(b"changed")
         with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
@@ -124,6 +148,9 @@ class NativeReleaseTests(unittest.TestCase):
                                  package.ASSETS["statuses.png"].read_bytes())
                 self.assertEqual(archive.extractfile(prefix+"messages.png").read(),
                                  package.ASSETS["messages.png"].read_bytes())
+                for asset, path in package.ASSETS.items():
+                    if asset.endswith(".mp3"):
+                        self.assertEqual(archive.extractfile(prefix+asset).read(), path.read_bytes())
                 self.assertNotIn(prefix+"back.png", archive.getnames())
                 if name.endswith(".pep"):
                     ini = archive.extractfile("description.ini").read()
