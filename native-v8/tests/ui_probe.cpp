@@ -97,6 +97,59 @@ class UiProbe {
         w.settings_.setInt("status", saved);
         w.home();
     }
+    static void manualDisconnect(Window &w) {
+        const std::string grouped = settingValue(w.settings_, "use_groups");
+        const std::string hidden = settingValue(w.settings_, "hide_offline");
+        w.contacts_.clear();
+        w.chats_.clear();
+        w.settings_.setInt("use_groups", 1);
+        w.settings_.setInt("hide_offline", 0);
+        ContactRecord first;
+        first.uin = 1009001;
+        first.name = "First";
+        first.group = "Telegram";
+        first.status = 0;
+        first.inRoster = true;
+        ContactRecord second = first;
+        second.uin++;
+        second.name = "Second";
+        second.status = 32;
+        w.contacts_.push_back(first);
+        w.contacts_.push_back(second);
+        w.chats_[first.uin].unread = 2;
+        w.connectionState_ = Event::Online;
+        w.generation_ = 123;
+        w.collapsed_["Telegram"] = false;
+        w.home();
+        require(w.view().rows.size() == 3 && w.view().rows[0].text.find("(2/2)") >= 0,
+                "disconnect fixture starts with online contacts and a live group counter");
+        w.mainMenu();
+        require(w.activateJavaMenu(Row(QString::null, "disconnect")),
+                "manual disconnect follows the real main menu action");
+        require(w.manualDisconnect_ && w.connectionState_ == Event::Disconnected &&
+                    !w.generation_ && w.contact(first.uin)->status == 0xffffffffU &&
+                    w.contact(second.uin)->status == 0xffffffffU,
+                "manual disconnect clears presence before retired worker events can arrive");
+        require(w.chats_[first.uin].unread == 2, "disconnect preserves unread messages");
+        w.back();
+        require(w.view().kind == View::Roster && w.view().rows[0].text.find("(2/2)") < 0,
+                "Back rebuilds roster counters changed while the main menu was open");
+        rosterIcon(w, 2, w.statusIcons_, 6);
+        w.settings_.setInt("hide_offline", 1);
+        w.rebuildRoster();
+        bool firstVisible = false, secondVisible = false;
+        for (unsigned i = 0; i < w.view().rows.size(); ++i) {
+            firstVisible = firstVisible || w.view().rows[i].uin == first.uin;
+            secondVisible = secondVisible || w.view().rows[i].uin == second.uin;
+        }
+        require(firstVisible && !secondVisible,
+                "offline filtering removes read contacts but keeps unread chats after disconnect");
+        w.settings_.set("use_groups", grouped);
+        w.settings_.set("hide_offline", hidden);
+        w.contacts_.clear();
+        w.chats_.clear();
+        w.home();
+    }
     static void connectionSplash(Window &w) {
         const QFont originalFont = w.font();
         const unsigned state = w.connectionState_, progress = w.connectionProgress_;
@@ -843,6 +896,7 @@ class UiProbe {
         require(safe.find(QString::fromUtf8("✓")) < 0 && safe.find(QString::fromUtf8("↗")) < 0 &&
                     safe.find(QString::fromUtf8("☺")) < 0 && safe.find(":)") >= 0,
                 "message icons independent of unsupported font glyphs");
+        manualDisconnect(w);
         connectionSplash(w);
         // End on a readable fixture scene for visual inspection; no network request.
         w.contacts_.clear();

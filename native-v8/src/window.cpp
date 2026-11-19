@@ -245,7 +245,8 @@ void Window::back() {
         if (view().kind == View::Chat) {
             markVisibleChatRead();
             rebuildChat();
-        }
+        } else if (view().kind == View::Roster)
+            rebuildRoster();
     } else
         mainMenu();
     if (!editAction_.empty() && stack_.size() == editDepth_) {

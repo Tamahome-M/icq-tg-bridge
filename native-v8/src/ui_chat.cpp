@@ -144,6 +144,10 @@ void Window::disconnectClient() {
     for (size_t i = 0; i < stack_.size(); ++i)
         stack_[i].request = 0;
     connectionState_ = Event::Disconnected;
+    // The worker's final State event belongs to the retired generation and
+    // is deliberately ignored. Apply its presence reset synchronously here.
+    for (size_t i = 0; i < contacts_.size(); ++i)
+        contacts_[i].status = 0xffffffffU;
     resetServerHistory();
     updateSystemStatusIcon();
     note("Отключено вручную");
