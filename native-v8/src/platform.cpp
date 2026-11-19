@@ -97,7 +97,7 @@ bool launch(const QString &document) {
 }
 } // namespace
 Platform::Platform(QObject *p)
-    : QObject(p), window_(0), sound_(new MediaController(this)),
+    : QObject(p), window_(0), sound_(new MediaController(this, true)),
       external_(new ExternalDisplay(this)),
       soundLibrary_(dlopen("libezxsound.so", RTLD_NOW | RTLD_LOCAL)), vibrationHandle_(0),
       backlightHandle_(0), closed_(UTIL_GetFlipStatus() == SYSTEM_FLIP_CLOSE) {
@@ -212,15 +212,15 @@ void Platform::endVibration() {
 }
 void Platform::notifyMessage(const QString &file, int volume, int ms) {
     vibrate(ms);
-    if (volume <= 0 || file.isEmpty())
+    if (volume <= 0 || file.isEmpty() || sound_->active())
         return;
     if (file == "tone")
         notifyDisconnected(volume);
     else
-        sound_->play(file, volume);
+        sound_->play(file, volume, true);
 }
 void Platform::notifyDisconnected(int volume) {
-    if (volume <= 0)
+    if (volume <= 0 || sound_->active())
         return;
     if (tonePath_.isEmpty())
         tonePath_ = makeTone();
@@ -228,7 +228,10 @@ void Platform::notifyDisconnected(int volume) {
         emit error(QString::fromUtf8("Не удалось создать сигнал"));
         return;
     }
-    sound_->play(tonePath_, volume);
+    sound_->play(tonePath_, volume, true);
+}
+void Platform::stopNotificationSound() {
+    sound_->stop();
 }
 void Platform::clearExternalText() {
     external_->clear();
@@ -238,8 +241,9 @@ void Platform::externalText(const QString &title, const QString &text, int secon
         external_->showText(title, text, seconds);
 }
 bool Platform::openUrl(const QString &url) {
-    if (!(url.startsWith("http://") || url.startsWith("https://")) || url.find('\n') >= 0 ||
-        url.find('\r') >= 0) {
+    if (!(url.startsWith("http://") || url.startsWith("https://") || url.startsWith("ftp://") ||
+          url.startsWith("mailto:")) ||
+        url.find('\n') >= 0 || url.find('\r') >= 0) {
         emit error(QString::fromUtf8("Неверный адрес"));
         return false;
     }

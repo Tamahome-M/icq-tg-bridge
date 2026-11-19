@@ -120,6 +120,27 @@ async def scenario(executable, folder, encryption, md5):
         roster = await phone.wait(lambda e: e.get('type') == 1)
         assert any(c['uin'] == who and c['name'] == 'Мама' and c['group'] == 'Telegram/Семья' for c in roster['contacts']), roster
         await phone.wait(lambda e: e.get('type') == 2 and e.get('uin') == second)
+        # The four-byte user-info trailer also belongs to departed records.
+        # A stale parser read it as an empty next UIN and reconnected.
+        icon_hash_of = server.icon_hash
+        server.icon_hash = lambda _: None
+        try:
+            await server.notify_status(who, C.STATUS_OFFLINE)
+        finally:
+            server.icon_hash = icon_hash_of
+        departed = await phone.wait(lambda e: e.get('type') == 2 and e.get('uin') == who
+                                    and any(c['status'] == 0xffffffff for c in e.get('contacts', [])))
+        assert departed['generation'] == 1, departed
+        await server.session.send_snac(C.BUDDY, C.BUDDY_DEPARTED,
+                                       blocks.buddy_departed(second) + blocks.buddy_departed(who))
+        for ident in (second, who):
+            departed = await phone.wait(lambda e: e.get('type') == 2 and e.get('uin') == ident
+                                        and any(c['status'] == 0xffffffff for c in e.get('contacts', [])))
+            assert departed['generation'] == 1, departed
+        await server.notify_status(who, C.STATUS_ONLINE)
+        arrived = await phone.wait(lambda e: e.get('type') == 2 and e.get('uin') == who
+                                   and any(c['status'] == C.STATUS_ONLINE for c in e.get('contacts', [])))
+        assert arrived['generation'] == 1, arrived
         await server.deliver(who, 'Входящее 😀')
         incoming = await phone.wait(lambda e: e.get('type') == 3 and e.get('messages') and not e['messages'][0]['out'])
         assert incoming['messages'][0]['text'] == 'Входящее 😀', incoming
@@ -137,6 +158,12 @@ async def scenario(executable, folder, encryption, md5):
         page = await phone.response(12, 6)
         assert page['more'] and page['offset'] == 1 and page['messages'][0]['thread'] == second, page
         assert page['messages'][0]['ref'] == (987654).to_bytes(8, 'big').hex()
+        # Fresh-chat preload uses the regular history route with one record,
+        # not OpenChat (which restores a chat to the roster).
+        await phone.command(3, 14, who, limit=1)
+        tail = await phone.response(14, 6)
+        assert len(tail['messages']) == 1 and tail['messages'][0]['time'] == 0, tail
+        assert tail['messages'][0]['text'] == 'Мама\nТекст истории', tail
         await phone.command(3, 13, second)
         failed = await phone.wait(lambda e: e.get('id') == 13 and e.get('type') == 12)
         assert failed['text'] == 'Сеть временно недоступна', failed
@@ -211,7 +238,9 @@ async def scenario(executable, folder, encryption, md5):
             if len(removed)==2:break
             await asyncio.sleep(.01)
         assert removed==[(second,False),(second,True)],removed
-        process.stdin.write(b'stop\nstart\n'); await process.stdin.drain()
+        process.stdin.write(b'stop-wait\n'); await process.stdin.drain()
+        assert (await phone.wait(lambda e: 'joined' in e))['joined']
+        process.stdin.write(b'start\n'); await process.stdin.drain()
         await phone.wait(lambda e:e.get('type')==0 and e.get('state')==2 and e.get('generation')==2)
         print('PASS native OSCAR', 'TMME' if encryption else 'plain', 'MD5' if md5 else 'XOR')
     finally:

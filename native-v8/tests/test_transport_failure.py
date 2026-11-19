@@ -1,5 +1,6 @@
 """A partial FLAP/TMME write poisons only that connection, never the next packet."""
 import asyncio
+import os
 from pathlib import Path
 import tempfile
 
@@ -23,15 +24,19 @@ async def scenario(binary, folder, encrypted, upload):
         sent.append(args)
         return True
 
+    async def info(_):
+        return {'title': 'IO test', 'network': 'Telegram'}
+
     server = OscarServer(cfg, store, outgoing, store.contacts, lambda uin: C.STATUS_ONLINE,
-                         on_file=receive_file)
+                         on_file=receive_file, chat_info=info)
     await server.start()
     port = server._server.sockets[0].getsockname()[1]
     cfg.oscar_port = cfg.bos_port = port
     process = await asyncio.create_subprocess_exec(
         str(binary), str(port), str(int(encrypted)), '1', str(folder),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE)
+        stderr=asyncio.subprocess.PIPE,
+        env=dict(os.environ, TMM_TEST_DISABLE_KEEPALIVE='1'))
     phone = Phone(process)
 
     async def line(value):
@@ -40,6 +45,12 @@ async def scenario(binary, folder, encrypted, upload):
 
     try:
         await phone.wait(lambda e: e.get('type') == 0 and e.get('state') == 2)
+        # Online is posted before the server's offline-end response is consumed;
+        # consuming it sends an automatic meta ACK. A real request/response is
+        # a FIFO barrier for that startup traffic. Keepalive is disabled only in
+        # this test, so no timer can steal the next-write fault after the barrier.
+        await phone.command(13, 77, who)
+        assert (await phone.response(77, 8))['fields']['name'] == 'IO test'
         await line('arm-send-failure')
         await phone.wait(lambda e: 'fault_count' in e)
         if upload:
@@ -52,6 +63,8 @@ async def scenario(binary, folder, encrypted, upload):
         await phone.wait(lambda e: e.get('type') == 0 and e.get('state') == 0)
         await line('send-fault-count')
         state = await phone.wait(lambda e: 'fault_count' in e)
+        assert state['fault_prefix_bytes'] == 3, state
+        assert state['fault_failures'] == 1, state
         assert state['fault_count'] == 0, 'client appended another packet after a partial write'
         assert not sent, sent
         await line('clear-send-failure')

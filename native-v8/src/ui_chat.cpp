@@ -1,7 +1,12 @@
 #include "window.h"
 #include "storage.h"
+#include "chat_history.h"
+#include "roster_order.h"
+#include "chat_layout.h"
 #include "ui_settings.h"
+#include "ui_files.h"
 #include "ui_language.h"
+#include "ui_links.h"
 #include <ZMultiLineEdit.h>
 #include <qapplication.h>
 #include <qimage.h>
@@ -43,6 +48,7 @@ static bool online(uint32_t s) {
 bool Window::selectScope() {
     capture_.cancel();
     player_.stop();
+    mediaCache_.setDirectory("");
     if (!managedMediaPath_.empty()) {
         unlink(managedMediaPath_.c_str());
         managedMediaPath_.clear();
@@ -50,6 +56,10 @@ bool Window::selectScope() {
     outgoingRequest_ = 0;
     discardAttachment();
     loadedMediaReady_ = false;
+    receivedDeferred_ = false;
+    openChatOrder_.clear();
+    infoAvatar_ = QPixmap();
+    infoAvatarUin_ = 0;
     savedMediaPurpose_.clear();
     playPath_.clear();
     receivedPath_.clear();
@@ -57,6 +67,7 @@ bool Window::selectScope() {
     pickUin_ = captureUin_ = 0;
     pending_.clear();
     pendingUin_.clear();
+    mediaRequests_.clear();
     quoteId_.clear();
     quoteText_.clear();
     quoteUin_ = 0;
@@ -80,6 +91,7 @@ bool Window::selectScope() {
             info(u(e));
         return false;
     }
+    mediaCache_.setDirectory(storage_->accountDir() + "/cache");
     storage_->loadRoster(contacts_);
     for (size_t i = 0; i < contacts_.size(); ++i)
         contacts_[i].status = 0xffffffffU;
@@ -118,6 +130,7 @@ void Window::connectClient() {
     client_.start();
     generation_ = client_.sessionGeneration();
     connectionState_ = Event::Connecting;
+    updateSystemStatusIcon();
     note("Подключение к " + cfg.host);
     notice_ = QString::null;
     update();
@@ -129,9 +142,16 @@ void Window::disconnectClient() {
     retireTransfers();
     pending_.clear();
     pendingUin_.clear();
+    mediaRequests_.clear();
     for (size_t i = 0; i < stack_.size(); ++i)
         stack_[i].request = 0;
     connectionState_ = Event::Disconnected;
+    // The worker's final State event belongs to the retired generation and
+    // is deliberately ignored. Apply its presence reset synchronously here.
+    for (size_t i = 0; i < contacts_.size(); ++i)
+        contacts_[i].status = 0xffffffffU;
+    resetServerHistory();
+    updateSystemStatusIcon();
     note("Отключено вручную");
     update();
 }
@@ -141,6 +161,7 @@ bool Window::send(Command c) {
     if (!client_.submit(c)) {
         pending_.erase(c.requestId);
         pendingUin_.erase(c.requestId);
+        mediaRequests_.erase(c.requestId);
         info(u("Нет соединения или очередь запросов заполнена"));
         return false;
     }
@@ -159,16 +180,22 @@ void Window::eventsReady() {
             unlink(events[i].path.c_str());
 }
 void Window::consume(const Event &e) {
+    if (consumeJavaMenu(e))
+        return;
     if (e.type == Event::State) {
         unsigned before = connectionState_;
         connectionState_ = e.state;
+        updateSystemStatusIcon();
         if (e.state == Event::Online) {
             connectionErrorShown_ = false;
             if (before != Event::Online)
                 collapsed_.clear();
+            if (view().kind == View::Chat)
+                requestLastMessage(view().uin);
         }
         note(e.text);
         if (e.state == Event::Disconnected || e.state == Event::Reconnecting) {
+            resetServerHistory();
             retireTransfers();
             if (e.state == Event::Reconnecting) {
                 connectionProgress_ = 0;
@@ -176,12 +203,13 @@ void Window::consume(const Event &e) {
             }
             pending_.clear();
             pendingUin_.clear();
+            mediaRequests_.clear();
             for (size_t i = 0; i < stack_.size(); ++i)
                 stack_[i].request = 0;
             for (size_t i = 0; i < contacts_.size(); ++i)
                 contacts_[i].status = 0xffffffffU;
-            if (before == Event::Online && !manualDisconnect_ && !silent_ &&
-                settingFlag(settings_, "disconnect_sound"))
+            if (before == Event::Online && !manualDisconnect_ && !silent_ && !player_.active() &&
+                !capture_.busy() && settingFlag(settings_, "disconnect_sound"))
                 platform_.notifyDisconnected(settingNumber(settings_, "disconnect_volume"));
         }
         if (view().kind == View::Roster)
@@ -260,6 +288,7 @@ void Window::consume(const Event &e) {
         if (e.requestId) {
             pending_.erase(e.requestId);
             pendingUin_.erase(e.requestId);
+            mediaRequests_.erase(e.requestId);
         }
         for (size_t i = 0; i < e.messages.size(); ++i)
             incoming(e.messages[i]);
@@ -285,10 +314,14 @@ void Window::consume(const Event &e) {
         return;
     }
     if (e.type == Event::Typing) {
+        const std::string typingMode = settingValue(settings_, "typing_sound");
+        if (typingMode.empty())
+            return;
         if (chats_.find(e.uin) != chats_.end())
             chats_[e.uin].typingUntil = e.flag ? now() + 10000 : 0;
         if (e.flag && std::find(quiet_.begin(), quiet_.end(), e.uin) == quiet_.end() && !silent_ &&
-            now() - startedAt_ > 60000 && !settingValue(settings_, "typing_sound").empty())
+            now() - startedAt_ > 60000 && typingMode != "display" && !player_.active() &&
+            !capture_.busy())
             platform_.notifyMessage(u(settingValue(settings_, "typing_sound") == "tone"
                                           ? "tone"
                                           : "sounds/" + settingValue(settings_, "typing_sound")),
@@ -297,30 +330,91 @@ void Window::consume(const Event &e) {
         return;
     }
     if (e.type == Event::History) {
-        for (size_t v = 0; v < stack_.size(); ++v) {
-            if (stack_[v].request != e.requestId)
-                continue;
-            View &target = stack_[v];
-            target.request = 0;
-            target.more = e.more;
-            target.offset = e.offset;
-            target.messages.insert(target.messages.end(), e.messages.begin(), e.messages.end());
-            while (target.messages.size() > 200) {
-                target.messages.erase(target.messages.begin());
-                if (target.selected > 0)
-                    --target.selected;
+        std::map<uint32_t, std::string>::iterator pending = pending_.find(e.requestId);
+        if (pending == pending_.end())
+            return;
+        if (pending->second == "chat-history") {
+            const uint32_t id = pendingUin_[e.requestId];
+            std::map<uint32_t, ChatState>::iterator found = chats_.find(id);
+            if (found != chats_.end() && found->second.historyRequest == e.requestId) {
+                ChatState &chat = found->second;
+                HistoryMerge merge =
+                    mergeChatHistory(chat.messages, e.messages, chat.historyBoundary);
+                chat.historyRequest = 0;
+                chat.historyOffset = e.offset;
+                chat.historyStarted = true;
+                chat.historyLoaded = chat.historyLoaded || !e.messages.empty();
+                chat.historyMore = e.more;
+                chat.historyBoundary = merge.firstPage;
+                chat.stamp = now();
+                const unsigned trim = chat.messages.size() > 200 ? chat.messages.size() - 200 : 0;
+                if (trim)
+                    chat.messages.erase(chat.messages.begin(), chat.messages.begin() + trim);
+                chat.historyBoundary =
+                    chat.historyBoundary > trim ? chat.historyBoundary - trim : 0;
+                if (chat.messages.size() == 200)
+                    chat.historyMore = false;
+                for (size_t i = 0; i < stack_.size(); ++i) {
+                    View &target = stack_[i];
+                    if (target.kind != View::Chat || target.uin != id)
+                        continue;
+                    if (target.selected >= 0 &&
+                        unsigned(target.selected) < merge.oldPositions.size())
+                        target.selected =
+                            std::max(0, int(merge.oldPositions[target.selected]) - int(trim));
+                    else
+                        target.selected = std::max(0, int(chat.messages.size()) - 1);
+                    if (target.top >= 0 && unsigned(target.top) < merge.oldPositions.size())
+                        target.top = std::max(0, int(merge.oldPositions[target.top]) - int(trim));
+                    rebuildChat(target, false);
+                }
+                if (view().kind == View::Chat && view().uin == id)
+                    info(u(e.messages.empty() ? "Сообщений нет" : "История добавлена в чат"));
             }
-            showHistory(target);
+        } else if (pending->second == "history") {
+            // Local/legacy discussion views retain their existing viewer.
+            for (size_t v = 0; v < stack_.size(); ++v) {
+                if (stack_[v].request != e.requestId)
+                    continue;
+                View &target = stack_[v];
+                target.request = 0;
+                target.more = e.more;
+                target.offset = e.offset;
+                target.messages.insert(target.messages.begin(), e.messages.begin(),
+                                       e.messages.end());
+                if (target.messages.size() > 200)
+                    target.messages.resize(200);
+                showHistory(target);
+            }
         }
         if (pending_[e.requestId] == "last") {
-            for (size_t i = 0; i < e.messages.size(); ++i) {
-                MessageRecord m = e.messages[i];
-                m.silent = true;
-                incoming(m);
+            std::map<uint32_t, ChatState>::iterator chat = chats_.find(e.uin);
+            // A preload is conversation context, never a new unread delivery.
+            // A live message may already have filled the chat while it loaded.
+            if (chat != chats_.end() && chat->second.loaded && chat->second.messages.empty() &&
+                !e.messages.empty()) {
+                MessageRecord message = e.messages.back();
+                message.uin = e.uin;
+                message.silent = true;
+                chat->second.messages.push_back(message);
+                chat->second.stamp = now();
+                std::string error;
+                if (!storage_->appendHistory(e.uin, message, error))
+                    note(error);
+                if (view().kind == View::Chat && view().uin == e.uin)
+                    rebuildChat();
             }
         }
+        const uint32_t target = pendingUin_[e.requestId];
+        const bool queued = pending->second == "last" && chats_.find(target) != chats_.end() &&
+                            chats_[target].historyQueued;
         pending_.erase(e.requestId);
         pendingUin_.erase(e.requestId);
+        mediaRequests_.erase(e.requestId);
+        if (queued) {
+            chats_[target].historyQueued = false;
+            requestChatHistory(target);
+        }
         update();
         return;
     }
@@ -343,6 +437,8 @@ void Window::consume(const Event &e) {
         if (pending_[e.requestId] == "info")
             showInfo(e);
         pending_.erase(e.requestId);
+        pendingUin_.erase(e.requestId);
+        mediaRequests_.erase(e.requestId);
         if (view().kind == View::Roster)
             rebuildRoster();
         return;
@@ -378,11 +474,46 @@ void Window::consume(const Event &e) {
         return;
     }
     if (e.type == Event::Media) {
+        if (pending_.find(e.requestId) != pending_.end() &&
+            pending_[e.requestId] == "info-avatar") {
+            bool relevant = false;
+            for (size_t i = 0; i < stack_.size(); ++i)
+                relevant =
+                    relevant || (stack_[i].context == "contact-info" && stack_[i].uin == e.uin);
+            if (relevant) {
+                QImage image;
+                unsigned width = 0, height = 0;
+                std::string error;
+                if (imageDimensions(e.path, width, height, error) && width <= 256 &&
+                    height <= 256 && image.load(u(e.path))) {
+                    infoAvatar_.convertFromImage(image);
+                    infoAvatarUin_ = e.uin;
+                    for (size_t i = 0; i < stack_.size(); ++i)
+                        if (stack_[i].context == "contact-info" && stack_[i].uin == e.uin) {
+                            View &info = stack_[i];
+                            if (info.rows.empty() || info.rows[0].action != "info-avatar-view") {
+                                info.rows.insert(info.rows.begin(),
+                                                 Row(QString::null, "info-avatar-view", e.uin));
+                                ++info.selected;
+                            }
+                        }
+                }
+            }
+            const std::string prefix = storage_->accountDir() + "/cache/";
+            if (e.path.compare(0, prefix.size(), prefix) == 0)
+                unlink(e.path.c_str());
+            pending_.erase(e.requestId);
+            pendingUin_.erase(e.requestId);
+            mediaRequests_.erase(e.requestId);
+            update();
+            return;
+        }
         if (pending_.find(e.requestId) != pending_.end()) {
             removeTransfer(e.requestId);
             showMedia(e);
             pending_.erase(e.requestId);
             pendingUin_.erase(e.requestId);
+            mediaRequests_.erase(e.requestId);
         } else if (!e.path.empty())
             unlink(e.path.c_str());
         return;
@@ -393,6 +524,7 @@ void Window::consume(const Event &e) {
         bool outgoing = e.requestId && e.requestId == outgoingRequest_;
         pending_.erase(e.requestId);
         pendingUin_.erase(e.requestId);
+        mediaRequests_.erase(e.requestId);
         QString message =
             u(e.text.empty() ? (e.flag ? "Готово" : "Операция не выполнена") : e.text);
         if (outgoing) {
@@ -409,11 +541,44 @@ void Window::consume(const Event &e) {
     if (e.type == Event::Error) {
         if (e.requestId && pending_.find(e.requestId) == pending_.end())
             return;
+        if (e.requestId && pending_[e.requestId] == "last") {
+            std::map<uint32_t, ChatState>::iterator chat = chats_.find(pendingUin_[e.requestId]);
+            if (chat != chats_.end())
+                chat->second.historyQueued = false;
+        }
+        if (e.requestId && pending_[e.requestId] == "chat-history") {
+            std::map<uint32_t, ChatState>::iterator chat = chats_.find(pendingUin_[e.requestId]);
+            if (chat != chats_.end() && chat->second.historyRequest == e.requestId)
+                chat->second.historyRequest = 0;
+        }
         if (e.requestId && e.requestId == outgoingRequest_) {
             pending_.erase(e.requestId);
             pendingUin_.erase(e.requestId);
+            mediaRequests_.erase(e.requestId);
             note(e.text);
             completeAttachment(false, u(e.text));
+            return;
+        }
+        bool mediaFailure = false;
+        for (size_t i = 0; i < stack_.size(); ++i)
+            if (stack_[i].kind == View::Transfer && stack_[i].request == e.requestId) {
+                View &failed = stack_[i];
+                failed.request = 0;
+                failed.context = "media-error";
+                failed.status = u(failed.directory == "photo"   ? "Фото недоступно"
+                                  : failed.directory == "voice" ? "Голосовое недоступно"
+                                  : failed.directory == "video" && videoSegment_
+                                      ? "Дальше нечего: ролик кончился"
+                                      : "Вложение недоступно");
+                failed.details = u(e.text);
+                mediaFailure = true;
+            }
+        if (mediaFailure) {
+            pending_.erase(e.requestId);
+            pendingUin_.erase(e.requestId);
+            mediaRequests_.erase(e.requestId);
+            note(e.text);
+            update();
             return;
         }
         removeTransfer(e.requestId);
@@ -423,6 +588,7 @@ void Window::consume(const Event &e) {
                 stack_[i].request = 0;
         pending_.erase(e.requestId);
         pendingUin_.erase(e.requestId);
+        mediaRequests_.erase(e.requestId);
         if (!e.requestId) {
             fprintf(stderr, "Connection error: %s\n", e.text.c_str());
             fflush(stderr);
@@ -445,6 +611,8 @@ void Window::consume(const Event &e) {
     }
 }
 void Window::incoming(const MessageRecord &m) {
+    if (std::find(openChatOrder_.begin(), openChatOrder_.end(), m.uin) == openChatOrder_.end())
+        openChatOrder_.push_back(m.uin);
     ChatState &chat = chats_[m.uin];
     chat.stamp = now();
     if (!chat.loaded) {
@@ -464,11 +632,15 @@ void Window::incoming(const MessageRecord &m) {
             return;
     }
     chat.messages.push_back(m);
-    unsigned cap = std::max(1, settingNumber(settings_, "chat_messages"));
-    while (chat.messages.size() > cap)
-        chat.messages.erase(chat.messages.begin());
+    unsigned cap =
+        chat.historyLoaded ? 200 : std::max(1, settingNumber(settings_, "chat_messages"));
+    const unsigned trim = chat.messages.size() > cap ? chat.messages.size() - cap : 0;
+    if (trim) {
+        chat.messages.erase(chat.messages.begin(), chat.messages.begin() + trim);
+        chat.historyBoundary = chat.historyBoundary > trim ? chat.historyBoundary - trim : 0;
+    }
     std::string error;
-    if (settingNumber(settings_, "history_count") > 0 && !storage_->appendHistory(m.uin, m, error))
+    if (!storage_->appendHistory(m.uin, m, error))
         note(error);
     if (!contact(m.uin)) {
         ContactRecord c;
@@ -481,14 +653,24 @@ void Window::incoming(const MessageRecord &m) {
         pending_[request.requestId] = "identity";
         send(request);
     }
+    for (size_t i = 0; i < stack_.size(); ++i) {
+        View &target = stack_[i];
+        if (target.kind != View::Chat || target.uin != m.uin)
+            continue;
+        const bool follow = target.rows.empty() || target.selected >= int(target.rows.size()) - 1;
+        if (follow)
+            target.selected = std::max(0, int(chat.messages.size()) - 1);
+        else
+            target.selected = std::max(0, target.selected - int(trim));
+        target.top = std::max(0, target.top - int(trim));
+        rebuildChat(target, false);
+    }
     bool visible =
         !locked_ && !closed_ && isVisible() && view().kind == View::Chat && view().uin == m.uin;
     if (!m.outgoing && !visible)
         ++chat.unread;
     if (!m.outgoing)
         notify(m);
-    if (view().kind == View::Chat && view().uin == m.uin)
-        rebuildChat();
     if (view().kind == View::Roster)
         rebuildRoster();
     trimChats();
@@ -505,6 +687,10 @@ void Window::notify(const MessageRecord &m) {
     bool quietProfile = locked_ || closed_;
     std::string sound = settingValue(settings_, quietProfile ? "sound_locked" : "sound_unlocked");
     int volume = settingNumber(settings_, quietProfile ? "volume_locked" : "volume_unlocked");
+    // Preserve vibration/unread/external notifications while the user owns
+    // audio for playback or recording; a second engine would compete for it.
+    if (player_.active() || capture_.busy())
+        volume = 0;
     int vibration =
         settingNumber(settings_, quietProfile ? "vibration_locked" : "vibration_unlocked");
     platform_.notifyMessage(sound.empty() ? QString::null
@@ -530,8 +716,9 @@ void Window::rebuildRoster() {
         old = v.rows[v.selected].uin;
     v.rows.clear();
     std::map<std::string, std::vector<size_t> > groups;
-    std::map<std::string, unsigned> total, on;
+    std::map<std::string, unsigned> total, on, unreadCount;
     bool grouped = settingFlag(settings_, "use_groups");
+    const bool sortByName = settingValue(settings_, "sort_by") == "name";
     for (size_t i = 0; i < contacts_.size(); ++i) {
         const ContactRecord &c = contacts_[i];
         if (c.type == 1 && grouped && !c.deleted) {
@@ -549,6 +736,8 @@ void Window::rebuildRoster() {
         for (;;) {
             groups[parent];
             ++total[parent];
+            if (unread)
+                unreadCount[parent] += chat->second.unread;
             if (online(c.status))
                 ++on[parent];
             size_t slash = parent.find_last_of('/');
@@ -586,76 +775,69 @@ void Window::rebuildRoster() {
                                                         : g->first.find_last_of('/') + 1);
             QString indent;
             indent.fill(' ', depth * 2);
-            v.rows.push_back(Row(indent + u(collapsed_[g->first] ? "+ " : "- ") + u(shortName) +
-                                     " (" + QString::number(on[g->first]) + "/" +
-                                     QString::number(total[g->first]) + ")",
-                                 "group-toggle:" + g->first));
+            QString label = indent + u(collapsed_[g->first] ? "+ " : "- ") + u(shortName);
+            if (on[g->first] && !settingFlag(settings_, "hide_offline"))
+                label += " (" + QString::number(on[g->first]) + "/" +
+                         QString::number(total[g->first]) + ")";
+            if (unreadCount[g->first])
+                label += " [" + QString::number(unreadCount[g->first]) + "]";
+            v.rows.push_back(Row(label, "group-toggle:" + g->first, 0, unreadCount[g->first]));
             if (collapsed_[g->first])
                 continue;
         }
         std::vector<size_t> &items = g->second;
-        for (size_t a = 1; a < items.size(); ++a) {
-            size_t b = a;
-            while (b) {
-                const ContactRecord &left = contacts_[items[b]], &right = contacts_[items[b - 1]];
-                bool before =
-                    settingValue(settings_, "sort_by") == "name"
-                        ? left.name < right.name
-                        : (online(left.status) != online(right.status) ? online(left.status)
-                                                                       : left.name < right.name);
-                if (!before)
-                    break;
-                std::swap(items[b], items[b - 1]);
-                --b;
+        sortRosterContacts(items, contacts_, sortByName);
+        // Unread chats lead each group; both passes retain the selected
+        // status/name order without allocating a second contact list.
+        for (unsigned pass = 0; pass < 2; ++pass) {
+            for (size_t k = 0; k < items.size(); ++k) {
+                const ContactRecord &c = contacts_[items[k]];
+                std::map<uint32_t, ChatState>::const_iterator chat = chats_.find(c.uin);
+                unsigned count = chat == chats_.end() ? 0 : chat->second.unread;
+                if ((count != 0) != (pass == 0))
+                    continue;
+                QString label = u(c.name);
+                if (count)
+                    label += " [" + QString::number(count) + "]";
+                v.rows.push_back(Row(label, "open", c.uin, count));
+                if (c.uin == old)
+                    v.selected = v.rows.size() - 1;
             }
-        }
-        for (size_t k = 0; k < items.size(); ++k) {
-            ContactRecord &c = contacts_[items[k]];
-            QString label = u(c.name);
-            std::map<uint32_t, ChatState>::const_iterator chat = chats_.find(c.uin);
-            if (chat != chats_.end() && chat->second.unread)
-                label += " [" + QString::number(chat->second.unread) + "]";
-            v.rows.push_back(Row(label, "open", c.uin));
-            if (c.uin == old)
-                v.selected = v.rows.size() - 1;
         }
     }
     v.selected = std::max(0, std::min(v.selected, (int)v.rows.size() - 1));
     update();
 }
+QString Window::messageHeader(const MessageRecord &m) const {
+    const QString sender = m.outgoing             ? u("Я")
+                           : m.senderName.empty() ? name(m.uin)
+                                                  : u(m.senderName);
+    const int offset =
+        (settingNumber(settings_, "timezone") + settingNumber(settings_, "daylight")) * 60 +
+        settingNumber(settings_, "time_offset_minutes");
+    return formatChatHeader(sender, m.time, settingFlag(settings_, "show_sender"),
+                            settingFlag(settings_, "show_time"),
+                            settingFlag(settings_, "display_date"), offset);
+}
 QString Window::messageText(const MessageRecord &m) const {
-    QString text;
-    time_t stamp =
-        m.time +
-        (settingNumber(settings_, "timezone") + settingNumber(settings_, "daylight")) * 3600 +
-        settingNumber(settings_, "time_offset_minutes") * 60;
-    struct tm *tm = gmtime(&stamp);
-    char when[32];
-    strftime(when, sizeof(when), settingFlag(settings_, "display_date") ? "%d.%m %H:%M" : "%H:%M",
-             tm);
-    if (settingFlag(settings_, "show_time"))
-        text += u(when) + " ";
-    if (settingFlag(settings_, "show_sender"))
-        text += (m.outgoing
-                     ? u("Я")
-                     : u(m.senderName.empty() ? std::string(name(m.uin).utf8()) : m.senderName)) +
-                ": ";
-    if (settingFlag(settings_, "show_newlines"))
+    QString text = messageHeader(m);
+    if (!text.isEmpty() && settingFlag(settings_, "show_newlines"))
         text += "\n";
-    text += u(m.text);
+    const std::string display = m.kind == 2 ? videoMessageText(m.text, m.url) : m.text;
+    text += u(display);
     if (settingFlag(settings_, "show_smileys")) {
         replaceText(text, "*IN_LOVE*", "<3");
         replaceText(text, "*THUMBS_UP*", "(y)");
         replaceText(text, "*ROFL*", ":D");
     }
-    if (m.kind)
+    if (m.kind && !(m.kind == 2 && display.find("[видео]") != std::string::npos))
         text += "\n" + u(m.kind == 1   ? "[фото]"
                          : m.kind == 2 ? "[видео]"
                          : m.kind == 3 ? "[голосовое]"
                                        : "[файл]");
     return text;
 }
-void Window::openChat(uint32_t id) {
+void Window::openChat(uint32_t id, bool preload) {
     if (!id)
         return;
     saveDraft();
@@ -664,36 +846,60 @@ void Window::openChat(uint32_t id) {
     View chat(View::Chat, name(id));
     chat.uin = id;
     push(chat);
+    if (std::find(openChatOrder_.begin(), openChatOrder_.end(), id) == openChatOrder_.end())
+        openChatOrder_.push_back(id);
     ChatState &state = chats_[id];
     state.stamp = now();
     if (!state.loaded) {
         storage_->loadHistory(id, state.messages, settingNumber(settings_, "chat_messages"));
         state.loaded = true;
     }
-    state.unread = 0;
+    markVisibleChatRead();
     trimChats();
     rebuildChat();
-    if (state.messages.empty() && connectionState_ == Event::Online) {
-        Command c(Command::OpenChat);
-        c.uin = id;
-        c.requestId = client_.nextRequestId();
-        pending_[c.requestId] = "last";
-        pendingUin_[c.requestId] = id;
-        send(c);
+    if (preload)
+        requestLastMessage(id);
+}
+void Window::requestLastMessage(uint32_t id) {
+    if (!id || connectionState_ != Event::Online)
+        return;
+    std::map<uint32_t, ChatState>::const_iterator chat = chats_.find(id);
+    if (chat == chats_.end() || !chat->second.messages.empty())
+        return;
+    for (std::map<uint32_t, std::string>::const_iterator pending = pending_.begin();
+         pending != pending_.end(); ++pending) {
+        std::map<uint32_t, uint32_t>::const_iterator target = pendingUin_.find(pending->first);
+        if ((pending->second == "last" || pending->second == "restore-chat" ||
+             pending->second == "chat-history") &&
+            target != pendingUin_.end() && target->second == id)
+            return;
     }
+    // Java preloads one history record. OpenChat is the separate bridge
+    // operation that restores a chat to the roster and may deliver a message.
+    Command request(Command::History);
+    request.uin = id;
+    request.limit = 1;
+    request.requestId = client_.nextRequestId();
+    pending_[request.requestId] = "last";
+    pendingUin_[request.requestId] = id;
+    send(request);
 }
 void Window::rebuildChat() {
     if (view().kind != View::Chat)
         return;
-    View &v = view();
+    rebuildChat(view(), true);
+}
+void Window::rebuildChat(View &v, bool followNew) {
     ChatState &chat = chats_[v.uin];
     int old = v.rows.size();
     v.rows.clear();
     v.title = name(v.uin) + (chat.typingUntil ? u(" — печатает") : QString::null);
     for (size_t i = 0; i < chat.messages.size(); ++i)
         v.rows.push_back(Row(messageText(chat.messages[i]), "message-menu", v.uin, i));
-    if (v.selected >= old - 1)
+    if (followNew && v.selected >= old - 1)
         v.selected = std::max(0, (int)v.rows.size() - 1);
+    v.selected = std::max(0, std::min(v.selected, int(v.rows.size()) - 1));
+    v.top = std::max(0, std::min(v.top, v.selected));
     update();
 }
 void Window::showHistory(View &v) {
@@ -701,38 +907,85 @@ void Window::showHistory(View &v) {
     for (size_t i = 0; i < v.messages.size(); ++i)
         if (v.directory.empty() || u(v.messages[i].text).lower().find(u(v.directory).lower()) >= 0)
             v.rows.push_back(Row(messageText(v.messages[i]), "message-menu", v.uin, i));
-    if (v.more)
-        v.rows.push_back(Row(u("Ещё сообщения"), "history-more", v.uin));
+    v.title = name(v.uin) + " (" + QString::number(v.messages.size()) + ")";
+}
+void Window::resetServerHistory() {
+    for (std::map<uint32_t, ChatState>::iterator i = chats_.begin(); i != chats_.end(); ++i) {
+        i->second.historyRequest = i->second.historyOffset = i->second.historyBoundary = 0;
+        i->second.historyStarted = i->second.historyMore = i->second.historyQueued = false;
+    }
 }
 void Window::history(bool server, bool more) {
     uint32_t id = view().uin;
     if (!id)
         return;
-    if (!more) {
-        View v(View::History, (server ? u("История сервера: ") : u("История: ")) + name(id));
-        v.uin = id;
-        v.context = server ? "server" : "local";
-        push(v);
-    }
     if (!server) {
-        storage_->loadHistory(id, view().messages, settingNumber(settings_, "history_count"));
-        showHistory(view());
-        update();
+        View v(View::History, name(id));
+        v.uin = id;
+        v.context = "local";
+        storage_->loadHistory(id, v.messages, settingNumber(settings_, "history_count"));
+        showHistory(v);
+        push(v);
         return;
     }
-    if (view().request)
+    if (connectionState_ != Event::Online) {
+        info(u("Нет соединения"));
         return;
+    }
+    while (view().kind == View::Popup)
+        back();
+    if (more && view().kind == View::History && view().context == "server") {
+        // Discussion results own their thread cursor in the existing viewer.
+        // They must not restart ordinary chat history at offset zero.
+        if (view().request)
+            return;
+        Command request(Command::History);
+        request.uin = id;
+        request.offset = view().offset;
+        request.limit =
+            std::max(1, std::min(100, settingNumber(settings_, "server_history_count")));
+        request.requestId = client_.nextRequestId();
+        if (send(request)) {
+            view().request = request.requestId;
+            pending_[request.requestId] = "history";
+            pendingUin_[request.requestId] = id;
+        }
+        return;
+    }
+    if (view().kind != View::Chat || view().uin != id)
+        openChat(id, false);
+    requestChatHistory(id);
+    (void)more; // Both menu commands continue the same chat-owned cursor.
+}
+void Window::requestChatHistory(uint32_t id) {
+    ChatState &chat = chats_[id];
+    if (chat.historyRequest)
+        return;
+    if (chat.historyStarted && !chat.historyMore) {
+        info(u(chat.messages.size() >= 200 ? "В чате уже 200 сообщений истории"
+                                           : "История полностью загружена"));
+        return;
+    }
+    for (std::map<uint32_t, std::string>::const_iterator i = pending_.begin(); i != pending_.end();
+         ++i)
+        if (i->second == "last" && pendingUin_[i->first] == id) {
+            chat.historyQueued = true;
+            info(u("История загрузится после последнего сообщения"));
+            return;
+        }
     Command c(Command::History);
     c.uin = id;
-    c.offset = view().offset;
-    c.limit = 10;
+    c.offset = chat.historyOffset;
+    c.limit = std::max(1, std::min(100, settingNumber(settings_, "server_history_count")));
     c.requestId = client_.nextRequestId();
     if (send(c)) {
-        view().request = c.requestId;
-        pending_[c.requestId] = "history";
+        chat.historyRequest = c.requestId;
+        if (!chat.historyStarted)
+            chat.historyBoundary = chat.messages.size();
+        pending_[c.requestId] = "chat-history";
         pendingUin_[c.requestId] = id;
+        info(u("Загружаю историю…"));
     }
-    update();
 }
 const MessageRecord *Window::selectedMessage() const {
     const View *v = 0;
@@ -805,16 +1058,59 @@ void Window::showResults(const Event &e) {
     update();
 }
 void Window::showInfo(const Event &e) {
-    QString text = name(e.uin) + "\nUIN: " + QString::number(e.uin) + "\n";
-    ContactRecord *c = contact(e.uin);
-    if (c)
-        text += status(c->status) + "\n" + u(c->group) + "\n";
-    for (std::map<std::string, std::string>::const_iterator i = e.fields.begin();
-         i != e.fields.end(); ++i)
-        text += u(i->first) + ": " + u(i->second) + "\n";
-    if (!e.text.empty())
-        text += u(e.text);
-    showText(u("Информация"), text);
+    View info(View::Text, QString::number(e.uin));
+    info.context = "contact-info";
+    info.uin = e.uin;
+    info.rows.push_back(Row(name(e.uin), "info-field"));
+    info.rows.push_back(Row("UIN: " + QString::number(e.uin), "info-field"));
+    ContactRecord *entry = contact(e.uin);
+    if (entry) {
+        info.rows.push_back(Row(status(entry->status), "info-field"));
+        if (!entry->group.empty())
+            info.rows.push_back(Row(u(entry->group), "info-field"));
+    }
+    const char *keys[] = {"name",   "kind",  "last",    "username", "members",
+                          "region", "phone", "fax",     "address",  "mobile",
+                          "age",    "url",   "network", "marks",    "about"};
+    const char *labels[] = {"Имя",        "Тип",        "Фамилия", "Логин",
+                            "Участников", "Область",    "Телефон", "Факс",
+                            "Адрес",      "Мобильный",  "Возраст", "Домашняя страница",
+                            "Сеть",       "Примечания", "О себе"};
+    for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
+        std::map<std::string, std::string>::const_iterator field = e.fields.find(keys[i]);
+        if (field != e.fields.end() && !field->second.empty() &&
+            !(std::string(keys[i]) == "age" && field->second == "0"))
+            info.rows.push_back(Row(u(labels[i]) + ": " + u(field->second), "info-field"));
+    }
+    if (!e.text.empty() && e.text != std::string(name(e.uin).utf8()) &&
+        (e.fields.find("name") == e.fields.end() || e.fields.find("name")->second != e.text))
+        info.rows.push_back(Row(u(e.text), "info-field"));
+    if (infoAvatarUin_ == e.uin && !infoAvatar_.isNull())
+        info.rows.insert(info.rows.begin(), Row(QString::null, "info-avatar-view", e.uin));
+    bool replaced = false;
+    for (size_t i = 0; i < stack_.size(); ++i)
+        if (stack_[i].context == "contact-info" && stack_[i].request == e.requestId) {
+            stack_[i] = info;
+            replaced = true;
+            break;
+        }
+    if (!replaced)
+        push(info);
+    else
+        update();
+    if (entry && !entry->avatarHash.empty() && connectionState_ == Event::Online &&
+        infoAvatarUin_ != e.uin) {
+        infoAvatar_ = QPixmap();
+        infoAvatarUin_ = 0;
+        Command avatar(Command::Avatar);
+        avatar.uin = e.uin;
+        avatar.token = entry->avatarHash;
+        avatar.requestId = client_.nextRequestId();
+        if (send(avatar)) {
+            pending_[avatar.requestId] = "info-avatar";
+            pendingUin_[avatar.requestId] = e.uin;
+        }
+    }
 }
 void Window::trimChats() {
     size_t loaded = 0;
@@ -840,6 +1136,9 @@ void Window::trimChats() {
         }
         if (oldest == chats_.end())
             break;
+        openChatOrder_.erase(
+            std::remove(openChatOrder_.begin(), openChatOrder_.end(), oldest->first),
+            openChatOrder_.end());
         std::vector<MessageRecord>().swap(oldest->second.messages);
         oldest->second.loaded = false;
         --loaded;

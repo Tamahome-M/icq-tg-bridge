@@ -10,8 +10,10 @@
 #include "platform.h"
 #include "media.h"
 #include "capture.h"
+#include "media_cache.h"
 #include <map>
 #include <vector>
+#include <time.h>
 class ZMultiLineEdit;
 namespace tmm {
 class Storage;
@@ -19,6 +21,7 @@ class UiProbe;
 class InputIndicator;
 class SystemMenu;
 class SystemChrome;
+struct ChatLayout;
 struct Row {
     QString text;
     std::string action;
@@ -33,6 +36,7 @@ struct View {
         Chat,
         History,
         Menu,
+        Popup,
         SettingsPage,
         Choice,
         Files,
@@ -60,10 +64,21 @@ struct View {
 };
 struct ChatState {
     std::vector<MessageRecord> messages;
-    unsigned unread;
+    unsigned unread, historyRequest, historyOffset, historyBoundary;
     unsigned long typingUntil, stamp;
-    bool loaded;
-    ChatState() : unread(0), typingUntil(0), stamp(0), loaded(false) {}
+    bool loaded, historyStarted, historyMore, historyLoaded, historyQueued;
+    ChatState()
+        : unread(0), historyRequest(0), historyOffset(0), historyBoundary(0), typingUntil(0),
+          stamp(0), loaded(false), historyStarted(false), historyMore(false), historyLoaded(false),
+          historyQueued(false) {}
+};
+struct EditorState {
+    QString title, text;
+    std::string action, key;
+    uint32_t uin;
+    unsigned depth;
+    bool secret;
+    int maximum, cursorParagraph, cursorIndex;
 };
 class Window : public QWidget {
     Q_OBJECT
@@ -90,6 +105,7 @@ class Window : public QWidget {
     void captureError(const QString &);
     void captureCancelled();
     void mediaFinished();
+    void mediaReturn();
     void mediaPosition(unsigned int, unsigned int);
     void editorChanged();
     void inputStateChanged(int, bool);
@@ -99,10 +115,12 @@ class Window : public QWidget {
     friend class UiProbe;
     Client client_;
     Settings settings_;
+    Settings settingsDraft_;
     Storage *storage_;
     Platform platform_;
     MediaController player_;
     CaptureController capture_;
+    MediaCache mediaCache_;
     QSocketNotifier *notifier_;
     QTimer timer_;
     ZMultiLineEdit *editor_;
@@ -110,26 +128,31 @@ class Window : public QWidget {
     SystemMenu *systemMenu_;
     SystemChrome *systemChrome_;
     std::string data_, editAction_, editKey_, pendingFileAction_, playPath_, downloadName_,
-        quoteId_, quoteText_, videoToken_, receivedPath_, receivedName_;
+        quoteId_, quoteText_, videoToken_, receivedPath_, receivedName_, settingsSection_;
     uint32_t editUin_, quoteUin_, captureUin_, pickUin_, videoUin_, videoSegment_, outgoingRequest_;
     unsigned connectionState_, captureKind_, pickKind_, playPosition_, playDuration_, generation_,
-        editDepth_, connectionProgress_;
-    bool loadedMediaReady_, editSecret_, captureOwned_;
-    bool connectionErrorShown_;
-    bool locked_, closed_, editorWasVisible_, silent_, paused_, manualDisconnect_, lightOn_;
+        editDepth_, connectionProgress_, settingsDepth_;
+    bool loadedMediaReady_, editSecret_, captureOwned_, receivedDeferred_;
+    bool connectionErrorShown_, settingsEditing_, resetComplete_;
+    bool locked_, closed_, editorWasVisible_, silent_, paused_, manualDisconnect_, lightOn_,
+        pinWrong_;
     unsigned long closedAt_, startedAt_, lastAlert_, lastActivity_, typingSentAt_;
     QString pin_, notice_, ticker_, editTitle_, connectionStage_;
     unsigned long noticeUntil_, tickerUntil_;
+    time_t splashMinute_;
     int pictureZoom_, pictureRotation_;
-    QPixmap picture_, background_, frame_, statusIcons_;
+    QPixmap picture_, frame_, statusIcons_, messageIcons_, popupBackdrop_, infoAvatar_, splashLogo_;
+    uint32_t infoAvatarUin_;
     std::vector<ContactRecord> contacts_;
     std::map<uint32_t, ChatState> chats_;
     std::vector<View> stack_;
+    std::vector<EditorState> editorParents_;
     std::map<std::string, bool> collapsed_;
     std::vector<std::string> log_;
-    std::vector<uint32_t> quiet_;
+    std::vector<uint32_t> quiet_, openChatOrder_;
     std::string capturePath_, savedMediaPurpose_, managedMediaPath_;
     std::map<uint32_t, std::string> pending_;
+    std::map<uint32_t, std::string> mediaRequests_;
     std::map<uint32_t, uint32_t> pendingUin_;
     View &view();
     const View &view() const;
@@ -147,14 +170,33 @@ class Window : public QWidget {
     void showSettings(const std::string &);
     void chooseSetting(const std::string &);
     void commitSetting(const std::string &, const std::string &);
-    void refreshBackground();
+    QColor bodyColor(unsigned role) const;
+    QFont chatFont() const;
     void applySettings();
+    void updateSystemStatusIcon();
     void activate(const Row &);
+    bool activateJavaMenu(const Row &);
+    bool consumeJavaMenu(const Event &);
+    void continueJavaPrivacySave();
+    bool activateSettings(const Row &);
+    bool activateMedia(const Row &);
+    bool mediaKey(int);
+    bool javaKey(int);
+    void startVoiceRecording();
+    void beginCapture(unsigned, uint32_t);
+    void finishSettings(bool);
+    bool settingsPageActive() const;
+    void showHotkeys();
+    void templateMenu(bool);
     void activateSelected();
     void key(int);
     void rebuildRoster();
     void rebuildChat();
-    void openChat(uint32_t);
+    void rebuildChat(View &, bool followNew);
+    void openChat(uint32_t, bool preload = true);
+    void requestLastMessage(uint32_t);
+    void resetServerHistory();
+    void requestChatHistory(uint32_t id);
     void history(bool server, bool more = false);
     void showHistory(View &);
     void search(bool all = false, bool more = false);
@@ -175,7 +217,6 @@ class Window : public QWidget {
     void note(const std::string &);
     void connectClient();
     void disconnectClient();
-    void switchAccount(int);
     bool selectScope();
     bool send(Command);
     void consume(const Event &);
@@ -190,10 +231,12 @@ class Window : public QWidget {
     void files(const std::string &, const std::string &);
     void loadFiles();
     void requestMedia(unsigned);
+    bool openCachedMedia(const Command &, const std::string &purpose);
     void showMedia(const Event &);
     void nextVideo();
     void play(const std::string &, bool audioOnly = false);
     void openUrl(const std::string &);
+    void openDeferredMedia();
     void upload(const std::string &, unsigned, uint32_t);
     void attachmentMenu(uint32_t);
     void reviewAttachment(const std::string &, unsigned, uint32_t, bool);
@@ -206,6 +249,8 @@ class Window : public QWidget {
     void showTransfer(uint32_t, uint32_t, const QString &, const QString &, bool upload);
     bool showPicture(const std::string &, const QString &, const std::string &context = "");
     bool connectionProgressVisible() const;
+    void drawPlayer(QPainter &);
+    void drawSplash(QPainter &);
     void drawProgress(QPainter &, const QString &, const QString &, uint64_t, uint64_t);
     void drawAttachmentDetails(QPainter &);
     void copy(const QString &);
@@ -213,9 +258,13 @@ class Window : public QWidget {
     void hotkey(int);
     void settingsChanged();
     unsigned unread() const;
+    void markVisibleChatRead();
     QString name(uint32_t) const;
     QString status(uint32_t) const;
     QString messageText(const MessageRecord &) const;
+    QString messageHeader(const MessageRecord &) const;
+    const MessageRecord *rowMessage(const View &, const Row &) const;
+    ChatLayout layoutMessage(const View &, const Row &) const;
     int rowHeight(const Row &) const;
     bool systemMenuVisible() const;
     void syncSystemMenu();

@@ -1,4 +1,5 @@
 #include <qpainter.h>
+#include <qpixmap.h>
 #include <qwidget.h>
 #include <stdio.h>
 #include <stdlib.h>

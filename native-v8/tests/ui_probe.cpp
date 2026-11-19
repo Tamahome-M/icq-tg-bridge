@@ -11,6 +11,9 @@
 #include <ZKbInputField.h>
 #include <ZKeyDef.h>
 #include <qapplication.h>
+#include <qimage.h>
+#include <qpainter.h>
+#include <qfontmetrics.h>
 #include <qtimer.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +24,17 @@ extern "C" void UTIL_SetPowerOnHandleStatus(int);
 extern "C" void UTIL_SetFlipStatus(int);
 extern "C" void UTIL_SetKeypadLockStatus(bool);
 void checkPaint(QWidget &, const char *);
+struct NotificationCall {
+    QString file;
+    int volume, vibration;
+    NotificationCall(const QString &f, int v, int b) : file(f), volume(v), vibration(b) {}
+};
+static std::vector<NotificationCall> notifications;
+extern "C" void __wrap__ZN3tmm8Platform13notifyMessageERK7QStringii(tmm::Platform *,
+                                                                    const QString &file, int volume,
+                                                                    int vibration) {
+    notifications.push_back(NotificationCall(file, volume, vibration));
+}
 void checkInputIndicator(tmm::InputIndicator &);
 void scheduleNetworkWorker(int);
 void runNetworkWorker();
@@ -48,6 +62,293 @@ class UiProbe {
         m.silent = silent;
         m.nativeId = std::string(8, (char)serial);
         return m;
+    }
+    static void rosterIcon(Window &w, int row, const QPixmap &atlas, unsigned sprite) {
+        ZListBox *list = w.systemMenu_->list();
+        require(w.systemMenuVisible() && list->isVisible() && row < list->count(),
+                "icon row uses the visible native system list");
+        ZListBoxItem *item = static_cast<ZListBoxItem *>(list->item(row));
+        QList<QPixmap> icons = item->getSubItemIcon(0, 0);
+        QPixmap expected;
+        expected.convertFromImage(atlas.convertToImage().copy(sprite * 16, 0, 16, 16));
+        require(icons.count() == 1 && icons.first() &&
+                    icons.first()->convertToImage() == expected.convertToImage(),
+                "native item retains the exact Java sprite");
+    }
+    static void statusMenu(Window &w) {
+        const unsigned saved = w.settings_.getInt("status", 0);
+        w.settings_.setInt("status", 0x2001);
+        w.home();
+        w.mainMenu();
+        unsigned statusRow = 0;
+        while (statusRow < w.view().rows.size() && w.view().rows[statusRow].action != "status")
+            ++statusRow;
+        require(statusRow < w.view().rows.size(), "main menu exposes Status");
+        rosterIcon(w, statusRow, w.statusIcons_, 12);
+        w.activate(w.view().rows[statusRow]);
+        require(w.view().context == "status-menu" && w.view().rows.size() == 13 &&
+                    w.view().selected == 12,
+                "Java status chooser selects the current status");
+        for (unsigned i = 0; i < w.view().rows.size(); ++i)
+            rosterIcon(w, i, w.statusIcons_, statusIcon(w.view().rows[i].value));
+        w.activate(w.view().rows[4]);
+        require(w.view().context == "main-menu", "choosing status returns to main menu");
+        rosterIcon(w, statusRow, w.statusIcons_, 5);
+        w.settings_.setInt("status", saved);
+        w.home();
+    }
+    static void manualDisconnect(Window &w) {
+        const std::string grouped = settingValue(w.settings_, "use_groups");
+        const std::string hidden = settingValue(w.settings_, "hide_offline");
+        w.contacts_.clear();
+        w.chats_.clear();
+        w.settings_.setInt("use_groups", 1);
+        w.settings_.setInt("hide_offline", 0);
+        ContactRecord first;
+        first.uin = 1009001;
+        first.name = "First";
+        first.group = "Telegram";
+        first.status = 0;
+        first.inRoster = true;
+        ContactRecord second = first;
+        second.uin++;
+        second.name = "Second";
+        second.status = 32;
+        w.contacts_.push_back(first);
+        w.contacts_.push_back(second);
+        w.chats_[first.uin].unread = 2;
+        w.connectionState_ = Event::Online;
+        w.generation_ = 123;
+        w.collapsed_["Telegram"] = false;
+        w.home();
+        require(w.view().rows.size() == 3 && w.view().rows[0].text.find("(2/2)") >= 0,
+                "disconnect fixture starts with online contacts and a live group counter");
+        w.mainMenu();
+        require(w.activateJavaMenu(Row(QString::null, "disconnect")),
+                "manual disconnect follows the real main menu action");
+        require(w.manualDisconnect_ && w.connectionState_ == Event::Disconnected &&
+                    !w.generation_ && w.contact(first.uin)->status == 0xffffffffU &&
+                    w.contact(second.uin)->status == 0xffffffffU,
+                "manual disconnect clears presence before retired worker events can arrive");
+        require(w.chats_[first.uin].unread == 2, "disconnect preserves unread messages");
+        w.back();
+        require(w.view().kind == View::Roster && w.view().rows[0].text.find("(2/2)") < 0,
+                "Back rebuilds roster counters changed while the main menu was open");
+        rosterIcon(w, 2, w.statusIcons_, 6);
+        w.settings_.setInt("hide_offline", 1);
+        w.rebuildRoster();
+        bool firstVisible = false, secondVisible = false;
+        for (unsigned i = 0; i < w.view().rows.size(); ++i) {
+            firstVisible = firstVisible || w.view().rows[i].uin == first.uin;
+            secondVisible = secondVisible || w.view().rows[i].uin == second.uin;
+        }
+        require(firstVisible && !secondVisible,
+                "offline filtering removes read contacts but keeps unread chats after disconnect");
+        w.settings_.set("use_groups", grouped);
+        w.settings_.set("hide_offline", hidden);
+        w.contacts_.clear();
+        w.chats_.clear();
+        w.home();
+    }
+    static void connectionSplash(Window &w) {
+        const QFont originalFont = w.font();
+        const unsigned state = w.connectionState_, progress = w.connectionProgress_;
+        const QString stage = w.connectionStage_;
+        const char *stages[] = {"Открытие доступа в сеть",
+                                "Определение адреса сервера",
+                                "Соединение с сервером",
+                                "Соединение и защита TMME",
+                                "Подключение к сеансу",
+                                "Согласование протокола",
+                                "Получение контактов",
+                                "Подготовка контакт-листа",
+                                "Повторное подключение…",
+                                "Ожидание перед повторным подключением",
+                                "Очень длинная дополнительная строка\nс переносом для проверки"};
+        w.home();
+        require(!w.locked_, "connection renderer fixture is unlocked");
+        w.connectionState_ = Event::Connecting;
+        w.connectionProgress_ = 65;
+        for (unsigned language = 0; language < 2; ++language) {
+            setUiLanguage(language ? "en" : "ru");
+            for (unsigned size = 0; size < 2; ++size) {
+                QFont font = originalFont;
+                font.setPointSize(size ? 24 : 16);
+                w.setFont(font);
+                for (unsigned i = 0; i < sizeof(stages) / sizeof(stages[0]); ++i) {
+                    w.connectionStage_ = QString::fromUtf8(stages[i]);
+                    // Render into the actual frame even if a previous lifecycle
+                    // check left the QWidget hidden. repaint() then does nothing.
+                    if (w.frame_.size() != w.size())
+                        w.frame_.resize(w.size());
+                    QPainter painter(&w.frame_);
+                    w.drawSplash(painter);
+                    painter.end();
+                    const QImage frame = w.frame_.convertToImage();
+                    const int top =
+                        w.height() - std::max(20, QFontMetrics(w.font()).height() + 2) - 6;
+                    // Compare colors after conversion to the firmware pixmap
+                    // format; it quantizes palette RGB to six bits per channel.
+                    const unsigned background = frame.pixel(0, 0) & 0xffffff;
+                    if (!language && !size && !i)
+                        fprintf(stderr, "SPLASH palette=%08x background=%08x above=%08x bar=%08x\n",
+                                w.bodyColor(1).rgb(), background, frame.pixel(0, top - 1),
+                                frame.pixel(0, top));
+                    require((frame.pixel(0, top - 1) & 0xffffff) == background,
+                            "connection bar stays one line for long RU/EN stages and large fonts");
+                    require((frame.pixel(0, top) & 0xffffff) != background,
+                            "connection progress remains visible below the single-line boundary");
+                }
+            }
+        }
+        QPixmap expected("logo.png");
+        require(!expected.isNull() && expected.width() == 96 && expected.height() == 96 &&
+                    w.splashLogo_.convertToImage() == expected.convertToImage(),
+                "fullscreen splash uses the packaged TeleMotoMax icon");
+        setUiLanguage(settingValue(w.settings_, "language"));
+        w.setFont(originalFont);
+        w.connectionState_ = state;
+        w.connectionProgress_ = progress;
+        w.connectionStage_ = stage;
+        w.home();
+    }
+    static void rosterSorting(Window &w, uint32_t alice, uint32_t bob) {
+        const std::string sort = settingValue(w.settings_, "sort_by"),
+                          grouped = settingValue(w.settings_, "use_groups"),
+                          hidden = settingValue(w.settings_, "hide_offline");
+        const uint32_t aliceStatus = w.contact(alice)->status, bobStatus = w.contact(bob)->status;
+        const std::string aliceName = w.contact(alice)->name, bobName = w.contact(bob)->name;
+        w.settings_.set("sort_by", "status");
+        w.settings_.setInt("use_groups", 1);
+        w.settings_.setInt("hide_offline", 0);
+        w.contact(alice)->status = 0;
+        w.contact(bob)->status = 0xffffffffU;
+        w.home();
+        require(w.view().rows.size() == 3 && w.view().rows[1].uin == alice &&
+                    w.view().rows[2].uin == bob,
+                "read chats retain status order within their group");
+        w.view().selected = 1;
+        const unsigned long alert = w.lastAlert_;
+        w.incoming(message(bob, 304, true));
+        require(w.view().rows[1].uin == bob && w.view().rows[1].value == 1 &&
+                    w.view().rows[2].uin == alice && w.lastAlert_ == alert,
+                "silent unread offline chat moves above read online chat in its group");
+        require(w.view().selected == 2 && w.view().rows[w.view().selected].uin == alice,
+                "unread reorder preserves the selected contact");
+        w.settings_.set("sort_by", "name");
+        w.rebuildRoster();
+        require(w.view().rows[1].uin == bob && w.view().rows[2].uin == alice,
+                "unread priority precedes alphabetical sorting");
+        w.settings_.setInt("hide_offline", 1);
+        w.rebuildRoster();
+        require(w.view().rows.size() == 3 && w.view().rows[1].uin == bob,
+                "hidden offline chat remains visible at top while unread");
+        w.settings_.setInt("use_groups", 0);
+        w.rebuildRoster();
+        require(w.view().rows.size() == 2 && w.view().rows[0].uin == bob &&
+                    w.view().rows[1].uin == alice,
+                "flat contact list also puts unread chats first");
+        w.settings_.setInt("use_groups", 1);
+        w.settings_.set("sort_by", "status");
+        w.incoming(message(alice, 305, true));
+        require(w.view().rows[1].uin == alice && w.view().rows[2].uin == bob &&
+                    w.view().rows[1].value == 1 && w.view().rows[2].value == 1,
+                "unread chats retain status order among themselves");
+        w.openChat(alice, false);
+        w.home();
+        require(w.view().rows[1].uin == bob && w.view().rows[2].uin == alice,
+                "reading one chat leaves the remaining unread chat first");
+        w.openChat(bob, false);
+        w.home();
+        require(w.view().rows.size() == 2 && w.view().rows[1].uin == alice,
+                "read offline chat is hidden again after opening it");
+        w.settings_.setInt("hide_offline", 0);
+        w.rebuildRoster();
+        require(w.view().rows.size() == 3 && w.view().rows[1].uin == alice &&
+                    w.view().rows[2].uin == bob,
+                "reading restores the ordinary contact order");
+        w.contact(alice)->name = "A away";
+        w.contact(alice)->status = 1;
+        w.contact(bob)->name = "Z online";
+        w.contact(bob)->status = 0;
+        w.rebuildRoster();
+        require(w.view().rows[1].uin == bob && w.view().rows[2].uin == alice,
+                "Java status sorting distinguishes online from away before sorting names");
+        w.settings_.set("sort_by", "name");
+        w.contact(alice)->name = "alpha";
+        w.contact(bob)->name = "Beta";
+        w.rebuildRoster();
+        require(w.view().rows[1].uin == alice && w.view().rows[2].uin == bob,
+                "Latin names sort without case like Java");
+        w.contact(alice)->name = "анна";
+        w.contact(bob)->name = "Борис";
+        w.rebuildRoster();
+        require(w.view().rows[1].uin == alice && w.view().rows[2].uin == bob,
+                "Cyrillic names sort without case like Java");
+        w.contact(alice)->name = aliceName;
+        w.contact(bob)->name = bobName;
+        w.settings_.set("sort_by", sort);
+        w.settings_.set("use_groups", grouped);
+        w.settings_.set("hide_offline", hidden);
+        w.contact(alice)->status = aliceStatus;
+        w.contact(bob)->status = bobStatus;
+        w.home();
+        w.openChat(alice, false);
+    }
+    static void notificationPolicy(Window &w, uint32_t id) {
+        MessageRecord m = message(id, 300, false);
+        size_t before = notifications.size();
+        struct timespec stamp;
+        clock_gettime(CLOCK_MONOTONIC, &stamp);
+        w.startedAt_ = (unsigned long)stamp.tv_sec * 1000 + stamp.tv_nsec / 1000000;
+        w.lastAlert_ = 0;
+        w.notify(m);
+        require(notifications.size() == before, "startup's first minute suppresses audio API");
+        w.startedAt_ = 0;
+        w.settings_.set("sound_unlocked", "tg.mp3");
+        w.settings_.setInt("volume_unlocked", 30);
+        w.settings_.setInt("vibration_unlocked", 100);
+        w.notify(m);
+        require(notifications.size() == before + 1 &&
+                    notifications.back().file == "sounds/tg.mp3" &&
+                    notifications.back().volume == 30 && notifications.back().vibration == 100,
+                "normal notification reaches audio API with selected file, level and vibration");
+        w.notify(m);
+        require(notifications.size() == before + 1, "burst gate suppresses repeated audio calls");
+        w.settings_.set("sound_locked", "message.mp3");
+        w.settings_.setInt("volume_locked", 70);
+        w.settings_.setInt("vibration_locked", 500);
+        w.locked_ = true;
+        w.lastAlert_ = 0;
+        w.notify(m);
+        require(notifications.size() == before + 2 &&
+                    notifications.back().file == "sounds/message.mp3" &&
+                    notifications.back().volume == 70 && notifications.back().vibration == 500,
+                "PIN lock uses the separate locked notification profile");
+        w.locked_ = false;
+        w.closed_ = true;
+        w.lastAlert_ = 0;
+        w.notify(m);
+        require(notifications.size() == before + 3 &&
+                    notifications.back().file == "sounds/message.mp3" &&
+                    notifications.back().volume == 70,
+                "closed flip uses the locked notification profile");
+        w.closed_ = false;
+        w.lastAlert_ = 0;
+        m.silent = true;
+        w.notify(m);
+        m.silent = false;
+        w.quiet_.push_back(id);
+        w.notify(m);
+        w.quiet_.pop_back();
+        w.silent_ = true;
+        w.notify(m);
+        w.silent_ = false;
+        require(notifications.size() == before + 3 && w.lastAlert_ == 0,
+                "bridge silence, quiet whitelist and global mute never enter audio API");
+        w.settings_.set("sound_unlocked", "");
+        w.settings_.setInt("vibration_unlocked", 0);
+        w.lastAlert_ = 0;
     }
     static void menus(Window &w) {
         w.home();
@@ -92,10 +393,22 @@ class UiProbe {
                 "background updates do not show a menu over the hidden editor");
         w.show();
         w.editorMenu();
-        require(list->isVisible(), "editor commands use native menu");
+        if (w.view().kind != View::Popup || !list->isVisible())
+            fprintf(stderr,
+                    "UI popup diagnostic: kind=%d context=%s editorHidden=%d editorVisible=%d "
+                    "action=%s menu=%d listHidden=%d listVisible=%d parentVisible=%d locked=%d "
+                    "rows=%u\n",
+                    int(w.view().kind), w.view().context.c_str(), w.editor_->isHidden(),
+                    w.editor_->isVisible(), w.editAction_.c_str(), w.systemMenuVisible(),
+                    list->isHidden(), list->isVisible(), w.isVisible(), w.locked_,
+                    unsigned(w.view().rows.size()));
+        require(w.view().kind == View::Popup && list->isVisible(),
+                "editor commands use bottom Motorola contextual popup");
         w.back();
         require(!list->isVisible() && w.editor_->isVisible(), "back restores original editor");
         w.finishEdit(false);
+        w.finishSettings(false);
+        w.showSettings("media");
         w.chooseSetting("video_kbps");
         int chosen = w.view().selected;
         require(list->isVisible() && list->currentItem() == chosen,
@@ -105,9 +418,10 @@ class UiProbe {
         w.unlock();
         require(list->isVisible() && list->currentItem() == chosen,
                 "unlock restores system menu selection");
+        const QRect beforeNotice = list->geometry();
         w.info("menu notice");
-        require(list->geometry().bottom() < w.height() - 79,
-                "native list leaves notification banner visible");
+        require(list->geometry() == beforeNotice && list->geometry().bottom() < w.height() - 26,
+                "top notice preserves the full native list area above softkeys");
         w.notice_ = QString::null;
         View large(View::Files, QString::fromLatin1("Files"));
         for (unsigned i = 0; i < 120; ++i)
@@ -123,13 +437,15 @@ class UiProbe {
         require(w.view().selected == 20 &&
                     list->item(list->currentItem())->getSubItemText(0, 0) == "20",
                 "reverse navigation crosses native pages correctly");
+        w.finishSettings(false);
         w.home();
         w.showSettings("media");
         require(list->isVisible() && list->count() < 32, "settings replace a large file page");
         setting = static_cast<ZSettingItem *>(list->firstItem());
         require(setting->getSubItemText(0, 0) == uiText("Фото: размер") &&
-                    setting->getSubItemText(0, 1) == uiText("Мост"),
+                    setting->getSubItemText(0, 1) == uiText("как в профиле моста"),
                 "native settings preserve colon-containing label separately from value");
+        w.finishSettings(false);
         w.home();
         require(!list->isVisible(), "returning to contacts removes menu overlay");
         w.lastActivity_ = 0;
@@ -172,16 +488,19 @@ class UiProbe {
         w.settings_.set("host", "127.0.0.1");
         w.settings_.set("uin", "123456");
         w.settings_.set("password", "dummy");
+        w.settings_.set("psk", "test-code");
         w.settings_.setInt("auto_connect", 0);
         w.settings_.setInt("auto_reconnect", 0);
         w.settings_.setInt("encryption", 0);
         w.settings_.set("network", "system");
         menus(w);
+        statusMenu(w);
         w.settings_.set("uin", "");
         w.mainMenu();
         w.activate(w.view().rows[0]);
         require(w.view().kind == View::SettingsPage && w.view().context == "account",
                 "connect menu keeps missing account settings visible");
+        w.finishSettings(false);
         w.settings_.set("uin", "123456");
         w.home();
         w.settings_.set("host", "");
@@ -192,6 +511,7 @@ class UiProbe {
         w.back();
         require(w.view().kind == View::SettingsPage && w.view().context == "network",
                 "back from configuration error opens network settings");
+        w.finishSettings(false);
         w.settings_.set("host", "127.0.0.1");
         w.home();
         scheduleNetworkWorker(0);
@@ -218,8 +538,8 @@ class UiProbe {
         require(w.view().rows[0].action == "disconnect", "reconnecting menu offers cancellation");
         w.activate(w.view().rows[0]);
         require(w.connectionState_ == Event::Disconnected && w.manualDisconnect_ &&
-                    w.view().kind != View::Menu,
-                "cancel reconnect returns to application");
+                    w.view().context == "main-menu" && w.view().rows[0].action == "connect",
+                "cancel reconnect keeps Java main menu with connect action");
         require(w.selectScope(), "test account scope");
         w.storage_->clearAllHistory(initialError);
         w.chats_.clear();
@@ -231,6 +551,7 @@ class UiProbe {
         w.settings_.set("external_preview", "0");
         w.settings_.setInt("history_count", 200);
         w.settings_.setInt("chat_messages", 15);
+        w.settings_.setInt("use_groups", 1);
         w.settings_.setInt("auto_connect", 0);
         w.applySettings();
         Event roster;
@@ -254,7 +575,12 @@ class UiProbe {
         require(w.collapsed_["Telegram"] && w.view().rows.size() == 1 &&
                     w.view().rows[0].action == "group-toggle:Telegram",
                 "initial contact groups start collapsed");
-        w.activate(w.view().rows[0]);
+        ZListBox *rosterList = w.systemMenu_->list();
+        require(rosterList->isVisible() && rosterList->count() == 1 &&
+                    rosterList->item(0)->getSubItemText(0, 0) == w.view().rows[0].text,
+                "collapsed roster is rendered by the Motorola menu widget");
+        QKeyEvent chooseGroup(QEvent::KeyPress, KEYCODE_CENTER_SELECT, 0, 0);
+        QApplication::sendEvent(rosterList->viewport(), &chooseGroup);
         require(!w.collapsed_["Telegram"] && w.view().rows.size() == 2,
                 "collapsed group opens on selection");
         Event incremental;
@@ -267,6 +593,30 @@ class UiProbe {
         require(w.contact(a.uin) && w.contact(b.uin), "incremental roster preserves existing");
         require(!w.collapsed_["Telegram"] && w.view().rows.size() == 3,
                 "roster refresh preserves an opened group");
+        rosterIcon(w, 2, w.statusIcons_, 6);
+        ZListItem *firstCell = rosterList->item(1), *secondCell = rosterList->item(2);
+        w.view().selected = 2;
+        w.update();
+        Event buddyStatus(Event::Presence);
+        buddyStatus.uin = b.uin;
+        buddyStatus.status = 0;
+        w.consume(buddyStatus);
+        require(w.view().rows[1].uin == b.uin && rosterList->currentItem() == 1 &&
+                    rosterList->item(1) == firstCell && rosterList->item(2) == secondCell,
+                "status reorder preserves cursor and reuses native roster cells");
+        rosterIcon(w, 1, w.statusIcons_, 7);
+        const unsigned rosterRevision = w.systemMenu_->revision();
+        w.consume(buddyStatus);
+        require(w.systemMenu_->revision() == rosterRevision,
+                "unchanged presence reuses the native roster without repaint rebuild");
+        buddyStatus.status = 0xffffffffU;
+        w.consume(buddyStatus);
+        w.view().selected = 0;
+        w.update();
+        QKeyEvent up(QEvent::KeyPress, KEYCODE_UP, 0, 0);
+        QApplication::sendEvent(rosterList->viewport(), &up);
+        require(w.view().selected == 0 && rosterList->currentItem() == 0,
+                "native roster keeps its first-row navigation boundary");
         Event online;
         online.type = Event::State;
         online.state = Event::Online;
@@ -303,6 +653,10 @@ class UiProbe {
         w.incoming(message(a.uin, 1, true));
         require(w.unread() == 1 && w.lastAlert_ == 0,
                 "silent arrival keeps unread without burst gate");
+        require(w.messageIcons_.width() == 96 && w.messageIcons_.height() == 16 &&
+                    w.view().rows[0].value == 1 && w.view().rows[0].text.find("[1]") >= 0,
+                "silent delivery marks its collapsed parent group unread");
+        rosterIcon(w, 0, w.messageIcons_, 0);
         w.incoming(message(a.uin, 2, false));
         require(w.unread() == 2 && w.lastAlert_ != 0, "next normal arrival alerts");
         w.incoming(message(a.uin, 2, false));
@@ -326,15 +680,41 @@ class UiProbe {
         w.incoming(seed);
         require(w.chats_[a.uin].messages.size() == before + 3,
                 "native id fallback preserves distinct text");
+        notificationPolicy(w, a.uin);
+        w.activate(w.view().rows[0]);
+        require(w.view().rows.size() == 3 && w.view().rows[1].uin == a.uin &&
+                    w.view().rows[1].value == w.chats_[a.uin].unread,
+                "expanded chat keeps unread count and envelope independently of status");
+        rosterIcon(w, 0, w.messageIcons_, 0);
+        rosterIcon(w, 1, w.messageIcons_, 0);
         w.openChat(a.uin);
         require(w.chats_[a.uin].unread == 0 && w.view().kind == View::Chat,
                 "opening chat clears unread");
+        rosterSorting(w, a.uin, b.uin);
+        w.lock();
+        w.incoming(message(a.uin, 301, true));
+        require(w.chats_[a.uin].unread == 1, "message in covered chat stays unread behind PIN");
+        w.unlock();
+        require(w.chats_[a.uin].unread == 0, "unlocking visible chat clears its unread marker");
+        w.hide();
+        w.incoming(message(a.uin, 302, true));
+        require(w.chats_[a.uin].unread == 1, "background chat keeps unread marker");
+        w.resume();
+        require(w.chats_[a.uin].unread == 0, "foreground chat clears the unread marker");
+        w.chatMenu();
+        w.incoming(message(a.uin, 303, true));
+        require(w.chats_[a.uin].unread == 1, "chat menu retains the unread marker until dismissed");
+        w.back();
+        require(w.chats_[a.uin].unread == 0, "returning from a menu marks the visible chat read");
         w.key(KEYCODE_RSK);
-        bool attachments = false;
-        for (size_t i = 0; i < w.view().rows.size(); ++i)
+        bool camera = false, attachments = false;
+        for (size_t i = 0; i < w.view().rows.size(); ++i) {
+            camera = camera || w.view().rows[i].action == "capture-photo";
             attachments = attachments || w.view().rows[i].action == "attachments";
-        require(w.view().kind == View::Menu && attachments && w.view().uin == a.uin,
-                "chat menu opens with attachments for the selected recipient");
+        }
+        require(w.view().kind == View::Popup && camera && !attachments && w.view().uin == a.uin &&
+                    w.view().selected == int(w.view().rows.size()) - 1,
+                "chat uses Java bottom popup with direct camera action for recipient");
         w.back();
         w.edit(QString::fromLatin1("Message"), "message", "Draft survives PIN", a.uin);
         require(w.editor_->text() == "Draft survives PIN", "native editor draft");
@@ -352,6 +732,20 @@ class UiProbe {
         require(w.locked_ && !w.editor_->isVisible(), "PIN hides native editor");
         require(!w.inputIndicator_->isVisible(), "PIN hides input status");
         checkPaint(w, "PIN");
+        require(!w.splashLogo_.isNull(),
+                "TeleMotoMax splash icon is available in the native package");
+        w.key(KEYCODE_9);
+        w.key(KEYCODE_9);
+        w.key(KEYCODE_9);
+        w.key(KEYCODE_9);
+        require(w.locked_ && w.pinWrong_ && w.pin_.isEmpty(),
+                "wrong PIN remains in the protected prompt");
+        w.key(KEYCODE_1);
+        w.key(KEYCODE_2);
+        w.key(KEYCODE_STAR);
+        require(!w.pinWrong_ && w.pin_ == "1", "Java star deletes a PIN digit and clears error");
+        w.key(KEYCODE_LSK);
+        require(w.locked_ && w.pin_.isEmpty(), "PIN Back clears input without unlocking");
         w.minimize();
         require(!w.isVisible() && w.locked_, "minimize preserves PIN lock");
         w.platform_.requestForeground();
@@ -363,6 +757,13 @@ class UiProbe {
         require(!w.locked_ && w.editor_->isVisible() && w.editor_->text() == "Draft survives PIN",
                 "PIN restores same editor and draft");
         w.finishEdit(false);
+        w.settings_.set("lock_pin", "");
+        w.lock();
+        w.key(KEYCODE_1);
+        require(w.locked_, "without PIN only hash unlocks");
+        w.key(KEYCODE_POUND);
+        require(!w.locked_, "Java hash unlock remains available without PIN");
+        w.settings_.set("lock_pin", "1234");
         require(!w.inputIndicator_->isVisible(), "closing editor hides input status");
         require(w.storage_->loadDraft(a.uin) == "Draft survives PIN", "cancel preserves draft");
         w.showSettings("account");
@@ -374,46 +775,49 @@ class UiProbe {
         w.editor_->setText(dummyPassword);
         w.editor_->setCursorPosition(0, 3);
         w.editorMenu();
-        require(w.view().rows[0].action == "editor-secret", "password menu offers visibility");
-        w.activate(w.view().rows[0]);
+        bool exposesPassword = false;
+        for (size_t i = 0; i < w.view().rows.size(); ++i)
+            exposesPassword = exposesPassword || w.view().rows[i].action == "editor-copy" ||
+                              w.view().rows[i].action == "editor-copy-all" ||
+                              w.view().rows[i].action == "editor-cut";
+        require(w.view().kind == View::Popup && !exposesPassword,
+                "secret editor popup does not copy or cut password text");
+        w.back();
         int line = -1, column = -1;
         w.editor_->getCursorPosition(&line, &column);
-        require(w.editor_->isVisible() && w.editor_->echoMode() == ZMultiLineEdit::Normal &&
+        require(w.editor_->isVisible() && w.editor_->echoMode() == ZMultiLineEdit::Password &&
                     w.editor_->text() == dummyPassword && line == 0 && column == 3 &&
                     w.editor_->getInputField()->getType() == ZKbInputField::FIELD_TYPE_PASSWORD,
-                "show password preserves text, cursor and native input rules");
-        w.editorMenu();
-        w.activate(w.view().rows[0]);
-        require(w.editor_->echoMode() == ZMultiLineEdit::Password,
-                "password menu can hide the text again");
-        w.editorMenu();
-        w.activate(w.view().rows[0]);
+                "password popup round trip preserves text, cursor and native input rules");
         w.suspend();
+        w.resume();
         require(w.editor_->echoMode() == ZMultiLineEdit::Password,
-                "background remasks a revealed password");
-        w.editorMenu();
-        w.activate(w.view().rows[0]);
+                "background keeps password masked");
         w.flipChanged(true);
         w.flipChanged(false);
         require(w.editor_->echoMode() == ZMultiLineEdit::Password,
-                "closing the flip remasks a revealed password");
-        w.editorMenu();
-        w.activate(w.view().rows[0]);
+                "closing the flip keeps password masked");
         w.lock();
         w.unlock();
         require(w.editor_->echoMode() == ZMultiLineEdit::Password &&
                     w.editor_->text() == dummyPassword,
-                "PIN remasks a revealed password without changing it");
+                "PIN preserves masked password and its text");
         w.finishEdit(true);
+        require(w.settingsDraft_.get("password") == std::string(dummyPassword.utf8()) &&
+                    w.settings_.get("password") != std::string(dummyPassword.utf8()),
+                "account password edits stay in the settings draft until Save");
+        w.finishSettings(true);
         Settings reloaded;
         require(reloaded.load(w.settings_.path(), initialError) &&
                     reloaded.get("password") == std::string(dummyPassword.utf8()),
                 "saved account password preserves case, spaces and UTF-8 after reload");
+        w.showSettings("account");
         w.chooseSetting("password");
         require(w.editor_->text() == dummyPassword &&
                     w.editor_->echoMode() == ZMultiLineEdit::Password,
                 "reopening password starts masked with the exact saved value");
         w.finishEdit(false);
+        w.finishSettings(false);
         w.openChat(a.uin);
         w.edit(QString::fromLatin1("Message"), "message", "Before ", a.uin);
         require(!w.editSecret_ &&
@@ -483,12 +887,15 @@ class UiProbe {
         w.chooseSetting("video_kbps");
         require(w.view().kind == View::Choice && w.view().rows.size() > 4, "media uses choices");
         w.back();
+        w.finishSettings(false);
         w.home();
         w.activate(Row(QString::null, "settings"));
         w.activate(Row(QString::null, "settings:network"));
         w.chooseSetting("encryption");
-        w.activate(Row(QString::null, "set:encryption:1"));
-        require(w.settings_.getBool("encryption"), "setting choice persists");
+        require(w.settingsDraft_.getBool("encryption") && !w.settings_.getBool("encryption"),
+                "network toggle remains staged until Save");
+        w.finishSettings(true);
+        require(w.settings_.getBool("encryption"), "saved network setting persists");
         w.settings_.set("language", "en");
         w.applySettings();
         require(uiText("Настройки") == "Settings", "English UI translation");
@@ -511,6 +918,8 @@ class UiProbe {
         require(safe.find(QString::fromUtf8("✓")) < 0 && safe.find(QString::fromUtf8("↗")) < 0 &&
                     safe.find(QString::fromUtf8("☺")) < 0 && safe.find(":)") >= 0,
                 "message icons independent of unsupported font glyphs");
+        manualDisconnect(w);
+        connectionSplash(w);
         // End on a readable fixture scene for visual inspection; no network request.
         w.contacts_.clear();
         w.chats_.clear();
@@ -580,10 +989,49 @@ class UiProbe {
         w.openChat(a.uin);
         if (selectedScene == "menu")
             w.mainMenu();
-        else if (selectedScene == "statuses") {
+        else if (selectedScene == "status-menu") {
+            w.mainMenu();
+            w.activate(Row(QString::null, "status"));
+        } else if (selectedScene == "pin" || selectedScene == "pin-error" ||
+                   selectedScene == "lock") {
+            w.settings_.set("lock_pin", selectedScene == "lock" ? "" : "1234");
+            w.lock();
+            if (selectedScene == "pin-error") {
+                w.key(KEYCODE_9);
+                w.key(KEYCODE_9);
+                w.key(KEYCODE_9);
+                w.key(KEYCODE_9);
+            } else if (selectedScene == "pin") {
+                w.key(KEYCODE_1);
+                w.key(KEYCODE_2);
+            }
+        } else if (selectedScene == "connection" || selectedScene == "connection-large") {
+            w.home();
+            w.connectionState_ = Event::Connecting;
+            w.connectionProgress_ = 65;
+            w.connectionStage_ = uiText("Определение адреса сервера");
+            if (selectedScene == "connection-large") {
+                QFont large = w.font();
+                large.setPointSize(24);
+                w.setFont(large);
+                w.connectionStage_ = uiText("Соединение и защита TMME");
+            }
+            w.update();
+            require(!w.systemMenuVisible() && !w.systemMenu_->list()->isVisible(),
+                    "connection splash hides the roster widget");
+        } else if (selectedScene == "statuses") {
             w.collapsed_["Telegram"] = w.collapsed_["Telegram/Каналы"] = w.collapsed_["MAX"] =
                 false;
             w.home();
+            bool nested = false;
+            for (unsigned i = 0; i < w.view().rows.size(); ++i)
+                if (w.view().rows[i].action == "group-toggle:Telegram/Каналы") {
+                    nested = true;
+                    require(
+                        w.systemMenu_->list()->item(i)->getSubItemText(0, 0).left(2) == "| ",
+                        "native roster preserves nested group depth despite whitespace trimming");
+                }
+            require(nested, "native roster keeps the nested Telegram group");
         } else if (selectedScene == "settings") {
             w.settings_.set("photo_size", "176x220");
             w.settings_.set("photo_kb", "20");

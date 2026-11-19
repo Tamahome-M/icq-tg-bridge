@@ -1,7 +1,9 @@
 #include "capture.h"
 #include "capture_codec.h"
 #include "capture_media.h"
+#include "camera_ui_v8.h"
 #include <qdialog.h>
+#include <qarray.h>
 #include <qimage.h>
 #include <qfileinfo.h>
 #include <ezxsound.h>
@@ -64,8 +66,9 @@ bool copyFile(const QString &from, const QString &to) {
     return ok && total > 0;
 }
 } // namespace
-// The stock VoiceNote code uses this same input device (0x303), 4000-sample
-// PCM reads and 160-sample AMR frames. Only this worker owns native handles.
+// Use the stock VoiceNote input device (0x303) and 160-sample AMR frames.
+// Keep the native 4000-sample packet size. Only the worker touches the AAL
+// handle: pause/close share AAL_read's mutex and cannot safely cancel it from UI.
 class VoiceCapture {
   public:
     VoiceCapture(const char *path, int seconds, unsigned bitrate)
@@ -128,7 +131,8 @@ class VoiceCapture {
         if (stopped())
             return;
         AM_NORMAL_DEV_INTERFACE input(static_cast<SOUNDM_AUDIO_NORMALDEV_TYPE_ENUM_T>(0x303));
-        short samples[4000], frame[160];
+        const unsigned chunk = 4000; // Stock VoiceNote PCM packet at 8 kHz.
+        short samples[chunk], frame[160];
         unsigned filled = 0, deadline = now() + 5000;
         while (!stopped() && frames_ < static_cast<unsigned>(seconds_) * 50) {
             if (input.canRead() != 0) {
@@ -139,8 +143,14 @@ class VoiceCapture {
                 usleep(20000);
                 continue;
             }
-            int count = input.read(samples, 4000);
-            if (count < 0 || count > 4000) {
+            // canRead may wait for the audio service. A Stop received during
+            // that wait must not start another blocking PCM read afterward.
+            if (stopped())
+                break;
+            int count = input.read(samples, chunk);
+            if (stopped())
+                break;
+            if (count < 0 || count > static_cast<int>(chunk)) {
                 error_ = 202;
                 break;
             }
@@ -287,14 +297,18 @@ void CaptureController::recordVoice(const QString &path, int seconds) {
     timer_.start(100);
 }
 void CaptureController::stop() {
-    if (voice_)
+    if (voice_) {
+        std::fprintf(stderr, "Voice recording: stop requested at %u AMR frames\n",
+                     voice_->frames());
         voice_->stop();
-    else if (dialog_)
+    } else if (dialog_)
         cancel();
 }
 void CaptureController::cancel() {
     if (!busy_)
         return;
+    if (dialog_ && dialog_->result() == QDialog::Accepted)
+        return; // A late AM/background notification cannot discard a saved shot.
     cancelled_ = true;
     if (voice_)
         voice_->stop();
@@ -306,6 +320,8 @@ void CaptureController::poll() {
     if (voice_ && voice_->done()) {
         timer_.stop();
         unsigned code = voice_->error(), frames = voice_->frames();
+        std::fprintf(stderr, "Voice recording: completed, %u AMR frames, error %u, cancelled %d\n",
+                     frames, code, cancelled_ ? 1 : 0);
         delete voice_;
         voice_ = 0;
         busy_ = false;
@@ -361,6 +377,7 @@ void CaptureController::camera(const QString &path, bool video, int seconds) {
                              "DestroyCameraDlg",
                              "SetCameraFileName",
                              "GetCameraFileName",
+                             "GetCameraData",
                              "SetCameraPhotoMaxLimitation",
                              "SetCameraVideoMaxLimitation",
                              "_ZN10CAM_UI_Dlg6cancelEv",
@@ -408,14 +425,41 @@ void CaptureController::camera(const QString &path, bool video, int seconds) {
         dialog_, video ? 320 : width, video ? 240 : height);
     if (video)
         timer_.start(100);
+    CameraUiV8 cameraUi(dialog_, cameraLibrary_, video);
+    if (!cameraUi.valid()) {
+        timer_.stop();
+        fn<void (*)(void *)>(dlsym(cameraLibrary_, "DestroyCameraDlg"))(dialog_);
+        dialog_ = 0;
+        busy_ = false;
+        videoSeconds_ = 0;
+        destination_ = QString::null;
+        unlink(path.local8Bit().data());
+        emit error(QString::fromUtf8("Несовместимый интерфейс камеры V8"));
+        return;
+    }
+    std::fprintf(stderr, "Camera %s: entering native dialog\n", video ? "video" : "photo");
     int result = dialog_->exec();
+    std::fprintf(stderr, "Camera %s: native dialog returned %d, cancelled %d\n",
+                 video ? "video" : "photo", result, cancelled_ ? 1 : 0);
+    cameraUi.detach();
     timer_.stop();
-    QString recorded = cameraFileName(dialog_);
-    fn<void (*)(void *)>(dlsym(cameraLibrary_, "DestroyCameraDlg"))(dialog_);
+    // Mode 1 returns photo bytes; mode 2 also exposes the recorded video as
+    // data. The result belongs to the dialog, not necessarily to a filename.
+    // Persist it before DestroyCameraDlg releases its QByteArray/temp file.
+    const QString staged = path + ".captured";
+    bool ownsStaged = result == QDialog::Accepted && !cancelled_ && reserve(staged);
+    bool ok = ownsStaged && saveCameraResult(dialog_, staged);
+    std::fprintf(stderr, "Camera %s: result saved %d, closing native dialog\n",
+                 video ? "video" : "photo", ok ? 1 : 0);
+    QDialog *completed = dialog_;
     dialog_ = 0;
+    fn<void (*)(void *)>(dlsym(cameraLibrary_, "DestroyCameraDlg"))(completed);
+    std::fprintf(stderr, "Camera %s: native dialog destroyed\n", video ? "video" : "photo");
     videoSeconds_ = 0;
-    bool ok = result == QDialog::Accepted && !cancelled_ && !recorded.isEmpty() &&
-              copyFile(recorded, path);
+    if (ok)
+        ok = ::rename(staged.local8Bit().data(), path.local8Bit().data()) == 0;
+    if (ownsStaged)
+        unlink(staged.local8Bit().data());
     if (ok && !video) {
         QImage image(path);
         ok = !image.isNull();
@@ -452,5 +496,28 @@ QString CaptureController::cameraFileName(QDialog *dialog) const {
     const QString *actual =
         fn<const QString *(*)(void *)>(dlsym(cameraLibrary_, "GetCameraFileName"))(dialog);
     return actual ? *actual : QString::null;
+}
+bool CaptureController::saveCameraResult(QDialog *dialog, const QString &destination) const {
+    // GetCameraData -> CAM_UI_Dlg::data returns const QByteArray& (dialog+384),
+    // not a char buffer or a by-value QByteArray with a hidden return argument.
+    const QByteArray *data =
+        fn<const QByteArray *(*)(void *)>(dlsym(cameraLibrary_, "GetCameraData"))(dialog);
+    if (data && data->size()) {
+        const unsigned size = data->size();
+        std::fprintf(stderr, "Camera result: %u bytes from native buffer\n", size);
+        if (size > 4 * 1024 * 1024)
+            return false;
+        FILE *out = std::fopen(destination.local8Bit().data(), "wb");
+        if (!out)
+            return false;
+        bool ok = std::fwrite(data->data(), 1, size, out) == size && !std::ferror(out);
+        if (std::fclose(out))
+            ok = false;
+        return ok;
+    }
+    const QString recorded = cameraFileName(dialog);
+    std::fprintf(stderr, "Camera result: empty native buffer, filename %s\n",
+                 recorded.isEmpty() ? "empty" : "present");
+    return !recorded.isEmpty() && copyFile(recorded, destination);
 }
 } // namespace tmm

@@ -3,8 +3,8 @@
 #include <ZSkinBase.h>
 
 namespace tmm {
-// Draw the firmware's title/softkey skins into Window's completed frame rather
-// than exposing separately painted child windows between navigation frames.
+// Draw native chrome into the completed frame. The footer background is
+// captured once from a hidden native ZSoftKey, including its theme blending.
 class SystemChrome {
   public:
     explicit SystemChrome(QWidget &);
@@ -14,7 +14,8 @@ class SystemChrome {
 
   private:
     QWidget &window_;
-    ZSkinBase header_, left_, right_;
+    ZSkinBase header_;
+    QPixmap footerBackground_;
     QFont headerFont_, softkeyFont_;
     QColor headerInk_, softkeyInk_;
     SystemChrome(const SystemChrome &);

@@ -829,9 +829,12 @@ class Client::Impl : public Cancellation {
             while (r.left()) {
                 ContactRecord c;
                 c.uin = uin(r.p8());
+                // Both online and offline user-info records include the
+                // warning level and TLV count. Leaving the offline trailer
+                // unread treats its zero bytes as another (empty) UIN.
+                r.u16();
+                Tlvs t = tlvs(r, r.u16());
                 if (s.subtype == 11) {
-                    r.u16();
-                    Tlvs t = tlvs(r, r.u16());
                     if (t[6].size() == 4) {
                         Reader status(t[6]);
                         c.status = status.u32();
@@ -1552,6 +1555,20 @@ void Client::launch(bool prefetch) {
 }
 void Client::stop() {
     impl_->stop();
+}
+bool Client::stopAndWait() {
+    impl_->stop();
+    pthread_mutex_lock(&impl_->mutex);
+    const bool join = impl_->joinable;
+    const pthread_t worker = impl_->thread;
+    pthread_mutex_unlock(&impl_->mutex);
+    if (join && pthread_join(worker, 0) != 0)
+        return false;
+    if (join) {
+        Guard guard(impl_->mutex);
+        impl_->joinable = false;
+    }
+    return true;
 }
 int Client::eventFd() const {
     return impl_->notify[0];

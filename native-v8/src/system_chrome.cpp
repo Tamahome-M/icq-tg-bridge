@@ -1,4 +1,5 @@
 #include "system_chrome.h"
+#include <ZSoftKey.h>
 #include <qapplication.h>
 #include <stddef.h>
 #include <algorithm>
@@ -24,15 +25,12 @@ static QFont themeFont(QWidget &window, const FONT_INFO_T &info) {
     return font;
 }
 SystemChrome::SystemChrome(QWidget &window)
-    : window_(window), header_(window, ZSkinService::clsZHeader1, false),
-      left_(window, ZSkinService::clsZSoftKeyLeft, false),
-      right_(window, ZSkinService::clsZSoftKeyRight, false) {
+    : window_(window), header_(window, ZSkinService::clsZHeader1, false) {
     refresh();
 }
 void SystemChrome::refresh() {
     header_.updateSkin();
-    left_.updateSkin();
-    right_.updateSkin();
+    footerBackground_ = QPixmap();
     const ZWidgetSkinProps *props = ZSkinService::getAllSkinnableProps();
     if (props) {
         headerFont_ = themeFont(window_, props->fntHeaderAStd);
@@ -57,14 +55,31 @@ void SystemChrome::drawHeader(QPainter &p, const QRect &rect, const QString &tit
 }
 void SystemChrome::drawFooter(QPainter &p, const QRect &rect, const QString &left,
                               const QString &right) {
+    if (rect.isEmpty())
+        return;
     p.save();
+    if (footerBackground_.size() != rect.size()) {
+        // The QWidget ZSkinBase overload does not blend like ZSoftButton's
+        // ZWidget overload. Render the real control without showing it or
+        // processing application events. Its solid themed parent prevents
+        // chat/photo pixels from showing through the bar's translucent skin.
+        QWidget surface(&window_);
+        surface.resize(rect.size());
+        surface.setPalette(window_.palette());
+        surface.setBackgroundColor(window_.palette().active().background());
+        ZSoftKey keys("CST_2", &surface);
+        keys.setGeometry(0, 0, rect.width(), rect.height());
+        keys.setText(ZSoftKey::LEFT, QString::null);
+        keys.setText(ZSoftKey::RIGHT, QString::null);
+        keys.hide();
+        footerBackground_ = QPixmap::grabWidget(&keys);
+    }
+    p.fillRect(rect, window_.palette().active().background());
+    if (!footerBackground_.isNull())
+        p.drawPixmap(rect.x(), rect.y(), footerBackground_);
     const QRect leftRect(rect.x(), rect.y(), rect.width() / 2, rect.height());
     const QRect rightRect(leftRect.right() + 1, rect.y(), rect.width() - leftRect.width(),
                           rect.height());
-    left_.drawBackground(p, &leftRect, false);
-    left_.drawBorder(p, &leftRect);
-    right_.drawBackground(p, &rightRect, false);
-    right_.drawBorder(p, &rightRect);
     p.setFont(softkeyFont_);
     p.setPen(softkeyInk_);
     p.drawText(leftRect.x() + 4, leftRect.y(), std::max(1, leftRect.width() - 8), leftRect.height(),

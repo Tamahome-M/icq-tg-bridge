@@ -32,7 +32,7 @@ class NativeReleaseTests(unittest.TestCase):
         self.root = Path(self.tmp.name) / "source"; self.root.mkdir()
         # Source fingerprint deliberately excludes build products and data.
         shutil.copytree(ROOT / "native-v8", self.root / "native-v8", ignore=shutil.ignore_patterns("build", "dist", "__pycache__"))
-        for source in (*package.ASSETS.values(), ROOT / "telemotomax/COPYING"):
+        for source in (*package.ASSETS.values(), ROOT / "telemotomax/COPYING", ROOT / "telemotomax/util/icon/make_icon.py"):
             target = self.root / source.relative_to(ROOT); target.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(source, target)
         self.dist = self.root / "native-v8/dist"; self.dist.mkdir()
         for name in release.FILES: (self.dist/name).write_bytes(("package:" + name).encode())
@@ -50,9 +50,49 @@ class NativeReleaseTests(unittest.TestCase):
         (self.root / "telemotomax/res/MIDP2/sounds/tg.mp3").write_bytes(b"changed")
         with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
 
+    def test_all_native_alerts_meet_reader_minimum_and_keep_working_tg(self):
+        for name, path in package.ASSETS.items():
+            if name.endswith(".mp3"):
+                with self.subTest(name=name):
+                    package.check_sound(path)
+        self.assertEqual(package.ASSETS["sounds/tg.mp3"],
+                         ROOT/"telemotomax/res/MIDP2/sounds/tg.mp3")
+        for name in ("message", "msg_low", "typing"):
+            self.assertEqual(package.ASSETS[f"sounds/{name}.mp3"],
+                             ROOT/f"native-v8/sounds/{name}.mp3")
+
+    def test_packaging_rejects_short_audio_even_when_tags_make_file_bigger(self):
+        binary = Path(self.tmp.name)/"arm"
+        header = bytearray(52); header[:6] = b"\x7fELF\x01\x01"; header[18:20] = b"\x28\x00"
+        binary.write_bytes(header)
+        for name in ("message", "msg_low", "typing"):
+            original = ROOT/f"telemotomax/res/MIDP2/sounds/{name}.mp3"
+            if name == "typing":
+                self.assertGreater(original.stat().st_size, 4096)
+            with self.subTest(name=name), patch.dict(package.ASSETS,
+                    {f"sounds/{name}.mp3": original}):
+                with self.assertRaisesRegex(ValueError, "4096"):
+                    package.inputs(binary)
+
     def test_status_sprite_change_requires_native_version(self):
         (self.root / "telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png").write_bytes(b"changed")
         with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
+
+    def test_every_packaged_shared_asset_is_bound_to_source_fingerprint(self):
+        before = release.source_hash(self.root)
+        for path in package.ASSETS.values():
+            relative = path.relative_to(ROOT)
+            staged = self.root / relative
+            original = staged.read_bytes()
+            with self.subTest(asset=relative):
+                try:
+                    staged.write_bytes(original + b"changed shared asset")
+                    self.assertNotEqual(before, release.source_hash(self.root))
+                    with self.assertRaises(ValueError):
+                        release.validate_manifest(self.root, self.manifest)
+                finally:
+                    staged.write_bytes(original)
+        self.assertEqual(before, release.source_hash(self.root))
 
     def test_manifest_rejects_wrong_source_assets_and_sizes(self):
         release.validate_manifest(self.root, self.manifest)
@@ -98,9 +138,20 @@ class NativeReleaseTests(unittest.TestCase):
                 prefix = "app/" if name.endswith(".pep") else "TeleMotoMax-Native/"
                 self.assertEqual(archive.getmember(prefix+"telemotomax.lin").mode, 0o755)
                 self.assertEqual(archive.getmember(prefix+"collect-log.lin").mode, 0o755)
+                xp_script = archive.extractfile(prefix+"collect-log-xp.cmd").read()
+                self.assertEqual(xp_script, (ROOT/"native-v8/collect-log-xp.cmd").read_bytes())
+                self.assertTrue(xp_script.isascii())
+                self.assertIn(b"\r\n", xp_script)
+                self.assertNotIn(b"\n", xp_script.replace(b"\r\n", b""))
                 self.assertIn("sounds/msg_low.mp3", "\n".join(archive.getnames()))
                 self.assertEqual(archive.extractfile(prefix+"statuses.png").read(),
                                  package.ASSETS["statuses.png"].read_bytes())
+                self.assertEqual(archive.extractfile(prefix+"messages.png").read(),
+                                 package.ASSETS["messages.png"].read_bytes())
+                for asset, path in package.ASSETS.items():
+                    if asset.endswith(".mp3"):
+                        self.assertEqual(archive.extractfile(prefix+asset).read(), path.read_bytes())
+                self.assertNotIn(prefix+"back.png", archive.getnames())
                 if name.endswith(".pep"):
                     ini = archive.extractfile("description.ini").read()
                     self.assertIn(b"Name = TeleMotoMax Native", ini)
@@ -127,8 +178,12 @@ class NativeReleaseTests(unittest.TestCase):
             self.assertNotIn("must-not-appear", report)
             self.assertIn("test:launcher.previous.log" if have_logs else "missing or unreadable", report)
             self.assertFalse(list(directory.glob(".tmm-log-*")))
-        (self.root/"native-v8/collect-log.lin").write_text("changed")
-        with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
+        for name in ("collect-log.lin", "collect-log-xp.cmd"):
+            path = self.root/"native-v8"/name
+            previous = path.read_bytes()
+            path.write_text("changed")
+            with self.assertRaises(ValueError): release.validate_manifest(self.root, self.manifest)
+            path.write_bytes(previous)
 
     def test_launcher_discards_firmware_input_echo_but_keeps_errors_and_exit_status(self):
         directory = Path(self.tmp.name)/"phone files"; directory.mkdir()

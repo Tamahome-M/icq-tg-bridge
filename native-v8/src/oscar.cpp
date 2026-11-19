@@ -301,10 +301,12 @@ ContactRecord presence(const Snac &s) {
     Reader r(s.data);
     ContactRecord c;
     c.uin = uin(r.p8());
-    if (s.subtype == 12)
-        return c;
     r.u16();
     Tlvs t = tlvs(r, r.u16());
+    if (r.left())
+        throw Error("Лишние данные статуса контакта");
+    if (s.subtype == 12)
+        return c;
     if (t[6].size() == 4) {
         Reader v(t[6]);
         c.status = v.u32();

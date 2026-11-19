@@ -17,6 +17,8 @@ class Settings {
     std::string get(const std::string &key, const std::string &fallback = "") const;
     int getInt(const std::string &key, int fallback = 0) const;
     bool getBool(const std::string &key, bool fallback = false) const;
+    bool remove(const std::string &key);
+    bool removePrefix(const std::string &prefix);
     void set(const std::string &key, const std::string &value);
     void setInt(const std::string &key, int value);
     void setBool(const std::string &key, bool value);

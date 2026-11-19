@@ -7,7 +7,62 @@
 #include <stdio.h>
 #include <fstream>
 using namespace tmm;
+static void historyOff() {
+    char pattern[] = "/tmp/tmm-history-off-XXXXXX";
+    const char *root = mkdtemp(pattern);
+    assert(root);
+    const std::string base(root);
+    std::string error;
+    Storage first(base);
+    MessageRecord message;
+    message.uin = 1000001;
+    message.outgoing = true;
+    message.cookie = 123;
+    message.text = "A saved message";
+    assert(first.setAccount("one.example", 5190, 12345, error));
+    const std::string one = first.accountDir();
+    assert(first.appendHistory(message.uin, message, error));
+    assert(first.saveDraft(message.uin, "Unsent draft", error));
+    assert(first.setAccount("two.example", 5190, 12345, error));
+    const std::string two = first.accountDir();
+    assert(first.appendHistory(message.uin, message, error));
+    assert(atomicWrite(one + "/history-1000001.dat.new-Ab12xZ", "partial", error));
+    assert(atomicWrite(one + "/notes.dat", "user data", error));
+    assert(atomicWrite(base + "/outside", "outside", error));
+    assert(symlink((base + "/outside").c_str(), (one + "/history-2.dat").c_str()) == 0);
+    assert(ensureDirectory(base + "/accounts/unknown", error));
+    assert(atomicWrite(base + "/accounts/unknown/history-1.dat", "user data", error));
+    assert(symlink((base + "/accounts/unknown").c_str(),
+                   (base + "/accounts/" + std::string(64, 'f')).c_str()) == 0);
+    first.setHistoryLimit(0);
+    assert(first.clearAllHistory(error, true));
+    assert(access((one + "/history-1000001.dat").c_str(), F_OK) < 0);
+    assert(access((two + "/history-1000001.dat").c_str(), F_OK) < 0);
+    assert(access((one + "/history-1000001.dat.new-Ab12xZ").c_str(), F_OK) < 0);
+    struct stat st;
+    assert(lstat((one + "/history-2.dat").c_str(), &st) == 0 && S_ISLNK(st.st_mode));
+    std::string text;
+    assert(readBounded(base + "/outside", text, 100) && text == "outside");
+    assert(readBounded(one + "/notes.dat", text, 100) && text == "user data");
+    assert(readBounded(base + "/accounts/unknown/history-1.dat", text, 100));
+    Storage restart(base);
+    restart.setHistoryLimit(0);
+    assert(restart.setAccount("one.example", 5190, 12345, error));
+    std::vector<MessageRecord> messages(1, message);
+    assert(restart.loadHistory(message.uin, messages) && messages.empty());
+    assert(restart.appendHistory(message.uin, message, error));
+    messages.push_back(message);
+    assert(restart.saveHistory(message.uin, messages, error));
+    assert(restart.updateReceipt(message.uin, message.cookie, 2, "read", error));
+    assert(access((one + "/history-1000001.dat").c_str(), F_OK) < 0);
+    assert(restart.loadDraft(message.uin) == "Unsent draft");
+    restart.setHistoryLimit(200);
+    assert(restart.loadHistory(message.uin, messages) && messages.empty());
+    assert(restart.appendHistory(message.uin, message, error));
+    assert(restart.loadHistory(message.uin, messages) && messages.size() == 1);
+}
 int main() {
+    historyOff();
     char pattern[] = "/tmp/tmm-storage-XXXXXX";
     char *root = mkdtemp(pattern);
     assert(root);
@@ -74,10 +129,18 @@ int main() {
     assert(a.loadHistory(m.uin, messages) && messages.size() == 1 && messages[0].delivery == 2 &&
            messages[0].nativeId == m.nativeId);
     a.setHistoryLimit(0);
+    std::string beforeDisabled;
+    assert(readBounded(first + "/history-1000001.dat", beforeDisabled, 65536));
     assert(a.updateReceipt(m.uin, m.cookie, 1, "max:new-id", error));
-    assert(a.loadHistory(m.uin, messages) && messages.size() == 1 && messages[0].delivery == 2 &&
-           messages[0].nativeId == "max:new-id");
+    assert(a.appendHistory(m.uin, m, error));
+    assert(a.saveHistory(m.uin, messages, error));
+    assert(a.loadHistory(m.uin, messages) && messages.empty());
+    std::string afterDisabled;
+    assert(readBounded(first + "/history-1000001.dat", afterDisabled, 65536) &&
+           beforeDisabled == afterDisabled);
     a.setHistoryLimit(500);
+    assert(a.loadHistory(m.uin, messages) && messages.size() == 1 &&
+           messages[0].nativeId == m.nativeId);
     // One provider message can be split into several OSCAR deliveries, all
     // sharing the same quote locator, even with identical fragment text.
     MessageRecord fragment = messages[0];
@@ -153,6 +216,49 @@ int main() {
     assert(access((first + "/cache/media-Ab12xZ.jpg").c_str(), F_OK) < 0);
     assert(access((first + "/cache/my-photo.jpg").c_str(), F_OK) == 0);
     assert(access((first + "/capture-123.jpg").c_str(), F_OK) == 0);
-    printf("storage/settings OK (%s)\n", root);
+    // Reset spans every managed account, but never a user file or link target.
+    assert(atomicWrite(first + "/cache/media-Ab12xZ.3gp", "download", error));
+    assert(atomicWrite(first + "/cache/media-not-random.jpg", "unknown", error));
+    assert(atomicWrite(first + "/capture-123-1.jpg", "owned capture", error));
+    assert(atomicWrite(first + "/notes.txt", "user note", error));
+    assert(atomicWrite(first + "/history-1000001.dat.new-Ab12xZ", "interrupted save", error));
+    assert(atomicWrite(base + "/outside.dat", "external target", error));
+    assert(unlink((first + "/roster.dat").c_str()) == 0);
+    assert(symlink((base + "/outside.dat").c_str(), (first + "/roster.dat").c_str()) == 0);
+    assert(a.setAccount("other.example", 5190, 123456, error));
+    const std::string second = a.accountDir();
+    assert(a.saveDraft(m.uin, "Another draft", error));
+    assert(a.saveTemplates(templates, error));
+    assert(a.appendHistory(m.uin, m, error));
+    assert(ensureDirectory(base + "/accounts/not-an-account", error));
+    assert(atomicWrite(base + "/accounts/not-an-account/history-1.dat", "user file", error));
+    const std::string linked = base + "/accounts/" + std::string(64, 'f');
+    assert(symlink((base + "/accounts/not-an-account").c_str(), linked.c_str()) == 0);
+    assert(a.resetAll(error));
+    assert(access((first + "/draft-1000001.dat").c_str(), F_OK) < 0);
+    assert(access((first + "/templates.dat").c_str(), F_OK) < 0);
+    assert(access((first + "/quiet.dat").c_str(), F_OK) < 0);
+    assert(access((first + "/capture-123-1.jpg").c_str(), F_OK) < 0);
+    assert(access((first + "/history-1000001.dat.new-Ab12xZ").c_str(), F_OK) < 0);
+    assert(access((first + "/cache/media-Ab12xZ.3gp").c_str(), F_OK) < 0);
+    assert(access((second + "/history-1000001.dat").c_str(), F_OK) < 0);
+    assert(access((second + "/draft-1000001.dat").c_str(), F_OK) < 0);
+    assert(access((second + "/templates.dat").c_str(), F_OK) < 0);
+    assert(access((first + "/cache/my-photo.jpg").c_str(), F_OK) == 0);
+    assert(access((first + "/cache/media-not-random.jpg").c_str(), F_OK) == 0);
+    assert(access((first + "/capture-123.jpg").c_str(), F_OK) == 0);
+    assert(access((first + "/notes.txt").c_str(), F_OK) == 0);
+    assert(readBounded(base + "/outside.dat", contents, 100) && contents == "external target");
+    assert(lstat((first + "/roster.dat").c_str(), &st) == 0 && S_ISLNK(st.st_mode));
+    assert(lstat(linked.c_str(), &st) == 0 && S_ISLNK(st.st_mode));
+    assert(readBounded(base + "/accounts/not-an-account/history-1.dat", contents, 100) &&
+           contents == "user file");
+    // A redirected accounts root must fail instead of traversing its target.
+    assert(ensureDirectory(base + "/redirected", error));
+    assert(symlink((base + "/accounts").c_str(), (base + "/redirected/accounts").c_str()) == 0);
+    Storage redirected(base + "/redirected");
+    assert(!redirected.resetAll(error) && !error.empty());
+    assert(access((base + "/accounts/not-an-account/history-1.dat").c_str(), F_OK) == 0);
+    printf("storage/settings and constrained all-account reset OK (%s)\n", root);
     return 0;
 }

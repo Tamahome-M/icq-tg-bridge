@@ -62,13 +62,26 @@ class UiProbe : public QObject {
         if (tick_ == 23) {
             require(w_.editor_->text() == "a2*3", "raw password keys produce exact expected text");
             w_.editorMenu();
-            w_.activate(w_.view().rows[0]);
-            require(w_.editor_->isVisible() && w_.editor_->echoMode() == ZMultiLineEdit::Normal &&
+            bool reveal = false;
+            for (size_t i = 0; i < w_.view().rows.size(); ++i)
+                if (w_.view().rows[i].action == "editor-secret") {
+                    w_.activate(w_.view().rows[i]);
+                    reveal = true;
+                    break;
+                }
+            require(reveal && w_.editor_->isVisible() &&
+                        w_.editor_->echoMode() == ZMultiLineEdit::Normal &&
+                        w_.editor_->getInputField()->getType() ==
+                            ZKbInputField::FIELD_TYPE_PASSWORD &&
                         w_.editor_->text() == "a2*3",
                     "password reveal after real typing preserves text");
         }
         if (tick_ == 25) {
             w_.finishEdit(true);
+            require(w_.settingsDraft_.get("password") == "a2*3" &&
+                        w_.settings_.get("password") != "a2*3",
+                    "real typed password stays in account draft before Save");
+            w_.finishSettings(true);
             Settings saved;
             std::string error;
             require(saved.load(w_.settings_.path(), error) && saved.get("password") == "a2*3",
