@@ -64,6 +64,39 @@ QString mediaTime(unsigned milliseconds) {
     snprintf(clock, sizeof(clock), "%u:%02u", seconds / 60, seconds % 60);
     return QString::fromLatin1(clock);
 }
+QString connectionCaption(const QString &stage) {
+    static const char *labels[][2] = {
+        {"Подготовка сети", "Подготовка сети"},
+        {"Открытие доступа в сеть", "Доступ в сеть"},
+        {"Определение адреса сервера", "Поиск сервера"},
+        {"Соединение с сервером", "Соединение"},
+        {"Соединение и защита TMME", "Соединение TMME"},
+        {"Авторизация", "Авторизация"},
+        {"Подключение к сеансу", "Начало сеанса"},
+        {"Согласование протокола", "Протокол"},
+        {"Получение контактов", "Контакты"},
+        {"Подготовка контакт-листа", "Список контактов"},
+        {"Повторное подключение…", "Переподключение"},
+        {"Ожидание перед повторным подключением", "Ожидание повтора"},
+        {"Переподключение", "Переподключение"},
+        {"Подключено", "Подключено"},
+    };
+    for (unsigned i = 0; i < sizeof(labels) / sizeof(labels[0]); ++i)
+        if (stage == QString::fromUtf8(labels[i][0]) || stage == uiText(labels[i][0]))
+            return uiText(labels[i][1]);
+    return stage;
+}
+QString singleLine(QString text, const QFontMetrics &metrics, int width) {
+    text = text.left(128);
+    for (unsigned i = 0; i < text.length(); ++i)
+        if (text[i] == '\n' || text[i] == '\r')
+            text[i] = QChar(' ');
+    if (metrics.width(text) <= width)
+        return text;
+    while (!text.isEmpty() && metrics.width(text + "...") > width)
+        text.truncate(text.length() - 1);
+    return text + "...";
+}
 } // namespace
 
 void Window::drawSplash(QPainter &p) {
@@ -104,9 +137,10 @@ void Window::drawSplash(QPainter &p) {
         p.drawText(8, height() / 2 - line / 2, textWidth, line, Qt::AlignCenter, "TeleMotoMax");
 
     // The same fullscreen bottom bar as Java; Cancel remains a key action.
-    const QString stage = locked_ ? uiText("Блокировка включена") : connectionStage_;
-    const std::vector<QString> stages = wrapped(stage, metrics, std::max(1, width() - 36), 2);
-    const int barHeight = std::max(20, int(stages.size()) * line) + 6;
+    const QString stage =
+        singleLine(locked_ ? uiText("Блокировка включена") : connectionCaption(connectionStage_),
+                   metrics, std::max(1, width() - 28));
+    const int barHeight = std::max(20, line) + 6;
     const int barTop = height() - barHeight;
     const int fill = locked_ ? width() : width() * std::min(100U, connectionProgress_) / 100;
     p.fillRect(0, barTop, width(), barHeight, palette().active().button());
@@ -121,10 +155,12 @@ void Window::drawSplash(QPainter &p) {
     if (!statusIcons_.isNull())
         p.drawPixmap(4, barTop + (barHeight - 16) / 2, statusIcons_, sprite * 16, 0, 16, 16);
     p.setPen(palette().active().buttonText());
-    drawLines(p, stages, 24, barTop + 3, std::max(1, width() - 28), line, Qt::AlignHCenter);
+    p.drawText(24, barTop + 3, std::max(1, width() - 28), line, Qt::AlignCenter | Qt::SingleLine,
+               stage);
     p.setClipRect(24, barTop, std::max(0, fill - 24), barHeight);
     p.setPen(palette().active().highlightedText());
-    drawLines(p, stages, 24, barTop + 3, std::max(1, width() - 28), line, Qt::AlignHCenter);
+    p.drawText(24, barTop + 3, std::max(1, width() - 28), line, Qt::AlignCenter | Qt::SingleLine,
+               stage);
     p.setClipping(false);
     p.setPen(ink);
     if (locked_) {

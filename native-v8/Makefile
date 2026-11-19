@@ -59,7 +59,7 @@ $(BUILD)/media-cache-test: tests/media_cache_test.cpp $(BUILD)/media_cache.o $(B
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/media_cache.o -o $@
 core-tests: $(BUILD)/crypto-driver $(BUILD)/storage-test $(BUILD)/toolchain-vector-test $(BUILD)/exception-test $(BUILD)/password-test $(BUILD)/media-cache-test
 ui-probe: $(BUILD)/ui-probe $(BUILD)/logo.png $(BUILD)/statuses.png $(BUILD)/messages.png $(BUILD)/smiles.txt $(BUILD)/smiles.png
-$(BUILD)/logo.png: ../telemotomax/res/GRAPHICS_32BIT/COMMON/logo.png | $(BUILD)
+$(BUILD)/logo.png: resources/logo.png | $(BUILD)
 	cp $< $@
 $(BUILD)/messages.png: ../telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png | $(BUILD)
 	cp $< $@

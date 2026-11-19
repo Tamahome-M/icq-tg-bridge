@@ -6,6 +6,14 @@ void setUiLanguage(const std::string &language) {
     english = language == "en";
 }
 static const char *translations[][2] = {
+    {"Поиск сервера", "Resolving server"},
+    {"Соединение", "Connecting"},
+    {"Соединение TMME", "Connecting TMME"},
+    {"Начало сеанса", "Starting session"},
+    {"Протокол", "Protocol"},
+    {"Список контактов", "Contact list"},
+    {"Переподключение", "Reconnecting"},
+    {"Ожидание повтора", "Retry wait"},
     {"Блокировка включена", "Keylock enabled"},
     {"*: стереть цифру", "*: delete digit"},
     {"Назад: очистить", "Back: clear"},

@@ -32,7 +32,7 @@ class NativeReleaseTests(unittest.TestCase):
         self.root = Path(self.tmp.name) / "source"; self.root.mkdir()
         # Source fingerprint deliberately excludes build products and data.
         shutil.copytree(ROOT / "native-v8", self.root / "native-v8", ignore=shutil.ignore_patterns("build", "dist", "__pycache__"))
-        for source in (*package.ASSETS.values(), ROOT / "telemotomax/COPYING"):
+        for source in (*package.ASSETS.values(), ROOT / "telemotomax/COPYING", ROOT / "telemotomax/util/icon/make_icon.py"):
             target = self.root / source.relative_to(ROOT); target.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(source, target)
         self.dist = self.root / "native-v8/dist"; self.dist.mkdir()
         for name in release.FILES: (self.dist/name).write_bytes(("package:" + name).encode())

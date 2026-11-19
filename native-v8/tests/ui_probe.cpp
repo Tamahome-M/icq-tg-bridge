@@ -12,6 +12,8 @@
 #include <ZKeyDef.h>
 #include <qapplication.h>
 #include <qimage.h>
+#include <qpainter.h>
+#include <qfontmetrics.h>
 #include <qtimer.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -93,6 +95,68 @@ class UiProbe {
         require(w.view().context == "main-menu", "choosing status returns to main menu");
         rosterIcon(w, statusRow, w.statusIcons_, 5);
         w.settings_.setInt("status", saved);
+        w.home();
+    }
+    static void connectionSplash(Window &w) {
+        const QFont originalFont = w.font();
+        const unsigned state = w.connectionState_, progress = w.connectionProgress_;
+        const QString stage = w.connectionStage_;
+        const char *stages[] = {"Открытие доступа в сеть",
+                                "Определение адреса сервера",
+                                "Соединение с сервером",
+                                "Соединение и защита TMME",
+                                "Подключение к сеансу",
+                                "Согласование протокола",
+                                "Получение контактов",
+                                "Подготовка контакт-листа",
+                                "Повторное подключение…",
+                                "Ожидание перед повторным подключением",
+                                "Очень длинная дополнительная строка\nс переносом для проверки"};
+        w.home();
+        require(!w.locked_, "connection renderer fixture is unlocked");
+        w.connectionState_ = Event::Connecting;
+        w.connectionProgress_ = 65;
+        for (unsigned language = 0; language < 2; ++language) {
+            setUiLanguage(language ? "en" : "ru");
+            for (unsigned size = 0; size < 2; ++size) {
+                QFont font = originalFont;
+                font.setPointSize(size ? 24 : 16);
+                w.setFont(font);
+                for (unsigned i = 0; i < sizeof(stages) / sizeof(stages[0]); ++i) {
+                    w.connectionStage_ = QString::fromUtf8(stages[i]);
+                    // Render into the actual frame even if a previous lifecycle
+                    // check left the QWidget hidden. repaint() then does nothing.
+                    if (w.frame_.size() != w.size())
+                        w.frame_.resize(w.size());
+                    QPainter painter(&w.frame_);
+                    w.drawSplash(painter);
+                    painter.end();
+                    const QImage frame = w.frame_.convertToImage();
+                    const int top =
+                        w.height() - std::max(20, QFontMetrics(w.font()).height() + 2) - 6;
+                    // Compare colors after conversion to the firmware pixmap
+                    // format; it quantizes palette RGB to six bits per channel.
+                    const unsigned background = frame.pixel(0, 0) & 0xffffff;
+                    if (!language && !size && !i)
+                        fprintf(stderr, "SPLASH palette=%08x background=%08x above=%08x bar=%08x\n",
+                                w.bodyColor(1).rgb(), background, frame.pixel(0, top - 1),
+                                frame.pixel(0, top));
+                    require((frame.pixel(0, top - 1) & 0xffffff) == background,
+                            "connection bar stays one line for long RU/EN stages and large fonts");
+                    require((frame.pixel(0, top) & 0xffffff) != background,
+                            "connection progress remains visible below the single-line boundary");
+                }
+            }
+        }
+        QPixmap expected("logo.png");
+        require(!expected.isNull() && expected.width() == 96 && expected.height() == 96 &&
+                    w.splashLogo_.convertToImage() == expected.convertToImage(),
+                "fullscreen splash uses the packaged TeleMotoMax icon");
+        setUiLanguage(settingValue(w.settings_, "language"));
+        w.setFont(originalFont);
+        w.connectionState_ = state;
+        w.connectionProgress_ = progress;
+        w.connectionStage_ = stage;
         w.home();
     }
     static void rosterSorting(Window &w, uint32_t alice, uint32_t bob) {
@@ -593,7 +657,8 @@ class UiProbe {
         require(w.locked_ && !w.editor_->isVisible(), "PIN hides native editor");
         require(!w.inputIndicator_->isVisible(), "PIN hides input status");
         checkPaint(w, "PIN");
-        require(!w.splashLogo_.isNull(), "Java splash logo is available in the native package");
+        require(!w.splashLogo_.isNull(),
+                "TeleMotoMax splash icon is available in the native package");
         w.key(KEYCODE_9);
         w.key(KEYCODE_9);
         w.key(KEYCODE_9);
@@ -778,6 +843,7 @@ class UiProbe {
         require(safe.find(QString::fromUtf8("✓")) < 0 && safe.find(QString::fromUtf8("↗")) < 0 &&
                     safe.find(QString::fromUtf8("☺")) < 0 && safe.find(":)") >= 0,
                 "message icons independent of unsupported font glyphs");
+        connectionSplash(w);
         // End on a readable fixture scene for visual inspection; no network request.
         w.contacts_.clear();
         w.chats_.clear();
@@ -863,11 +929,17 @@ class UiProbe {
                 w.key(KEYCODE_1);
                 w.key(KEYCODE_2);
             }
-        } else if (selectedScene == "connection") {
+        } else if (selectedScene == "connection" || selectedScene == "connection-large") {
             w.home();
             w.connectionState_ = Event::Connecting;
             w.connectionProgress_ = 65;
-            w.connectionStage_ = uiText("Согласование протокола");
+            w.connectionStage_ = uiText("Определение адреса сервера");
+            if (selectedScene == "connection-large") {
+                QFont large = w.font();
+                large.setPointSize(24);
+                w.setFont(large);
+                w.connectionStage_ = uiText("Соединение и защита TMME");
+            }
             w.update();
             require(!w.systemMenuVisible() && !w.systemMenu_->list()->isVisible(),
                     "connection splash hides the roster widget");
