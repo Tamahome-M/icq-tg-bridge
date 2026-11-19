@@ -30,10 +30,13 @@ static std::vector<tmm::Command> submitted;
 static QString drawnLeft, drawnRight;
 static unsigned systemIconMode;
 static uint32_t systemIconStatus;
-extern "C" void __wrap__ZN3tmm12StatusIconV820configureApplicationEjj(unsigned mode,
-                                                                      uint32_t status) {
+static bool systemIconUnread;
+extern "C" void __wrap__ZN3tmm12StatusIconV820configureApplicationEjjb(unsigned mode,
+                                                                      uint32_t status,
+                                                                      bool unread) {
     systemIconMode = mode;
     systemIconStatus = status;
+    systemIconUnread = unread;
 }
 extern "C" bool __wrap__ZN3tmm6Client6submitERKNS_7CommandE(tmm::Client *, const tmm::Command &c) {
     submitted.push_back(c);
@@ -1120,6 +1123,8 @@ class UiProbe {
         reset(w);
     }
     static void systemPresence(Window &w) {
+        reset(w);
+        w.chats_.clear();
         w.settings_.setInt("running_icon", 1);
         w.settings_.setInt("status", 16);
         w.connectionState_ = Event::Disconnected;
@@ -1141,6 +1146,31 @@ class UiProbe {
         w.settings_.setInt("status", 0);
         w.connectionState_ = Event::Online;
         w.applySettings();
+        require(!systemIconUnread, "empty chats have no unread system badge");
+        MessageRecord first = message(1000001);
+        first.nativeId = "badge-first";
+        w.incoming(first);
+        require(systemIconUnread, "silent incoming message sets the system envelope");
+        MessageRecord second = message(1000002);
+        second.nativeId = "badge-second";
+        w.incoming(second);
+        w.show();
+        w.closed_ = false;
+        w.locked_ = true;
+        w.openChat(first.uin);
+        require(systemIconUnread && w.chats_[first.uin].unread == 1,
+                "locked chat does not clear an unread system envelope");
+        w.locked_ = false;
+        w.markVisibleChatRead();
+        w.update();
+        require(systemIconUnread && !w.chats_[first.uin].unread,
+                "reading one chat retains the envelope for the other chat");
+        w.disconnectClient();
+        require(systemIconUnread && systemIconStatus == 0xffffffffU,
+                "disconnect preserves unread for the grey daisy with envelope");
+        w.openChat(second.uin);
+        require(!systemIconUnread, "reading the final unread chat removes the system envelope");
+        reset(w);
     }
     static void scene(Window &w, uint32_t id) {
         reset(w);

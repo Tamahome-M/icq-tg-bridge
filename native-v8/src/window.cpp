@@ -182,6 +182,7 @@ void Window::syncSystemMenu() {
                       bottom);
 }
 void Window::update() {
+    updateSystemStatusIcon();
     syncSystemMenu();
     QWidget::update();
 }
@@ -343,7 +344,8 @@ ContactRecord *Window::contact(uint32_t id) {
 void Window::updateSystemStatusIcon() {
     StatusIconV8::configureApplication(
         settingNumber(settings_, "running_icon"),
-        connectionState_ == Event::Online ? settings_.getInt("status", 0) : 0xffffffffU);
+        connectionState_ == Event::Online ? settings_.getInt("status", 0) : 0xffffffffU,
+        unread() != 0);
 }
 void Window::applySettings() {
     updateSystemStatusIcon();
@@ -549,6 +551,7 @@ void Window::inputStateChanged(int windowId, bool active) {
     inputIndicator_->activate(windowId, active);
 }
 void Window::systemThemeChanged() {
+    StatusIconV8::themeChanged();
     setPalette(QApplication::palette());
     if (systemChrome_)
         systemChrome_->refresh();

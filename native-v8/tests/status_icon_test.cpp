@@ -3,7 +3,9 @@
 #include "zapplication_v8.h"
 #include "status_icon_v8.h"
 #include "status_icon_observer.h"
+#include "theme_patch.h"
 #include <ZHeader.h>
+#include <ZMessageDlg.h>
 #include <RES_ICON_Reader.h>
 #include <qcopchannel_qws.h>
 #include <qdatastream.h>
@@ -15,11 +17,23 @@
 #include <unistd.h>
 #include <dlfcn.h>
 #include <string.h>
+#include <sys/stat.h>
+static bool patched;
 static const char *resources[][2] = {{"im_offline_cli4", "im_offline_idle4"},
                                      {"im_icq_cli4", "im_icq_idle5"},
                                      {"im_icq_away_cli4", "im_icq_away_idle5"},
                                      {"im_busy_cli4", "im_busy_idle4"},
                                      {"im_icq_invisible_cli4", "im_icq_invisible_idle5"}};
+static const char *customResources[][2] = {{"tmm_offline_cli", "tmm_offline_main"},
+                                           {"im_icq_cli4", "im_icq_idle5"},
+                                           {"im_icq_away_cli4", "im_icq_away_idle5"},
+                                           {"im_busy_cli4", "im_busy_idle4"},
+                                           {"im_icq_invisible_cli4", "im_icq_invisible_idle5"},
+                                           {"tmm_msg_offline_cli", "tmm_msg_offline_main"},
+                                           {"tmm_msg_online_cli", "tmm_msg_online_main"},
+                                           {"tmm_msg_away_cli", "tmm_msg_away_main"},
+                                           {"tmm_msg_busy_cli", "tmm_msg_busy_main"},
+                                           {"tmm_msg_invisible_cli", "tmm_msg_invisible_main"}};
 static void drain() {
     for (unsigned i = 0; i < 20; ++i) {
         qApp->processEvents();
@@ -46,14 +60,14 @@ static void registered(StatusIconObserver &observer, unsigned at, int slot) {
     Q_INT8 kind, state;
     Q_INT32 count, priority;
     stream >> kind >> count >> priority;
-    assert(kind == slot && count == 5 && priority == 3);
-    for (unsigned value = 0; value < 5; ++value) {
+    assert(kind == slot && count == (patched ? 10 : 5) && priority == 3);
+    for (unsigned value = 0; value < unsigned(count); ++value) {
         stream >> state;
-        assert(state == value);
+        assert(unsigned(state) == value);
         for (unsigned i = 0; i < 4; ++i) {
             QString resource;
             stream >> resource;
-            assert(resource == resources[value][i / 2]);
+            assert(resource == (patched ? customResources[value][i / 2] : resources[value][i / 2]));
             assert(resource.length() <= 60); // Native shared-memory resource limit.
         }
     }
@@ -90,15 +104,36 @@ static void nativeAreas(void *library) {
 int main(int argc, char **argv) {
     if (!getenv("V8_QWS_LOCAL_ONLY"))
         return 3;
+    // Exercise installation in the sandbox's real /ezxlocal before Qt loads
+    // its skin. No physical phone or read-only firmware files are touched.
+    const bool install = getenv("TMM_TEST_INSTALL_ICONS");
+    const std::string themeConfig = "/ezxlocal/download/appwrite/setup/ezx_theme.cfg";
+    const std::string patchDir = "/ezxlocal/download/appwrite/TeleMotoMaxStatusIcons";
+    if (install) {
+        assert(mkdir(patchDir.c_str(), 0700) == 0);
+        std::string error;
+        if (!tmm::patchStatusTheme(themeConfig, patchDir, "/work/status-icons.ezx", false, error)) {
+            fprintf(stderr, "THEME INSTALL FAILED: %s\n", error.c_str());
+            return 4;
+        }
+    }
     ZApplication app(argc, argv, QApplication::GuiServer);
     void *library = dlopen("libezxappbase.so.1", RTLD_NOW | RTLD_GLOBAL);
     assert(library);
     nativeAreas(library);
     RES_ICON_Reader reader;
-    for (unsigned state = 0; state < 5; ++state)
+    patched = !reader.getIcon("tmm_status_v1", false).isNull();
+    assert(patched == bool(getenv("TMM_TEST_PATCHED_ICONS")));
+    for (unsigned state = 0; state < (patched ? 10U : 5U); ++state)
         for (unsigned display = 0; display < 2; ++display) {
-            QPixmap icon = reader.getIcon(resources[state][display], false);
+            QPixmap icon = reader.getIcon(
+                (patched ? customResources[state][display] : resources[state][display]), false);
             assert(!icon.isNull() && icon.width() <= 64 && icon.height() <= 32);
+            if (patched) {
+                char file[100];
+                snprintf(file, sizeof file, "/state/status-%u-%u.png", state, display);
+                assert(icon.save(file, "PNG"));
+            }
         }
     StatusIconObserver observer;
     {
@@ -157,6 +192,27 @@ int main(int argc, char **argv) {
         drain();
         assert(observer.messages.size() == at + 1);
         changed(observer, at, ZHeader::ICQ, 0);
+        // Unread follows every presence, remains while offline, and changes
+        // only when the boolean changes; another unread needs no IPC.
+        for (unsigned i = 0; i < 5; ++i) {
+            const uint32_t raw[] = {0xffffffffU, 0, 1, 16, 256};
+            tmm::StatusIconV8::configureApplication(2, raw[i], false);
+            drain();
+            at = observer.messages.size();
+            tmm::StatusIconV8::configureApplication(2, raw[i], true);
+            drain();
+            assert(observer.messages.size() == at + unsigned(patched));
+            if (patched)
+                changed(observer, at, ZHeader::ICQ, i + 5);
+            tmm::StatusIconV8::configureApplication(2, raw[i], true);
+            drain();
+            assert(observer.messages.size() == at + unsigned(patched));
+            tmm::StatusIconV8::configureApplication(2, raw[i], false);
+            drain();
+            assert(observer.messages.size() == at + unsigned(patched) * 2);
+            if (patched)
+                changed(observer, at + 1, ZHeader::ICQ, i);
+        }
         at = observer.messages.size();
         tmm::StatusIconV8::configureApplication(0, 0);
         drain();
@@ -183,6 +239,17 @@ int main(int argc, char **argv) {
     assert(app.QApplication::exec() == 0);
     drain();
     assert(observer.messages.size() == at + 4);
+    if (install) {
+        // Same native result dialog as the phone installer. No Window-specific
+        // foreground handlers are attached to this standalone application.
+        ZMessageDlg result(QString::fromUtf8("TeleMotoMax"),
+                           QString::fromUtf8("Значки установлены. Перезагрузите телефон."),
+                           ZMessageDlg::just_ok);
+        QTimer::singleShot(200, &result, SLOT(accept()));
+        result.exec();
+        std::string error;
+        assert(tmm::patchStatusTheme(themeConfig, patchDir, "/work/status-icons.ezx", true, error));
+    }
     changed(observer, at + 2, ZHeader::IM, ZHeader::EMPTY_STATUS);
     removed(observer, at + 3, ZHeader::IM);
     tmm::StatusIconV8::configureApplication(1, 0); // No owner after destruction.

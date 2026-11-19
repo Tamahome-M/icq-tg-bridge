@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+case "$0" in */*) tmm_icon_dir=${0%/*} ;; *) tmm_icon_dir=. ;; esac
+exec "$tmm_icon_dir/telemotomax.lin" --restore-status-icons

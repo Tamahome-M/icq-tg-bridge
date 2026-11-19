@@ -2,10 +2,10 @@ name: TeleMotoMax Native V8
 on:
   push:
     branches: [main]
-    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/util/icon/make_icon.py', 'telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
+    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', 'tests/test_native_theme.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/util/icon/make_icon.py', 'telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
   pull_request:
     branches: [main]
-    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/util/icon/make_icon.py', 'telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
+    paths: ['native-v8/**', 'tools/native-v8-release.py', 'tests/test_native_release.py', 'tests/test_native_theme.py', '.github/workflows/native-v8-release.yml', 'telemotomax/res/MIDP2/sounds/**', 'telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png', 'telemotomax/util/icon/make_icon.py', 'telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png', 'telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png', 'telemotomax/res/GRAPHICS_32BIT/MODULES/SMILES_STD/**', 'telemotomax/COPYING']
   workflow_dispatch:
 permissions:
   contents: read
@@ -23,6 +23,7 @@ jobs:
           python3 -m pip install -r requirements.txt
           python3 native-v8/tests/test_crypto.py
           python3 tests/test_native_release.py
+          python3 tests/test_native_theme.py
           g++ -std=c++98 -O2 -Inative-v8/src native-v8/tests/storage_test.cpp native-v8/src/{storage,settings,crypto}.cpp -o "$RUNNER_TEMP/storage-test"
           "$RUNNER_TEMP/storage-test"
           g++ -std=c++98 -Inative-v8/src native-v8/tests/instance_test.cpp native-v8/src/instance.cpp -o "$RUNNER_TEMP/instance-test"

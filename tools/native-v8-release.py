@@ -30,7 +30,7 @@ def version(source):
 
 def source_hash(source):
     native = source / "native-v8"
-    files = [p for name in ("src", "tools", "sounds", "resources", "VERSION", "Makefile", "telemotomax.lin", "collect-log.lin", "collect-log-xp.cmd", "README.md", "features.tsv")
+    files = [p for name in ("src", "tools", "sounds", "resources", "VERSION", "Makefile", "telemotomax.lin", "collect-log.lin", "collect-log-xp.cmd", "install-status-icons.lin", "restore-status-icons.lin", "README.md", "features.tsv")
              for p in ((native / name).rglob("*") if (native / name).is_dir() else [native / name]) if p.is_file()]
     files += [source / "telemotomax/res/MIDP2/sounds/tg.mp3"]
     files += [source / "telemotomax/COPYING"]

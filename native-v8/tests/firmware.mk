@@ -69,7 +69,9 @@ $(BUILD)/moc_status_icon_observer.cpp: tests/status_icon_observer.h | $(BUILD)
 	$(MOC) $< -o $@
 $(BUILD)/moc_status_icon_observer.o: $(BUILD)/moc_status_icon_observer.cpp tests/status_icon_observer.h $(QT_COMPAT)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -Itests -c $< -o $@
-$(BUILD)/status-icon-test: tests/status_icon_test.cpp $(BUILD)/moc_status_icon_observer.o $(BUILD)/status_icon_v8.o $(BUILD)/sdk-link/.ready
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -Itests $(LDFLAGS) $< $(BUILD)/moc_status_icon_observer.o $(BUILD)/status_icon_v8.o -lezxappbase -lqte-mt -ldl -o $@
+$(BUILD)/status-icon-test: tests/status_icon_test.cpp $(BUILD)/moc_status_icon_observer.o $(BUILD)/status_icon_v8.o $(BUILD)/theme_patch.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -Itests $(LDFLAGS) $< $(BUILD)/moc_status_icon_observer.o $(BUILD)/status_icon_v8.o $(BUILD)/theme_patch.o -lezxappbase -lqte-mt -ldl -o $@
 .PHONY: status-icon-test
-status-icon-test: $(BUILD)/status-icon-test
+status-icon-test: $(BUILD)/status-icon-test $(BUILD)/status-icons.ezx
+$(BUILD)/status-icons.ezx: resources/status-icons.ezx | $(BUILD)
+	cp $< $@

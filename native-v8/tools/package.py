@@ -12,6 +12,7 @@ ASSETS = {
        for name in ("message", "msg_low", "typing")},
     "sounds/tg.mp3": ROOT.parent / "telemotomax/res/MIDP2/sounds/tg.mp3",
     "logo.png": ROOT / "resources/logo.png",
+    "status-icons.ezx": ROOT / "resources/status-icons.ezx",
     "icon.png": ROOT.parent / "telemotomax/res/GRAPHICS_32BIT/COMMON/icon.png",
     "messages.png": ROOT.parent / "telemotomax/res/GRAPHICS_8BIT/COMMON/messages.png",
     "statuses.png": ROOT.parent / "telemotomax/res/GRAPHICS_8BIT/COMMON/statuses.png",
@@ -50,6 +51,8 @@ def inputs(binary):
     result = dict(ASSETS)
     result.update({"telemotomax-native": binary, "telemotomax.lin": ROOT / "telemotomax.lin",
                    "collect-log.lin": ROOT / "collect-log.lin",
+                   "install-status-icons.lin": ROOT / "install-status-icons.lin",
+                   "restore-status-icons.lin": ROOT / "restore-status-icons.lin",
                    "collect-log-xp.cmd": ROOT / "collect-log-xp.cmd",
                    "features.tsv": ROOT / "features.tsv",
                    "README.md": ROOT / "README.md", "COPYING": ROOT.parent / "telemotomax/COPYING"})
@@ -74,7 +77,7 @@ def archive(files):
 
 
 def build(binary, output):
-    app = {name: (path.read_bytes(), name in ("telemotomax-native", "telemotomax.lin", "collect-log.lin")) for name, path in inputs(binary).items()}
+    app = {name: (path.read_bytes(), name == "telemotomax-native" or name.endswith(".lin")) for name, path in inputs(binary).items()}
     output.mkdir(parents=True, exist_ok=True)
     (output / "TeleMotoMax-Native-V8.tar.gz").write_bytes(archive({"TeleMotoMax-Native/" + n: v for n, v in app.items()}))
     description = f"""[Actions]
