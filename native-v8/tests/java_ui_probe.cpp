@@ -11,6 +11,7 @@
 #include "ui_language.h"
 #include "system_chrome.h"
 #include "system_menu.h"
+#include "input_indicator.h"
 #include <ZListBox.h>
 #include <ZKeyDef.h>
 #include <ZMultiLineEdit.h>
@@ -28,12 +29,47 @@ extern "C" void UTIL_SetFlipStatus(int);
 extern "C" void UTIL_SetKeypadLockStatus(bool);
 static std::vector<tmm::Command> submitted;
 static QString drawnLeft, drawnRight;
+static QString drawnHeader;
+static QString drawnListText;
+static bool observeListText;
+struct PaintedText {
+    QString text;
+    QFont font;
+    QColor color;
+    int y;
+    PaintedText(QPainter *p, const QString &value, int top)
+        : text(value), font(p->font()), color(p->pen().color()), y(top) {}
+};
+static std::vector<PaintedText> paintedTexts;
+extern "C" void realText(QPainter *, int, int, int, int, int, const QString &, int, QRect *,
+                         char **) asm("__real__ZN8QPainter8drawTextEiiiiiRK7QStringiP5QRectPPc");
+extern "C" void wrapText(QPainter *, int, int, int, int, int, const QString &, int, QRect *,
+                         char **) asm("__wrap__ZN8QPainter8drawTextEiiiiiRK7QStringiP5QRectPPc");
+extern "C" void wrapText(QPainter *p, int x, int y, int w, int h, int flags, const QString &text,
+                         int length, QRect *bounds, char **internal) {
+    if (observeListText) {
+        drawnListText = text;
+        paintedTexts.push_back(PaintedText(p, text, y));
+    }
+    realText(p, x, y, w, h, flags, text, length, bounds, internal);
+}
 static unsigned systemIconMode;
 static uint32_t systemIconStatus;
 static bool systemIconUnread;
+extern "C" void
+realHeader(tmm::SystemChrome *, QPainter &, const QRect &, const QString &,
+           int) asm("__real__ZN3tmm12SystemChrome10drawHeaderER8QPainterRK5QRectRK7QStringi");
+extern "C" void
+wrapHeader(tmm::SystemChrome *, QPainter &, const QRect &, const QString &,
+           int) asm("__wrap__ZN3tmm12SystemChrome10drawHeaderER8QPainterRK5QRectRK7QStringi");
+extern "C" void wrapHeader(tmm::SystemChrome *chrome, QPainter &p, const QRect &r,
+                           const QString &title, int offset) {
+    drawnHeader = title;
+    realHeader(chrome, p, r, title, offset);
+}
 extern "C" void __wrap__ZN3tmm12StatusIconV820configureApplicationEjjb(unsigned mode,
-                                                                      uint32_t status,
-                                                                      bool unread) {
+                                                                       uint32_t status,
+                                                                       bool unread) {
     systemIconMode = mode;
     systemIconStatus = status;
     systemIconUnread = unread;
@@ -960,8 +996,8 @@ class UiProbe {
         live.senderName = "Nick";
         live.outgoing = false;
         w.settings_.setBool("show_newlines", false);
-        require(w.messageText(live) == QString::fromLatin1("15.11 01:13 Nick: new live message"),
-                "real message timestamp and configured timezone still render normally");
+        require(w.messageText(live) == QString::fromLatin1("Nick (15.11 01:13): new live message"),
+                "Java-style header retains the real timestamp and configured timezone");
         // Restoring a chat from All Chats remains its own bridge operation.
         w.chats_[id].messages.clear();
         submitted.clear();
@@ -1122,6 +1158,151 @@ class UiProbe {
             "discussion continuation appends older context in its thread without opening a chat");
         reset(w);
     }
+    static QString emptyChatLabel(Window &w) {
+        QPixmap canvas(w.size());
+        QPainter p(&canvas);
+        drawnListText = QString::null;
+        paintedTexts.clear();
+        observeListText = true;
+        w.drawList(p);
+        observeListText = false;
+        return drawnListText;
+    }
+    static void emptyChatLoading(Window &w, uint32_t id) {
+        reset(w);
+        w.pending_.clear();
+        w.pendingUin_.clear();
+        w.chats_[id] = ChatState();
+        w.chats_[id].loaded = true;
+        w.connectionState_ = Event::Online;
+        submitted.clear();
+        w.openChat(id);
+        require(!w.view().request && emptyChatLabel(w) == uiText("Загрузка…"),
+                "empty chat paints Loading while its conversation preload is pending");
+        Event empty(Event::History);
+        empty.uin = id;
+        empty.requestId = submitted.back().requestId;
+        w.consume(empty);
+        require(emptyChatLabel(w) == uiText("Сообщений нет"),
+                "completed empty preload paints No messages");
+        w.history(true);
+        require(emptyChatLabel(w) == uiText("Загрузка…"),
+                "explicit server history also paints Loading in an empty chat");
+        Event failed(Event::Error);
+        failed.uin = id;
+        failed.requestId = submitted.back().requestId;
+        failed.text = "Test history error";
+        w.consume(failed);
+        require(emptyChatLabel(w) == uiText("Сообщений нет"),
+                "failed history request cannot leave Loading stuck");
+        w.chats_[id + 1] = ChatState();
+        w.chats_[id + 1].loaded = true;
+        w.requestLastMessage(id + 1);
+        require(emptyChatLabel(w) == uiText("Сообщений нет"),
+                "another chat's pending preload does not change this chat's empty state");
+        w.requestLastMessage(id);
+        require(emptyChatLabel(w) == uiText("Загрузка…"), "retry starts Loading again");
+        w.disconnectClient();
+        require(emptyChatLabel(w) == uiText("Сообщений нет"),
+                "disconnect clears the pending empty-chat Loading state");
+        w.connectionState_ = Event::Online;
+        reset(w);
+    }
+    static void chatStyleAndNotices(Window &w, uint32_t id) {
+        reset(w);
+        const Settings previous = w.settings_;
+        w.pending_.clear();
+        w.pendingUin_.clear();
+        w.notice_ = w.ticker_ = QString::null;
+        w.settings_.setBool("show_sender", true);
+        w.settings_.setBool("show_time", true);
+        w.settings_.setBool("show_newlines", false);
+        w.chats_[id] = ChatState();
+        w.chats_[id].loaded = true;
+        MessageRecord incoming = message(id);
+        incoming.time = 1700000000;
+        incoming.senderName = "Анна";
+        incoming.text = "Привет";
+        w.chats_[id].messages.push_back(incoming);
+        MessageRecord outgoing = incoming;
+        outgoing.outgoing = true;
+        outgoing.text = "Ответ";
+        w.chats_[id].messages.push_back(outgoing);
+        MessageRecord historical = incoming;
+        historical.time = 0;
+        historical.text = "[17.11 12:05] Борис: История";
+        w.chats_[id].messages.push_back(historical);
+        w.openChat(id, false);
+        w.view().selected = 0;
+        QPixmap canvas(w.size());
+        QPainter p(&canvas);
+        paintedTexts.clear();
+        observeListText = true;
+        w.drawList(p);
+        observeListText = false;
+        bool author = false, own = false, history = false, plainBody = false;
+        QColor incomingColor, outgoingColor;
+        for (size_t i = 0; i < paintedTexts.size(); ++i) {
+            const PaintedText &text = paintedTexts[i];
+            if (text.text.find(uiText("Анна")) >= 0) {
+                author = text.font.bold();
+                incomingColor = text.color;
+            }
+            if (text.text.find(uiText("Я")) >= 0) {
+                own = text.font.bold();
+                outgoingColor = text.color;
+            }
+            if (text.text.find(uiText("Борис")) >= 0)
+                history = text.font.bold() && text.text.find("1970") < 0;
+            if (text.text.find(uiText("Привет")) >= 0)
+                plainBody =
+                    !text.font.bold() && text.color == w.palette().active().highlightedText();
+        }
+        require(author && own && history && plainBody && incomingColor != outgoingColor,
+                "chat paints bold colored incoming/outgoing/history headers and plain themed body");
+        w.settings_.setBool("show_sender", false);
+        w.settings_.setBool("show_time", false);
+        paintedTexts.clear();
+        observeListText = true;
+        w.drawList(p);
+        observeListText = false;
+        require(!paintedTexts.empty() && paintedTexts[0].text == uiText("Привет") &&
+                    !paintedTexts[0].font.bold(),
+                "formatting flags apply to already open messages without another delivery");
+        w.settings_.setBool("show_sender", true);
+        w.settings_.setBool("show_time", true);
+        const QString status = uiText("Загружаю историю…");
+        w.info(status);
+        paintedTexts.clear();
+        observeListText = true;
+        w.drawFrame(p);
+        observeListText = false;
+        require(drawnHeader.find(status) >= 0, "service notice replaces the very top caption");
+        unsigned top = 0, bottom = 0;
+        for (size_t i = 0; i < paintedTexts.size(); ++i)
+            if (paintedTexts[i].text.find(status) >= 0) {
+                if (paintedTexts[i].y < 28)
+                    ++top;
+                else
+                    ++bottom;
+            }
+        require(top == 1 && !bottom,
+                "service notice is drawn once at the top, without a bottom banner");
+        w.settings_.setBool("full_editor", true);
+        w.edit(uiText("Сообщение"), "message", "draft", id);
+        require(w.inputIndicator_->y() >= 29,
+                "fullscreen editor leaves room for an active top service notice");
+        w.noticeUntil_ = 1;
+        w.tick();
+        require(w.notice_.isEmpty() && w.inputIndicator_->y() < 29,
+                "notice expiry restores fullscreen editor space without losing the editor");
+        w.finishEdit(false);
+        w.settings_ = previous;
+        w.applySettings();
+        w.drawHeader(p);
+        require(drawnHeader.find(status) < 0, "notice expiry restores the normal chat caption");
+        reset(w);
+    }
     static void systemPresence(Window &w) {
         reset(w);
         w.chats_.clear();
@@ -1189,7 +1370,32 @@ class UiProbe {
             w.showSettings("interface");
         else if (selected == "privacy")
             w.activate(Row(QString::null, "privacy-lists"));
-        else if (selected == "history") {
+        else if (selected == "chat-style" || selected == "notice" || selected == "loading") {
+            w.settings_.setBool("show_sender", true);
+            w.settings_.setBool("show_time", true);
+            w.settings_.setBool("display_date", false);
+            w.chats_[id] = ChatState();
+            w.chats_[id].loaded = true;
+            if (selected != "loading") {
+                MessageRecord incoming = message(id);
+                incoming.time = 1700000000;
+                incoming.senderName = "Сергей";
+                incoming.text = "Привет! Как работает новая версия на V8?";
+                w.chats_[id].messages.push_back(incoming);
+                incoming.outgoing = true;
+                incoming.text = "Отлично. Теперь заголовки и текст оформлены как в Java.";
+                w.chats_[id].messages.push_back(incoming);
+                incoming.time = 0;
+                incoming.outgoing = false;
+                incoming.text = "[17.11 12:05] Мария: Сообщение из истории сервера.";
+                w.chats_[id].messages.push_back(incoming);
+            }
+            w.openChat(id, false);
+            if (selected == "loading")
+                w.requestLastMessage(id);
+            if (selected == "notice")
+                w.info(uiText("Загружаю историю…"));
+        } else if (selected == "history") {
             MessageRecord m = message(id, 2);
             m.token = "example-video";
             m.nativeId = std::string(8, 'h');
@@ -1201,8 +1407,10 @@ class UiProbe {
             chat(w, m);
             w.chatMenu();
         }
-        w.notice_ = QString::null;
-        w.noticeUntil_ = 0;
+        if (selected != "notice") {
+            w.notice_ = QString::null;
+            w.noticeUntil_ = 0;
+        }
         w.resize(240, 320);
         w.show();
         w.repaint();
@@ -1265,6 +1473,8 @@ class UiProbe {
         privacy(w, 1000001);
         localHistory(w, 1000001);
         inlineHistory(w, 1000001);
+        emptyChatLoading(w, 1000001);
+        chatStyleAndNotices(w, 1000001);
         systemPresence(w);
         scene(w, 1000001);
         fprintf(stderr, "JAVA UI PASS %u checks\n", checks_);

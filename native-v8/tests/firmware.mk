@@ -75,3 +75,15 @@ $(BUILD)/status-icon-test: tests/status_icon_test.cpp $(BUILD)/moc_status_icon_o
 status-icon-test: $(BUILD)/status-icon-test $(BUILD)/status-icons.ezx
 $(BUILD)/status-icons.ezx: resources/status-icons.ezx | $(BUILD)
 	cp $< $@
+
+.PHONY: system-chrome-test roster-order-test
+system-chrome-test: $(BUILD)/system-chrome-test
+$(BUILD)/system-chrome-test: tests/system_chrome_test.cpp $(BUILD)/system_chrome.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -Wl,--wrap=_ZN8ZSoftKeyC1ERK7QStringP7QWidgetS4_ $< $(BUILD)/system_chrome.o -lezxappbase -lqte-mt -ldl -o $@
+roster-order-test: $(BUILD)/roster-order-test
+$(BUILD)/roster-order-test: tests/roster_order_test.cpp $(BUILD)/roster_order.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/roster_order.o -lqte-mt -o $@
+.PHONY: chat-layout-test
+chat-layout-test: $(BUILD)/chat-layout-test
+$(BUILD)/chat-layout-test: tests/chat_layout_test.cpp $(BUILD)/chat_layout.o $(BUILD)/sdk-link/.ready
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/chat_layout.o -lezxappbase -lqte-mt -ldl -o $@

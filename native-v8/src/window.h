@@ -21,6 +21,7 @@ class UiProbe;
 class InputIndicator;
 class SystemMenu;
 class SystemChrome;
+struct ChatLayout;
 struct Row {
     QString text;
     std::string action;
@@ -261,6 +262,9 @@ class Window : public QWidget {
     QString name(uint32_t) const;
     QString status(uint32_t) const;
     QString messageText(const MessageRecord &) const;
+    QString messageHeader(const MessageRecord &) const;
+    const MessageRecord *rowMessage(const View &, const Row &) const;
+    ChatLayout layoutMessage(const View &, const Row &) const;
     int rowHeight(const Row &) const;
     bool systemMenuVisible() const;
     void syncSystemMenu();

@@ -217,6 +217,7 @@ class UiProbe {
                           grouped = settingValue(w.settings_, "use_groups"),
                           hidden = settingValue(w.settings_, "hide_offline");
         const uint32_t aliceStatus = w.contact(alice)->status, bobStatus = w.contact(bob)->status;
+        const std::string aliceName = w.contact(alice)->name, bobName = w.contact(bob)->name;
         w.settings_.set("sort_by", "status");
         w.settings_.setInt("use_groups", 1);
         w.settings_.setInt("hide_offline", 0);
@@ -266,6 +267,26 @@ class UiProbe {
         require(w.view().rows.size() == 3 && w.view().rows[1].uin == alice &&
                     w.view().rows[2].uin == bob,
                 "reading restores the ordinary contact order");
+        w.contact(alice)->name = "A away";
+        w.contact(alice)->status = 1;
+        w.contact(bob)->name = "Z online";
+        w.contact(bob)->status = 0;
+        w.rebuildRoster();
+        require(w.view().rows[1].uin == bob && w.view().rows[2].uin == alice,
+                "Java status sorting distinguishes online from away before sorting names");
+        w.settings_.set("sort_by", "name");
+        w.contact(alice)->name = "alpha";
+        w.contact(bob)->name = "Beta";
+        w.rebuildRoster();
+        require(w.view().rows[1].uin == alice && w.view().rows[2].uin == bob,
+                "Latin names sort without case like Java");
+        w.contact(alice)->name = "анна";
+        w.contact(bob)->name = "Борис";
+        w.rebuildRoster();
+        require(w.view().rows[1].uin == alice && w.view().rows[2].uin == bob,
+                "Cyrillic names sort without case like Java");
+        w.contact(alice)->name = aliceName;
+        w.contact(bob)->name = bobName;
         w.settings_.set("sort_by", sort);
         w.settings_.set("use_groups", grouped);
         w.settings_.set("hide_offline", hidden);
@@ -397,9 +418,10 @@ class UiProbe {
         w.unlock();
         require(list->isVisible() && list->currentItem() == chosen,
                 "unlock restores system menu selection");
+        const QRect beforeNotice = list->geometry();
         w.info("menu notice");
-        require(list->geometry().bottom() < w.height() - 79,
-                "native list leaves notification banner visible");
+        require(list->geometry() == beforeNotice && list->geometry().bottom() < w.height() - 26,
+                "top notice preserves the full native list area above softkeys");
         w.notice_ = QString::null;
         View large(View::Files, QString::fromLatin1("Files"));
         for (unsigned i = 0; i < 120; ++i)

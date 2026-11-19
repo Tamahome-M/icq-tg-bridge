@@ -22,7 +22,8 @@ void Window::layoutEditor() {
     if (!editor_ || !inputIndicator_)
         return;
     const int statusHeight = std::max(24, inputIndicator_->sizeHint().height());
-    const bool hideTitle = editAction_ == "message" && settingFlag(settings_, "full_editor");
+    const bool hideTitle = editAction_ == "message" && settingFlag(settings_, "full_editor") &&
+                           notice_.isEmpty() && ticker_.isEmpty();
     inputIndicator_->setGeometry(2, hideTitle ? 1 : 29, width() - 4, statusHeight);
     // Motorola's skin may enforce a larger minimum than sizeHint().
     const int top = inputIndicator_->geometry().bottom() + 1;

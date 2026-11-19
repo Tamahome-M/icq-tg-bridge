@@ -204,8 +204,7 @@ void Window::drawProgress(QPainter &p, const QString &details, const QString &st
     const QColor accent(bodyColor(3));
     const QColor border(bodyColor(8));
     const int left = 12, bodyTop = 34;
-    const int banner = !notice_.isEmpty() ? 52 : !ticker_.isEmpty() ? 25 : 0;
-    const int bodyBottom = height() - 32 - banner;
+    const int bodyBottom = height() - 32;
     const int textWidth = std::max(1, width() - 2 * left);
     p.setClipRect(0, 29, width(), std::max(1, height() - 56));
     p.setFont(QFont("Helvetica", 14));
@@ -259,7 +258,6 @@ void Window::drawProgress(QPainter &p, const QString &details, const QString &st
 
 void Window::drawPlayer(QPainter &p) {
     p.save();
-    const int banner = !notice_.isEmpty() ? 52 : !ticker_.isEmpty() ? 25 : 0;
     const QRect body(0, 29, width(), std::max(1, height() - 56));
     p.setClipRect(body);
     if (view().context == "player-video") {
@@ -292,7 +290,7 @@ void Window::drawPlayer(QPainter &p) {
     const int barHeight = 7;
     const int contentHeight = lineHeight + clockHeight + barHeight +
                               int(keyLines.size()) * lineHeight + (hasSize ? lineHeight : 0) + 26;
-    const int bodyBottom = height() - 32 - banner;
+    const int bodyBottom = height() - 32;
     int top = 34 + std::max(0, (bodyBottom - 34 - contentHeight) / 2);
     p.setFont(small);
     p.setPen(ink);

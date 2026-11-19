@@ -1,6 +1,8 @@
 #include "window.h"
 #include "storage.h"
 #include "chat_history.h"
+#include "roster_order.h"
+#include "chat_layout.h"
 #include "ui_settings.h"
 #include "ui_files.h"
 #include "ui_language.h"
@@ -784,20 +786,7 @@ void Window::rebuildRoster() {
                 continue;
         }
         std::vector<size_t> &items = g->second;
-        for (size_t a = 1; a < items.size(); ++a) {
-            size_t b = a;
-            while (b) {
-                const ContactRecord &left = contacts_[items[b]], &right = contacts_[items[b - 1]];
-                bool before = sortByName ? left.name < right.name
-                                         : (online(left.status) != online(right.status)
-                                                ? online(left.status)
-                                                : left.name < right.name);
-                if (!before)
-                    break;
-                std::swap(items[b], items[b - 1]);
-                --b;
-            }
-        }
+        sortRosterContacts(items, contacts_, sortByName);
         // Unread chats lead each group; both passes retain the selected
         // status/name order without allocating a second contact list.
         for (unsigned pass = 0; pass < 2; ++pass) {
@@ -819,29 +808,21 @@ void Window::rebuildRoster() {
     v.selected = std::max(0, std::min(v.selected, (int)v.rows.size() - 1));
     update();
 }
+QString Window::messageHeader(const MessageRecord &m) const {
+    const QString sender = m.outgoing             ? u("Я")
+                           : m.senderName.empty() ? name(m.uin)
+                                                  : u(m.senderName);
+    const int offset =
+        (settingNumber(settings_, "timezone") + settingNumber(settings_, "daylight")) * 60 +
+        settingNumber(settings_, "time_offset_minutes");
+    return formatChatHeader(sender, m.time, settingFlag(settings_, "show_sender"),
+                            settingFlag(settings_, "show_time"),
+                            settingFlag(settings_, "display_date"), offset);
+}
 QString Window::messageText(const MessageRecord &m) const {
-    QString text;
-    // BART history carries a ready-made [dd.mm hh:mm] author prefix, not a
-    // Unix timestamp. Keep that header instead of inventing 01.01.1970.
-    if (m.time) {
-        time_t stamp =
-            m.time +
-            (settingNumber(settings_, "timezone") + settingNumber(settings_, "daylight")) * 3600 +
-            settingNumber(settings_, "time_offset_minutes") * 60;
-        struct tm *tm = gmtime(&stamp);
-        char when[32];
-        strftime(when, sizeof(when),
-                 settingFlag(settings_, "display_date") ? "%d.%m %H:%M" : "%H:%M", tm);
-        if (settingFlag(settings_, "show_time"))
-            text += u(when) + " ";
-        if (settingFlag(settings_, "show_sender"))
-            text += (m.outgoing ? u("Я")
-                                : u(m.senderName.empty() ? std::string(name(m.uin).utf8())
-                                                         : m.senderName)) +
-                    ": ";
-        if (settingFlag(settings_, "show_newlines"))
-            text += "\n";
-    }
+    QString text = messageHeader(m);
+    if (!text.isEmpty() && settingFlag(settings_, "show_newlines"))
+        text += "\n";
     const std::string display = m.kind == 2 ? videoMessageText(m.text, m.url) : m.text;
     text += u(display);
     if (settingFlag(settings_, "show_smileys")) {

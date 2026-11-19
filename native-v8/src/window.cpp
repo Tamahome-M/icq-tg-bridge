@@ -9,6 +9,7 @@
 #include "system_chrome.h"
 #include "status_icon.h"
 #include "status_icon_v8.h"
+#include "chat_layout.h"
 #include <ZKbInputField.h>
 #include <ZMultiLineEdit.h>
 #include <ZKeyDef.h>
@@ -42,6 +43,19 @@ static unsigned long now() {
 }
 static QString number(unsigned n) {
     return QString::number(n);
+}
+static bool chatLoading(uint32_t id, const std::map<uint32_t, std::string> &requests,
+                        const std::map<uint32_t, uint32_t> &targets) {
+    for (std::map<uint32_t, std::string>::const_iterator request = requests.begin();
+         request != requests.end(); ++request) {
+        if (request->second != "last" && request->second != "chat-history" &&
+            request->second != "restore-chat")
+            continue;
+        std::map<uint32_t, uint32_t>::const_iterator target = targets.find(request->first);
+        if (target != targets.end() && target->second == id)
+            return true;
+    }
+    return false;
 }
 Window::Window(const std::string &dir)
     : QWidget(0, "telemotomax", WRepaintNoErase | WResizeNoErase), storage_(new Storage(dir)),
@@ -174,15 +188,13 @@ void Window::syncSystemMenu() {
     if (!systemMenu_ || stack_.empty())
         return;
     int bottom = height() - 27;
-    if (!notice_.isEmpty())
-        bottom -= 52;
-    else if (!ticker_.isEmpty())
-        bottom -= 25;
     systemMenu_->sync(view(), systemMenuVisible(), view().kind == View::AttachmentReview ? 145 : 29,
                       bottom);
 }
 void Window::update() {
     updateSystemStatusIcon();
+    if (editor_ && !editor_->isHidden())
+        layoutEditor();
     syncSystemMenu();
     QWidget::update();
 }
@@ -744,6 +756,15 @@ void Window::drawHeader(QPainter &p) {
         title = u("Подключение");
         roster = false;
     }
+    if (!locked_ && view().kind == View::Chat && chatLoading(view().uin, pending_, pendingUin_))
+        title = u("Загрузка…");
+    if (!locked_ && !connectionProgressVisible() && (!notice_.isEmpty() || !ticker_.isEmpty())) {
+        title = notice_.isEmpty() ? ticker_ : notice_;
+        for (unsigned i = 0; i < title.length(); ++i)
+            if (title[i] == '\n' || title[i] == '\r')
+                title[i] = QChar(' ');
+        roster = false;
+    }
     // Keep unread deliveries visible even inside another chat, a menu or PIN.
     if (unread())
         title = "[" + number(unread()) + "] " + title;
@@ -816,12 +837,38 @@ void Window::drawFooter(QPainter &p) {
     }
     systemChrome_->drawFooter(p, QRect(0, height() - 26, width(), 26), left, right);
 }
+const MessageRecord *Window::rowMessage(const View &v, const Row &r) const {
+    if (r.action != "message-menu")
+        return 0;
+    if (v.kind == View::History)
+        return r.value < v.messages.size() ? &v.messages[r.value] : 0;
+    if (v.kind == View::Chat) {
+        std::map<uint32_t, ChatState>::const_iterator chat = chats_.find(v.uin);
+        if (chat != chats_.end() && r.value < chat->second.messages.size())
+            return &chat->second.messages[r.value];
+    }
+    return 0;
+}
+ChatLayout Window::layoutMessage(const View &v, const Row &r) const {
+    const MessageRecord *message = rowMessage(v, r);
+    // Rows may predate a formatting preference or a contact-name refresh.
+    // Use the record so current header/body formatting stays consistent.
+    const QString formatted = message ? messageText(*message) : r.text;
+    const ChatText text =
+        splitChatText(formatted, message ? messageHeader(*message) : QString::null,
+                      settingFlag(settings_, "show_newlines"), message && !message->time);
+    const bool decorated =
+        settingFlag(settings_, "show_icons") || settingFlag(settings_, "show_receipts");
+    return layoutChatText(text, chatFont(), std::max(1, width() - (decorated ? 22 : 5) - 7));
+}
 int Window::rowHeight(const Row &r) const {
     if (view().context == "contact-info" && r.action == "info-avatar-view")
         return infoAvatar_.isNull() ? 30 : infoAvatar_.height() + 8;
     if (view().kind != View::Chat && view().kind != View::History &&
         view().context != "contact-info")
         return std::max(30, fontMetrics().height() + 10);
+    if (rowMessage(view(), r))
+        return std::max(30, layoutMessage(view(), r).height + 10);
     QFontMetrics metrics(chatFont());
     return std::max(
         30, metrics.boundingRect(0, 0,
@@ -839,6 +886,9 @@ void Window::drawList(QPainter &p) {
     bool fields = v.context == "contact-info";
     if (chat || fields)
         p.setFont(chatFont());
+    const QFont regular = p.font();
+    QFont bold = regular;
+    bold.setBold(true);
     int available = height() - 56;
     if (v.selected < v.top)
         v.top = v.selected;
@@ -852,20 +902,12 @@ void Window::drawList(QPainter &p) {
     p.setClipRect(0, 29, width(), available);
     int y = 29;
     for (int i = v.top; i < (int)v.rows.size() && y < height() - 27; ++i) {
-        int h = rowHeight(v.rows[i]);
+        const MessageRecord *m = chat ? rowMessage(v, v.rows[i]) : 0;
+        const ChatLayout layout = m ? layoutMessage(v, v.rows[i]) : ChatLayout();
+        const int h = m ? std::max(30, layout.height + 10) : rowHeight(v.rows[i]);
         bool selected = i == v.selected;
         if (selected)
             p.fillRect(0, y, width(), std::min(h, available), palette().active().highlight());
-        const MessageRecord *m = 0;
-        if (chat && v.rows[i].action == "message-menu") {
-            if (v.kind == View::History && v.rows[i].value < v.messages.size())
-                m = &v.messages[v.rows[i].value];
-            else {
-                std::map<uint32_t, ChatState>::const_iterator c = chats_.find(v.uin);
-                if (c != chats_.end() && v.rows[i].value < c->second.messages.size())
-                    m = &c->second.messages[v.rows[i].value];
-            }
-        }
         const QColor ink =
             selected ? palette().active().highlightedText() : palette().active().text();
         p.setPen(ink);
@@ -899,7 +941,22 @@ void Window::drawList(QPainter &p) {
         }
         if (fields && v.rows[i].action == "info-avatar-view" && !infoAvatar_.isNull())
             p.drawPixmap((width() - infoAvatar_.width()) / 2, y + 4 - offset, infoAvatar_);
-        else
+        else if (m) {
+            const QColor headerInk = chatHeaderColor(
+                m->outgoing, selected ? palette().active().highlight() : palette().active().base());
+            for (size_t run = 0; run < layout.runs.size(); ++run) {
+                const ChatRun &part = layout.runs[run];
+                const int top = y + 4 + part.y - offset;
+                if (top + layout.lineHeight < 29 || top >= height() - 27)
+                    continue;
+                p.setFont(part.header ? bold : regular);
+                p.setPen(part.header ? headerInk : ink);
+                p.drawText(left + part.x, top, std::max(1, width() - left - part.x - 7),
+                           layout.lineHeight, Qt::AlignLeft | Qt::AlignTop | Qt::SingleLine,
+                           part.text);
+            }
+            p.setFont(regular);
+        } else
             p.drawText(left, y + 4 - offset, width() - left - 7, h - 8,
                        Qt::AlignLeft |
                            ((chat || fields) ? Qt::WordBreak : Qt::AlignVCenter | Qt::SingleLine),
@@ -907,9 +964,13 @@ void Window::drawList(QPainter &p) {
         y += std::min(h, available);
     }
     if (v.rows.empty()) {
+        // Conversation requests do not use View::request: that field also
+        // controls cancellation when going Back.
+        const bool loading =
+            v.request || (v.kind == View::Chat && chatLoading(v.uin, pending_, pendingUin_));
         p.setPen(Qt::gray);
         p.drawText(8, 55, width() - 16, 90, Qt::WordBreak,
-                   v.request ? u("Загрузка…") : u("Сообщений нет"));
+                   u(loading ? "Загрузка…" : "Сообщений нет"));
     }
     p.setClipping(false);
     p.setFont(font());
@@ -934,18 +995,21 @@ void Window::paintEvent(QPaintEvent *event) {
 void Window::drawFrame(QPainter &p) {
     if (locked_ || connectionProgressVisible()) {
         drawSplash(p);
+        if (!locked_ && !notice_.isEmpty())
+            systemChrome_->drawHeader(p, QRect(0, 0, width(), 28), notice_);
         return;
     }
     splashLogo_ = QPixmap();
     if (view().kind == View::Popup && !locked_ && !popupBackdrop_.isNull()) {
         p.drawPixmap(0, 0, popupBackdrop_);
+        drawHeader(p);
         drawFooter(p);
         return;
     }
     // Transparent native skin parts blend against the phone's palette in menus.
     p.fillRect(rect(), systemMenuVisible() ? palette().active().background() : bodyColor(1));
     if (!(editor_ && editor_->isVisible() && editAction_ == "message" &&
-          settingFlag(settings_, "full_editor")))
+          settingFlag(settings_, "full_editor") && notice_.isEmpty() && ticker_.isEmpty()))
         drawHeader(p);
     drawFooter(p);
     if (view().kind == View::Transfer || view().kind == View::Recording) {
@@ -975,15 +1039,6 @@ void Window::drawFrame(QPainter &p) {
         p.setClipping(false);
     } else if (!systemMenuVisible())
         drawList(p);
-    if (!notice_.isEmpty()) {
-        p.fillRect(0, height() - 79, width(), 52, palette().active().button());
-        p.setPen(palette().active().buttonText());
-        p.drawText(5, height() - 78, width() - 10, 50, Qt::WordBreak, notice_);
-    } else if (!ticker_.isEmpty()) {
-        p.fillRect(0, height() - 52, width(), 25, palette().active().button());
-        p.setPen(palette().active().buttonText());
-        p.drawText(4, height() - 52, width() - 8, 25, Qt::SingleLine | Qt::AlignVCenter, ticker_);
-    }
 }
 void Window::mediaPosition(unsigned int p, unsigned int d) {
     playPosition_ = p;
