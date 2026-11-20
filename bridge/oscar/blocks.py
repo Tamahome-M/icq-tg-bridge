@@ -41,7 +41,8 @@ def user_info(screenname: str, *, warning: int = 0, user_class: int | None = Non
 
 
 def icon_reply(uin: int, icon_hash: bytes, image: bytes,
-               bart_type: int = C.BART_ICON, part: int = 1, total: int = 1) -> bytes:
+               bart_type: int = C.BART_ICON, part: int = 1, total: int = 1,
+               wide_parts: bool = False) -> bytes:
     """Тело SNAC 10/07: аватарка контакта (или снимок, история, часть ролика
     по токену — тот же формат с другим типом приметы, расширение TeleMotoMax).
 
@@ -49,11 +50,16 @@ def icon_reply(uin: int, icon_hash: bytes, image: bytes,
     отсчитывает начало картинки по этой длине, а не по разбору полей. Байты
     флагов у примет обычно 0x01; для ролика, который не влезает в один пакет,
     в первом — номер части, во втором — сколько их всего.
+    Только для согласованного native-расширения wide_parts оба байта равны
+    нулю, а перед длиной данных добавлены u16 номер/всего: больше 255 частей.
     """
-    first = struct.pack(">HBB", bart_type, part, len(icon_hash)) + icon_hash
-    second = struct.pack(">HBB", bart_type, total, len(icon_hash)) + icon_hash
+    if not 1 <= part <= total <= (65535 if wide_parts else 255):
+        raise ValueError("неверный номер части BART")
+    first = struct.pack(">HBB", bart_type, 0 if wide_parts else part, len(icon_hash)) + icon_hash
+    second = struct.pack(">HBB", bart_type, 0 if wide_parts else total, len(icon_hash)) + icon_hash
+    counters = struct.pack(">HH", part, total) if wide_parts else b""
     return (pstr8(str(uin).encode("ascii"))
-            + first + b"\x00" + second
+            + first + b"\x00" + second + counters
             + struct.pack(">H", len(image)) + image)
 
 

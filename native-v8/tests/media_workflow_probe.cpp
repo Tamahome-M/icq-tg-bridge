@@ -300,6 +300,18 @@ class UiProbe {
             window.back();
         }
         window.settings_.setInt("video_rotate", 0);
+        window.settings_.setInt("video_seconds", 3600);
+        window.settings_.setInt("video_kbps", 1024);
+        window.settings_.setInt("video_kb", 524288);
+        window.requestMedia(2);
+        require(submitted.back().media[7] == 3600 && submitted.back().media[6] == 1024 &&
+                    submitted.back().media[12] == 65535 && submitted.back().media[22] == 512 &&
+                    submitted.back().media[23] == 1,
+                "one-hour high-quality video carries large limits without u16 truncation");
+        window.back();
+        window.settings_.setInt("video_seconds", 0);
+        window.settings_.setInt("video_kbps", 0);
+        window.settings_.setInt("video_kb", 0);
         cacheReopen(window, cache, contact.uin);
         fprintf(stderr, "MEDIA UI COMPLETE: %u checks\n", checks_);
         scene(window, contact.uin);

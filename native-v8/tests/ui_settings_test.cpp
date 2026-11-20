@@ -65,6 +65,22 @@ int main() {
     s.set("video_kb", "0");
     s.set("media_memory_kb", "0");
     assert(mediaSettings(s)[12] == 8192); // Native disk-backed transfer budget, not Java heap.
+    s.set("video_seconds", "3600");
+    s.set("video_kbps", "1024");
+    s.set("video_kb", "524288");
+    assert(validateSetting(*settingField("video_seconds"), "3600", error));
+    assert(!validateSetting(*settingField("video_seconds"), "3601", error));
+    assert(validateSetting(*settingField("video_kbps"), "1024", error));
+    assert(validateSetting(*settingField("video_kb"), "524288", error));
+    assert(!validateSetting(*settingField("video_kb"), "1048576", error));
+    const std::map<unsigned, unsigned> large = mediaSettings(s);
+    assert(large.find(7)->second == 3600 && large.find(6)->second == 1024 &&
+           large.find(12)->second == 65535 && large.find(22)->second == 512 &&
+           large.find(23)->second == 1);
+    assert(videoLimitKB(s) == 524288);
+    s.set("video_kb", "8192");
+    assert(!mediaSettings(s).count(22));
+    s.set("video_kb", "0");
     assert(c.media[13] == 65535 && c.media[14] == 2 && c.media[17] == 12);
     s.set("video_size", "");
     s.set("photo_size", "");

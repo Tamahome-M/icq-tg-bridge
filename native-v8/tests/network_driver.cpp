@@ -155,6 +155,11 @@ int main(int argc, char **argv) {
         cfg.psk = getenv("TMM_TEST_PSK");
     if (getenv("TMM_TEST_MAX_MEDIA"))
         cfg.maxMediaBytes = atoi(getenv("TMM_TEST_MAX_MEDIA"));
+    if (getenv("TMM_TEST_LARGE_VIDEO")) {
+        cfg.media[23] = 1;
+        cfg.media[12] = 65535;
+        cfg.media[22] = atoi(getenv("TMM_TEST_LARGE_VIDEO"));
+    }
     cfg.network = "system";
     cfg.cacheDir = argv[4];
     cfg.autoReconnect = getenv("TMM_TEST_RECONNECT") != 0;
@@ -257,6 +262,8 @@ int main(int argc, char **argv) {
             c.token = unhex(token);
             c.nativeId = unhex(ref);
             c.status = c.mode;
+            if (c.type == Command::Video && getenv("TMM_TEST_LARGE_VIDEO"))
+                c.media = cfg.media;
             if (c.type == Command::QuietChats)
                 c.uins.push_back(c.uin);
             bool accepted = client.submit(c);

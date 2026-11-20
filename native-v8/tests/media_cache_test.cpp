@@ -40,6 +40,10 @@ int main() {
     b = file(root, "recording-owned.3gp");
     c = file(root, "media-too-large.3gp", 11);
     assert(!cache.store("a", a, "a") && !cache.store("b", b, "b") && !cache.store("c", c, "c"));
+    cache.reserve(32);
+    assert(cache.store("large", c, "large.3gp") && cache.find("large", path, name));
+    cache.clear();
+    c = file(root, "media-too-large.3gp", 11);
     const std::string link = root + "/media-link.jpg";
     assert(symlink(a.c_str(), link.c_str()) == 0 && !cache.store("link", link, "l"));
     const std::string nested = root + "/media-nested";

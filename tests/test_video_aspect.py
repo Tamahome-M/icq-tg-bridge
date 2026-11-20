@@ -35,6 +35,15 @@ async def run(encoder: Path) -> None:
             return source
 
         bridge.side_for = lambda _: SimpleNamespace(video_bytes=video_bytes)
+        coders = []
+        original_coder = bridge._transcoder
+
+        def tracked_coder(seconds):
+            coder = original_coder(seconds)
+            coders.append(coder)
+            return coder
+
+        bridge._transcoder = tracked_coder
         # Expected *visible* white rectangle, excluding letterboxing. This is
         # measured after decoding the actual encoded output, not from -vf text.
         cases = [
@@ -48,6 +57,9 @@ async def run(encoder: Path) -> None:
             ("metadata-portrait", "640x360", "1", "mpeg4", "auto", True, (240, 180), (100, 180)),
             ("v3-wide", "640x360", "1", "h263", "never", False, (176, 144), (176, 98)),
             ("v3-portrait", "360x640", "1", "h263", "never", False, (176, 144), (80, 144)),
+            ("hour-512", "320x240", "1", "mpeg4", "never", False, (240, 180), (240, 180)),
+            ("hour-768", "320x240", "1", "mpeg4", "never", False, (240, 180), (240, 180)),
+            ("hour-1024", "320x240", "1", "mpeg4", "never", False, (240, 180), (240, 180)),
         ]
         try:
             for index, (name, size, sar, codec, rotate, automatic, frame, visible) in enumerate(cases):
@@ -62,13 +74,20 @@ async def run(encoder: Path) -> None:
                                    check=True, timeout=15)
                     incoming = tagged
                 source = incoming.read_bytes()
+                long_clip = name.startswith("hour-")
+                bitrate = int(name.split("-")[1]) if long_clip else 192
+                seconds = 3600 if long_clip else 300
                 session.media = {"video_codec": codec, "video_width": 240 if codec == "mpeg4" else 176,
                                  "video_height": 180 if codec == "mpeg4" else 144,
-                                 "video_kbps": 192, "video_seconds": 300, "video_max_kb": 8192,
+                                 "video_kbps": bitrate, "video_seconds": seconds,
+                                 "video_max_kb": 524288 if long_clip else 8192,
+                                 "bart_parts16": long_clip,
                                  "video_rotate": automatic}
-                assert bridge._video_kbps(300) == 192
+                assert bridge._video_kbps(seconds) == bitrate
                 data = await bridge.fetch_video(uin, f"video:{index + 1}", rotate=rotate)
                 assert data, name
+                if long_clip:
+                    assert coders[-1].video_seconds == 3600 and coders[-1].timeout >= 7200
                 output = root / f"{name}.3gp"
                 output.write_bytes(data)
                 info = json.loads(subprocess.check_output([
@@ -78,6 +97,8 @@ async def run(encoder: Path) -> None:
                 assert (info["width"], info["height"]) == frame, (name, info)
                 if codec == "mpeg4":
                     assert info.get("sample_aspect_ratio", "1:1") == "1:1", (name, info)
+                    if long_clip:
+                        assert info["level"] == 4, (name, info)
                 if codec == "h263":
                     assert not {b"fiel", b"pasp"}.intersection(container_boxes(data)), name
                 png = subprocess.check_output([str(encoder), "-v", "error", "-i", str(output),
@@ -90,6 +111,25 @@ async def run(encoder: Path) -> None:
                 assert abs(box[0] - (frame[0] - visible[0]) / 2) <= 1, (name, box)
                 assert abs(box[1] - (frame[1] - visible[1]) / 2) <= 1, (name, box)
                 print(f"{name}: {codec} {frame}, content {measured}, centered, decode OK")
+            # A real hour-long timeline catches hidden 300-second cutoffs;
+            # static low-FPS input keeps the fixture small and cheap to encode.
+            incoming = root / "full-hour.mp4"
+            subprocess.run([str(encoder), "-y", "-v", "error", "-f", "lavfi", "-i",
+                            "color=white:size=128x96:rate=1", "-t", "3600", "-c:v", "mpeg4",
+                            str(incoming)], check=True, timeout=120)
+            source = incoming.read_bytes()
+            session.media = {"video_codec": "mpeg4", "video_width": 240, "video_height": 180,
+                             "video_kbps": 512, "video_seconds": 3600, "video_max_kb": 524288,
+                             "bart_parts16": True, "video_rotate": False}
+            encoded = await bridge.fetch_video(uin, "video:999", rotate="never")
+            assert encoded
+            output = root / "full-hour.3gp"
+            output.write_bytes(encoded)
+            info = json.loads(subprocess.check_output([str(probe), "-v", "error", "-show_format",
+                                                       "-show_streams", "-of", "json", str(output)], timeout=20))
+            assert abs(float(info["format"]["duration"]) - 3600) < 0.1, info
+            assert int(info["streams"][0]["nb_frames"]) == 54000, info
+            print("full hour: encoded duration 3600 s, 54000 frames, no hidden cutoff")
         finally:
             await bridge.photo_server.stop()
             bridge.storage.close()

@@ -910,6 +910,8 @@ class Bridge:
         if self.tmm("video_seconds") <= 0:
             return None
         transcoder = self._transcoder(self.tmm("video_seconds"))
+        if self.oscar.session and self.oscar.session.media.get("bart_parts16"):
+            transcoder.timeout = max(transcoder.timeout, min(3600, self.tmm("video_seconds")) * 2)
         if not transcoder.available:
             log.warning("ролик для «%s»: ffmpeg %r не найден", contact.title, self.cfg.render_ffmpeg)
             return None

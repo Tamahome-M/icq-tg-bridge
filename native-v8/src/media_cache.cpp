@@ -13,6 +13,12 @@ MediaCache::MediaCache(unsigned entries, uint64_t bytes)
 MediaCache::~MediaCache() {
     clear();
 }
+void MediaCache::reserve(uint64_t bytes) {
+    // Capacity is a disk budget, not an allocation. Grow only for an explicit
+    // larger video setting; never evict a currently playing file on Save.
+    if (bytes > maximumBytes_ && bytes <= 512ULL * 1024 * 1024)
+        maximumBytes_ = bytes;
+}
 void MediaCache::setDirectory(const std::string &directory) {
     clear();
     directory_ = directory;

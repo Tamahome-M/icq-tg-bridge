@@ -15,6 +15,7 @@ class MediaCache {
     bool store(const std::string &key, const std::string &path, const std::string &filename);
     bool owns(const std::string &path) const;
     void clear();
+    void reserve(uint64_t bytes);
     static std::string requestKey(const Command &command);
 
   private:

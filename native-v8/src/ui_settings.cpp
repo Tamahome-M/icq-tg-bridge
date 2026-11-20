@@ -72,11 +72,16 @@ static const SettingField fields[] = {
     {"media", "video_size", "Видео: кадр", "",
      "=как в профиле моста|176x144|144x176|240x180|320x240|240x320|480x640|640x480", 0, false},
     {"media", "video_kbps", "Видео: битрейт, кбит/с", "0",
-     "0=как в профиле моста|32|48|64|96|128|192|256|384", 0, false},
+     "0=как в профиле моста|32|48|64|96|128|192|256|320|384|512|768|1024", 0, false},
     {"media", "video_seconds", "Видео: длина, с", "0",
-     "0=как в профиле моста|5|10|15|20|30|60|120|180|300", 0, false},
+     "0=как в профиле моста|5|10|15|20|30|60=1 мин|120=2 мин|180=3 мин|300=5 мин|"
+     "600=10 мин|900=15 мин|1200=20 мин|1800=30 мин|2700=45 мин|3600=60 мин",
+     0, false},
     {"media", "video_kb", "Видео: не больше, КБ", "0",
-     "0=по лимиту загрузки|16|24|32|48|64|128|256|512", 0, false},
+     "0=по лимиту загрузки|16|24|32|48|64|128|256|512|1024=1 МиБ|2048=2 МиБ|4096=4 МиБ|"
+     "8192=8 МиБ|16384=16 МиБ|32768=32 МиБ|65536=64 МиБ|131072=128 МиБ|262144=256 МиБ|"
+     "524288=512 МиБ",
+     0, false},
     {"media", "video_rotate", "Ролик боком", "0", "0=авто (широкий — боком)|1=всегда|2=никогда", 0,
      false},
     {"media", "voice_kbps10", "Голосовое: битрейт, кбит/с", "0",
@@ -436,6 +441,11 @@ static unsigned limit(const Settings &s, const char *k) {
     std::string v = settingValue(s, k);
     return v.empty() ? 0 : (atoi(v.c_str()) == 0 ? 65535 : atoi(v.c_str()));
 }
+unsigned videoLimitKB(const Settings &s) {
+    const unsigned selected = settingNumber(s, "video_kb");
+    const unsigned general = settingNumber(s, "media_memory_kb");
+    return selected ? selected : general ? general : 8192;
+}
 std::map<unsigned, unsigned> mediaSettings(const Settings &s) {
     std::map<unsigned, unsigned> m;
     m[1] = m[2] = m[4] = m[5] = 0;
@@ -447,12 +457,14 @@ std::map<unsigned, unsigned> mediaSettings(const Settings &s) {
     // The bridge's auto request checks the source only when rotation is
     // enabled. Explicit always/never are still carried by each BART request.
     m[8] = settingNumber(s, "video_rotate") == 2 ? 2 : 1;
-    // Native playback reads from disk and has an 8 MiB transfer ceiling by
-    // default; do not inherit Java V8's 400 KiB whole-clip heap budget.
-    const unsigned memoryKB = settingNumber(s, "media_memory_kb");
-    const unsigned limitKB = memoryKB ? memoryKB : 8192;
-    if (!m[12] || m[12] > limitKB)
-        m[12] = limitKB;
+    // An explicit video limit overrides the default for other attachments.
+    // Keep the u16 KiB field representable for older bridges; new bridges use
+    // the optional MiB field for larger files.
+    const unsigned limitKB = videoLimitKB(s);
+    m[12] = std::min(limitKB, 65535u);
+    if (limitKB > 65535)
+        m[22] = limitKB / 1024;
+    m[23] = 1; // Supports BART replies with u16 part/total counters.
     for (unsigned i = 0; i < 2; ++i) {
         std::string v = settingValue(s, i ? "video_size" : "photo_size");
         size_t x = v.find('x');

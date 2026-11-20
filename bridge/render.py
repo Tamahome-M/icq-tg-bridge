@@ -334,11 +334,13 @@ class Transcoder:
             # сохраняя выбранный кодек вместо скрытой замены на MPEG-4.
             width, height = VIDEO_WIDTH, VIDEO_HEIGHT
         codec_args = list(VIDEO_CODECS[codec])
-        if codec == "mpeg4" and width * height > 176 * 144:
+        if codec == "mpeg4" and (width * height > 176 * 144 or self.video_kbps > 64):
             # Simple Profile Level 0 — это QCIF и не больше: кадр 320×240 с
             # таким заголовком плеер телефона отвергал («MediaException:
-            # convert»). До CIF (352×288) — Level 3.
-            codec_args = ["-c:v", "mpeg4", "-profile:v", "0", "-level", "3", "-vtag", "mp4v"]
+            # convert»). До CIF/384 кбит/с — Level 3; VGA и повышенный
+            # битрейт требуют Simple Profile Level 4a (код уровня 4).
+            level = "4" if width * height > 352 * 288 or self.video_kbps > 384 else "3"
+            codec_args = ["-c:v", "mpeg4", "-profile:v", "0", "-level", level, "-vtag", "mp4v"]
         # Fit the *display* aspect ratio, including anamorphic input, into a
         # square-pixel frame. H.263/V3 cannot rely on SAR/pasp to undo a stretch.
         # Round down to even dimensions for yuv420p, then pad instead of crop.

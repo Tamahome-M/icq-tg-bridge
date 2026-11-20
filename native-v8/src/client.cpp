@@ -404,8 +404,8 @@ class Client::Impl : public Cancellation {
             permanentFailure = true;
             throw;
         }
-        connectionProgress(20, cfg.encryption ? "Соединение и защита TMME"
-                                             : "Соединение с сервером");
+        connectionProgress(20,
+                           cfg.encryption ? "Соединение и защита TMME" : "Соединение с сервером");
         open(cfg.host, cfg.port, ip);
         connectionProgress(35, "Авторизация");
         uint64_t deadline = monotonicMs() + 60000;
@@ -723,7 +723,17 @@ class Client::Impl : public Cancellation {
                 fcntl(p.fd, F_SETFD, FD_CLOEXEC);
                 p.path = &path[0];
             }
-            if (p.bytes + data.size() > cfg.maxMediaBytes) {
+            unsigned maximum = cfg.maxMediaBytes;
+            if (p.kind == 0x82) {
+                const std::map<unsigned, unsigned> &media = p.command.media;
+                std::map<unsigned, unsigned>::const_iterator mb = media.find(22),
+                                                             kb = media.find(12);
+                if (mb != media.end() && mb->second && mb->second <= 512)
+                    maximum = mb->second * 1024u * 1024u;
+                else if (kb != media.end() && kb->second && kb->second <= 65535)
+                    maximum = kb->second * 1024u;
+            }
+            if (p.bytes + data.size() > maximum) {
                 error(s.request, p.command.uin, "Вложение больше установленного лимита");
                 cleanupPending(s.request);
                 return;
@@ -1080,6 +1090,10 @@ class Client::Impl : public Cancellation {
         p.command = c;
         p.deadline = monotonicMs() + 180000;
         p.kind = mediaType(c.type);
+        if (c.type == Command::Video && c.media.count(7))
+            p.deadline =
+                monotonicMs() +
+                std::max(180000u, std::min(3600u, c.media.find(7)->second) * 2000u + 60000u);
         if (p.kind) {
             if (c.type == Command::History || c.type == Command::Discussion) {
                 if (c.offset > 65535 || !c.limit || c.limit > 200)
