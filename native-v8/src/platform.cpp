@@ -138,13 +138,21 @@ void Platform::minimize() {
     if (window_)
         window_->hide();
 }
-void Platform::requestForeground() {
+void Platform::showWindow(QWidget &window, bool fullscreen) {
+    // showNormal restores Qt's saved (often half-width/half-height) geometry.
+    // A phone's non-fullscreen mode must still fill its available work area.
+    if (fullscreen)
+        window.showFullScreen();
+    else
+        window.showMaximized();
+}
+void Platform::requestForeground(bool fullscreen) {
     // Activation can arrive after the application was hidden. Refresh the
     // physical lid state instead of relying only on a previous notification.
     lidChanged(UTIL_GetFlipStatus());
     if (window_ && !closed_) {
         setBacklight(true);
-        window_->showFullScreen();
+        showWindow(*window_, fullscreen);
         // Re-register/show the main widget through the firmware as well as Qt.
         // raiseAppWindows alone only asks AM to raise windows it already knows.
         static_cast<ZApplication *>(qApp)->showMainWidget(window_);

@@ -50,6 +50,14 @@ int main(int argc, char **argv) {
     incoming = chatHeaderColor(false, QColor(0, 0, 128));
     outgoing = chatHeaderColor(true, QColor(0, 0, 128));
     assert(incoming.green() > 100 && outgoing.green() > 100 && incoming != outgoing);
+    const QColor lightSelection = chatSelectionColor(QColor(255, 255, 255), QColor(0, 0, 0));
+    const QColor darkSelection = chatSelectionColor(QColor(0, 0, 0), QColor(255, 255, 255));
+    assert(lightSelection.red() == lightSelection.green() &&
+           lightSelection.green() == lightSelection.blue());
+    assert(lightSelection.red() >= 220 && lightSelection.red() < 255);
+    assert(darkSelection.red() == darkSelection.green() &&
+           darkSelection.green() == darkSelection.blue());
+    assert(darkSelection.red() > 0 && darkSelection.red() < 40);
     puts("CHAT LAYOUT PASS: Java headers, history dates, separate bold/color spans, line breaks, "
          "narrow wrapping and theme contrast");
     return 0;

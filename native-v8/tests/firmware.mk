@@ -87,3 +87,7 @@ $(BUILD)/roster-order-test: tests/roster_order_test.cpp $(BUILD)/roster_order.o 
 chat-layout-test: $(BUILD)/chat-layout-test
 $(BUILD)/chat-layout-test: tests/chat_layout_test.cpp $(BUILD)/chat_layout.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/chat_layout.o -lezxappbase -lqte-mt -ldl -o $@
+.PHONY: window-geometry-test
+window-geometry-test: $(BUILD)/window-geometry-test $(BUILD)/logo.png $(BUILD)/statuses.png $(BUILD)/messages.png
+$(BUILD)/window-geometry-test: tests/window_geometry_test.cpp $(filter-out $(BUILD)/main.o,$(OBJECTS)) $(MOC_OBJECTS) $(BUILD)/sdk-link/.ready Makefile
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(filter-out $(BUILD)/main.o,$(OBJECTS)) $(MOC_OBJECTS) -lezxsound -lqte-mt -lezxappbase -lezxpm -lm -ldl -lpthread -lrt -lresolv -o $@

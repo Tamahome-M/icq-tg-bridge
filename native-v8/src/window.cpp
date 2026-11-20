@@ -377,13 +377,12 @@ void Window::applySettings() {
             info(u("Не удалось удалить локальную историю: ") + u(error));
         }
     }
-    if (isVisible()) {
-        if (settingFlag(settings_, "fullscreen"))
-            showFullScreen();
-        else
-            showNormal();
-    }
+    if (isVisible())
+        showConfigured();
     update();
+}
+void Window::showConfigured() {
+    Platform::showWindow(*this, settingFlag(settings_, "fullscreen"));
 }
 QColor Window::bodyColor(unsigned role) const {
     const QColorGroup &colors = palette().active();
@@ -442,7 +441,7 @@ void Window::suspend() {
 }
 void Window::resume() {
     // Platform refreshes the hardware flip state before requesting foreground.
-    platform_.requestForeground();
+    platform_.requestForeground(settingFlag(settings_, "fullscreen"));
     if (closed_)
         return;
     lastActivity_ = now();
@@ -906,10 +905,13 @@ void Window::drawList(QPainter &p) {
         const ChatLayout layout = m ? layoutMessage(v, v.rows[i]) : ChatLayout();
         const int h = m ? std::max(30, layout.height + 10) : rowHeight(v.rows[i]);
         bool selected = i == v.selected;
+        const QColor selectedBackground =
+            m ? chatSelectionColor(palette().active().base(), palette().active().text())
+              : palette().active().highlight();
         if (selected)
-            p.fillRect(0, y, width(), std::min(h, available), palette().active().highlight());
+            p.fillRect(0, y, width(), std::min(h, available), selectedBackground);
         const QColor ink =
-            selected ? palette().active().highlightedText() : palette().active().text();
+            selected && !m ? palette().active().highlightedText() : palette().active().text();
         p.setPen(ink);
         bool decorated = chat && (settingFlag(settings_, "show_icons") ||
                                   settingFlag(settings_, "show_receipts"));
@@ -943,7 +945,7 @@ void Window::drawList(QPainter &p) {
             p.drawPixmap((width() - infoAvatar_.width()) / 2, y + 4 - offset, infoAvatar_);
         else if (m) {
             const QColor headerInk = chatHeaderColor(
-                m->outgoing, selected ? palette().active().highlight() : palette().active().base());
+                m->outgoing, selected ? selectedBackground : palette().active().base());
             for (size_t run = 0; run < layout.runs.size(); ++run) {
                 const ChatRun &part = layout.runs[run];
                 const int top = y + 4 + part.y - offset;

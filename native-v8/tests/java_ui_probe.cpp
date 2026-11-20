@@ -12,6 +12,7 @@
 #include "system_chrome.h"
 #include "system_menu.h"
 #include "input_indicator.h"
+#include "chat_layout.h"
 #include <ZListBox.h>
 #include <ZKeyDef.h>
 #include <ZMultiLineEdit.h>
@@ -1255,11 +1256,15 @@ class UiProbe {
             if (text.text.find(uiText("Борис")) >= 0)
                 history = text.font.bold() && text.text.find("1970") < 0;
             if (text.text.find(uiText("Привет")) >= 0)
-                plainBody =
-                    !text.font.bold() && text.color == w.palette().active().highlightedText();
+                plainBody = !text.font.bold() && text.color == w.palette().active().text();
         }
         require(author && own && history && plainBody && incomingColor != outgoingColor,
                 "chat paints bold colored incoming/outgoing/history headers and plain themed body");
+        QPixmap sample(1, 1);
+        sample.fill(chatSelectionColor(w.palette().active().base(), w.palette().active().text()));
+        require(canvas.convertToImage().pixel(w.width() - 2, 31) ==
+                    sample.convertToImage().pixel(0, 0),
+                "selected message uses a soft neutral background instead of the menu highlight");
         w.settings_.setBool("show_sender", false);
         w.settings_.setBool("show_time", false);
         paintedTexts.clear();

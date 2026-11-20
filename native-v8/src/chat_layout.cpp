@@ -160,4 +160,13 @@ QColor chatHeaderColor(bool outgoing, const QColor &background) {
         return outgoing ? QColor(128, 200, 255) : QColor(255, 144, 144);
     return outgoing ? QColor(0, 0, 255) : QColor(255, 0, 0);
 }
+QColor chatSelectionColor(const QColor &background, const QColor &text) {
+    const int base =
+        (background.red() * 299 + background.green() * 587 + background.blue() * 114) / 1000;
+    const int ink = (text.red() * 299 + text.green() * 587 + text.blue() * 114) / 1000;
+    // Java's default message cursor is a pale tint, not a full saturated menu
+    // highlight. Use neutral grey with a small contrast against either theme.
+    const int shade = (base * 9 + ink) / 10;
+    return QColor(shade, shade, shade);
+}
 } // namespace tmm
