@@ -33,6 +33,7 @@ KEYS = {
     "video_width": "tmm_video_width",
     "video_height": "tmm_video_height",
     "video_rotate": "tmm_video_rotate",
+    "video_codec": "render_video_codec",
     "video_kbps": "render_video_kbps",
     "voice_seconds": "tmm_voice_seconds",
     "voice_kbps": "tmm_voice_kbps",

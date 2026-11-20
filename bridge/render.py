@@ -232,8 +232,8 @@ class Transcoder:
 
     async def probe_size(self, raw: bytes) -> tuple[int, int] | None:
         """Видимый размер кадра исходника: ширина и высота с учётом тега
-        поворота (телефонные ролики часто сняты «боком» и помечены
-        rotate=90 — на экране они вертикальные)."""
+        поворота и пропорций пикселя (телефонные ролики часто сняты «боком»
+        и помечены rotate=90 — на экране они вертикальные)."""
         if not raw:
             return None
         probe = os.path.join(os.path.dirname(self.ffmpeg) or "", "ffprobe") \
@@ -247,12 +247,14 @@ class Transcoder:
                 fh.write(raw)
             proc = await asyncio.create_subprocess_exec(
                 probe, "-v", "error", "-select_streams", "v:0",
-                "-show_entries", "stream=width,height:stream_tags=rotate:stream_side_data=rotation",
+                "-show_entries", "stream=width,height,sample_aspect_ratio:"
+                "stream_tags=rotate:stream_side_data=rotation",
                 "-of", "default=noprint_wrappers=1", src,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
             width = height = 0
             rotation = 0
+            sar_num = sar_den = 1
             for line in out.decode("utf-8", "replace").splitlines():
                 key, _, value = line.partition("=")
                 value = value.strip()
@@ -263,10 +265,15 @@ class Transcoder:
                         height = int(value)
                     elif key in ("TAG:rotate", "rotation"):
                         rotation = int(float(value))
+                    elif key == "sample_aspect_ratio":
+                        numerator, denominator = map(int, value.split(":"))
+                        if numerator > 0 and denominator > 0:
+                            sar_num, sar_den = numerator, denominator
                 except ValueError:
                     pass
             if not width or not height:
                 return None
+            width = max(1, (width * sar_num + sar_den // 2) // sar_den)
             if abs(rotation) % 180 == 90:
                 width, height = height, width
             return width, height
@@ -332,7 +339,12 @@ class Transcoder:
             # таким заголовком плеер телефона отвергал («MediaException:
             # convert»). До CIF (352×288) — Level 3.
             codec_args = ["-c:v", "mpeg4", "-profile:v", "0", "-level", "3", "-vtag", "mp4v"]
-        scale = f"{rotate}scale={width}:{height},fps={self.video_fps}"
+        # Fit the *display* aspect ratio, including anamorphic input, into a
+        # square-pixel frame. H.263/V3 cannot rely on SAR/pasp to undo a stretch.
+        # Round down to even dimensions for yuv420p, then pad instead of crop.
+        scale = (f"{rotate}scale=w='max(2,trunc(min({width},{height}*dar)/2)*2)':"
+                 f"h='max(2,trunc(min({height},{width}/dar)/2)*2)',setsar=1,"
+                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,fps={self.video_fps}")
         if codec == "h263":
             # V3r открывает тот же H.263/AMR после удаления из 3GP только
             # fiel и pasp. Не записываем эти необязательные блоки: нулевой

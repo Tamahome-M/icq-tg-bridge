@@ -123,7 +123,7 @@ async def run_pages() -> None:
         metadata = directory / "videos" / f"{page.token}.json"
         # И последние форматы с fiel/pasp (v3/v4), и старые записи без версии
         # должны перейти на новый формат с сохранением исходника и ссылки.
-        for version in (4, 3, None):
+        for version in (5, 4, 3, None):
             old = json.loads(metadata.read_text())
             if version is None:
                 old["spec"].pop("encoding_version")
@@ -248,7 +248,7 @@ async def run_media_settings() -> None:
                     await asyncio.gather(*list(page.jobs.values()))
                     assert bridge.videos.resolve(current_asset)[0] == FAKE_VIDEO
                     args = Path(cfg.render_ffmpeg + ".args").read_text()
-                    assert f"scale={width}:{height},fps=15,setsar=0" in args, args
+                    assert f"pad={width}:{height}:" in args and "fps=15,setsar=0" in args, args
                     assert f"-b:v {kbps}k" in args, args
                     assert "-c:v h263" in args, args
                     previous_asset = current_asset
@@ -296,7 +296,7 @@ async def run_settings_during_prepare() -> None:
         await new_job
         assert store.resolve(asset_url(path, changed))[0] == FAKE_VIDEO
         args = Path(spec.ffmpeg + ".args").read_text()
-        assert "scale=128:96" in args and "-b:v 24k" in args
+        assert "pad=128:96:" in args and "-b:v 24k" in args
         await store.stop()
     print("  смена Медиа во время подготовки: прежняя задача отменена, новый результат сохранён")
 

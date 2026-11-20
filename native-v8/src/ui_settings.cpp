@@ -76,14 +76,14 @@ static const SettingField fields[] = {
     {"media", "video_seconds", "Видео: длина, с", "0",
      "0=как в профиле моста|5|10|15|20|30|60|120|180|300", 0, false},
     {"media", "video_kb", "Видео: не больше, КБ", "0",
-     "0=как в профиле моста|16|24|32|48|64|128|256|512", 0, false},
+     "0=по лимиту загрузки|16|24|32|48|64|128|256|512", 0, false},
     {"media", "video_rotate", "Ролик боком", "0", "0=авто (широкий — боком)|1=всегда|2=никогда", 0,
      false},
     {"media", "voice_kbps10", "Голосовое: битрейт, кбит/с", "0",
      "0=как в профиле моста|48=4.8|52=5.2|59=5.9|67=6.7|74=7.4|80=8.0|102=10.2|122=12.2", 0, false},
     {"media", "voice_seconds", "Голосовое: длина, с", "0",
      "0=как в профиле моста|30|60|120|300|600", 0, false},
-    {"media", "media_memory_kb", "Ролик в памяти, КБ (0 — по куче)", "0", "", 8192, false},
+    {"media", "media_memory_kb", "Лимит вложения, КБ (0 — 8192)", "0", "", 8192, false},
     {"telegram", "telegram_on", "Включена", "1", "0=Нет|1=Да", 0, false},
     {"telegram", "telegram_limit", "Чатов в списке (0 — все, пусто — по профилю)", "", "", 9999,
      false},
@@ -444,6 +444,15 @@ std::map<unsigned, unsigned> mediaSettings(const Settings &s) {
     unsigned ids[] = {3, 6, 7, 8, 9, 10, 11, 12};
     for (unsigned i = 0; i < 8; ++i)
         m[ids[i]] = settingNumber(s, keys[i]);
+    // The bridge's auto request checks the source only when rotation is
+    // enabled. Explicit always/never are still carried by each BART request.
+    m[8] = settingNumber(s, "video_rotate") == 2 ? 2 : 1;
+    // Native playback reads from disk and has an 8 MiB transfer ceiling by
+    // default; do not inherit Java V8's 400 KiB whole-clip heap budget.
+    const unsigned memoryKB = settingNumber(s, "media_memory_kb");
+    const unsigned limitKB = memoryKB ? memoryKB : 8192;
+    if (!m[12] || m[12] > limitKB)
+        m[12] = limitKB;
     for (unsigned i = 0; i < 2; ++i) {
         std::string v = settingValue(s, i ? "video_size" : "photo_size");
         size_t x = v.find('x');
@@ -460,6 +469,9 @@ std::map<unsigned, unsigned> mediaSettings(const Settings &s) {
     m[18] = limit(s, "express_limit");
     m[19] = 131;
     m[20] = 3;
+    // MPEG-4 SP supports the chosen V8 frame sizes, including portrait video.
+    // Older bridges ignore this optional key and retain their existing codec.
+    m[21] = 2;
     return m;
 }
 ClientConfig clientSettings(const Settings &s, const std::string &cache,

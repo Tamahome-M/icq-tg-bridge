@@ -55,6 +55,16 @@ int main() {
     assert(!c.md5Login && c.encryption && c.psk == "1234");
     assert(c.maxMediaBytes == 512 * 1024 && c.reconnectAttempts == 8 && c.quietChats == quiet);
     assert(c.media[4] == 320 && c.media[5] == 240 && c.media[6] == 96 && c.media[8] == 1);
+    assert(c.media[12] == 512 && c.media[21] == 2);
+    s.set("video_rotate", "0");
+    assert(mediaSettings(s)[8] == 1); // Auto enables source-aware rotation at the bridge.
+    s.set("video_rotate", "2");
+    assert(mediaSettings(s)[8] == 2);
+    s.set("video_kb", "256");
+    assert(mediaSettings(s)[12] == 256);
+    s.set("video_kb", "0");
+    s.set("media_memory_kb", "0");
+    assert(mediaSettings(s)[12] == 8192); // Native disk-backed transfer budget, not Java heap.
     assert(c.media[13] == 65535 && c.media[14] == 2 && c.media[17] == 12);
     s.set("video_size", "");
     s.set("photo_size", "");
