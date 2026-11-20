@@ -85,6 +85,7 @@ class Window : public QWidget {
   public:
     explicit Window(const std::string &dataDirectory);
     ~Window();
+    void showConfigured();
     void saveState();
     void suspend();
     void resume();

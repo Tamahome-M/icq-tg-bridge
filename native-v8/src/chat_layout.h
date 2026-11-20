@@ -27,5 +27,6 @@ ChatText splitChatText(const QString &formatted, const QString &generatedHeader,
                        bool serverHistory = false);
 ChatLayout layoutChatText(const ChatText &, const QFont &, int width);
 QColor chatHeaderColor(bool outgoing, const QColor &background);
+QColor chatSelectionColor(const QColor &background, const QColor &text);
 } // namespace tmm
 #endif

@@ -15,7 +15,8 @@ class Platform : public QObject {
     void setWindow(QWidget *window);
     bool flipClosed() const;
     void minimize();
-    void requestForeground();
+    static void showWindow(QWidget &window, bool fullscreen);
+    void requestForeground(bool fullscreen = true);
     void setBacklight(bool on);
     bool openUrl(const QString &url);
     bool openFile(const QString &path);

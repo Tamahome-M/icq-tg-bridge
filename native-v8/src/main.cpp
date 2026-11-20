@@ -59,7 +59,7 @@ int main(int argc, char **argv) {
         tmm::StatusIconV8 statusIcon;
         tmm::Window window(data);
         app.setMainWidget(&window);
-        window.showFullScreen();
+        window.showConfigured();
         int result = app.exec();
         window.saveState();
         return result;
