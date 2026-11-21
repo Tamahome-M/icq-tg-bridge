@@ -108,7 +108,7 @@ struct Upload {
     Upload() : fd(-1), part(1), total(0), bytes(0), size(0) {}
 };
 } // namespace
-class Client::Impl : public Cancellation {
+class Client::Impl : public Cancellation, public ReadWatch {
   public:
     mutable pthread_mutex_t mutex;
     pthread_cond_t drained;
@@ -123,7 +123,8 @@ class Client::Impl : public Cancellation {
     MobileNetwork mobile;
     Transport socket;
     unsigned sequence, metaSeq;
-    uint64_t lastRx, lastPing;
+    uint64_t nextPing;
+    unsigned unansweredPings;
     std::vector<ContactRecord> roster;
     std::map<uint32_t, Pending> pending;
     std::map<unsigned, uint32_t> metas;
@@ -136,8 +137,9 @@ class Client::Impl : public Cancellation {
     Impl()
         : running(false), joinable(false), stopping(false), restart(false), online(false),
           permanentFailure(false), finishing(false), prefetchOnly(false), nextId(1), generation(0),
-          activeGeneration(0), eventBytes(0), socket(*this), sequence(1), metaSeq(1), lastRx(0),
-          lastPing(0), dnsTried(false), dnsPolicySet(false), startupDnsEnabled(false), stamp(0) {
+          activeGeneration(0), eventBytes(0), socket(*this), sequence(1), metaSeq(1), nextPing(0),
+          unansweredPings(0), dnsTried(false), dnsPolicySet(false), startupDnsEnabled(false),
+          stamp(0) {
         wake[0] = wake[1] = notify[0] = notify[1] = -1;
         pthread_mutex_init(&mutex, 0);
         pthread_cond_init(&drained, 0);
@@ -206,18 +208,33 @@ class Client::Impl : public Cancellation {
         size_t size = eventSize(e);
         if (size > 2 * 1024 * 1024)
             throw Error("Слишком большое событие интерфейса");
-        Guard g(mutex);
-        while (events.size() >= 128 || eventBytes + size > 2 * 1024 * 1024) {
-            if (stopping || !wait)
-                return false;
-            if (e.type == Event::Progress)
-                return true;
-            pthread_cond_wait(&drained, &mutex);
+        for (;;) {
+            {
+                Guard g(mutex);
+                if (events.size() < 128 && eventBytes + size <= 2 * 1024 * 1024) {
+                    events.push_back(e);
+                    eventBytes += size;
+                    signalPipe(notify[1]);
+                    return true;
+                }
+                if (stopping || !wait)
+                    return false;
+                if (e.type == Event::Progress)
+                    return true;
+                if (!online || !configured.pingSeconds) {
+                    pthread_cond_wait(&drained, &mutex);
+                    continue;
+                }
+                // The UI can stop draining events while a system dialog is open.
+                // Keep the bounded queue and service the socket outside its lock.
+                timespec until;
+                clock_gettime(CLOCK_REALTIME, &until);
+                ++until.tv_sec;
+                if (pthread_cond_timedwait(&drained, &mutex, &until) != ETIMEDOUT)
+                    continue;
+            }
+            checkKeepalive(false);
         }
-        events.push_back(e);
-        eventBytes += size;
-        signalPipe(notify[1]);
-        return true;
     }
     void state(unsigned n, const std::string &text) {
         Event e(Event::State);
@@ -249,6 +266,37 @@ class Client::Impl : public Cancellation {
               uint32_t id = 0) {
         sendFlap(2, snac(family, subtype, data, id));
     }
+    void checkKeepalive(bool received) {
+        {
+            Guard g(mutex);
+            if (cfg.pingSeconds != configured.pingSeconds) {
+                cfg.pingSeconds = configured.pingSeconds;
+                nextPing = 0;
+                unansweredPings = 0;
+            }
+            cfg.missedPings = configured.missedPings;
+        }
+        if (received)
+            unansweredPings = 0;
+        if (!cfg.pingSeconds || monotonicMs() < nextPing)
+            return;
+        if (cfg.missedPings && unansweredPings >= cfg.missedPings && !socket.buffered()) {
+            // The worker can wake late or be waiting for the UI queue. A reply
+            // already waiting in the socket must get a chance to be consumed.
+            pollfd input = {socket.fd(), POLLIN, 0};
+            int ready;
+            do {
+                ready = poll(&input, 1, 0);
+            } while (ready < 0 && errno == EINTR);
+            if (ready <= 0 || !(input.revents & POLLIN))
+                throw Error("Соединение не отвечает на пинги (" + decimal(unansweredPings) + ")");
+        }
+        sendFlap(5, std::string());
+        send(1, 0xe); // Classic OSCAR servers may only answer the self-info request.
+        if (unansweredPings < cfg.missedPings)
+            ++unansweredPings;
+        nextPing = monotonicMs() + uint64_t(cfg.pingSeconds) * 1000;
+    }
     std::string readFlap(unsigned &channel, uint64_t deadline) {
         std::string header = socket.read(6, deadline);
         Reader h(header);
@@ -257,9 +305,7 @@ class Client::Impl : public Cancellation {
         channel = h.u8();
         h.u16();
         unsigned size = h.u16();
-        std::string body = socket.read(size, deadline);
-        lastRx = monotonicMs();
-        return body;
+        return socket.read(size, deadline);
     }
     Snac receive(uint64_t deadline) {
         for (;;) {
@@ -516,7 +562,10 @@ class Client::Impl : public Cancellation {
         meta(0x3c, 2);
         if (cfg.startupDns && pinned.empty())
             pinned = ip;
-        lastRx = lastPing = monotonicMs();
+        nextPing = 0;
+        unansweredPings = 0;
+        socket.watchReads(*this);
+        checkKeepalive(false);
         {
             Guard g(mutex);
             online = true;
@@ -1338,14 +1387,6 @@ class Client::Impl : public Cancellation {
                         }
                     }
                     uint64_t now = monotonicMs();
-                    if (cfg.pingSeconds && now - lastPing >= uint64_t(cfg.pingSeconds) * 1000) {
-                        if (cfg.missedPings &&
-                            now - lastRx >= uint64_t(cfg.pingSeconds) * cfg.missedPings * 1000)
-                            throw Error("Соединение не отвечает на пинги");
-                        sendFlap(5, std::string());
-                        send(1, 0xe);
-                        lastPing = now;
-                    }
                     if (upload.fd >= 0) {
                         try {
                             uploadPart();
@@ -1384,6 +1425,7 @@ class Client::Impl : public Cancellation {
                         Snac s = receive(monotonicMs() + 180000);
                         dispatch(s);
                     }
+                    checkKeepalive(false);
                 }
             } catch (const std::exception &e) {
                 {
@@ -1500,9 +1542,15 @@ void Client::configure(const ClientConfig &c) {
         i.launchDnsHost = c.host;
         i.launchDnsServer = c.dnsServer;
     }
+    bool pingsChanged =
+        i.configured.pingSeconds != c.pingSeconds || i.configured.missedPings != c.missedPings;
     i.configured = c;
     i.configured.startupDns = i.startupDnsEnabled;
     i.configured.dnsServer = i.launchDnsServer;
+    if (pingsChanged && i.running) {
+        signalPipe(i.wake[1]);
+        pthread_cond_broadcast(&i.drained);
+    }
 }
 void Client::start() {
     launch(false);

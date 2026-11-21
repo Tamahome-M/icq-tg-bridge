@@ -21,11 +21,12 @@ uint64_t monotonicMs() {
     return uint64_t(v.tv_sec) * 1000 + v.tv_usec / 1000;
 }
 Transport::Transport(Cancellation &c)
-    : fd_(-1), cancel_(c), secure_(false), failed_(false), at_(0) {}
+    : fd_(-1), cancel_(c), readWatch_(0), secure_(false), failed_(false), at_(0) {}
 Transport::~Transport() {
     close();
 }
 void Transport::close() {
+    readWatch_ = 0;
     if (fd_ >= 0) {
         ::close(fd_);
         fd_ = -1;
@@ -66,6 +67,8 @@ bool Transport::wait(bool write, uint64_t deadline) {
         }
         if (p[0].revents & (POLLIN | POLLOUT | POLLHUP | POLLERR | POLLNVAL))
             return true;
+        if (!write && readWatch_)
+            readWatch_->checkKeepalive(false);
     }
 }
 void Transport::connect(const std::string &ip, unsigned port, uint64_t deadline) {
@@ -110,6 +113,8 @@ void Transport::rawRead(char *d, size_t size, uint64_t deadline) {
         }
         if (!n)
             throw wire::Error("Сервер закрыл соединение");
+        if (readWatch_)
+            readWatch_->checkKeepalive(true);
         d += n;
         size -= n;
     }

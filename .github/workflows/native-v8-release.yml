@@ -31,6 +31,7 @@ jobs:
           g++ -std=c++98 -Wall -Wextra -Werror -Inative-v8/src native-v8/tests/media_cache_test.cpp native-v8/src/media_cache.cpp -o "$RUNNER_TEMP/media-cache-test"
           "$RUNNER_TEMP/media-cache-test"
           python3 native-v8/tests/test_network.py
+          python3 native-v8/tests/test_keepalive.py
           python3 native-v8/tests/test_large_video.py
           python3 native-v8/tests/test_dns.py
           python3 native-v8/tests/test_startup_dns.py

@@ -12,9 +12,17 @@ class Cancellation {
     virtual int wakeFd() const = 0;
     virtual void bindSocket(int) {}
 };
+// The BOS worker may send a keepalive while a partial incoming frame is
+// waiting for more bytes. Writes are always completed by the same thread.
+class ReadWatch {
+  public:
+    virtual ~ReadWatch() {}
+    virtual void checkKeepalive(bool received) = 0;
+};
 class Transport {
     int fd_;
     Cancellation &cancel_;
+    ReadWatch *readWatch_;
     bool secure_, failed_;
     std::string plain_;
     size_t at_;
@@ -35,6 +43,9 @@ class Transport {
     }
     bool buffered() const {
         return at_ < plain_.size();
+    }
+    void watchReads(ReadWatch &watch) {
+        readWatch_ = &watch;
     }
     bool wait(bool write, uint64_t deadline);
     std::string read(size_t size, uint64_t deadline);

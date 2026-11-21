@@ -124,7 +124,8 @@ void Window::connectClient() {
     connectionProgress_ = 0;
     connectionStage_ = u("Подготовка сети");
     ClientConfig cfg = clientSettings(settings_, storage_->accountDir() + "/cache", quiet_);
-    fprintf(stderr, "Connection: starting worker (%s network)\n", cfg.network.c_str());
+    fprintf(stderr, "Connection: starting worker (%s network, ping interval %u s, miss limit %u)\n",
+            cfg.network.c_str(), cfg.pingSeconds, cfg.missedPings);
     fflush(stderr);
     client_.configure(cfg);
     client_.start();
