@@ -68,10 +68,10 @@ Window::Window(const std::string &dir)
       loadedMediaReady_(false), editSecret_(false), captureOwned_(false), receivedDeferred_(false),
       connectionErrorShown_(false), settingsEditing_(false), resetComplete_(false), locked_(false),
       closed_(false), editorWasVisible_(false), silent_(false), paused_(false),
-      manualDisconnect_(false), lightOn_(true), pinWrong_(false), closedAt_(0), startedAt_(now()),
-      lastAlert_(0), lastActivity_(now()), typingSentAt_(0), noticeUntil_(0), tickerUntil_(0),
-      indicatorsAt_(0), splashMinute_(0), pictureZoom_(100), pictureRotation_(0),
-      infoAvatarUin_(0) {
+      manualDisconnect_(false), lightOn_(true), pinWrong_(false), mediaFullScreen_(false),
+      closedAt_(0), startedAt_(now()), lastAlert_(0), lastActivity_(now()), typingSentAt_(0),
+      noticeUntil_(0), tickerUntil_(0), indicatorsAt_(0), splashMinute_(0), pictureZoom_(100),
+      pictureRotation_(0), infoAvatarUin_(0) {
     setCaption("TeleMotoMax Native");
     setFocusPolicy(StrongFocus);
     setBackgroundMode(NoBackground);
@@ -199,13 +199,24 @@ void Window::update() {
     syncSystemMenu();
     QWidget::update();
 }
+bool Window::fullScreenMedia() const {
+    return !stack_.empty() && (view().kind == View::Picture ||
+                               (view().kind == View::Player && view().context == "player-video"));
+}
 void Window::syncVideoVisibility() {
+    const bool media = fullScreenMedia();
+    if (media != mediaFullScreen_) {
+        mediaFullScreen_ = media;
+        if (isVisible() && !settingFlag(settings_, "fullscreen"))
+            showConfigured();
+    }
     QWidget *video = player_.videoWidget();
     if (!video)
         return;
-    if (!stack_.empty() && view().kind == View::Player && !locked_ && !closed_ && isVisible())
+    if (media && view().kind == View::Player && !locked_ && !closed_ && isVisible()) {
+        video->setGeometry(rect());
         video->show();
-    else
+    } else
         video->hide();
 }
 void Window::push(const View &v) {
@@ -294,6 +305,8 @@ void Window::info(const QString &s) {
     update();
 }
 void Window::platformError(const QString &s) {
+    if (sender() == &player_ && !stack_.empty() && view().context == "player-video")
+        view().status = s;
     note(std::string(s.utf8()));
     info(s);
 }
@@ -384,7 +397,7 @@ void Window::applySettings() {
     update();
 }
 void Window::showConfigured() {
-    Platform::showWindow(*this, settingFlag(settings_, "fullscreen"));
+    Platform::showWindow(*this, fullScreenMedia() || settingFlag(settings_, "fullscreen"));
 }
 QColor Window::bodyColor(unsigned role) const {
     const QColorGroup &colors = palette().active();
@@ -422,7 +435,7 @@ void Window::resizeEvent(QResizeEvent *) {
     syncSystemMenu();
     QWidget *w = player_.videoWidget();
     if (w && w->isVisible())
-        w->setGeometry(0, 29, width(), std::max(1, height() - 56));
+        w->setGeometry(rect());
 }
 void Window::showEvent(QShowEvent *) {
     if (closedAt_ && settingNumber(settings_, "flip_lock_minutes") > 0 &&
@@ -443,7 +456,7 @@ void Window::suspend() {
 }
 void Window::resume() {
     // Platform refreshes the hardware flip state before requesting foreground.
-    platform_.requestForeground(settingFlag(settings_, "fullscreen"));
+    platform_.requestForeground(fullScreenMedia() || settingFlag(settings_, "fullscreen"));
     if (closed_)
         return;
     lastActivity_ = now();
@@ -521,11 +534,14 @@ void Window::tick() {
     if (takeActivationRequest())
         resume();
     unsigned long ms = now();
-    if (isVisible() && !closed_ && !locked_ && !connectionProgressVisible() &&
-        ms - indicatorsAt_ >= 5000) {
-        indicatorsAt_ = ms;
-        if (systemChrome_->refreshIndicators())
-            QWidget::update(0, 0, width(), 28);
+    if (isVisible() && !closed_ && !locked_ && !fullScreenMedia() && !connectionProgressVisible()) {
+        bool changed = systemChrome_->refreshClock();
+        if (ms - indicatorsAt_ >= 5000) {
+            indicatorsAt_ = ms;
+            changed = systemChrome_->refreshIndicators() || changed;
+        }
+        if (changed)
+            QWidget::update(0, 0, width(), 29);
     }
     if ((locked_ || connectionProgressVisible()) && isVisible() && !closed_ &&
         splashMinute_ != time(0) / 60) {
@@ -757,8 +773,6 @@ void Window::drawHeader(QPainter &p) {
         if (count > 1)
             title += " (" + QString::number(index) + "/" + QString::number(count) + ")";
     }
-    if (view().kind == View::Picture)
-        title += " " + number(pictureZoom_) + "%";
     if (connectionProgressVisible()) {
         title = u("Подключение");
         roster = false;
@@ -776,11 +790,11 @@ void Window::drawHeader(QPainter &p) {
     if (unread())
         title = "[" + number(unread()) + "] " + title;
     int offset = settingNumber(settings_, "caption_offset") * width() / 100;
-    systemChrome_->drawHeader(p, QRect(0, 0, width(), 28), title, offset + (roster ? 20 : 0));
+    systemChrome_->drawHeader(p, QRect(0, 0, width(), 29), title, offset + (roster ? 20 : 0));
     if (roster && !statusIcons_.isNull()) {
         unsigned own =
             connectionState_ == Event::Online ? settings_.getInt("status", 0) : 0xffffffffU;
-        p.drawPixmap(4, 6, statusIcons_, statusIcon(own) * 16, 0, 16, 16);
+        p.drawPixmap(systemChrome_->titleLeft(), 6, statusIcons_, statusIcon(own) * 16, 0, 16, 16);
     }
 }
 void Window::drawFooter(QPainter &p) {
@@ -1002,7 +1016,7 @@ void Window::drawFrame(QPainter &p) {
     if (locked_ || connectionProgressVisible()) {
         drawSplash(p);
         if (!locked_ && !notice_.isEmpty())
-            systemChrome_->drawHeader(p, QRect(0, 0, width(), 28), notice_);
+            systemChrome_->drawHeader(p, QRect(0, 0, width(), 29), notice_);
         return;
     }
     splashLogo_ = QPixmap();
@@ -1010,6 +1024,22 @@ void Window::drawFrame(QPainter &p) {
         p.drawPixmap(0, 0, popupBackdrop_);
         drawHeader(p);
         drawFooter(p);
+        return;
+    }
+    if (fullScreenMedia()) {
+        p.fillRect(rect(), Qt::black);
+        if (view().kind == View::Picture && !picture_.isNull()) {
+            QWMatrix matrix;
+            const double scale = pictureZoom_ / 100.0;
+            matrix.scale(scale, scale);
+            matrix.rotate(pictureRotation_);
+            const QPixmap image = picture_.xForm(matrix);
+            p.drawPixmap((width() - image.width()) / 2, (height() - image.height()) / 2, image);
+        } else if (view().more || !view().status.isEmpty()) {
+            p.setPen(Qt::white);
+            p.drawText(6, 0, std::max(1, width() - 12), height(), Qt::AlignCenter | Qt::WordBreak,
+                       view().status.isEmpty() ? u("Видео завершено") : view().status);
+        }
         return;
     }
     // Transparent native skin parts blend against the phone's palette in menus.
@@ -1022,18 +1052,6 @@ void Window::drawFrame(QPainter &p) {
         drawProgress(p, view().details, view().status, view().bytes, view().total);
     } else if (view().kind == View::AttachmentReview) {
         drawAttachmentDetails(p);
-    } else if (view().kind == View::Picture && !picture_.isNull()) {
-        p.save();
-        const QRect area(0, 29, width(), std::max(1, height() - 56));
-        p.setClipRect(area);
-        QWMatrix matrix;
-        double scale = (double)pictureZoom_ / 100;
-        matrix.scale(scale, scale);
-        matrix.rotate(pictureRotation_);
-        QPixmap image = picture_.xForm(matrix);
-        p.drawPixmap((width() - image.width()) / 2, area.y() + (area.height() - image.height()) / 2,
-                     image);
-        p.restore();
     } else if (view().kind == View::Player) {
         drawPlayer(p);
     } else if (view().kind == View::Text && view().context != "contact-info" &&
@@ -1049,7 +1067,7 @@ void Window::drawFrame(QPainter &p) {
 void Window::mediaPosition(unsigned int p, unsigned int d) {
     playPosition_ = p;
     playDuration_ = d;
-    if (!stack_.empty() && view().kind == View::Player)
+    if (!stack_.empty() && view().kind == View::Player && !fullScreenMedia())
         update();
 }
 void Window::mediaFinished() {

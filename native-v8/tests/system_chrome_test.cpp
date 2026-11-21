@@ -2,6 +2,8 @@
 #include "zapplication_v8.h"
 #include "system_chrome.h"
 #include <ZSoftKey.h>
+#include <RES_ICON_Reader.h>
+#include <qdatetime.h>
 #include <qimage.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +41,17 @@ static QPixmap draw(tmm::SystemChrome &chrome, const QSize &size, const QColor &
     return result;
 }
 static int signalLevel = 0, batteryLevel = 0;
+static unsigned clockMinute = 41;
+extern "C" time_t __wrap_time(time_t *out) {
+    const time_t stamp = (15 * 60 + clockMinute) * 60;
+    if (out)
+        *out = stamp;
+    return stamp;
+}
+extern "C" QTime testTime() asm("__wrap__ZN5QTime11currentTimeEv");
+QTime testTime() {
+    return QTime(15, clockMinute);
+}
 extern "C" int __wrap_UTIL_GetSignalQuality() {
     return signalLevel;
 }
@@ -47,10 +60,10 @@ extern "C" int __wrap_UTIL_GetBatteryLevel() {
 }
 
 static QImage header(tmm::SystemChrome &chrome, const QColor &underlay, const QString &title) {
-    QPixmap image(240, 28);
+    QPixmap image(240, 29);
     image.fill(underlay);
     QPainter p(&image);
-    chrome.drawHeader(p, QRect(0, 0, 240, 28), title);
+    chrome.drawHeader(p, QRect(0, 0, 240, 29), title);
     p.end();
     return image.convertToImage();
 }
@@ -73,10 +86,42 @@ int main(int argc, char **argv) {
     batteryLevel = 5;
     assert(chrome.refreshIndicators());
     QImage full = header(chrome, Qt::red, longTitle);
-    assert(low.copy(192, 0, 23, 28) != full.copy(192, 0, 23, 28));
-    assert(low.copy(216, 0, 24, 28) != full.copy(216, 0, 24, 28));
-    assert(full.copy(192, 0, 48, 28) == header(chrome, Qt::blue, "").copy(192, 0, 48, 28));
-    puts("HEADER PASS: opaque, live radio and battery levels, clipped title");
+    const QRect radio(0, 0, 25, 29), battery(215, 0, 25, 29);
+    assert(low.copy(radio) != full.copy(radio));
+    assert(low.copy(battery) != full.copy(battery));
+    RES_ICON_Reader reader;
+    QPixmap background = reader.getIcon("header_bg_std", false);
+    QPixmap signal = reader.getIcon("signal_5_hed1", false);
+    QPixmap power = reader.getIcon("batt_level_3_hed2", false);
+    assert(!background.isNull() && signal.size() == radio.size() && power.size() == battery.size());
+    QPixmap reference(240, 29);
+    reference.fill(window.palette().active().background());
+    QPainter p(&reference);
+    p.drawPixmap(0, 0, background, 0, 0, reference.width(), reference.height());
+    p.drawPixmap(radio.topLeft(), signal);
+    p.drawPixmap(battery.topLeft(), power);
+    p.end();
+    const QImage native = reference.convertToImage();
+    assert(native.copy(radio) == full.copy(radio) && native.copy(battery) == full.copy(battery));
+    QImage empty = header(chrome, Qt::blue, "");
+    assert(empty.copy(26, 0, 80, 29) == native.copy(26, 0, 80, 29));
+    assert(full.copy(27, 0, 70, 29) != empty.copy(27, 0, 70, 29));
+    assert(!chrome.refreshClock());
+    ++clockMinute;
+    assert(chrome.refreshClock());
+    QImage later = header(chrome, Qt::red, "");
+    bool sawClock = false;
+    for (int x = 0; x < 240; ++x) {
+        for (int y = 0; y < 29; ++y) {
+            if (empty.pixel(x, y) != native.pixel(x, y)) {
+                assert(x >= 130 && x < battery.x() && empty.pixel(x, y) == full.pixel(x, y));
+                sawClock = true;
+            }
+        }
+    }
+    assert(sawClock && empty != later && !chrome.refreshClock());
+    puts("HEADER PASS: native background and unscaled left signal/right battery, unclipped "
+         "firmware clock updates by minute, title cannot cross indicators");
     const QSize sizes[] = {QSize(240, 26), QSize(239, 32)};
     for (unsigned i = 0; i < 2; ++i) {
         ZSoftKey reference("CST_2", &window);

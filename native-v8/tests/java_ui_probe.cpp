@@ -733,36 +733,36 @@ class UiProbe {
         const int oldChatFont = settingNumber(w.settings_, "chat_font_size");
         w.showSettings("interface");
         w.chooseSetting("font_size");
-        require(w.view().kind == View::Choice && w.view().rows.size() == 7 &&
+        require(w.view().kind == View::Choice && w.view().rows.size() == 13 &&
                     index(w, "set:font_size:12") >= 0 && index(w, "set:font_size:24") >= 0,
                 "interface font is a size dropdown rather than a small-font toggle");
-        w.activate(w.view().rows[index(w, "set:font_size:20")]);
+        w.activate(w.view().rows[index(w, "set:font_size:19")]);
         w.chooseSetting("chat_font_size");
-        w.activate(w.view().rows[index(w, "set:chat_font_size:18")]);
-        require(settingNumber(w.settingsDraft_, "font_size") == 20 &&
-                    settingNumber(w.settingsDraft_, "chat_font_size") == 18 &&
+        w.activate(w.view().rows[index(w, "set:chat_font_size:17")]);
+        require(settingNumber(w.settingsDraft_, "font_size") == 19 &&
+                    settingNumber(w.settingsDraft_, "chat_font_size") == 17 &&
                     w.font().pointSize() == oldFont && w.chatFont().pointSize() == oldChatFont,
                 "font choices are staged until Save");
         w.key(KEYCODE_LSK);
         require(w.font().pointSize() == oldFont && w.chatFont().pointSize() == oldChatFont,
                 "Back preserves both current font sizes");
         w.showSettings("interface");
-        w.commitSetting("font_size", "20");
-        w.commitSetting("chat_font_size", "18");
+        w.commitSetting("font_size", "19");
+        w.commitSetting("chat_font_size", "17");
         w.key(KEYCODE_RSK);
         Settings fontReload;
         require(fontReload.load(w.settings_.path(), accountError) &&
-                    fontReload.getInt("font_size") == 20 &&
-                    fontReload.getInt("chat_font_size") == 18 && w.font().pointSize() == 20 &&
-                    w.chatFont().pointSize() == 18 && w.editor_->font().pointSize() == 20,
+                    fontReload.getInt("font_size") == 19 &&
+                    fontReload.getInt("chat_font_size") == 17 && w.font().pointSize() == 19 &&
+                    w.chatFont().pointSize() == 17 && w.editor_->font().pointSize() == 19,
                 "Save applies and persists separate interface/chat/editor font sizes");
         QPixmap fontFrame(w.size());
         QPainter fontPainter(&fontFrame);
         w.drawFrame(fontPainter);
         fontPainter.end();
         const ZListBox::ListItemRegion firstRegion = static_cast<ZListBox::ListItemRegion>(0);
-        require(w.systemMenu_->list()->getItemFont(firstRegion, false).pointSize() == 20 &&
-                    w.systemMenu_->list()->getItemFont(firstRegion, true).pointSize() == 20,
+        require(w.systemMenu_->list()->getItemFont(firstRegion, false).pointSize() == 19 &&
+                    w.systemMenu_->list()->getItemFont(firstRegion, true).pointSize() == 19,
                 "native menu region fonts follow the saved interface size");
         require(w.bodyColor(1) == w.palette().active().base() &&
                     w.bodyColor(2) == w.palette().active().text() &&

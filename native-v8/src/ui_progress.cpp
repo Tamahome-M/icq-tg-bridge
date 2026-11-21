@@ -260,13 +260,6 @@ void Window::drawPlayer(QPainter &p) {
     p.save();
     const QRect body(0, 29, width(), std::max(1, height() - 56));
     p.setClipRect(body);
-    if (view().context == "player-video") {
-        // Java gives the complete Canvas to video. The Motorola video child
-        // shares this body geometry; native softkeys already offer Back/Next.
-        p.fillRect(body, Qt::black);
-        p.restore();
-        return;
-    }
     // The audio Canvas owns its background, independently of chat wallpaper.
     p.fillRect(body, QColor(bodyColor(1)));
     const int left = 10, textWidth = std::max(1, width() - 2 * left);

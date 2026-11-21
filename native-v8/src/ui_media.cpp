@@ -115,14 +115,14 @@ bool Window::showPicture(const std::string &path, const QString &title,
         info(u(error.empty() ? "Не удалось открыть изображение" : error));
         return false;
     }
+    View v(View::Picture, title);
+    v.context = context;
+    push(v); // Use the actual fullscreen geometry for the initial fit.
     picture_.convertFromImage(image);
     pictureRotation_ = 0;
     pictureZoom_ =
         std::max(1, std::min(100, std::min((width() * 100) / std::max(1, image.width()),
-                                           ((height() - 56) * 100) / std::max(1, image.height()))));
-    View v(View::Picture, title);
-    v.context = context;
-    push(v);
+                                           (height() * 100) / std::max(1, image.height()))));
     return true;
 }
 void Window::previewAttachment() {
@@ -132,11 +132,8 @@ void Window::previewAttachment() {
     }
     if (captureKind_ == 1)
         showPicture(capturePath_, u("Фото"), "outgoing-preview");
-    else if (captureKind_ == 2 || captureKind_ == 3) {
-        play(capturePath_, captureKind_ == 3);
-        if (view().kind == View::Player)
-            view().context = "outgoing-preview";
-    }
+    else if (captureKind_ == 2 || captureKind_ == 3)
+        play(capturePath_, captureKind_ == 3, true);
 }
 bool Window::connectionProgressVisible() const {
     return !stack_.empty() && !locked_ && (!editor_ || editor_->isHidden()) &&
@@ -439,7 +436,7 @@ void Window::nextVideo() {
     } else
         videoSegment_ = previousSegment;
 }
-void Window::play(const std::string &path, bool audioOnly) {
+void Window::play(const std::string &path, bool audioOnly, bool preview) {
     if (locked_ || closed_ || !isVisible()) {
         info(u("Откройте крышку и разблокируйте экран для просмотра"));
         return;
@@ -452,15 +449,12 @@ void Window::play(const std::string &path, bool audioOnly) {
         return;
     if (view().kind == View::Player)
         stack_.pop_back();
-    QWidget *w = player_.videoWidget();
-    if (w) {
-        if (w->parentWidget() != this)
-            w->reparent(this, QPoint(0, 30), false);
-        w->setGeometry(0, 29, width(), std::max(1, height() - 56));
-    }
     View v(View::Player, u(audioOnly ? "Прослушать" : "Смотреть видео"));
     v.context = audioOnly ? "player-voice" : "player-video";
+    if (preview)
+        v.directory = "outgoing-preview";
     push(v);
+    setFocus();
 }
 void Window::openUrl(const std::string &url) {
     if (url.find("http://") != 0 && url.find("https://") != 0 && url.find("ftp://") != 0 &&

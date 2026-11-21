@@ -79,7 +79,7 @@ $(BUILD)/status-icons.ezx: resources/status-icons.ezx | $(BUILD)
 .PHONY: system-chrome-test roster-order-test
 system-chrome-test: $(BUILD)/system-chrome-test
 $(BUILD)/system-chrome-test: tests/system_chrome_test.cpp $(BUILD)/system_chrome.o $(BUILD)/sdk-link/.ready
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -Wl,--wrap=_ZN8ZSoftKeyC1ERK7QStringP7QWidgetS4_,--wrap=UTIL_GetSignalQuality,--wrap=UTIL_GetBatteryLevel $< $(BUILD)/system_chrome.o -lezxappbase -lqte-mt -ldl -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) -Wl,--wrap=_ZN8ZSoftKeyC1ERK7QStringP7QWidgetS4_,--wrap=UTIL_GetSignalQuality,--wrap=UTIL_GetBatteryLevel,--wrap=time,--wrap=_ZN5QTime11currentTimeEv $< $(BUILD)/system_chrome.o -lezxappbase -lqte-mt -ldl -o $@
 roster-order-test: $(BUILD)/roster-order-test
 $(BUILD)/roster-order-test: tests/roster_order_test.cpp $(BUILD)/roster_order.o $(BUILD)/sdk-link/.ready
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(LDFLAGS) $< $(BUILD)/roster_order.o -lqte-mt -o $@

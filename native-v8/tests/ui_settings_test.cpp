@@ -124,7 +124,8 @@ int main() {
     for (unsigned i = 0; i < sizeof(removed) / sizeof(removed[0]); ++i)
         assert(!settingField(removed[i]));
     assert(!settingIsToggle("font_size") && !settingIsToggle("chat_font_size"));
-    const char *sizes[] = {"12", "14", "16", "18", "20", "22", "24"};
+    const char *sizes[] = {"12", "13", "14", "15", "16", "17", "18",
+                           "19", "20", "21", "22", "23", "24"};
     for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i) {
         assert(validateSetting(*settingField("font_size"), sizes[i], error));
         assert(validateSetting(*settingField("chat_font_size"), sizes[i], error));
