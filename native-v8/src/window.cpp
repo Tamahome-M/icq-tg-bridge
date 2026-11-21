@@ -128,7 +128,6 @@ Window::Window(const std::string &dir)
     home();
     applySettings();
     note("TeleMotoMax Native " TMM_NATIVE_VERSION "; OSCAR/TMM 1.31");
-    client_.configure(clientSettings(settings_, storage_->accountDir() + "/cache", quiet_));
     if (settingFlag(settings_, "auto_connect"))
         connectClient();
     else if (settingFlag(settings_, "startup_dns") && validateNetworkSettings(settings_, error)) {
@@ -360,6 +359,7 @@ void Window::updateSystemStatusIcon() {
         unread() != 0);
 }
 void Window::applySettings() {
+    client_.configure(clientSettings(settings_, storage_->accountDir() + "/cache", quiet_));
     updateSystemStatusIcon();
     setUiLanguage(settingValue(settings_, "language"));
     QFont bodyFont = QApplication::font();

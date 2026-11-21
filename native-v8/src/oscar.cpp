@@ -455,6 +455,10 @@ Bart bart(const std::string &data) {
     b.total = r.u8();
     if (r.p8() != b.token)
         throw Error("Токены BART не совпадают");
+    if (!b.part && !b.total) {
+        b.part = r.u16();
+        b.total = r.u16();
+    }
     b.data = r.p16();
     if (r.left() || !b.part || !b.total || b.part > b.total)
         throw Error("Неверные части BART");

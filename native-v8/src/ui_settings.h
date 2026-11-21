@@ -27,6 +27,7 @@ const char *javaHotkeyLabel(const std::string &action);
 bool validateSetting(const SettingField &, const std::string &value, std::string &error);
 bool validateNetworkSettings(const Settings &, std::string &error);
 std::map<unsigned, unsigned> mediaSettings(const Settings &);
+unsigned videoLimitKB(const Settings &);
 ClientConfig clientSettings(const Settings &, const std::string &cache,
                             const std::vector<uint32_t> &quiet);
 } // namespace tmm

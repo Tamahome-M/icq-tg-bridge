@@ -68,7 +68,8 @@ class FakeJimm:
     MEDIA_KEYS = {"photo_width": 1, "photo_height": 2, "photo_quality": 3, "video_width": 4,
                   "video_height": 5, "video_kbps": 6, "video_seconds": 7, "video_rotate": 8,
                   "voice_kbps": 9, "voice_seconds": 10, "photo_max_kb": 11,
-                  "roster_limit": 13, "video_mode": 20}
+                  "roster_limit": 13, "video_mode": 20, "video_codec": 21,
+                  "video_max_mb": 22, "bart_parts16": 23}
 
     async def client_info(self, platform: str, width: int, height: int, memory_kb: int,
                           media: dict | None = None) -> None:
@@ -80,6 +81,8 @@ class FakeJimm:
                 value = int(round(value * 10))
             elif name == "video_rotate":
                 value = 1 if value else 2
+            elif name == "video_codec":
+                value = {"h263": 1, "mpeg4": 2}.get(value, value)
             tail += struct.pack(">HH", self.MEDIA_KEYS[name], int(value))
         await self.send_snac(C.OSERVICE, C.CLIENT_INFO,
                              pstr8(platform.encode("utf-8")) + struct.pack(">HHI", width, height, memory_kb) + tail)

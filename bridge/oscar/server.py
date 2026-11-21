@@ -1069,7 +1069,8 @@ class Session:
                   5: "video_height", 6: "video_kbps", 7: "video_seconds", 8: "video_rotate",
                   9: "voice_kbps", 10: "voice_seconds", 11: "photo_max_kb",
                   12: "video_max_kb", 13: "roster_limit", 17: "max_roster_limit",
-                  18: "express_roster_limit"}
+                  18: "express_roster_limit", 21: "video_codec",
+                  22: "video_max_mb", 23: "bart_parts16"}
     # Не «Медиа», а выключатели сетей с телефона (TeleMotoMax 0.71+ — eXpress,
     # 0.73+ — все): 1 — включена, 2 — выключена; нет пары — как в мосту.
     NETWORK_KEYS = {14: "express", 15: "max", 16: "telegram"}
@@ -1079,6 +1080,7 @@ class Session:
     # нужна уже при сборке контакт-листа.
     VERSION_KEY = 19
     VIDEO_MODE_KEY = 20  # 1 — браузер, 2 — плеер, 3 — выбор между ними (0.79+)
+    # Необязательная пара «Медиа» 21: 1 — H.263, 2 — MPEG-4 SP (native V8 0.1.19+).
     # Ограничение контакт-листа: 0 в паре значит «как в профиле», поэтому
     # «все чаты» телефон шлёт этим числом (TeleMotoMax 0.70+).
     ROSTER_ALL = 0xFFFF
@@ -1114,6 +1116,16 @@ class Session:
             media["voice_kbps"] = media["voice_kbps"] / 10       # 122 — это 12.2
         if "video_rotate" in media:
             media["video_rotate"] = media["video_rotate"] == 1   # 1 всегда, 2 никогда
+        if "video_codec" in media:
+            codec = {1: "h263", 2: "mpeg4"}.get(media.pop("video_codec"))
+            if codec:
+                media["video_codec"] = codec
+        if "bart_parts16" in media:
+            media["bart_parts16"] = media["bart_parts16"] == 1
+        if "video_max_mb" in media:
+            maximum_mb = media.pop("video_max_mb")
+            if media.get("bart_parts16") and 1 <= maximum_mb <= 512:
+                media["video_max_kb"] = maximum_mb * 1024
         for limit in ("roster_limit", "max_roster_limit", "express_roster_limit"):
             if media.get(limit) == self.ROSTER_ALL:
                 media[limit] = 0                                 # без ограничения
@@ -1762,6 +1774,8 @@ class Session:
 
     def _bart_part_size(self, length: int) -> int:
         owner = (self.server.session if self.service_only else None) or self
+        if self.media.get("bart_parts16"):
+            return C.VIDEO_PART_BYTES
         small_heap = (owner.profile_name == "v3"
                       or (owner.device is not None and 0 < owner.device.memory_kb < 2048))
         preferred = 12 * 1024 if small_heap else C.VIDEO_PART_BYTES
@@ -1777,10 +1791,15 @@ class Session:
                                   "Файл слишком большой для загрузки в приложении")
             return
         total = max(1, (len(data) + size - 1) // size)
+        wide_parts = total > 255 and self.media.get("bart_parts16", False)
+        if total > (65535 if wide_parts else 255):
+            await self.send_error(C.SSBI, 0x0001, request_id, "Файл слишком большой")
+            return
         for index in range(total):
             chunk = data[index * size:(index + 1) * size]
             if not await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,
-                    blocks.icon_reply(target, token, chunk, kind, index + 1, total),
+                    blocks.icon_reply(target, token, chunk, kind, index + 1, total,
+                                      wide_parts=wide_parts),
                     request_id=request_id):
                 return
 

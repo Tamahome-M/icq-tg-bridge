@@ -706,7 +706,7 @@ class Bridge:
         """Перекодировщик с теми же кодеками, что у страницы !render."""
         return Transcoder(self.cfg.render_ffmpeg, seconds,
                           self.cfg.render_audio_seconds, self.cfg.render_timeout,
-                          self.cfg.render_dir, self.cfg.render_video_codec,
+                          self.cfg.render_dir, self.tmm("video_codec"),
                           self._video_kbps(seconds), self.cfg.render_video_fps,
                           self.tmm("voice_kbps"),
                           (self.tmm("video_width"), self.tmm("video_height")),
@@ -910,6 +910,8 @@ class Bridge:
         if self.tmm("video_seconds") <= 0:
             return None
         transcoder = self._transcoder(self.tmm("video_seconds"))
+        if self.oscar.session and self.oscar.session.media.get("bart_parts16"):
+            transcoder.timeout = max(transcoder.timeout, min(3600, self.tmm("video_seconds")) * 2)
         if not transcoder.available:
             log.warning("ролик для «%s»: ffmpeg %r не найден", contact.title, self.cfg.render_ffmpeg)
             return None
@@ -954,7 +956,7 @@ class Bridge:
 
     def browser_video_spec(self) -> VideoSpec:
         return VideoSpec(self.cfg.render_ffmpeg, self.cfg.render_video_seconds,
-                         self.cfg.render_timeout, self.cfg.render_video_codec,
+                         self.cfg.render_timeout, self.tmm("video_codec"),
                          self.tmm("video_kbps"), self.cfg.render_video_fps,
                          self.tmm("video_width"), self.tmm("video_height"),
                          self.tmm("video_rotate"))

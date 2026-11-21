@@ -84,7 +84,9 @@ async def run(encoder: Path) -> None:
                                 "mpeg4", "-c:a", "aac", str(incoming)], check=True, timeout=30)
                 source = incoming.read_bytes()
                 reference = directory / "recipe.3gp"
-                filters = ("transpose=1," if rotate else "") + "scale=176:144,fps=15"
+                reference_coder = bridge._transcoder(bridge.tmm("video_seconds"))
+                filters = reference_coder.video_args("in", "out")
+                filters = filters[filters.index("-vf") + 1].removesuffix(",setsar=0")
                 subprocess.run([str(encoder), "-y", "-v", "error", "-i", str(incoming),
                                 "-c:v", "h263", "-vf", filters, "-b:v", "90k",
                                 "-c:a", "libopencore_amrnb", "-b:a", "12.2k", "-ar", "8000",

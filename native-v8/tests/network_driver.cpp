@@ -155,12 +155,17 @@ int main(int argc, char **argv) {
         cfg.psk = getenv("TMM_TEST_PSK");
     if (getenv("TMM_TEST_MAX_MEDIA"))
         cfg.maxMediaBytes = atoi(getenv("TMM_TEST_MAX_MEDIA"));
+    if (getenv("TMM_TEST_LARGE_VIDEO")) {
+        cfg.media[23] = 1;
+        cfg.media[12] = 65535;
+        cfg.media[22] = atoi(getenv("TMM_TEST_LARGE_VIDEO"));
+    }
     cfg.network = "system";
     cfg.cacheDir = argv[4];
     cfg.autoReconnect = getenv("TMM_TEST_RECONNECT") != 0;
     cfg.reconnectSeconds = 1;
     cfg.pingSeconds = getenv("TMM_TEST_DISABLE_KEEPALIVE") ? 0 : 1;
-    cfg.missedPings = 3;
+    cfg.missedPings = getenv("TMM_TEST_MISSED_PINGS") ? atoi(getenv("TMM_TEST_MISSED_PINGS")) : 3;
     if (getenv("TMM_TEST_PREFETCH")) {
         cfg.host = "bridge.example.org";
         cfg.dnsServer = "127.0.0.1";
@@ -176,9 +181,10 @@ int main(int argc, char **argv) {
     else
         client.start();
     time_t end = time(0) + 90;
+    bool drainEvents = true;
     while (time(0) < end) {
         pollfd p[2];
-        p[0].fd = client.eventFd();
+        p[0].fd = drainEvents ? client.eventFd() : -1;
         p[0].events = POLLIN;
         p[0].revents = 0;
         p[1].fd = 0;
@@ -197,6 +203,19 @@ int main(int argc, char **argv) {
                 break;
             if (line == "quit")
                 break;
+            if (line == "hold-events" || line == "drain-events") {
+                drainEvents = line == "drain-events";
+                std::cout << "{\"draining\":" << drainEvents << "}" << std::endl;
+                continue;
+            }
+            if (line.compare(0, 6, "pings ") == 0) {
+                std::istringstream values(line.substr(6));
+                if (!(values >> cfg.pingSeconds >> cfg.missedPings))
+                    return 2;
+                client.configure(cfg);
+                std::cout << "{\"configured\":true}" << std::endl;
+                continue;
+            }
             if (line == "stop") {
                 client.stop();
                 continue;
@@ -257,6 +276,8 @@ int main(int argc, char **argv) {
             c.token = unhex(token);
             c.nativeId = unhex(ref);
             c.status = c.mode;
+            if (c.type == Command::Video && getenv("TMM_TEST_LARGE_VIDEO"))
+                c.media = cfg.media;
             if (c.type == Command::QuietChats)
                 c.uins.push_back(c.uin);
             bool accepted = client.submit(c);

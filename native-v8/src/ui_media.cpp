@@ -220,6 +220,7 @@ void Window::requestMedia(unsigned kind) {
         c.mode = rotate == 1 ? 0x20 : rotate == 2 ? 0x10 : 0;
     }
     if (kind == 2) {
+        mediaCache_.reserve(uint64_t(videoLimitKB(settings_)) * 1024);
         videoToken_ = c.token;
         videoUin_ = c.uin;
         videoSegment_ = 0;
@@ -415,6 +416,7 @@ void Window::nextVideo() {
     c.requestId = client_.nextRequestId();
     c.media = mediaSettings(settings_);
     int rotate = settingNumber(settings_, "video_rotate");
+    mediaCache_.reserve(uint64_t(videoLimitKB(settings_)) * 1024);
     c.mode = rotate == 1 ? 0x20 : rotate == 2 ? 0x10 : 0;
     const unsigned previousSegment = videoSegment_;
     videoSegment_ = c.offset;

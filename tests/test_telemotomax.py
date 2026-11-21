@@ -443,7 +443,7 @@ async def run_video_rotate() -> None:
     # Аргументы ffmpeg: боком — MPEG-4 и вертикальный кадр; QCIF — H.263.
     t = Transcoder("ffmpeg", 30, video_codec="h263", video_size=(320, 240), video_rotate=True)
     args = " ".join(t.video_args("in", "out"))
-    assert "transpose=1" in args and "scale=176:144" in args and "-c:v h263" in args, args
+    assert "transpose=1" in args and "pad=176:144:" in args and "-c:v h263" in args, args
     t = Transcoder("ffmpeg", 10)
     args = " ".join(t.video_args("in", "out"))
     assert "transpose" not in args and "-c:v h263" in args, args
@@ -600,7 +600,7 @@ async def run_profiles() -> None:
         client.device = ("MotoV8", 240, 320, 8192)
         client.media = {"photo_width": 480, "photo_height": 640, "photo_quality": 70,
                         "video_kbps": 128, "video_seconds": 15, "voice_kbps": 7.4,
-                        "video_rotate": False}
+                        "video_rotate": False, "video_codec": "mpeg4"}
         await client.connect()
         await client.bos(await client.login_md5_jimm())
         await client.drain_for(0.3)
@@ -608,7 +608,7 @@ async def run_profiles() -> None:
         assert session is not None and session.profile_name == "v8"
         assert session.media == {"photo_width": 480, "photo_height": 640, "photo_quality": 70,
                                  "video_kbps": 128, "video_seconds": 15, "voice_kbps": 7.4,
-                                 "video_rotate": False}, session.media
+                                 "video_rotate": False, "video_codec": "mpeg4"}, session.media
         # То же через Bridge.tmm: медиа важнее профиля, профиль — общего.
         from bridge.bridge import Bridge
         stub = type("Stub", (), {})()
@@ -616,6 +616,11 @@ async def run_profiles() -> None:
         assert Bridge.tmm(stub, "photo_quality") == 70
         assert Bridge.tmm(stub, "photo_max_kb") == 60, "не задано — из профиля v8"
         assert Bridge.tmm(stub, "voice_kbps") == 7.4 and Bridge.tmm(stub, "video_rotate") is False
+        assert Bridge.tmm(stub, "video_codec") == "mpeg4"
+        await client.client_info(*client.device, media={"video_codec": 999})
+        await client.drain_for(0.1)
+        assert "video_codec" not in session.media
+        assert Bridge.tmm(stub, "video_codec") == cfg.render_video_codec
         await client.close()
         await asyncio.sleep(0.2)
 

@@ -73,6 +73,10 @@ int main() {
                   std::string(1, 0) + be16(0x82) + std::string("\2\20", 2) + std::string(16, 't') +
                   p16("part"));
     assert(b.part == 1 && b.total == 2 && b.data == "part");
+    b = bart(p8("1000001") + be16(0x82) + std::string("\0\20", 2) + std::string(16, 't') +
+             std::string(1, 0) + be16(0x82) + std::string("\0\20", 2) + std::string(16, 't') +
+             be16(256) + be16(9000) + p16("large video part"));
+    assert(b.part == 256 && b.total == 9000 && b.data == "large video part");
     // Corrupted/truncated lengths and compression-independent OSCAR layouts may
     // throw a bounded protocol error, but must not read outside their frame.
     srand(42);

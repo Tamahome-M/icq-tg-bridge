@@ -126,7 +126,8 @@ class Client {
   public:
     Client();
     ~Client();
-    void configure(const ClientConfig &config); // snapshot for the next start
+    // Keepalive settings take effect online. Other fields apply at the next start.
+    void configure(const ClientConfig &config);
     void start();
     void prefetchDns(); // startup DNS only; no OSCAR login, no Connecting event
     void stop();        // asynchronous cancellation; never waits for network I/O
