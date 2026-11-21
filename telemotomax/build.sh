@@ -3,7 +3,7 @@
 #
 # Исходники лежат рядом, в src/ и res/; модули FILES, SMILES_STD, AVATARS,
 # язык русский. Ничего в систему не ставится: JDK 8, Ant, ProGuard 4.11 и
-# заглушки CLDC/MIDP скачиваются в рабочий каталог. Нужны только curl и tar.
+# заглушки CLDC/MIDP скачиваются в рабочий каталог.
 #
 #   ./build.sh [рабочий каталог] [имя]   # результат: <каталог>/out/TeleMotoMax.jar, .jad
 #
@@ -21,11 +21,20 @@ mkdir -p "$WORK" && cd "$WORK"
 
 say() { printf '\033[1;32m==\033[0m %s\n' "$*"; }
 
+# GitHub Actions предоставляет JDK 8 в образе runner. Диагностические сборки
+# тоже ищут javac по пути <рабочий каталог>/jdk/bin/javac.
+if [ ! -e jdk ] && [ ! -L jdk ] && [ -n "${JAVA_HOME_8_X64:-}" ] &&
+    [ -x "$JAVA_HOME_8_X64/bin/javac" ] && grep -qs '^JAVA_VERSION="1\.8\.' "$JAVA_HOME_8_X64/release"; then
+    ln -s "$JAVA_HOME_8_X64" jdk
+fi
 if [ ! -x jdk/bin/javac ]; then
-    say "JDK 8 (Temurin)"
-    URL=$(curl -sfL https://api.github.com/repos/adoptium/temurin8-binaries/releases/latest \
-        | grep -o 'https://[^"]*OpenJDK8U-jdk_x64_linux_hotspot_[^"]*\.tar\.gz' | head -1)
-    curl -sfL "$URL" -o jdk.tgz && mkdir -p jdk && tar xzf jdk.tgz -C jdk --strip-components=1
+    say "JDK 8 (Temurin 8u514-b01)"
+    JDK_URL=https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u514-b01/OpenJDK8U-jdk_x64_linux_hotspot_8u514b01.tar.gz
+    JDK_SHA256=27eda854481d20806d918b30cdd417c6bed4fd15882e24f3595dc8ae7fb5d095
+    curl -fsSL --retry 3 "$JDK_URL" -o jdk.tgz
+    printf '%s  jdk.tgz\n' "$JDK_SHA256" | sha256sum -c -
+    mkdir -p jdk
+    tar xzf jdk.tgz -C jdk --strip-components=1
 fi
 if [ ! -x ant/bin/ant ]; then
     say "Ant"

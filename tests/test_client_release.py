@@ -285,6 +285,39 @@ class ReleaseTests(unittest.TestCase):
         with patch.object(release, "read_url", side_effect=missing):
             release.check_version(self.source, "owner/repo")
 
+    def test_jdk_bootstrap_rejects_bad_download_and_reuses_runner_jdk8(self):
+        runner = self.root / "runner-jdk"
+        (runner / "bin").mkdir(parents=True)
+        (runner / "bin/javac").touch(mode=0o755)
+        (runner / "release").write_text('JAVA_VERSION="17.0.1"\n')
+        requests = self.root / "requests"
+        curl = self.root / "curl"
+        curl.write_text('#!/bin/sh\n'
+                        'echo "$*" >> "$REQUESTS"\n'
+                        'case "$*" in\n'
+                        '  *OpenJDK8U*) echo "bad gateway" > jdk.tgz ;;\n'
+                        '  *) exit 23 ;;\n'
+                        'esac\n')
+        curl.chmod(0o755)
+        work = self.root / "build"
+        env = dict(os.environ, JAVA_HOME_8_X64=str(runner), REQUESTS=str(requests),
+                   PATH=str(self.root) + os.pathsep + os.environ["PATH"], LC_ALL="C")
+        command = [str(ROOT / "telemotomax/build.sh"), str(work)]
+
+        broken = subprocess.run(command, env=env, capture_output=True, text=True)
+        self.assertNotEqual(broken.returncode, 0)
+        self.assertIn("jdk.tgz: FAILED", broken.stdout)
+        self.assertFalse((work / "jdk").exists())
+        self.assertEqual(len(requests.read_text().splitlines()), 1)
+
+        (runner / "release").write_text('JAVA_VERSION="1.8.0_514"\n')
+        requests.write_text("")
+        retry = subprocess.run(command, env=env, capture_output=True, text=True)
+        self.assertEqual(retry.returncode, 23, retry.stdout + retry.stderr)
+        self.assertTrue((work / "jdk/bin/javac").samefile(runner / "bin/javac"))
+        self.assertEqual(len(requests.read_text().splitlines()), 1)
+        self.assertIn("apache-ant", requests.read_text())
+
     def test_ci_network_failure_is_not_treated_as_new_version(self):
         denied = urllib.error.HTTPError("test", 403, "denied", {}, None)
         self.addCleanup(denied.close)
