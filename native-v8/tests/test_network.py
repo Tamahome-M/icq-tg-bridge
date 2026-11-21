@@ -82,6 +82,13 @@ async def scenario(executable, folder, encryption, md5):
     async def file(*_): return 'имя.txt', blob
     async def avatar(uin): return avatar_hash, photo
     async def chat_list(): return [(who, 'Мама', 0, 0, True), (second, 'Сергей', 1, 1, True)]
+    directory_reads = []
+    directory = [('Человек ' + str(i), '+7000000' + str(i)) for i in range(25)]
+
+    async def phonebook():
+        directory_reads.append(1)
+        return directory, False
+
     async def open_chat(uin): return True
     async def quote(dest, source, message_id): quotes.append((dest, source, message_id)); return ''
     async def send_photo(uin, data): uploads.append(('photo', uin, data)); return True
@@ -98,7 +105,7 @@ async def scenario(executable, folder, encryption, md5):
                          fetch_video=video, fetch_voice=voice, fetch_file=file, chat_list=chat_list, open_chat=open_chat,
                          on_quote=quote, quote_supported=lambda uin: True, on_photo=send_photo, on_voice=send_voice,
                          on_video=send_video, on_file=send_file, chat_info=info, search=search,
-                         on_privacy=on_privacy, on_remove=on_remove)
+                         on_privacy=on_privacy, on_remove=on_remove, phonebook=phonebook)
     server.on_typing = on_typing
     offline_ts = int(time.time()) // 60 * 60 - 1800
     store.queue(who, 'Офлайн по UTC', 10, forced=True, ts=offline_ts)
@@ -146,6 +153,12 @@ async def scenario(executable, folder, encryption, md5):
         await server.deliver(who, 'Входящее 😀')
         incoming = await phone.wait(lambda e: e.get('type') == 3 and e.get('messages') and not e['messages'][0]['out'])
         assert incoming['messages'][0]['text'] == 'Входящее 😀', incoming
+        for request_id, offset in ((201, 0), (202, 20)):
+            await phone.command(34, request_id, offset=offset, limit=20, flag=(offset == 0))
+            page = await phone.response(request_id, 14)
+            assert page['phones'] == [list(row) for row in directory[offset:offset+20]], page
+            assert page['offset'] == offset and bool(page['more']) == (offset == 0)
+        assert len(directory_reads) == 1
         await phone.command(0, 10, who, text='Привет 😀')
         receipt = await phone.wait(lambda e: e.get('type') == 4 and e.get('delivery') == 1)
         assert sent == [(who, 'Привет 😀')], sent

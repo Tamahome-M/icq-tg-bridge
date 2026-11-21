@@ -206,6 +206,7 @@ async def run_side() -> None:
     dialogs = await side.dialogs()
     assert [d.title for d in dialogs] == ["Работа", "Мама Петровна", "Я", "Тётя Валя"], dialogs
     # Контакт без переписки: свой чат с вычисленным номером, писать можно сразу.
+    assert ("Мама Петровна", "+79990001122") in side.phonebook()
     aunt = dialogs[3]
     assert aunt.peer_id == to_peer(ME ^ AUNT) and aunt.kind == "user"
     assert await side.title_for(aunt.peer_id) == ("Тётя Валя", "user")

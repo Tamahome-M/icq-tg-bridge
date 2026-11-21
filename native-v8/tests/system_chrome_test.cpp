@@ -38,6 +38,23 @@ static QPixmap draw(tmm::SystemChrome &chrome, const QSize &size, const QColor &
         canvas.convertToImage().copy(offset ? 4 : 0, offset ? 37 : 0, size.width(), size.height()));
     return result;
 }
+static int signalLevel = 0, batteryLevel = 0;
+extern "C" int __wrap_UTIL_GetSignalQuality() {
+    return signalLevel;
+}
+extern "C" int __wrap_UTIL_GetBatteryLevel() {
+    return batteryLevel;
+}
+
+static QImage header(tmm::SystemChrome &chrome, const QColor &underlay, const QString &title) {
+    QPixmap image(240, 28);
+    image.fill(underlay);
+    QPainter p(&image);
+    chrome.drawHeader(p, QRect(0, 0, 240, 28), title);
+    p.end();
+    return image.convertToImage();
+}
+
 int main(int argc, char **argv) {
     if (!getenv("V8_QWS_LOCAL_ONLY"))
         return 3;
@@ -46,6 +63,20 @@ int main(int argc, char **argv) {
     window.resize(240, 320);
     window.show();
     tmm::SystemChrome chrome(window);
+    const QString longTitle = QString::fromUtf8("Очень длинное название контакта или группы");
+    QImage low = header(chrome, Qt::red, longTitle);
+    assert(low == header(chrome, Qt::blue, longTitle));
+    assert(!chrome.refreshIndicators());
+    batteryLevel = 2;
+    assert(!chrome.refreshIndicators());
+    signalLevel = 5;
+    batteryLevel = 5;
+    assert(chrome.refreshIndicators());
+    QImage full = header(chrome, Qt::red, longTitle);
+    assert(low.copy(192, 0, 23, 28) != full.copy(192, 0, 23, 28));
+    assert(low.copy(216, 0, 24, 28) != full.copy(216, 0, 24, 28));
+    assert(full.copy(192, 0, 48, 28) == header(chrome, Qt::blue, "").copy(192, 0, 48, 28));
+    puts("HEADER PASS: opaque, live radio and battery levels, clipped title");
     const QSize sizes[] = {QSize(240, 26), QSize(239, 32)};
     for (unsigned i = 0; i < 2; ++i) {
         ZSoftKey reference("CST_2", &window);

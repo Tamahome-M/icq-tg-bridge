@@ -65,6 +65,12 @@ def main():
                     os.unlink(temporary)
     for option in ("firmware", "resources", "language", "setup", "hardware_stubs", "qemu"):
         os.environ["V8_QWS_" + option.upper()] = str(getattr(args, option))
+    if args.program == "/work/java-ui-probe":
+        # The handset launcher sources ezxenv.sh, including $QTDIR/lib. Use
+        # that firmware path for the real phone and address-book entry points.
+        paths = os.environ.get("V8_QWS_INPUT_LIBS", "").split(":")
+        paths.extend(("/test-hardware", "/usr/lib/ezx/lib"))
+        os.environ["V8_QWS_INPUT_LIBS"] = ":".join(dict.fromkeys(filter(None, paths)))
     sys.path.insert(0, str(harness))
     spec = importlib.util.spec_from_file_location("tmm_external_qws", harness / "run_qws.py")
     runner = importlib.util.module_from_spec(spec)

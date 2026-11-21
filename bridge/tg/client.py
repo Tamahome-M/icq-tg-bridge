@@ -15,6 +15,7 @@ from typing import Awaitable, Callable
 from telethon import TelegramClient, events, functions, types, utils
 
 from ..history import HistoryItem, MAX_ALBUM_PHOTOS, MissedMessage, SentMessage
+from ..phonebook import international_number
 from ..mentions import mentions_all, utf16_text
 from ..quotes import QuoteContent, QuoteMedia, QuoteError, check_size, filename
 
@@ -78,6 +79,7 @@ class TelegramSide:
             system_lang_code=cfg.tg_lang_code,
         )
         self.me: types.User | None = None
+        self._dialog_phones: dict[int, tuple[str, str]] = {}
         self._handlers_bound = False
         self._albums = {}  # (peer, topic, group, outgoing) -> (events by ID, delivery task)
         self._recent_albums = {}  # member IDs only; late updates do not re-deliver the post
@@ -136,6 +138,7 @@ class TelegramSide:
         channels: list[tuple[int, bool, str, object]] = []   # каналы: peer, мьют, группа, entity
         by_peer: dict[int, list[Dialog]] = {}
         own_folder: set[int] = set()
+        phones = {}
         # Группа, ставшая супергруппой, остаётся в диалогах пустой оболочкой
         # с migrated_to — тот же чат живёт дальше под новым peer_id, и без
         # ignore_migrated он был бы в списке дважды.
@@ -148,6 +151,8 @@ class TelegramSide:
             kind = self._kind(entity)
             peer_id = utils.get_peer_id(entity)
             title = dialog.name or str(peer_id)
+            if kind == "user" and not getattr(entity, "is_self", False) and getattr(entity, "phone", None):
+                phones[peer_id] = (title, entity.phone)
             pinned = bool(getattr(dialog, "pinned", False))
             muted = is_muted(dialog)
             archived = bool(getattr(dialog, "archived", False))
@@ -189,7 +194,27 @@ class TelegramSide:
         log.debug("получено %d чатов, групп %d: %s", len(out), len(spread),
                  ", ".join(f"{name} — {count}" for name, count in
                            sorted(spread.items(), key=lambda kv: -kv[1])))
+        self._dialog_phones = phones
         return out
+
+    def dialog_phones(self):
+        return [(name, international_number(phone)) for name, phone in self._dialog_phones.values()]
+
+    async def phonebook(self):
+        # One bulk call also includes saved contacts who have no conversation.
+        result = await self.client(functions.contacts.GetContactsRequest(hash=0))
+        people = self._dialog_phones.copy()
+        for user in result.users:
+            if (not isinstance(user, types.User) or user.is_self or user.bot
+                    or user.deleted or not user.phone):
+                people.pop(user.id, None)
+                self._dialog_phones.pop(user.id, None)
+            else:
+                row = (utils.get_display_name(user), user.phone)
+                people[user.id] = row
+                if user.id in self._dialog_phones:
+                    self._dialog_phones[user.id] = row
+        return [(name, international_number(phone)) for name, phone in people.values()]
 
     async def _topics(self, entity) -> list:
         """Темы форума. Пустой список — если это не форум или тем не видно."""
@@ -915,7 +940,7 @@ class TelegramSide:
             "kind": {"user": "Личный чат", "bot": "Бот",
                      "chat": "Группа", "channel": "Канал"}.get(kind, "Чат"),
             "username": f"@{entity.username}" if getattr(entity, "username", None) else "",
-            "phone": f"+{entity.phone}" if getattr(entity, "phone", None) else "",
+            "phone": international_number(getattr(entity, "phone", None)),
             "members": "",
             "about": "",
         }

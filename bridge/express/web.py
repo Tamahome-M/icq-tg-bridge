@@ -173,6 +173,17 @@ JS_HELPERS = """() => {
     const pick = (x) => (x && x.name) || '';
     return pick(p.phonebookProfile) || pick(p.ctsProfile) || pick(p.rtsProfile);
   };
+  window.__exPhones = (profile) => {
+    if (!profile) return [];
+    const saved = profile.phonebookProfile, work = profile.ctsProfile;
+    // The stock contact card displays the saved contact and the comma-separated
+    // office phone/otherPhone fields. SIP addresses belong to the eXpress dialer.
+    return [saved && saved.contactType === 'phone' && saved.contact,
+            work && work.phone, work && work.otherPhone]
+      .filter(value => typeof value === 'string' || typeof value === 'number')
+      .flatMap(value => String(value).split(',').map(number => number.trim()))
+      .filter(number => /^[+0-9(][0-9 ().-]*$/.test(number));
+  };
   window.__exAvatar = (huid) => {
     const p = window.__store.getState().profiles[huid];
     if (!p) return '';
@@ -185,6 +196,8 @@ JS_HELPERS = """() => {
   };
   window.__exChat = (c) => ({
     id: c.groupChatId, type: c.chatType, name: c.name || (c.opponent ? window.__exName(c.opponent.userHuid) : ''),
+    phones: c.chatType === 'chat' && c.opponent ?
+      window.__exPhones(window.__store.getState().profiles[c.opponent.userHuid]) : [],
     opponent: c.opponent ? c.opponent.userHuid : null, unread: c.unreadCounter || 0,
     muted: !!(c.chatSettings && c.chatSettings.dnd), pinned: !!(c.chatSettings && c.chatSettings.pinned), members: (c.members || []).map(m => m.userHuid),
     presence: c.opponent ? window.__exPresence(c.opponent.userHuid) : null,
@@ -203,6 +216,22 @@ JS_HELPERS = """() => {
 
 # Следит за последним событием каждого чата: оно меняется при новом,
 # изменённом и удалённом сообщении, даже если чат не открыт.
+JS_PHONEBOOK = """self => {
+    const s = window.__store.getState(), rows = [], peers = new Map();
+    const visible = new Set(s.indexes.visibleChats);
+    for (const c of s.chats)
+        if (visible.has(c.groupChatId) && !c.left && c.chatType === 'chat' && c.opponent)
+            peers.set(c.opponent.userHuid, c.name);
+    for (const [huid, profile] of Object.entries(s.profiles)) {
+        if (huid === self || !profile || (!profile.phonebookProfile && !peers.has(huid)))
+            continue;
+        for (const number of window.__exPhones(profile))
+            rows.push([peers.get(huid) || window.__exName(huid), number]);
+    }
+    return rows;
+}"""
+
+
 JS_WATCH = """() => {
   if (window.__exWatching) return;
   window.__exWatching = true;
@@ -388,6 +417,7 @@ class Chat:
     members_count: int = 0
     updated: float = 0
     last: Message | None = None
+    phones: tuple[str, ...] = ()
 
 
 class NotLoggedIn(RuntimeError):
@@ -647,6 +677,9 @@ class ExpressClient:
     async def connected(self) -> bool:
         return bool((await self._page.evaluate(JS_STATUS))["alive"])
 
+    async def phonebook(self):
+        return await self._page.evaluate(JS_PHONEBOOK, self.huid)
+
     async def chats(self) -> list[Chat]:
         rows = await self._page.evaluate(
             """() => { const s = window.__store.getState(), shown = new Set(s.indexes.visibleChats);
@@ -662,7 +695,7 @@ class ExpressClient:
                                members=row["members"],
                                left=row["left"], parent=row["parent"], starter=row["starter"],
                                starter_sender=row["starterSender"],
-                               avatar=row["avatar"], read_at=int(row["readAt"]),
+                               phones=tuple(row["phones"]), avatar=row["avatar"], read_at=int(row["readAt"]),
                                inbox_read_at=int(row.get("inboxReadAt") or 0),
                                status=(row["presence"] or {}).get("status") or "",
                                status_changed=((row["presence"] or {}).get("changed") or 0) / 1000,

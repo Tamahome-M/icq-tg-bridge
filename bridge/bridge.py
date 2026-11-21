@@ -18,6 +18,7 @@ from . import emoji, history, policy
 from .access import AccessControl
 from . import photos
 from .photos import PhotoStore
+from .phonebook import directory
 from . import profiles
 from .quotes import QuoteError, check_size, filename, text_parts, utf16_size
 from .render import Item, RenderStore, Transcoder
@@ -102,7 +103,7 @@ class Bridge:
                                  video_link=self.video_link, on_quote=self.on_phone_quote,
                                  quote_supported=self.quote_supported,
                                  quote_reference=self.storage.quote_reference,
-                                 on_quiet_chats=self.on_phone_quiet_chats)
+                                 on_quiet_chats=self.on_phone_quiet_chats, phonebook=self.phonebook)
         # Любую сеть можно выключить с телефона (настройки сетей в
         # TeleMotoMax): выбор запоминается в базе и действует и после
         # перезапуска, пока телефон не пришлёт другой.
@@ -418,6 +419,24 @@ class Bridge:
         if not contact.last_ts:
             return -1
         return max(0, int((time.time() - contact.last_ts) // 86400))
+
+    async def phonebook(self):
+        async def contacts(name, side):
+            if not self._running or name in self._network_ready:
+                try:
+                    return await asyncio.wait_for(side.phonebook(), 8), False
+                except Exception as exc:
+                    log.warning("Телефонная книга %s недоступна: %s", NET_TITLES[name], exc)
+            return side.dialog_phones(), True
+
+        parts = await asyncio.gather(*(contacts(name, side) for name, side in (
+            ("telegram", self.telegram), ("express", self.express)) if side and self.active[name]))
+        rows = [row for entries, _ in parts for row in entries]
+        partial = any(incomplete for _, incomplete in parts)
+        if self.max is not None and self.active["max"]:
+            rows.extend(self.max.phonebook())
+            partial |= self._running and "max" not in self._network_ready
+        return directory(rows), partial
 
     async def chat_list(self) -> list[tuple[int, str, int, int, bool]]:
         """Все чаты для отдельного экрана TeleMotoMax — и те, что в

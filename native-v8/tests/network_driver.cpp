@@ -132,6 +132,12 @@ static void emit(const Event &e) {
         std::cout << "{\"uin\":" << c.uin << ",\"type\":" << c.type << ",\"name\":" << quote(c.name)
                   << ",\"group\":" << quote(c.group) << ",\"status\":" << c.status << "}";
     }
+    std::cout << "],\"phones\":[";
+    for (size_t i = 0; i < e.phones.size(); ++i) {
+        if (i)
+            std::cout << ',';
+        std::cout << '[' << quote(e.phones[i].name) << ',' << quote(e.phones[i].number) << ']';
+    }
     std::cout << "],\"messages\":[";
     for (size_t i = 0; i < e.messages.size(); ++i) {
         if (i)

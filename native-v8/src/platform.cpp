@@ -1,4 +1,5 @@
 #include "platform.h"
+#include "phone_number.h"
 #include "media.h"
 #include "external_display.h"
 #include "zapplication_v8.h"
@@ -248,6 +249,38 @@ void Platform::externalText(const QString &title, const QString &text, int secon
     if (closed_)
         external_->showText(title, text, seconds);
 }
+bool Platform::dialNumber(const std::string &value) {
+    const std::string number = phoneNumber(value);
+    if (number.empty())
+        return false;
+    static void *library = dlopen("libezxphone.so.1", RTLD_LAZY | RTLD_LOCAL);
+    typedef void (*Dial)(const char *);
+    static Dial dial = library ? fn<Dial>(dlsym(library, "_Z27PHONE_MakeVoiceCallDirectlyPKc")) : 0;
+    if (!dial)
+        return false;
+    dial(number.c_str());
+    return true;
+}
+
+bool Platform::newPhoneContact(const QString &name, const std::string &value) {
+    const std::string number = phoneNumber(value);
+    if (number.empty())
+        return false;
+    static void *library = dlopen("libezxaddrbk.so.1", RTLD_LAZY | RTLD_LOCAL);
+    // V8 ADDRBK_UI::newContact(FIELD_NUMBER, data, uid, parent, name).
+    // Motorola runs its own modal editor and returns on Save or Cancel.
+    typedef int (*NewContact)(int, const QString &, void *, QWidget *, QString);
+    static NewContact edit =
+        library ? fn<NewContact>(dlsym(
+                      library, "_ZN9ADDRBK_UI10newContactENS_13FormFieldTypeERK7QStringP20ADDRBK_"
+                               "CONTACT_UID_SP7QWidgetS1_"))
+                : 0;
+    if (!edit)
+        return false;
+    edit(0, QString::fromLatin1(number.c_str()), 0, window_, name);
+    return true;
+}
+
 bool Platform::openUrl(const QString &url) {
     if (!(url.startsWith("http://") || url.startsWith("https://") || url.startsWith("ftp://") ||
           url.startsWith("mailto:")) ||
