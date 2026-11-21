@@ -2,6 +2,7 @@
 #include <ZSoftKey.h>
 #include <ZSkinBase.h>
 #include <qdatetime.h>
+#include <qimage.h>
 #include <RES_ICON_Reader.h>
 #include <qapplication.h>
 #include <stddef.h>
@@ -73,6 +74,15 @@ bool SystemChrome::refreshClock() {
     clock_ = UTIL_DateTime::timeToString(QTime::currentTime(), UTIL_DateTime::Minutes);
     return true;
 }
+static QPixmap indicatorIcon(RES_ICON_Reader &reader, const QString &name) {
+    // The resource reader supplies a shared mask. Keep private pixels and an
+    // owned mask before another firmware lookup can detach the shared segment.
+    const QPixmap shared = reader.getIcon(name.latin1(), false);
+    QPixmap icon;
+    if (!shared.isNull())
+        icon.convertFromImage(shared.convertToImage());
+    return icon;
+}
 bool SystemChrome::refreshIndicators() {
     int signal = UTIL_GetSignalQuality(), battery = UTIL_GetBatteryLevel();
     if (signal < 0 || signal > 5)
@@ -85,17 +95,15 @@ bool SystemChrome::refreshIndicators() {
     RES_ICON_Reader reader;
     if (signal != signal_) {
         signal_ = signal;
-        signalIcon_ =
-            signal < 0
-                ? QPixmap()
-                : reader.getIcon(("signal_" + QString::number(signal) + "_hed1").latin1(), false);
+        signalIcon_ = signal < 0
+                          ? QPixmap()
+                          : indicatorIcon(reader, "signal_" + QString::number(signal) + "_hed1");
     }
     if (battery != battery_) {
         battery_ = battery;
         batteryIcon_ =
             battery < 0 ? QPixmap()
-                        : reader.getIcon(
-                              ("batt_level_" + QString::number(battery) + "_hed2").latin1(), false);
+                        : indicatorIcon(reader, "batt_level_" + QString::number(battery) + "_hed2");
     }
     return true;
 }
@@ -113,7 +121,6 @@ void SystemChrome::drawHeader(QPainter &p, const QRect &rect, const QString &tit
     // ZSkinBase background can include the handset wallpaper.
     p.fillRect(rect, window_.palette().active().background());
     if (!headerBackground_.isNull()) {
-        // V8 Qt's 24-bit tiled blit can run past a pixmap in the window framebuffer.
         const int w = std::min(rect.width(), headerBackground_.width());
         const int h = std::min(rect.height(), headerBackground_.height());
         p.drawPixmap(rect.x(), rect.y(), headerBackground_, 0, 0, w, h);
