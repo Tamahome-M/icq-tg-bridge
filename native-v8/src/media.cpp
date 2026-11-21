@@ -103,7 +103,9 @@ QWidget *MediaController::ensureVideoWidget() {
                                                                         "telemotomax-video", 0);
     video_ = static_cast<QWidget *>(storage);
     connect(video_, SIGNAL(destroyed()), this, SLOT(videoDestroyed()));
-    video_->resize(240, 280);
+    if (surface)
+        video_->setGeometry(surface->rect());
+    video_->setFocusPolicy(QWidget::NoFocus);
     video_->hide();
     return video_;
 }

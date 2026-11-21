@@ -1,13 +1,19 @@
 #include "system_chrome.h"
 #include <ZSoftKey.h>
+#include <ZSkinBase.h>
+#include <qdatetime.h>
 #include <RES_ICON_Reader.h>
 #include <qapplication.h>
 #include <stddef.h>
 #include <algorithm>
 
-// These public SDK layouts match this firmware's ZSkinBase constructor and
-// ZSoftKey::initFont/updateFont. Keep the native objects' vtables intact.
-typedef char TmmSkinBaseSize[(sizeof(ZSkinBase) == 64) ? 1 : -1];
+// Same time formatter and minute precision as ZHeader::setTimeString on V8.
+class UTIL_DateTime {
+  public:
+    enum TimeAccuracy { Minutes };
+    static QString timeToString(const QTime &, TimeAccuracy);
+};
+
 typedef char TmmSkinFontSize[(sizeof(FONT_INFO_T) == 28) ? 1 : -1];
 typedef char TmmHeaderFontOffset[(offsetof(ZWidgetSkinProps, fntHeaderAStd) == 14364) ? 1 : -1];
 typedef char TmmSoftkeyFontOffset[(offsetof(ZWidgetSkinProps, fntSoftkeyStd) == 14448) ? 1 : -1];
@@ -30,12 +36,21 @@ static QFont themeFont(QWidget &window, const FONT_INFO_T &info) {
     return font;
 }
 SystemChrome::SystemChrome(QWidget &window)
-    : window_(window), header_(window, ZSkinService::clsZHeader1, false), signal_(-2),
-      battery_(-2) {
+    : window_(window), signal_(-2), battery_(-2), minute_(-1) {
     refresh();
 }
 void SystemChrome::refresh() {
-    header_.updateSkin();
+    RES_ICON_Reader reader;
+    const QPixmap artwork = reader.getIcon("header_bg_std", false);
+    headerBackground_ = QPixmap();
+    if (!artwork.isNull()) {
+        headerBackground_.resize(artwork.size());
+        headerBackground_.fill(window_.palette().active().background());
+        QPainter background(&headerBackground_);
+        background.drawPixmap(0, 0, artwork);
+    }
+    minute_ = -1;
+    refreshClock();
     signal_ = battery_ = -2;
     refreshIndicators();
     footerBackground_ = QPixmap();
@@ -50,17 +65,14 @@ void SystemChrome::refresh() {
         headerInk_ = softkeyInk_ = window_.palette().active().foreground();
     }
 }
-static QPixmap headerIcon(RES_ICON_Reader &reader, const QString &name, int width) {
-    QPixmap icon = reader.getIcon(name.latin1(), false);
-    if (!icon.isNull() && (icon.width() > width || icon.height() > 16)) {
-        double scale = std::min(double(width) / icon.width(), 16.0 / icon.height());
-        QWMatrix m;
-        m.scale(scale, scale);
-        return icon.xForm(m);
-    }
-    return icon;
+bool SystemChrome::refreshClock() {
+    const time_t minute = time(0) / 60;
+    if (minute == minute_)
+        return false;
+    minute_ = minute;
+    clock_ = UTIL_DateTime::timeToString(QTime::currentTime(), UTIL_DateTime::Minutes);
+    return true;
 }
-
 bool SystemChrome::refreshIndicators() {
     int signal = UTIL_GetSignalQuality(), battery = UTIL_GetBatteryLevel();
     if (signal < 0 || signal > 5)
@@ -74,59 +86,53 @@ bool SystemChrome::refreshIndicators() {
     if (signal != signal_) {
         signal_ = signal;
         signalIcon_ =
-            signal < 0 ? QPixmap()
-                       : headerIcon(reader, "signal_" + QString::number(signal) + "_idle1.g", 22);
+            signal < 0
+                ? QPixmap()
+                : reader.getIcon(("signal_" + QString::number(signal) + "_hed1").latin1(), false);
     }
     if (battery != battery_) {
         battery_ = battery;
         batteryIcon_ =
-            battery < 0
-                ? QPixmap()
-                : headerIcon(reader, "batt_level_" + QString::number(battery) + "_hed2.gif", 21);
+            battery < 0 ? QPixmap()
+                        : reader.getIcon(
+                              ("batt_level_" + QString::number(battery) + "_hed2").latin1(), false);
     }
     return true;
 }
 
-static bool drawIndicator(QPainter &p, const QRect &box, const QPixmap &icon) {
-    if (icon.isNull())
-        return false;
-    p.drawPixmap(box.x() + (box.width() - icon.width()) / 2,
-                 box.y() + (box.height() - icon.height()) / 2, icon);
-    return true;
+int SystemChrome::titleLeft() const {
+    // Keep the application icon and title aligned even while radio state is unknown.
+    return std::max(25, signalIcon_.width()) + 2;
 }
-
 void SystemChrome::drawHeader(QPainter &p, const QRect &rect, const QString &title, int offset) {
     if (rect.isEmpty())
         return;
     p.save();
+    p.setClipRect(rect);
+    // Paint the application's header artwork on a solid surface. The generic
+    // ZSkinBase background can include the handset wallpaper.
     p.fillRect(rect, window_.palette().active().background());
-    header_.drawBackground(p, &rect, false);
-    header_.drawBorder(p, &rect);
+    if (!headerBackground_.isNull()) {
+        // V8 Qt's 24-bit tiled blit can run past a pixmap in the window framebuffer.
+        const int w = std::min(rect.width(), headerBackground_.width());
+        const int h = std::min(rect.height(), headerBackground_.height());
+        p.drawPixmap(rect.x(), rect.y(), headerBackground_, 0, 0, w, h);
+    }
+    if (!signalIcon_.isNull())
+        p.drawPixmap(rect.x(), rect.y() + (rect.height() - signalIcon_.height()) / 2, signalIcon_);
+    const int batteryLeft = rect.right() + 1 - std::max(25, batteryIcon_.width());
+    if (!batteryIcon_.isNull())
+        p.drawPixmap(rect.right() + 1 - batteryIcon_.width(),
+                     rect.y() + (rect.height() - batteryIcon_.height()) / 2, batteryIcon_);
     p.setFont(headerFont_);
     p.setPen(headerInk_);
-    const int middle = rect.y() + rect.height() / 2;
-    const QRect cell(rect.right() - 47, middle - 8, 22, 16);
-    const QRect power(rect.right() - 23, middle - 8, 21, 16);
-    if (!drawIndicator(p, cell, signalIcon_)) {
-        for (int i = 0; i < 5; ++i) {
-            int h = 3 + i * 2;
-            int x = cell.x() + 2 + i * 4;
-            if (i < signal_)
-                p.fillRect(x, middle + 5 - h, 3, h, headerInk_);
-            else
-                p.drawPoint(x + 1, middle + 4);
-        }
-    }
-    if (!drawIndicator(p, power, batteryIcon_)) {
-        p.drawRect(power.x(), middle - 5, 18, 10);
-        p.fillRect(power.x() + 18, middle - 2, 2, 4, headerInk_);
-        if (battery_ > 0)
-            p.fillRect(power.x() + 2, middle - 3, battery_ * 5, 6, headerInk_);
-    }
-    const int indent = std::max(0, 5 + offset);
-    const int space = cell.x() - 2 - rect.x() - indent;
-    if (space > 0)
-        p.drawText(rect.x() + indent, rect.y(), space, rect.height(),
+    const int clockWidth = p.fontMetrics().width(clock_);
+    const int clockLeft = batteryLeft - 2 - clockWidth;
+    p.drawText(clockLeft, rect.y(), clockWidth, rect.height(),
+               Qt::AlignRight | Qt::AlignVCenter | Qt::SingleLine, clock_);
+    const int titleX = rect.x() + titleLeft() + std::max(0, offset);
+    if (clockLeft > titleX + 3)
+        p.drawText(titleX, rect.y(), clockLeft - titleX - 3, rect.height(),
                    Qt::AlignLeft | Qt::AlignVCenter | Qt::SingleLine, title);
     p.restore();
 }

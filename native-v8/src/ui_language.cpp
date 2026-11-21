@@ -272,6 +272,7 @@ static const char *translations[][2] = {
     {"Плеер", "Player"},
     {"Играет", "Playing"},
     {"Проиграно", "Finished"},
+    {"Видео завершено", "Video finished"},
     {"выбор — ещё раз, 0 — закрыть", "Select: replay, 0: close"},
     {"выбор — пауза, 4 — сначала", "Select: pause, 4: restart"},
     {"Сохранять локальную историю", "Save local history"},

@@ -6,6 +6,7 @@
 #include <limits.h>
 #include <algorithm>
 namespace tmm {
+static const char fontSizes[] = "12|13|14|15|16|17|18|19|20|21|22|23|24";
 static const SettingField fields[] = {
     {"account", "uin", "UIN", "", "", 12, false},
     {"account", "password", "Пароль", "", "", 64, true},
@@ -36,7 +37,7 @@ static const SettingField fields[] = {
     {"interface", "running_icon", "Значок запущенного приложения", "1",
      "1=Строка статуса (вместо BT/USB)|2=Экран ожидания|0=Нет", 0, false},
     {"interface", "mirror_menu", "'Зеркальные' меню", "0", "0=Нет|1=Да", 0, false},
-    {"interface", "font_size", "Размер шрифта", "16", "12|14|16|18|20|22|24", 0, false},
+    {"interface", "font_size", "Размер шрифта", "16", fontSizes, 0, false},
     {"interface", "use_groups", "Группы контактов", "0", "0=Нет|1=Да", 0, false},
     {"interface", "hide_empty", "Скрывать пустые группы", "0", "0=Нет|1=Да", 0, false},
     {"interface", "hide_offline", "Скрывать отключившихся", "0", "0=Нет|1=Да", 0, false},
@@ -49,7 +50,7 @@ static const SettingField fields[] = {
     {"interface", "save_history", "Сохранять локальную историю", "1", "0=Нет|1=Да", 0, false},
     {"interface", "server_history_count", "Сообщений в истории с сервера", "10", "", 100, false},
     {"interface", "chat_messages", "Сообщений в чате", "15", "", 100, false},
-    {"interface", "chat_font_size", "Размер шрифта в чате", "14", "12|14|16|18|20|22|24", 0, false},
+    {"interface", "chat_font_size", "Размер шрифта в чате", "14", fontSizes, 0, false},
     {"interface", "show_icons", "Иконка", "1", "0=Нет|1=Да", 0, false},
     {"interface", "show_sender", "Ник", "0", "0=Нет|1=Да", 0, false},
     {"interface", "show_time", "Время", "1", "0=Нет|1=Да", 0, false},

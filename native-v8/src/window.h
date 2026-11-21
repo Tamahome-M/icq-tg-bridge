@@ -136,7 +136,7 @@ class Window : public QWidget {
     bool loadedMediaReady_, editSecret_, captureOwned_, receivedDeferred_;
     bool connectionErrorShown_, settingsEditing_, resetComplete_;
     bool locked_, closed_, editorWasVisible_, silent_, paused_, manualDisconnect_, lightOn_,
-        pinWrong_;
+        pinWrong_, mediaFullScreen_;
     unsigned long closedAt_, startedAt_, lastAlert_, lastActivity_, typingSentAt_;
     QString pin_, notice_, ticker_, editTitle_, connectionStage_;
     unsigned long noticeUntil_, tickerUntil_, indicatorsAt_;
@@ -157,6 +157,7 @@ class Window : public QWidget {
     std::map<uint32_t, uint32_t> pendingUin_;
     View &view();
     const View &view() const;
+    bool fullScreenMedia() const;
     void syncVideoVisibility();
     void playerMenu();
     void push(const View &);
@@ -238,7 +239,7 @@ class Window : public QWidget {
     bool openCachedMedia(const Command &, const std::string &purpose);
     void showMedia(const Event &);
     void nextVideo();
-    void play(const std::string &, bool audioOnly = false);
+    void play(const std::string &, bool audioOnly = false, bool preview = false);
     void openUrl(const std::string &);
     void openDeferredMedia();
     void upload(const std::string &, unsigned, uint32_t);

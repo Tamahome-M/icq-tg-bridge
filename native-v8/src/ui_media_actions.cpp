@@ -85,7 +85,8 @@ void Window::startVoiceRecording() {
 }
 void Window::playerMenu() {
     // The Java Canvas exposes "Дальше" directly, not another player menu.
-    if (view().context == "player-video" && !videoToken_.empty())
+    if (view().context == "player-video" && view().directory != "outgoing-preview" &&
+        !videoToken_.empty())
         nextVideo();
 }
 bool Window::mediaKey(int code) {
@@ -140,11 +141,33 @@ bool Window::mediaKey(int code) {
         } else if (code == KEYCODE_RSK)
             back();
     } else {
-        if (fire)
+        if (code == KEYCODE_SIDE_UP || code == KEYCODE_SIDE_DOWN) {
+            // Match the seven steps plus mute used by the Motorola engine.
+            const int volume = std::max(0, std::min(100, settings_.getInt("player_volume", 70)));
+            const int level = (volume * 7 + 50) / 100;
+            const int next = std::max(0, std::min(7, level + (code == KEYCODE_SIDE_UP ? 1 : -1)));
+            if (next != level) {
+                const int percent = (next * 100 + 3) / 7;
+                player_.setVolume(percent);
+                settings_.setInt("player_volume", percent);
+            }
+        } else if (code == KEYCODE_LEFT || code == KEYCODE_4 || code == KEYCODE_RIGHT ||
+                   code == KEYCODE_6) {
+            const bool forward = code == KEYCODE_RIGHT || code == KEYCODE_6;
+            if (playDuration_) {
+                const unsigned pos = std::min(playPosition_, playDuration_);
+                // V8 seeks inside the last half-second can finish the clip immediately.
+                const unsigned last = playDuration_ > 500 ? playDuration_ - 500 : playDuration_ - 1;
+                if (forward && pos >= last)
+                    return true;
+                const unsigned target =
+                    forward ? pos + std::min(10000U, last - pos) : pos - std::min(10000U, pos);
+                if (target != pos && player_.seek(target))
+                    playPosition_ = target;
+            }
+        } else if (fire)
             back();
-        else if (code == KEYCODE_3)
-            nextVideo();
-        else if (code == KEYCODE_RSK)
+        else if (code == KEYCODE_3 || code == KEYCODE_RSK)
             playerMenu();
     }
     update();

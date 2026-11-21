@@ -1,7 +1,11 @@
 // Real Window/Qt/file operations. Only command submission is observed by the
-// linker; no physical camera, microphone, player or network success is claimed.
+// linker. The fullscreen checks use the real video widget with a simulated decoder.
 #define FEAT_KEYPAD_SUPPORT
 #include "application.h"
+#include <qtimer.h>
+#define private public
+#include "media.h"
+#undef private
 #include "window.h"
 #include "storage.h"
 #include "ui_language.h"
@@ -19,6 +23,35 @@ extern "C" void UTIL_SetPowerOnHandleStatus(int);
 extern "C" void UTIL_SetFlipStatus(int);
 extern "C" void UTIL_SetKeypadLockStatus(bool);
 static std::vector<tmm::Command> submitted;
+static bool simulateVideo, seekable;
+static unsigned seekTarget;
+static int engineVolume;
+extern "C" bool __real__ZN3tmm15MediaController4playERK7QStringib(tmm::MediaController *,
+                                                                  const QString &, int, bool);
+extern "C" bool __wrap__ZN3tmm15MediaController4playERK7QStringib(tmm::MediaController *media,
+                                                                  const QString &file, int volume,
+                                                                  bool audio) {
+    if (!simulateVideo || audio)
+        return __real__ZN3tmm15MediaController4playERK7QStringib(media, file, volume, audio);
+    media->videoActive_ = media->ensureVideoWidget() != 0;
+    return media->videoActive_;
+}
+extern "C" bool __real__ZN3tmm15MediaController4seekEj(tmm::MediaController *, unsigned);
+extern "C" bool __wrap__ZN3tmm15MediaController4seekEj(tmm::MediaController *media,
+                                                       unsigned target) {
+    if (!simulateVideo)
+        return __real__ZN3tmm15MediaController4seekEj(media, target);
+    seekTarget = target;
+    return seekable;
+}
+extern "C" void __real__ZN3tmm15MediaController9setVolumeEi(tmm::MediaController *, int);
+extern "C" void __wrap__ZN3tmm15MediaController9setVolumeEi(tmm::MediaController *media,
+                                                            int volume) {
+    if (simulateVideo)
+        engineVolume = volume;
+    else
+        __real__ZN3tmm15MediaController9setVolumeEi(media, volume);
+}
 extern "C" bool __wrap__ZN3tmm6Client6submitERKNS_7CommandE(tmm::Client *, const tmm::Command &c) {
     submitted.push_back(c);
     return true;
@@ -249,7 +282,7 @@ class UiProbe {
         require(image.save("/state/phone/photo.jpg", "JPEG"), "real Qt JPEG fixture");
         received(window, "/state/phone/photo.jpg", "photo", "photo.jpg");
         const int zoom = window.pictureZoom_;
-        require(window.view().kind == View::Picture && zoom < 25,
+        require(window.view().kind == View::Picture && zoom == 25,
                 "received photo uses the common fitted image viewer");
         window.key(KEYCODE_UP);
         window.key(KEYCODE_RIGHT);
@@ -313,8 +346,70 @@ class UiProbe {
         window.settings_.setInt("video_kbps", 0);
         window.settings_.setInt("video_kb", 0);
         cacheReopen(window, cache, contact.uin);
+        window.openChat(contact.uin, false);
+        videoControls(window);
         fprintf(stderr, "MEDIA UI COMPLETE: %u checks\n", checks_);
         scene(window, contact.uin);
+    }
+    static void press(Window &window, int code) {
+        QKeyEvent key(QEvent::KeyPress, code, 0, 0);
+        QApplication::sendEvent(&window, &key);
+    }
+    static void videoControls(Window &window) {
+        simulateVideo = seekable = true;
+        window.settings_.setInt("player_volume", 70);
+        window.play("/state/local.3gp", false, true);
+        QWidget *surface = window.player_.videoWidget();
+        require(
+            surface && surface->isVisible() && surface->geometry() == window.rect() &&
+                surface->focusPolicy() == QWidget::NoFocus && window.fullScreenMedia(),
+            "outgoing video preview uses a full-size Motorola surface and leaves keys with Window");
+        window.mediaPosition(2500, 27000);
+        press(window, KEYCODE_RIGHT);
+        require(seekTarget == 12500 && window.playPosition_ == 12500,
+                "Right seeks forward ten seconds");
+        press(window, KEYCODE_6);
+        press(window, KEYCODE_6);
+        require(seekTarget == 26500 && window.playPosition_ == 26500, "repeat seeks clamp at end");
+        seekable = false;
+        press(window, KEYCODE_LEFT);
+        require(seekTarget == 16500 && window.playPosition_ == 26500,
+                "failed seek preserves position");
+        seekable = true;
+        for (int i = 0; i < 3; ++i)
+            press(window, KEYCODE_4);
+        require(seekTarget == 0 && window.playPosition_ == 0, "backward seeks clamp at start");
+        press(window, KEYCODE_SIDE_UP);
+        require(engineVolume == 86, "side volume up advances one of seven hardware levels");
+        for (int i = 0; i < 9; ++i)
+            press(window, KEYCODE_SIDE_DOWN);
+        require(engineVolume == 0 && !window.settings_.getInt("player_volume"),
+                "side volume reaches mute");
+        for (int i = 0; i < 9; ++i)
+            press(window, KEYCODE_SIDE_UP);
+        require(engineVolume == 100, "side volume clamps at maximum");
+        const size_t before = submitted.size();
+        press(window, KEYCODE_3);
+        require(submitted.size() == before && window.fullScreenMedia(),
+                "camera preview has no next network segment");
+        window.lock();
+        require(surface->isHidden(), "locking covers video");
+        window.unlock();
+        require(surface->isVisible() && surface->geometry() == window.rect(),
+                "unlock restores fullscreen video");
+        press(window, KEYCODE_LSK);
+        require(!window.fullScreenMedia() && surface->isHidden() &&
+                    window.view().kind == View::Chat,
+                "back closes video surface and returns to chat");
+        window.play("/state/local.3gp", false);
+        const QString reason = QString::fromLatin1("Decoder stopped");
+        window.player_.pendingError_ = reason;
+        window.player_.pending_ = 3;
+        window.player_.dispatch();
+        require(window.view().status == reason && surface->isHidden(),
+                "decoder failure remains readable inside the fullscreen viewer");
+        press(window, KEYCODE_0);
+        simulateVideo = false;
     }
     static void cacheReopen(Window &window, const std::string &cache, uint32_t target) {
         window.openChat(target, false);
@@ -330,7 +425,7 @@ class UiProbe {
         require(submitted.size() == before + 1 && submitted.back().type == Command::Photo,
                 "first photo open requests the bridge");
         const Command first = submitted.back();
-        QImage jpeg(80, 60, 32);
+        QImage jpeg(240, 320, 32);
         jpeg.fill(0xff224488);
         Event ready(Event::Media);
         ready.requestId = first.requestId;
@@ -341,7 +436,18 @@ class UiProbe {
         window.consume(ready);
         require(window.view().kind == View::Picture && window.mediaCache_.owns(ready.path),
                 "completed photo enters disk cache and the real Qt viewer");
+        QPixmap canvas(window.size());
+        QPainter painter(&canvas);
+        window.drawFrame(painter);
+        painter.end();
+        const QImage image = canvas.convertToImage();
+        const unsigned center = image.pixel(image.width() / 2, image.height() / 2);
+        require(window.fullScreenMedia() && window.pictureZoom_ == 100 &&
+                    image.pixel(0, 0) == center &&
+                    image.pixel(image.width() - 1, image.height() - 1) == center,
+                "portrait photo covers first and last display rows without status or softkey bars");
         window.back();
+        require(!window.fullScreenMedia(), "leaving photo restores the chat frame");
         require(window.picture_.isNull(), "closing a cached photo releases decoded pixels");
         before = submitted.size();
         window.requestMedia(1);
