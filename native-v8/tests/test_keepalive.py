@@ -179,8 +179,8 @@ async def silent_server(driver, folder, encrypted, misses, **env):
                        and server.session.pings_seen > 0)
 
 
-async def busy_ui(driver, folder, encrypted):
-    async with connected(driver, folder, encrypted, TMM_TEST_MISSED_PINGS="1") as (phone, server, who):
+async def busy_ui(driver, folder, encrypted, **env):
+    async with connected(driver, folder, encrypted, TMM_TEST_MISSED_PINGS="1", **env) as (phone, server, who):
         session = server.session
         assert session.pings_seen, "first keepalive missing after login"
         await control(phone, "hold-events", "draining")
@@ -188,6 +188,13 @@ async def busy_ui(driver, folder, encrypted):
             await session.notify_status(who, C.STATUS_AWAY)
         before = session.pings_seen
         await wait_for(lambda: session.pings_seen >= before + 3, timeout=5)
+        await control(phone, "pings 0 1", "configured")
+        await asyncio.sleep(.2)
+        before = session.pings_seen
+        await asyncio.sleep(1.4)
+        assert session.pings_seen == before, "disabled while UI is full"
+        await control(phone, "pings 1 1", "configured")
+        await wait_for(lambda: session.pings_seen >= before + 2)
         await control(phone, "drain-events", "draining")
         await phone.command(13, 14, who)
         await phone.response(14, 8)
@@ -218,6 +225,7 @@ async def main():
             runs.append(awake_after_video(driver, root / "stalled", encrypted, stopped_clock=True))
             if not os.environ.get("TMM_NETWORK_DRIVER"):  # host-only Motorola driver adapter
                 runs.append(paused_worker(driver, root / "delayed-rtc", encrypted, TMM_TEST_RTC="1"))
+                runs.append(busy_ui(driver, root / "busy-rtc", encrypted, TMM_TEST_RTC="1"))
                 runs.append(silent_server(driver, root, encrypted, 3, TMM_TEST_RTC="1"))
                 runs.append(awake_after_video(driver, root / "rtc", encrypted, stopped_clock=True,
                                               TMM_TEST_RTC="1", TMM_TEST_FROZEN_WALL="1"))

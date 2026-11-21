@@ -222,14 +222,16 @@ class Client::Impl : public Cancellation, public ReadWatch {
                     return false;
                 if (e.type == Event::Progress)
                     return true;
-                if (!online || !configured.pingSeconds) {
+                if (!online || (!cfg.pingSeconds && !configured.pingSeconds)) {
                     pthread_cond_wait(&drained, &mutex);
                     continue;
                 }
                 // The UI can stop draining events while a system dialog is open.
                 // Keep the bounded queue and service the socket outside its lock.
-                timespec until = {time(0) + 1, 0};
-                pthread_cond_timedwait(&drained, &mutex, &until);
+                if (cfg.pingSeconds == configured.pingSeconds) {
+                    timespec until = {time(0) + 1, 0};
+                    pthread_cond_timedwait(&drained, &mutex, &until);
+                }
             }
             checkKeepalive(false, pingTimer.pollNow());
         }
