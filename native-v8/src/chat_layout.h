@@ -25,7 +25,7 @@ QString formatChatHeader(const QString &sender, uint32_t time, bool showSender, 
                          bool showDate, int offsetMinutes);
 ChatText splitChatText(const QString &formatted, const QString &generatedHeader, bool newLine,
                        bool serverHistory = false);
-ChatLayout layoutChatText(const ChatText &, const QFont &, int width);
+ChatLayout layoutChatText(const ChatText &, const QFont &, int width, int firstLineIndent = 0);
 QColor chatHeaderColor(bool outgoing, const QColor &background);
 QColor chatSelectionColor(const QColor &background, const QColor &text);
 } // namespace tmm

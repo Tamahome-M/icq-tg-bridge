@@ -81,8 +81,9 @@ class Wrapper {
     }
 
   public:
-    Wrapper(ChatLayout &layout, int width)
-        : layout_(layout), width_(std::max(1, width)), x_(0), y_(0), fresh_(true) {}
+    Wrapper(ChatLayout &layout, int width, int firstLineIndent)
+        : layout_(layout), width_(std::max(1, width)),
+          x_(std::max(0, std::min(firstLineIndent, width_))), y_(0), fresh_(true) {}
     void text(const QString &text, const QFontMetrics &metrics, bool header) {
         for (unsigned i = 0; i < text.length();) {
             if (text[i] == '\n') {
@@ -105,9 +106,9 @@ class Wrapper {
                 ++end;
             QString word = text.mid(i, end - i);
             int width = metrics.width(word);
-            if (x_ && x_ + width > width_)
+            if (!fresh_ && x_ + width > width_)
                 nextLine();
-            if (width <= width_) {
+            if (x_ + width <= width_) {
                 append(word, width, header);
                 i = end;
                 continue;
@@ -129,7 +130,7 @@ class Wrapper {
         }
     }
     void separate() {
-        if (x_)
+        if (!fresh_)
             nextLine();
     }
     void finish() {
@@ -137,13 +138,13 @@ class Wrapper {
     }
 };
 } // namespace
-ChatLayout layoutChatText(const ChatText &text, const QFont &font, int width) {
+ChatLayout layoutChatText(const ChatText &text, const QFont &font, int width, int firstLineIndent) {
     ChatLayout layout;
     QFont bold = font;
     bold.setBold(true);
     QFontMetrics normalMetrics(font), boldMetrics(bold);
     layout.lineHeight = std::max(normalMetrics.height(), boldMetrics.height());
-    Wrapper wrapper(layout, width);
+    Wrapper wrapper(layout, width, firstLineIndent);
     wrapper.text(text.header, boldMetrics, true);
     if (text.newLine)
         wrapper.separate();
