@@ -7,6 +7,8 @@ import os
 import struct
 import time
 
+from ..history import album_members
+
 from . import const as C
 from .proto import Reader, TLVList, pstr8, pstr16, tlv, tlv_u16, tlv_u32
 
@@ -72,8 +74,18 @@ def message_ref(message_id: int | str) -> bytes:
     return value.to_bytes(8, "big") if 0 < value < 2**64 else b""
 
 
+def attachment_tokens(attach: str, token_for, albums: bool) -> bytes:
+    """The ordinary token, or 2–10 ordinary photo tokens in display order."""
+    members = album_members(attach)
+    if not members:
+        return (token_for(attach) or b"") if attach else b""
+    tokens = [token_for(member) for member in (members if albums else members[:1])]
+    return b"".join(tokens) if all(tokens) else b""
+
+
 def history_records(rows: list[tuple], max_bytes: int, token_for,
-                    threads: bool = False, quotes: bool = False) -> bytes:
+                    threads: bool = False, quotes: bool = False, albums: bool = False,
+                    page_more: bool | None = None) -> bytes:
     """Записи истории для TeleMotoMax: длина текста (2 байта), UTF-8, флаг
     и, если бит 1 флага взведён, 16-байтный токен вложения; бит 2 —
     это видео (превью и ролик), бит 3 — голосовое, оба разом (0x07) —
@@ -84,13 +96,16 @@ def history_records(rows: list[tuple], max_bytes: int, token_for,
     сообщения для цитирования (клиент 0.85+, quotes=True). Не влезает — теряем самое старое (записи
     идут от старых к новым)."""
     encoded: list[bytes] = []
-    for row in rows:
+    used = 0
+    for row in reversed(rows):
         text, attach = row[0], row[1]
         mine = bool(row[2]) if len(row) > 2 else False
         thread_uin = int(row[3]) if len(row) > 3 and threads else 0
         ref = message_ref(row[4]) if quotes and len(row) > 4 else b""
-        raw = text.encode("utf-8")[:4000]
-        token = token_for(attach) if attach else None
+        raw = text.encode("utf-8")
+        if len(raw) > 4000:
+            raw = raw[:4000].decode("utf-8", "ignore").encode("utf-8")
+        token = attachment_tokens(attach, token_for, albums)
         rec = struct.pack(">H", len(raw)) + raw
         mark = (0x08 if mine else 0) | (0x10 if thread_uin else 0) | (0x20 if ref else 0)
         if token:
@@ -101,16 +116,23 @@ def history_records(rows: list[tuple], max_bytes: int, token_for,
                 flag = 0x05
             elif attach.startswith("file:"):
                 flag = 0x07               # биты 2 и 4 разом — документ
-            rec += bytes([flag | mark]) + token
+            if len(token) > 16:
+                rec += bytes([flag | mark | 0x40, len(token) // 16]) + token
+            else:
+                rec += bytes([flag | mark]) + token
         else:
             rec += bytes([mark])
         if thread_uin:
             rec += struct.pack(">I", thread_uin)
         rec += ref
+        if used + len(rec) > max_bytes:
+            break
         encoded.append(rec)
-    while encoded and sum(len(r) for r in encoded) > max_bytes:
-        encoded.pop(0)
-    return b"".join(encoded)
+        used += len(rec)
+    header = b""
+    if page_more is not None:
+        header = bytes([0xFF, bool(page_more or len(encoded) < len(rows))])
+    return header + b"".join(reversed(encoded))
 
 
 def chat_records(rows: list[tuple[int, str, int, int, bool]], max_bytes: int) -> bytes:

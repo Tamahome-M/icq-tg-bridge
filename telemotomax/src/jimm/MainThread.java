@@ -142,6 +142,8 @@ public class MainThread implements Runnable
 				if (text != null) bytes += text.length() * 2;
 				if (item instanceof Message)
 				{
+					byte[] attachment = ((Message)item).getAttachToken();
+					if (attachment != null) bytes += attachment.length;
 					String name = ((Message)item).getSenderName();
 					if (name != null) bytes += name.length() * 2;
 				}

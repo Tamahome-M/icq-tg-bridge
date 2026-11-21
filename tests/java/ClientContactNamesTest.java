@@ -4,6 +4,7 @@ import java.io.*;
 import java.lang.reflect.*;
 import java.util.*;
 import javax.microedition.lcdui.*;
+import DrawControls.TextList;
 import jimm.comm.*;
 import jimm.comm.connections.Connection;
 
@@ -60,6 +61,23 @@ public final class ClientContactNamesTest {
         check(Arrays.equals(media.getMessageRef(),new byte[]{0,0,0,0,0,0,0,123}),"message reference lost beside sender name");
         Message link=receive("live-express");named(EXPRESS,"eXpress: Команда");
         check(link instanceof UrlMessage && ((UrlMessage)link).getUrl().equals("https://example.org/video") && wire.sends==2,"browser URL or ACK lost");
+        reset();Message album=receive("album");
+        check(album.getAttachKind()==1 && album.getAttachToken().length==48 && wire.sends==1,
+              "album must remain one acknowledged photo post with all three tokens");
+        ChatTextList albumChat=ChatHistory.getChatHistoryAt(String.valueOf(TG));
+        check(albumChat.messageCount()==1,"one Telegram album produced extra chat messages");
+        albumChat.activate();
+        PhotoViewer.show(String.valueOf(TG),album.getAttachToken(),albumChat);
+        Vector requests=(Vector)field(Icq.class,"reqAction").get(null);
+        check(requests.isEmpty(),"opening album choices fetched photo bytes");
+        TextList choices=(TextList)DrawControls.VirtualList.getCurrent();
+        choices.selectTextByIndex(2);
+        Object picker=field(DrawControls.VirtualList.class,"commandListener").get(choices);
+        ((javax.microedition.lcdui.CommandListener)picker).commandAction(JimmUI.cmdSelect,null);
+        RequestBartAction request=(RequestBartAction)requests.lastElement();
+        check(Arrays.equals((byte[])field(RequestBartAction.class,"token").get(request),
+              Arrays.copyOfRange(album.getAttachToken(),32,48)),"third album photo fetched the wrong token");
+        requests.removeAllElements();
         reset();receive("offline");named(TG,"Мама");check(wire.sends==0,"offline names create network traffic");
         System.out.println("PASS: real bridge live channel 1/2, photo/browser URL and offline packets immediately name temporary contacts, chat titles and first headers; exact ACK counts, no profile requests");
 
@@ -78,6 +96,8 @@ public final class ClientContactNamesTest {
         Method size=MainThread.class.getDeclaredMethod("payloadBytes",Object[].class);size.setAccessible(true);
         PlainMessage queued=new PlainMessage(String.valueOf(TG),"100500",1,"text",false);queued.setSenderName("Мама");
         check(((Integer)size.invoke(null,new Object[]{new Object[]{queued}})).intValue()==16,"queue memory budget ignores sender name");
+        queued.setAttach(new byte[48],1);
+        check(((Integer)size.invoke(null,new Object[]{new Object[]{queued}})).intValue()==64,"album tokens exceed bounded queue budget");
         System.out.println("PASS: sender name included in the bounded UI queue memory budget and released after use");
     }
     public static void main(String[] args)throws Exception{

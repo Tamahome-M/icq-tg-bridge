@@ -686,7 +686,7 @@ void Window::activate(const Row &chosen) {
         }
         QString description =
             u("TeleMotoMax Native " TMM_NATIVE_VERSION "\nMotorola RAZR V8 / Qt 2\nПротокол OSCAR "
-              "+ TeleMotoMax 1.31\n") +
+              "+ TeleMotoMax 1.32\n") +
             u(connectionState_ == Event::Online ? "Подключено" : "Отключено") + "\n" +
             QString::number(contacts_.size()) + u(" контактов");
         if (resident)

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import io
 import time
@@ -13,7 +14,7 @@ from typing import Awaitable, Callable
 
 from telethon import TelegramClient, events, functions, types, utils
 
-from ..history import HistoryItem, MissedMessage, SentMessage
+from ..history import HistoryItem, MAX_ALBUM_PHOTOS, MissedMessage, SentMessage
 from ..mentions import mentions_all, utf16_text
 from ..quotes import QuoteContent, QuoteMedia, QuoteError, check_size, filename
 
@@ -78,6 +79,8 @@ class TelegramSide:
         )
         self.me: types.User | None = None
         self._handlers_bound = False
+        self._albums = {}  # (peer, topic, group, outgoing) -> (events by ID, delivery task)
+        self._recent_albums = {}  # member IDs only; late updates do not re-deliver the post
         # Что отправлено самим мостом: такие исходящие телефону не возвращаем.
         self._own_ids: dict[tuple[int, int], float] = {}
         self._sending: dict[int, int] = {}
@@ -118,6 +121,8 @@ class TelegramSide:
 
     async def stop(self) -> None:
         await self.client.disconnect()
+        if self._albums:
+            await asyncio.gather(*(task for _, task in self._albums.values()))
 
     # --- контакт-лист ---------------------------------------------------
 
@@ -357,22 +362,7 @@ class TelegramSide:
         Отправленное самим мостом сюда тоже прилетает — его узнаём по номеру
         (или по тому, что отправка в этот чат прямо сейчас идёт) и молчим.
         """
-        try:
-            peer_id = utils.get_peer_id(event.message.peer_id)
-            if self._sending.get(peer_id) or self._forget_own(peer_id, event.message.id):
-                return
-            text = describe_message(event.message)
-            if not text:
-                return
-            # Вложение — как у входящих: иначе своё фото или голосовое с
-            # другого устройства на телефоне нельзя было открыть.
-            await self.on_message(peer_id, "Я", text,
-                                  int(event.message.date.timestamp()),
-                                  await self._topic_in(event),
-                                  attach=attachment_of(event.message),
-                                  message_id=getattr(event.message, "id", 0))
-        except Exception:
-            log.exception("ошибка обработки своего сообщения")
+        await self._receive_event(event, outgoing=True)
 
     def _forget_own(self, peer_id: int, message_id: int) -> bool:
         """True, если сообщение отправил мост; запись при этом убирается."""
@@ -415,34 +405,141 @@ class TelegramSide:
         return ""
 
     async def _on_new_message(self, event) -> None:
+        await self._receive_event(event, outgoing=False)
+
+    async def _receive_event(self, event, outgoing: bool) -> None:
         try:
-            peer_id = utils.get_peer_id(event.message.peer_id)
-            topic_id = await self._topic_in(event)
-            text = describe_message(event.message)
-            log.debug("событие Telegram: сообщение %s в чате %s%s, %s",
-                      getattr(event.message, "id", "?"),
-                      peer_id, f" (тема {topic_id})" if topic_id else "",
-                      media_kind(event.message) or "текст")
-            sender = ""
-            if self.cfg.show_sender_in_groups and not event.is_private:
-                try:
-                    sender = utils.get_display_name(await event.get_sender()) or ""
-                except Exception:
-                    sender = ""
-            # Снимок в сообщении: расширенному клиенту отдадим его по запросу.
-            attach = attachment_of(event.message)
-            shown = await self.on_message(peer_id, sender, text,
-                                          int(event.message.date.timestamp()), topic_id,
-                                          attach=attach, message_id=getattr(event.message, "id", 0),
-                                          mention=self.mentions_me(event.message))
-            if self.cfg.mark_read and shown and (self.phone_online is None or self.phone_online()):
-                await event.message.mark_read()
+            msg = event.message
+            peer = utils.get_peer_id(msg.peer_id)
+            if outgoing and (self._sending.get(peer) or self._forget_own(peer, msg.id)):
+                return
+            group = getattr(msg, "grouped_id", None)
+            topic = topic_of(msg)
+            key = (peer, topic, group, outgoing)
+            if group is not None:
+                if msg.id in self._recent_albums.get(key, ()):
+                    return
+                while pending := self._albums.get(key):
+                    pending[0][msg.id] = event
+                    await asyncio.shield(pending[1])
+                    if msg.id in self._recent_albums.get(key, ()):
+                        return
+            # Do not let a following text arrive on the phone ahead of its album.
+            earlier = [task for (p, t, _, _), (members, task) in self._albums.items()
+                       if (p, t) == (peer, topic) and min(members) < getattr(msg, "id", 0)]
+            if group is None:
+                if earlier:
+                    await asyncio.gather(*(asyncio.shield(task) for task in earlier))
+                await self._deliver_post(event, [msg], outgoing)
+            else:
+                events_by_id = {msg.id: event}
+                task = asyncio.create_task(self._deliver_group(key, events_by_id, earlier))
+                self._albums[key] = (events_by_id, task)
+                await asyncio.shield(task)
         except Exception:
-            log.exception("ошибка обработки входящего сообщения")
+            log.exception("ошибка обработки события Telegram")
+
+    async def _deliver_group(self, key, events_by_id, earlier) -> None:
+        peer, topic, group, outgoing = key
+        anchor = next(iter(events_by_id.values()))
+        try:
+            # Telegram has committed the album before its individual updates
+            # arrive. Look at neighbouring messages, not consecutive numeric
+            # IDs, so one late/missing update cannot split a complete album.
+            messages = {}
+            try:
+                nearby = await asyncio.wait_for(self.client.get_messages(
+                    peer, limit=2 * MAX_ALBUM_PHOTOS, offset_id=anchor.message.id,
+                    add_offset=-MAX_ALBUM_PHOTOS), timeout=3)
+                for msg in nearby:
+                    if (getattr(msg, "grouped_id", None) == group and topic_of(msg) == topic
+                            and utils.get_peer_id(msg.peer_id) == peer):
+                        messages[msg.id] = msg
+            except Exception:
+                log.debug("не удалось уточнить состав фотоальбома %s", group, exc_info=True)
+            if len(messages) < 2:
+                # Offline history or a partially visible group: collect updates
+                # already in transit, including a lone surviving member.
+                await asyncio.sleep(0.5)
+            if earlier:
+                await asyncio.gather(*earlier)
+            messages.update((i, e.message) for i, e in events_by_id.items())
+            seen = self._recent_albums.get(key, ())
+            new = [messages[i] for i in sorted(messages) if i not in seen]
+            for post in photo_posts(new):
+                await self._deliver_post(events_by_id.get(post[0].id, anchor), post, outgoing)
+            self._recent_albums[key] = frozenset(messages) | frozenset(seen)
+            if len(self._recent_albums) > 128:
+                del self._recent_albums[next(iter(self._recent_albums))]
+        finally:
+            self._albums.pop(key, None)
+
+    async def _deliver_post(self, event, post, outgoing: bool) -> None:
+        first, last = post[0], post[-1]
+        text, attach = post_content(post)
+        if not text:
+            return
+        sender = "Я" if outgoing else ""
+        if not outgoing and self.cfg.show_sender_in_groups and not event.is_private:
+            try:
+                sender = utils.get_display_name(await event.get_sender()) or ""
+            except Exception:
+                pass
+        shown = await self.on_message(utils.get_peer_id(first.peer_id), sender, text,
+                                      int(last.date.timestamp()), await self._topic_in(event),
+                                      attach=attach, message_id=getattr(last, "id", 0),
+                                      mention=not outgoing and any(self.mentions_me(m) for m in post))
+        if (not outgoing and self.cfg.mark_read and shown
+                and (self.phone_online is None or self.phone_online())):
+            await last.mark_read()
+
+    async def _recent_posts(self, peer, limit, topic, since, group_photos=True):
+        """Newest logical posts first, with each post's members oldest first."""
+        buffer, mixed = [], set()
+        cursor, exhausted = 0, False
+
+        async def read_page(size):
+            nonlocal cursor, exhausted
+            options = {"offset_id": cursor} if cursor else {}
+            page = [m async for m in self.client.iter_messages(
+                peer, limit=size, reply_to=topic or None, **options)]
+            exhausted = len(page) < size
+            if page:
+                cursor = page[-1].id
+                buffer.extend(page)
+
+        for remaining in range(limit, 0, -1):
+            if not buffer and not exhausted:
+                await read_page(remaining)
+            if not buffer:
+                return
+            msg = buffer.pop(0)
+            if since is not None and msg.date < since:
+                return
+            group = getattr(msg, "grouped_id", None) if group_photos else None
+            if group is None or msg.id in mixed:
+                mixed.discard(msg.id)
+                yield [msg]
+                continue
+            # A preload of one ordinary message uses one small request. For
+            # groups, look past the page edge and any interleaved separate post.
+            window = 2 * MAX_ALBUM_PHOTOS - 1
+            if len(buffer) < window and not exhausted:
+                await read_page(max(window, remaining))
+            siblings = [m for m in buffer[:window]
+                        if getattr(m, "grouped_id", None) == group and topic_of(m) == topic_of(msg)]
+            members = [msg, *siblings]
+            if is_photo_album(members):
+                ids = {m.id for m in siblings}
+                buffer[:] = [m for m in buffer if m.id not in ids]
+                yield members[::-1]
+            else:
+                mixed.update(m.id for m in siblings)
+                yield [msg]
 
     async def history(self, peer_id: int, count: int | None,
                       since: dt.datetime | None, cap: int,
-                      topic_id: int = 0) -> list[HistoryItem]:
+                      topic_id: int = 0, *, group_photos: bool = True) -> list[HistoryItem]:
         """Последние сообщения чата: либо count штук, либо всё начиная с since.
 
         Для темы форума берём сообщения только этой темы, иначе в ответ
@@ -457,11 +554,9 @@ class TelegramSide:
         names: dict[int, str] = {}
 
         items: list[HistoryItem] = []
-        async for msg in self.client.iter_messages(peer_id, limit=min(count or cap, cap),
-                                                  reply_to=topic_id or None):
-            if since is not None and msg.date < since:
-                break
-            text = describe_message(msg)
+        async for post in self._recent_posts(peer_id, min(count or cap, cap), topic_id, since, group_photos):
+            msg = post[0]
+            text, attach = post_content(post)
             if not text:
                 continue
             if msg.out:
@@ -470,7 +565,8 @@ class TelegramSide:
                 who = chat_name
             else:
                 who = await self._sender_name(msg, names)
-            items.append(HistoryItem(msg.date, who, text, msg.id, media_kind(msg)))
+            items.append(HistoryItem(msg.date, who, text, msg.id, media_kind(msg),
+                                     attach=attach if len(post) > 1 else ""))
         items.reverse()
         return items
 
@@ -864,18 +960,17 @@ class TelegramSide:
         names: dict[int, str] = {}
 
         out: list[MissedMessage] = []
-        async for msg in self.client.iter_messages(peer_id, limit=cap,
-                                                  reply_to=topic_id or None):
-            if int(msg.date.timestamp()) < since_ts:
-                break
+        since = dt.datetime.fromtimestamp(since_ts, dt.timezone.utc)
+        async for post in self._recent_posts(peer_id, cap, topic_id, since):
+            msg = post[-1]
             if msg.out:
                 continue
-            text = describe_message(msg)
+            text, attach = post_content(post)
             if not text:
                 continue
-            sender = "" if private else await self._sender_name(msg, names)
+            sender = "" if private else await self._sender_name(post[0], names)
             out.append(MissedMessage(int(msg.date.timestamp()), sender, text, msg.id,
-                                     attachment_of(msg), self.mentions_me(msg)))
+                                     attach, any(self.mentions_me(m) for m in post)))
         out.reverse()
         return out
 
@@ -1056,6 +1151,26 @@ def status_of(entity, kind: str) -> str:
     if kind != "user":
         return "online"
     return status_name(getattr(entity, "status", None))
+
+
+def is_photo_album(messages) -> bool:
+    return 2 <= len(messages) <= MAX_ALBUM_PHOTOS and all(
+        isinstance(m.media, types.MessageMediaPhoto) for m in messages)
+
+
+def photo_posts(messages):
+    """Keep a photos-only album together. Other media retain their own actions."""
+    if is_photo_album(messages):
+        return [messages]
+    return [[m] for m in messages]
+
+
+def post_content(post) -> tuple[str, str]:
+    if len(post) == 1:
+        return describe_message(post[0]), attachment_of(post[0])
+    captions = "\n".join(m.message.strip() for m in post if (m.message or "").strip())
+    text = f"[фото: {len(post)}]" + (" " + captions if captions else "")
+    return text, "album:" + ",".join(str(m.id) for m in post)
 
 
 def attachment_of(msg) -> str:

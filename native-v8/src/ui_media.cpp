@@ -200,9 +200,9 @@ void Window::retireTransfers() {
         showAttachmentReview();
     syncVideoVisibility();
 }
-void Window::requestMedia(unsigned kind) {
+void Window::requestMedia(unsigned kind, unsigned photoIndex) {
     const MessageRecord *m = selectedMessage();
-    if (!m || m->token.empty()) {
+    if (!m || photoIndex >= m->token.size() / 16) {
         info(u("У сообщения нет вложения"));
         return;
     }
@@ -211,7 +211,7 @@ void Window::requestMedia(unsigned kind) {
               : kind == 3 ? Command::Voice
                           : Command::File);
     c.uin = m->uin;
-    c.token = m->token;
+    c.token = m->token.substr(photoIndex * 16, 16);
     c.nativeId = m->nativeId;
     c.requestId = client_.nextRequestId();
     c.media = mediaSettings(settings_);

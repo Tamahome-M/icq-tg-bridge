@@ -453,9 +453,11 @@ class Bridge:
         await self.refresh_shown_statuses()
         got = await self.fetch_history(uin, 1)
         rows = got[0] if got else []
-        last = rows[0][0] if rows else ""
-        contact = self.storage.contact_by_uin(uin) or contact
-        await self.reply(contact, last or "— чат открыт, сообщений пока не было —")
+        if rows:
+            text, attach, _, _, reference = rows[0]
+            await self.oscar.deliver(uin, text, forced=True, attach=attach, source_message_id=reference)
+        else:
+            await self.reply(contact, "— чат открыт, сообщений пока не было —")
         log.info("чат «%s» открыт с телефона", contact.title)
         return True
 
@@ -991,8 +993,12 @@ class Bridge:
         # На одно сообщение больше, чем нужно: по нему и видно, осталось ли
         # что листать дальше.
         want = min(offset + count + 1, cap)
-        items = await self.side_for(contact.peer_id).history(contact.peer_id, want, None, cap,
-                                                             contact.topic_id)
+        side = self.side_for(contact.peer_id)
+        options = {}
+        session = self.oscar.session
+        if side is self.telegram and session and not getattr(session, "photo_albums", True):
+            options["group_photos"] = False  # this phone counts individual photos in its offset
+        items = await side.history(contact.peer_id, want, None, cap, contact.topic_id, **options)
         # items идут от старых к новым: нужное окно — то, что старее уже
         # показанных, и не длиннее пачки.
         end = max(0, len(items) - offset)
@@ -1006,7 +1012,7 @@ class Bridge:
                 line = emoji.to_text(line)
             has_picture = i.kind in ("photo", "video", "voice", "file") and i.msg_id
             thread_uin = await self._thread_uin(contact, i.thread) if i.thread else 0
-            out.append((line, f"{i.kind}:{i.msg_id}" if has_picture else "", i.who == "Я",
+            out.append((line, i.attach or (f"{i.kind}:{i.msg_id}" if has_picture else ""), i.who == "Я",
                         thread_uin, self.storage.quote_reference(uin, i.source_id or i.msg_id)
                         if self.quote_supported(uin) else 0))
         log.info("история «%s» для TeleMotoMax: %d сообщений%s, с фото %d%s",

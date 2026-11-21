@@ -61,8 +61,38 @@ async def connected(driver, directory, encrypted, **env):
         store.close()
 
 
-async def paused_worker(driver, folder, encrypted):
-    async with connected(driver, folder, encrypted) as (phone, server, who):
+async def awake_after_video(driver, folder, encrypted, *, stopped_clock=False, **env):
+    async with connected(driver, folder, encrypted, **env) as (phone, server, who):
+        session = server.session
+        async def history(*_):
+            return ([("Ping\nПроверка истории", "", False, 0, 90)], False)
+        async def attachment(*_):
+            raise AssertionError("delivery of a video message must not fetch its preview")
+        server.fetch_history = history
+        server.fetch_attachment = attachment
+        await wait_for(lambda: session.pings_seen >= 2)
+        await server.deliver(who, "[видео]", attach="video:91", message_id=91)
+        message = await phone.wait(lambda e: e.get("type") == 3 and e.get("messages")
+                                   and e["messages"][0]["kind"] == C.ATTACH_VIDEO)
+        assert len(bytes.fromhex(message["messages"][0]["token"])) == 16
+        await wait_for(lambda: server.ack_works and not server.storage.peek_pending())
+        if stopped_clock:
+            await control(phone, "freeze-clock", "clockStopped")
+        before = session.pings_seen
+        await phone.command(3, 15, who, limit=1)
+        page = await phone.response(15, 6)
+        assert "Проверка истории" in page["messages"][0]["text"]
+        await wait_for(lambda: session.pings_seen >= before + 3, timeout=5)
+        assert server.session is session and not session.closed
+    log = (await phone.p.stderr.read()).decode()
+    if env.get("TMM_TEST_RTC_DENIED"):
+        assert "RTC_SW_SETTIME" in log and "software, 1 s, rtc_sw off" in log, log
+    elif env.get("TMM_TEST_RTC"):
+        assert log.count("rtc_sw, 1 s, rtc_sw on") >= 3 and "RTC_SW_JOB_DONE" not in log, log
+
+
+async def paused_worker(driver, folder, encrypted, **env):
+    async with connected(driver, folder, encrypted, **env) as (phone, server, who):
         session = server.session
         before = session.pings_seen
         os.kill(phone.p.pid, signal.SIGSTOP)
@@ -120,9 +150,9 @@ async def slow_video(driver, folder, encrypted):
         assert server.session is session and not session.closed
 
 
-async def silent_server(driver, folder, encrypted, misses):
+async def silent_server(driver, folder, encrypted, misses, **env):
     async with connected(driver, folder, encrypted, TMM_TEST_DISABLE_KEEPALIVE="1",
-                         TMM_TEST_RECONNECT="1") as (phone, server, _):
+                         TMM_TEST_RECONNECT="1", **env) as (phone, server, _):
         session = server.session
         assert not session.pings_seen
         times = []
@@ -149,8 +179,8 @@ async def silent_server(driver, folder, encrypted, misses):
                        and server.session.pings_seen > 0)
 
 
-async def busy_ui(driver, folder, encrypted):
-    async with connected(driver, folder, encrypted, TMM_TEST_MISSED_PINGS="1") as (phone, server, who):
+async def busy_ui(driver, folder, encrypted, **env):
+    async with connected(driver, folder, encrypted, TMM_TEST_MISSED_PINGS="1", **env) as (phone, server, who):
         session = server.session
         assert session.pings_seen, "first keepalive missing after login"
         await control(phone, "hold-events", "draining")
@@ -158,6 +188,13 @@ async def busy_ui(driver, folder, encrypted):
             await session.notify_status(who, C.STATUS_AWAY)
         before = session.pings_seen
         await wait_for(lambda: session.pings_seen >= before + 3, timeout=5)
+        await control(phone, "pings 0 1", "configured")
+        await asyncio.sleep(.2)
+        before = session.pings_seen
+        await asyncio.sleep(1.4)
+        assert session.pings_seen == before, "disabled while UI is full"
+        await control(phone, "pings 1 1", "configured")
+        await wait_for(lambda: session.pings_seen >= before + 2)
         await control(phone, "drain-events", "draining")
         await phone.command(13, 14, who)
         await phone.response(14, 8)
@@ -179,15 +216,24 @@ async def main():
             driver = shlex.split(os.environ["TMM_NETWORK_DRIVER"])
         else:
             binary = root / "network-test"
-            compile_driver(binary)
+            compile_driver(binary, rtc_adapter=True)
             driver = [str(binary)]
         for encrypted in (False, True):
-            cases = (paused_worker, slow_video, busy_ui)
+            cases = (paused_worker, slow_video, busy_ui, awake_after_video)
             runs = [case(driver, root / case.__name__, encrypted) for case in cases]
             runs += [silent_server(driver, root, encrypted, n) for n in (1, 3)]
+            runs.append(awake_after_video(driver, root / "stalled", encrypted, stopped_clock=True))
+            if not os.environ.get("TMM_NETWORK_DRIVER"):  # host-only Motorola driver adapter
+                runs.append(paused_worker(driver, root / "delayed-rtc", encrypted, TMM_TEST_RTC="1"))
+                runs.append(busy_ui(driver, root / "busy-rtc", encrypted, TMM_TEST_RTC="1"))
+                runs.append(silent_server(driver, root, encrypted, 3, TMM_TEST_RTC="1"))
+                runs.append(awake_after_video(driver, root / "rtc", encrypted, stopped_clock=True,
+                                              TMM_TEST_RTC="1", TMM_TEST_FROZEN_WALL="1"))
+                runs.append(awake_after_video(driver, root / "denied", encrypted, stopped_clock=True,
+                                              TMM_TEST_RTC="1", TMM_TEST_RTC_DENIED="1"))
             await asyncio.gather(*runs)
             print("PASS native keepalive", "TMME" if encrypted else "plain",
-                  "resume, fragmented video, UI backlog, live settings, 1/3 unanswered, reconnect")
+                  "video ACK, history, idle, stalled clocks, RTC, resume, fragmented input, UI backlog, reconnect")
 
 
 if __name__ == "__main__":

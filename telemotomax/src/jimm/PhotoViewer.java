@@ -112,6 +112,11 @@ public class PhotoViewer extends Canvas implements CommandListener, JimmScreen,
 	// Opens the viewer and asks the bridge for the picture.
 	static public void show(String uin, byte[] token, JimmScreen back)
 	{
+		if (token != null && token.length > 16)
+		{
+			new PhotoAlbum(uin, token, back).activate();
+			return;
+		}
 		PhotoViewer viewer = new PhotoViewer(back);
 		viewer.status = ResourceBundle.getString("photo_loading");
 		if (current != null) { current.image = null; discardPhoto(current); Icq.cancelAction(current.request); }

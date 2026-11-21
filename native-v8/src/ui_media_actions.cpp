@@ -154,6 +154,28 @@ bool Window::activateMedia(const Row &chosen) {
     Row r = chosen;
     std::string action = r.action;
     uint32_t id = r.uin ? r.uin : view().uin;
+    if (action == "photo") {
+        const MessageRecord *m = selectedMessage();
+        if (m && m->kind == 1 && m->token.size() > 16) {
+            View album(View::Choice, u("Показать фото"));
+            album.context = "photo-album";
+            album.uin = m->uin;
+            album.messages.push_back(
+                *m); // pin the post while live chat updates can move the cursor
+            unsigned count = m->token.size() / 16;
+            for (unsigned i = 0; i < count; ++i)
+                album.rows.push_back(
+                    Row(u("Фото") + " " + QString::number(i + 1) + "/" + QString::number(count),
+                        "album-photo", m->uin, i));
+            push(album);
+        } else
+            requestMedia(1);
+        return true;
+    }
+    if (action == "album-photo") {
+        requestMedia(1, r.value);
+        return true;
+    }
     if (action == "video-menu") {
         const MessageRecord *m = selectedMessage();
         if (!m)
@@ -169,10 +191,10 @@ bool Window::activateMedia(const Row &chosen) {
             push(choices);
         return true;
     }
-    if (action == "photo" || action == "video" || action == "voice" || action == "file") {
+    if (action == "video" || action == "voice" || action == "file") {
         if (view().context == "video-choice")
             back();
-        requestMedia(action == "photo" ? 1 : action == "video" ? 2 : action == "voice" ? 3 : 4);
+        requestMedia(action == "video" ? 2 : action == "voice" ? 3 : 4);
         return true;
     }
     if (action == "video-browser") {

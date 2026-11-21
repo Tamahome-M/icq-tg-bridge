@@ -37,9 +37,9 @@ struct PaintedText {
     QString text;
     QFont font;
     QColor color;
-    int y;
-    PaintedText(QPainter *p, const QString &value, int top)
-        : text(value), font(p->font()), color(p->pen().color()), y(top) {}
+    int x, y;
+    PaintedText(QPainter *p, const QString &value, int left, int top)
+        : text(value), font(p->font()), color(p->pen().color()), x(left), y(top) {}
 };
 static std::vector<PaintedText> paintedTexts;
 extern "C" void realText(QPainter *, int, int, int, int, int, const QString &, int, QRect *,
@@ -50,7 +50,7 @@ extern "C" void wrapText(QPainter *p, int x, int y, int w, int h, int flags, con
                          int length, QRect *bounds, char **internal) {
     if (observeListText) {
         drawnListText = text;
-        paintedTexts.push_back(PaintedText(p, text, y));
+        paintedTexts.push_back(PaintedText(p, text, x, y));
     }
     realText(p, x, y, w, h, flags, text, length, bounds, internal);
 }
@@ -463,6 +463,31 @@ class UiProbe {
                                  : kind == 3 ? "voice"
                                              : "file") >= 0,
                     "history token exposes just quote-paste and matching media actions");
+        }
+        m = message(id, 1);
+        m.token = std::string(16, 'a') + std::string(16, 'b') + std::string(16, 'c');
+        w.connectionState_ = Event::Online;
+        for (unsigned page = 0; page < 2; ++page) {
+            if (page)
+                history(w, m, false);
+            else
+                chat(w, m);
+            w.messageMenu();
+            submitted.clear();
+            choose(w, "photo");
+            require(w.view().context == "photo-album" && w.view().rows.size() == 3 &&
+                        w.view().rows[2].text == uiText("Фото 3/3") && submitted.empty(),
+                    "chat and history open three album choices without downloading");
+            if (!page)
+                w.chats_[id].messages[0].token.clear();
+            w.activate(w.view().rows[2]);
+            require(submitted.size() == 1 && submitted[0].type == Command::Photo &&
+                        submitted[0].token == std::string(16, 'c'),
+                    "only the chosen photo of the original post is requested");
+            w.pending_.clear();
+            w.pendingUin_.clear();
+            w.mediaRequests_.clear();
+            reset(w);
         }
         w.quoteId_.clear();
         chat(w, message(id));
@@ -1159,14 +1184,23 @@ class UiProbe {
             "discussion continuation appends older context in its thread without opening a chat");
         reset(w);
     }
-    static QString emptyChatLabel(Window &w) {
-        QPixmap canvas(w.size());
-        QPainter p(&canvas);
+    static void paintChatList(Window &w, QPainter &p) {
         drawnListText = QString::null;
         paintedTexts.clear();
         observeListText = true;
         w.drawList(p);
         observeListText = false;
+    }
+    static int paintedLeft(const char *prefix) {
+        for (size_t i = 0; i < paintedTexts.size(); ++i)
+            if (paintedTexts[i].text.startsWith(uiText(prefix)))
+                return paintedTexts[i].x;
+        return -1;
+    }
+    static QString emptyChatLabel(Window &w) {
+        QPixmap canvas(w.size());
+        QPainter p(&canvas);
+        paintChatList(w, p);
         return drawnListText;
     }
     static void emptyChatLoading(Window &w, uint32_t id) {
@@ -1218,6 +1252,8 @@ class UiProbe {
         w.settings_.setBool("show_sender", true);
         w.settings_.setBool("show_time", true);
         w.settings_.setBool("show_newlines", false);
+        w.settings_.setBool("show_icons", true);
+        w.settings_.setBool("show_receipts", true);
         w.chats_[id] = ChatState();
         w.chats_[id].loaded = true;
         MessageRecord incoming = message(id);
@@ -1237,10 +1273,7 @@ class UiProbe {
         w.view().selected = 0;
         QPixmap canvas(w.size());
         QPainter p(&canvas);
-        paintedTexts.clear();
-        observeListText = true;
-        w.drawList(p);
-        observeListText = false;
+        paintChatList(w, p);
         bool author = false, own = false, history = false, plainBody = false;
         QColor incomingColor, outgoingColor;
         for (size_t i = 0; i < paintedTexts.size(); ++i) {
@@ -1265,12 +1298,22 @@ class UiProbe {
         require(canvas.convertToImage().pixel(w.width() - 2, 31) ==
                     sample.convertToImage().pixel(0, 0),
                 "selected message uses a soft neutral background instead of the menu highlight");
+        w.settings_.setBool("show_newlines", true);
+        paintChatList(w, p);
+        require(paintedLeft("Анна") == 22 && paintedLeft("Привет") == 5 && paintedLeft("Я") == 22 &&
+                    paintedLeft("Ответ") == 5 && paintedLeft("[17.11") == 22 &&
+                    paintedLeft("История") == 5,
+                "live and history bodies align with the left edge of the first-line icon");
+        w.settings_.setBool("show_icons", false);
+        paintChatList(w, p);
+        require(paintedLeft("Анна") == 5 && paintedLeft("Я") == 22,
+                "receipts reserve space only on outgoing messages");
+        w.settings_.setBool("show_receipts", false);
+        paintChatList(w, p);
+        require(paintedLeft("Я") == 5, "messages without a visible marker use the whole line");
         w.settings_.setBool("show_sender", false);
         w.settings_.setBool("show_time", false);
-        paintedTexts.clear();
-        observeListText = true;
-        w.drawList(p);
-        observeListText = false;
+        paintChatList(w, p);
         require(!paintedTexts.empty() && paintedTexts[0].text == uiText("Привет") &&
                     !paintedTexts[0].font.bold(),
                 "formatting flags apply to already open messages without another delivery");

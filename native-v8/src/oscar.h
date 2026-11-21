@@ -4,6 +4,7 @@
 #include <stdexcept>
 namespace tmm {
 namespace wire {
+const unsigned tmmProtocolVersion = 132;
 struct Error : std::runtime_error {
     explicit Error(const std::string &s) : std::runtime_error(s) {}
 };

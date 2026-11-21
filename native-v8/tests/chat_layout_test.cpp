@@ -32,8 +32,18 @@ int main(int argc, char **argv) {
     assert(inlineText.runs.size() >= 3 && inlineText.runs[0].header && !inlineText.runs[1].header &&
            inlineText.runs[0].y == inlineText.runs[1].y &&
            inlineText.runs[1].x >= inlineText.runs[0].width);
-    ChatLayout newLine = layoutChatText(separated, font, 1000);
-    assert(newLine.runs.size() == 2 && newLine.runs[1].y > newLine.runs[0].y);
+    ChatLayout newLine = layoutChatText(separated, font, 1000, 17);
+    assert(newLine.runs.size() == 2 && newLine.runs[0].x == 17 && newLine.runs[1].x == 0 &&
+           newLine.runs[1].y > newLine.runs[0].y);
+    const int glyph = QFontMetrics(font).width("W");
+    ChatText token;
+    token.body = "WWWWWWWWWWWWWW";
+    ChatLayout wrapped = layoutChatText(token, font, glyph * 6, glyph * 2);
+    assert(wrapped.runs.size() == 3);
+    assert(wrapped.runs[0].x == glyph * 2 && wrapped.runs[0].y == 0 &&
+           wrapped.runs[0].text == "WWWW");
+    assert(wrapped.runs[1].x == 0 && wrapped.runs[1].text == "WWWWWW");
+    assert(wrapped.runs[2].x == 0 && wrapped.runs[2].text == "WWWW");
     parts.body += u(" https://example.test/оченьдлинноеназваниебезпробелов/abcdefghijk");
     for (int width = 25; width <= 210; width += 37) {
         ChatLayout layout = layoutChatText(parts, font, width);

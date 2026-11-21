@@ -206,13 +206,27 @@ public final class HistoryMemoryTest {
   render(viewer,page(1,4,2,true,true));metadata(viewer,1,8);viewer.commandAction(JimmUI.cmdBack,null);
   System.out.println("PASS: reply to inactive history is dropped without a stuck loading flag; returning and retrying preserves records");
  }
+ static void album()throws Exception{
+  HistoryViewer v=viewer();ByteArrayOutputStream bytes=new ByteArrayOutputStream();DataOutputStream out=new DataOutputStream(bytes);
+  out.writeByte(255);out.writeByte(0);out.writeUTF("album");out.writeByte(0x71);out.writeByte(3);
+  ByteArrayOutputStream tokens=new ByteArrayOutputStream();for(int i=1;i<=3;i++)tokens.write(token(i));out.write(tokens.toByteArray());
+  out.writeInt(1000001);out.writeLong(987);out.writeUTF("next");out.writeByte(0);
+  render(v,bytes.toByteArray());list(v).selectTextByIndex(0);
+  check(Arrays.equals(tokens.toByteArray(),(byte[])m(HistoryViewer.class,"currentToken").invoke(v)),"history lost album members");
+  check(Arrays.equals(id(987),(byte[])m(HistoryViewer.class,"currentRef").invoke(v)),"album moved the quote reference");
+  check("1000001".equals(m(HistoryViewer.class,"currentThread").invoke(v)),"album moved the discussion UIN");
+  check(f(HistoryViewer.class,"shown").getInt(v)==2,"pagination counted album members as posts");
+  byte[] bad=bytes.toByteArray();bad[10]=11;
+  check(((Integer)m(HistoryViewer.class,"recordCount",byte[].class,int.class,int.class).invoke(null,bad,2,bad.length)).intValue()<0,
+        "invalid album count accepted");
+ }
  static void cancel(Class type,String name)throws Exception{try{Timer timer=(Timer)f(type,name).get(null);if(timer!=null)timer.cancel();}catch(NoSuchFieldException removed){}}
  public static void main(String[] args)throws Exception{
   baseline=args[0].equals("baseline");
   try{
    f(Options.class,"options").set(null,new Hashtable());m(Options.class,"setDefaults").invoke(null);
    Options.setBoolean(Options.OPTION_USE_SMILES,false);Constructor ctor=MainThread.class.getDeclaredConstructor();ctor.setAccessible(true);ctor.newInstance();
-   golden();memory();if(!baseline){failures();limits();rangeAndClose();inactive();nested();longMessage();}
+   golden();memory();if(!baseline){album();failures();limits();rangeAndClose();inactive();nested();longMessage();}
   }finally{
    Jimm.getTimerRef().cancel();cancel(TextList.class,"aniTimer");cancel(ContactList.class,"iconTimer");cancel(ContactList.class,"soundTimer");
    Object canvas=f(VirtualList.class,"virtualCanvas").get(null);((Timer)f(canvas.getClass(),"repeatTimer").get(canvas)).cancel();

@@ -27,6 +27,7 @@
 #include <unistd.h>
 #include <algorithm>
 namespace tmm {
+static const int listTextLeft = 5, listTextRight = 7;
 static QString u(const char *s) {
     return uiText(s);
 }
@@ -127,7 +128,7 @@ Window::Window(const std::string &dir)
     selectScope();
     home();
     applySettings();
-    note("TeleMotoMax Native " TMM_NATIVE_VERSION "; OSCAR/TMM 1.31");
+    note("TeleMotoMax Native " TMM_NATIVE_VERSION "; OSCAR/TMM 1.32");
     if (settingFlag(settings_, "auto_connect"))
         connectClient();
     else if (settingFlag(settings_, "startup_dns") && validateNetworkSettings(settings_, error)) {
@@ -856,9 +857,11 @@ ChatLayout Window::layoutMessage(const View &v, const Row &r) const {
     const ChatText text =
         splitChatText(formatted, message ? messageHeader(*message) : QString::null,
                       settingFlag(settings_, "show_newlines"), message && !message->time);
-    const bool decorated =
-        settingFlag(settings_, "show_icons") || settingFlag(settings_, "show_receipts");
-    return layoutChatText(text, chatFont(), std::max(1, width() - (decorated ? 22 : 5) - 7));
+    const bool hasIcon =
+        message && (settingFlag(settings_, "show_icons") ||
+                    (message->outgoing && settingFlag(settings_, "show_receipts")));
+    return layoutChatText(text, chatFont(), width() - listTextLeft - listTextRight,
+                          hasIcon ? 17 : 0);
 }
 int Window::rowHeight(const Row &r) const {
     if (view().context == "contact-info" && r.action == "info-avatar-view")
@@ -869,15 +872,11 @@ int Window::rowHeight(const Row &r) const {
     if (rowMessage(view(), r))
         return std::max(30, layoutMessage(view(), r).height + 10);
     QFontMetrics metrics(chatFont());
-    return std::max(
-        30, metrics.boundingRect(0, 0,
-                                 std::max(1, width() - ((settingFlag(settings_, "show_icons") ||
-                                                         settingFlag(settings_, "show_receipts"))
-                                                            ? 30
-                                                            : 12)),
-                                 100000, Qt::WordBreak, r.text)
-                    .height() +
-                10);
+    return std::max(30,
+                    metrics.boundingRect(0, 0, std::max(1, width() - listTextLeft - listTextRight),
+                                         100000, Qt::WordBreak, r.text)
+                            .height() +
+                        10);
 }
 void Window::drawList(QPainter &p) {
     View &v = view();
@@ -886,6 +885,7 @@ void Window::drawList(QPainter &p) {
     if (chat || fields)
         p.setFont(chatFont());
     const QFont regular = p.font();
+    const int textWidth = std::max(1, width() - listTextLeft - listTextRight);
     QFont bold = regular;
     bold.setBold(true);
     int available = height() - 56;
@@ -913,9 +913,6 @@ void Window::drawList(QPainter &p) {
         const QColor ink =
             selected && !m ? palette().active().highlightedText() : palette().active().text();
         p.setPen(ink);
-        bool decorated = chat && (settingFlag(settings_, "show_icons") ||
-                                  settingFlag(settings_, "show_receipts"));
-        int left = decorated ? 22 : 5;
         int offset = selected ? v.scroll : 0;
         if (m) {
             int iy = y + 7 - offset;
@@ -934,8 +931,8 @@ void Window::drawList(QPainter &p) {
                     p.drawLine(10, iy + 5, 13, iy + 5);
                 }
             } else if (settingFlag(settings_, "show_icons")) {
-                p.drawLine(5, iy + 4, 16, iy + 4);
-                int tip = m->outgoing ? 5 : 16, base = m->outgoing ? 10 : 11;
+                p.drawLine(listTextLeft, iy + 4, 16, iy + 4);
+                int tip = m->outgoing ? listTextLeft : 16, base = m->outgoing ? 10 : 11;
                 p.drawLine(base, iy, tip, iy + 4);
                 p.drawLine(tip, iy + 4, base, iy + 8);
             }
@@ -953,13 +950,13 @@ void Window::drawList(QPainter &p) {
                     continue;
                 p.setFont(part.header ? bold : regular);
                 p.setPen(part.header ? headerInk : ink);
-                p.drawText(left + part.x, top, std::max(1, width() - left - part.x - 7),
+                p.drawText(listTextLeft + part.x, top, std::max(1, textWidth - part.x),
                            layout.lineHeight, Qt::AlignLeft | Qt::AlignTop | Qt::SingleLine,
                            part.text);
             }
             p.setFont(regular);
         } else
-            p.drawText(left, y + 4 - offset, width() - left - 7, h - 8,
+            p.drawText(listTextLeft, y + 4 - offset, textWidth, h - 8,
                        Qt::AlignLeft |
                            ((chat || fields) ? Qt::WordBreak : Qt::AlignVCenter | Qt::SingleLine),
                        v.rows[i].text);

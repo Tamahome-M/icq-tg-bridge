@@ -1,4 +1,5 @@
 #include "ui_settings.h"
+#include "oscar.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
@@ -479,7 +480,7 @@ std::map<unsigned, unsigned> mediaSettings(const Settings &s) {
     m[16] = settingFlag(s, "telegram_on") ? 1 : 2;
     m[17] = limit(s, "max_limit");
     m[18] = limit(s, "express_limit");
-    m[19] = 131;
+    m[19] = wire::tmmProtocolVersion;
     m[20] = 3;
     // MPEG-4 SP supports the chosen V8 frame sizes, including portrait video.
     // Older bridges ignore this optional key and retain their existing codec.
