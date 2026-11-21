@@ -28,9 +28,9 @@ if [ ! -e jdk ] && [ ! -L jdk ] && [ -n "${JAVA_HOME_8_X64:-}" ] &&
     ln -s "$JAVA_HOME_8_X64" jdk
 fi
 if [ ! -x jdk/bin/javac ]; then
-    say "JDK 8 (Temurin 8u514-b01)"
-    JDK_URL=https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u514-b01/OpenJDK8U-jdk_x64_linux_hotspot_8u514b01.tar.gz
-    JDK_SHA256=27eda854481d20806d918b30cdd417c6bed4fd15882e24f3595dc8ae7fb5d095
+    say "JDK 8 (Zulu 8u472)"
+    JDK_URL=https://cdn.azul.com/zulu/bin/zulu8.90.0.19-ca-jdk8.0.472-linux_x64.tar.gz
+    JDK_SHA256=6f9e3fa773829ac2553411fb0cdeb394980627c47c9ab8f8892d4b917b70e2dd
     curl -fsSL --retry 3 "$JDK_URL" -o jdk.tgz
     printf '%s  jdk.tgz\n' "$JDK_SHA256" | sha256sum -c -
     mkdir -p jdk

@@ -295,7 +295,7 @@ class ReleaseTests(unittest.TestCase):
         curl.write_text('#!/bin/sh\n'
                         'echo "$*" >> "$REQUESTS"\n'
                         'case "$*" in\n'
-                        '  *OpenJDK8U*) echo "bad gateway" > jdk.tgz ;;\n'
+                        '  *" -o jdk.tgz") echo "bad gateway" > jdk.tgz ;;\n'
                         '  *) exit 23 ;;\n'
                         'esac\n')
         curl.chmod(0o755)
