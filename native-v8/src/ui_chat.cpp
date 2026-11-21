@@ -989,6 +989,8 @@ void Window::requestChatHistory(uint32_t id) {
     }
 }
 const MessageRecord *Window::selectedMessage() const {
+    if (!stack_.empty() && view().context == "photo-album" && !view().messages.empty())
+        return &view().messages[0];
     const View *v = 0;
     for (size_t n = stack_.size(); n > 0; --n)
         if (stack_[n - 1].kind == View::Chat || stack_[n - 1].kind == View::History) {

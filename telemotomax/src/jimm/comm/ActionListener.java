@@ -403,12 +403,16 @@ public class ActionListener
 						System.arraycopy(buf, extMarker + 4, messageRef, 0, 8);
 					}
 					// kind 1 = photo, 2 = video preview, 3 = voice message, 4 = file
-					if ((extType == 0x9001) && (extLength == 17)
-							&& (buf[extMarker + 4] >= 1) && (buf[extMarker + 4] <= 4))
+					if (extType == 0x9001 && extLength >= 17)
 					{
-						attachToken = new byte[16];
-						System.arraycopy(buf, extMarker + 5, attachToken, 0, 16);
-						attachKind = buf[extMarker + 4];
+						int kind = buf[extMarker + 4], bytes = extLength - 1;
+						if ((bytes == 16 && kind >= 1 && kind <= 4)
+							|| (kind == 1 && bytes <= 160 && bytes % 16 == 0))
+						{
+							attachToken = new byte[bytes];
+							System.arraycopy(buf, extMarker + 5, attachToken, 0, bytes);
+							attachKind = kind;
+						}
 					}
 					extMarker += 4 + extLength;
 				}

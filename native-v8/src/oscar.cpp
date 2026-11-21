@@ -385,9 +385,11 @@ MessageRecord incoming(const Snac &s, std::string &ack, const std::string &e) {
               le16(1) + std::string(1, 0);
     } else
         throw Error("Неподдерживаемый канал сообщения");
-    if (t[0x9001].size() == 17) {
-        m.kind = (unsigned char)t[0x9001][0];
-        m.token = t[0x9001].substr(1);
+    const std::string &attachment = t[0x9001];
+    if (attachment.size() == 17 || (attachment.size() >= 33 && attachment.size() <= 161 &&
+                                    attachment.size() % 16 == 1 && attachment[0] == 1)) {
+        m.kind = (unsigned char)attachment[0];
+        m.token = attachment.substr(1);
     }
     if (t[0x9002].size() == 8)
         m.nativeId = t[0x9002];
@@ -407,11 +409,14 @@ void history(const std::string &data, uint32_t who, std::vector<MessageRecord> &
         m.uin = m.sourceUin = who;
         m.text = r.p16();
         unsigned flag = r.u8();
-        if ((flag & 0xc0) || ((flag & 6) && !(flag & 1)))
+        if ((flag & 0x80) || ((flag & 6) && !(flag & 1)) || ((flag & 0x40) && (flag & 7) != 1))
             throw Error("Неизвестный формат истории");
         m.outgoing = (flag & 8) != 0;
         if (flag & 1) {
-            m.token = r.bytes(16);
+            unsigned count = flag & 0x40 ? r.u8() : 1;
+            if ((flag & 0x40) && (count < 2 || count > 10))
+                throw Error("Неверный размер фотоальбома");
+            m.token = r.bytes(count * 16);
             m.kind = (flag & 6) == 6 ? 4 : flag & 4 ? 3 : flag & 2 ? 2 : 1;
         }
         if (flag & 16)

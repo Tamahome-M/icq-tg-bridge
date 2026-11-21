@@ -40,6 +40,8 @@ async def fixtures(directory):
     await live("truncated", outside[0], "текст с неполным именем")
     packet = rows[-1][2]
     rows[-1] = ("truncated", 0, packet[:-len(name)] + struct.pack(">HH", C.TLV_TMM_SENDER_NAME, 100) + b"short")
+    session.tmm_version = (1, 32)
+    await live("album", outside[0], "[фото: 3] Альбом", True, attach="album:11,12,13")
     session.tmm_version = (1, 19)
     await live("legacy", outside[0], "старый мост")
     session.tmm_version = (1, 20)

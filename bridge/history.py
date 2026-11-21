@@ -17,6 +17,17 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 PREFIX = "!"
+MAX_ALBUM_PHOTOS = 10  # Telegram media group limit
+
+
+def album_members(attach: str) -> tuple[str, ...]:
+    """Individual photo descriptors for a persisted Telegram album."""
+    if not attach.startswith("album:"):
+        return ()
+    ids = attach[6:].split(",")
+    if not 2 <= len(ids) <= MAX_ALBUM_PHOTOS or not all(i.isascii() and i.isdecimal() for i in ids):
+        return ()
+    return tuple("photo:" + i for i in ids)
 
 
 class HistoryLoadError(Exception):
@@ -43,7 +54,8 @@ class HistoryItem:
     msg_id: int = 0        # номер сообщения в сети — по нему достаётся вложение
     kind: str = ""         # photo, video, voice, audio — или пусто
     thread: int = 0        # topic_id обсуждения, начатого под этим сообщением; 0 — нет
-    source_id: str = ""    # полный UUID eXpress; msg_id остаётся номером вложения
+    source_id: str = ""    # исходное сообщение для цитирования
+    attach: str = ""       # у фотоальбома содержит ID всех снимков
 
 
 class SentMessage(int):

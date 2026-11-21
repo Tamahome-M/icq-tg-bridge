@@ -53,6 +53,29 @@ int main() {
             1000001, rows, more);
     assert(more && rows.size() == 1 && rows[0].kind == 4 && rows[0].outgoing &&
            rows[0].discussionUin == 1000002 && rows[0].nativeId == be64(987));
+    const std::string photos = std::string(16, 'a') + std::string(16, 'b') + std::string(16, 'c');
+    s.data += tlv(0x9001, std::string(1, 1) + photos);
+    m = incoming(s, ack);
+    assert(m.kind == 1 && m.token == photos);
+    rows.clear();
+    history(p16(text) + std::string(1, 0x61) + std::string(1, 3) + photos + be64(50) + p16("next") +
+                std::string(1, 0),
+            1000001, rows, more);
+    assert(rows.size() == 2 && rows[0].kind == 1 && rows[0].nativeId == be64(50) &&
+           rows[0].token == photos && rows[1].text == "next");
+    for (unsigned n = 0; n <= 11; ++n) {
+        if (n == 3)
+            continue;
+        rows.clear();
+        bool rejected = false;
+        try {
+            history(p16(text) + std::string(1, 0x41) + std::string(1, n) + photos, 1000001, rows,
+                    more);
+        } catch (const Error &) {
+            rejected = true;
+        }
+        assert(rejected);
+    }
     std::vector<ContactRecord> contacts;
     chats("CP1" + std::string(1, 1) + be32(1000001) + std::string(1, 6) + be16(2) + p16(text),
           contacts, more);

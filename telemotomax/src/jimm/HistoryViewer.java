@@ -65,7 +65,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 
 	private TextList list;
 	private Vector videoUrls = new Vector(); // only the hidden browser URL, never the full text
-	private Vector tokens = new Vector();    // per message: byte[16] or null
+	private Vector tokens = new Vector();    // per message: contiguous 16-byte attachment tokens or null
 	private byte[] kinds = new byte[MAX_LINES]; // one byte per message, without boxed Integers
 	private Vector refs = new Vector();
 	private Vector threads = new Vector();   // per message: String UIN обсуждения или null
@@ -224,8 +224,10 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 					byte[] attach = null, ref = null;
 					if ((flag & 1) != 0)
 					{
-						attach = new byte[16];
-						System.arraycopy(bytes, marker, attach, 0, 16); marker += 16;
+						int size = tokenBytes(bytes, marker, end, flag);
+						if ((flag & 0x40) != 0) marker++;
+						attach = new byte[size];
+						System.arraycopy(bytes, marker, attach, 0, size); marker += size;
 					}
 					String thread = null;
 					if ((flag & 0x10) != 0) { thread = String.valueOf(Util.getDWord(bytes, marker)); marker += 4; }
@@ -420,7 +422,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			if (i >= skipped) positions[i - skipped] = marker;
 			int len = Util.getWord(data, marker); marker += 2 + len;
 			int flag = Util.getByte(data, marker++);
-			if ((flag & 1) != 0) marker += 16;
+			marker += tokenBytes(data, marker, end, flag) + ((flag & 0x40) != 0 ? 1 : 0);
 			if ((flag & 0x10) != 0) marker += 4;
 			if ((flag & 0x20) != 0) marker += 8;
 		}
@@ -439,8 +441,11 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			int len = Util.getWord(data, marker), textAt = marker + 2;
 			if (count > 0 && bytes + len > MAX_TEXT_BYTES / 2) break;
 			marker = textAt + len;
-			int flag = Util.getByte(data, marker++), tokenAt = marker;
-			if ((flag & 1) != 0) marker += 16;
+			int flag = Util.getByte(data, marker++);
+			int tokenSize = tokenBytes(data, marker, end, flag);
+			if ((flag & 0x40) != 0) marker++;
+			int tokenAt = marker;
+			marker += tokenSize;
 			int threadAt = marker;
 			if ((flag & 0x10) != 0) marker += 4;
 			int refAt = marker;
@@ -459,7 +464,7 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			int rows = one.getSize();
 			if (count > 0 && page.getSize() + rows > MAX_ROWS / 2) break;
 			byte[] token = null, ref = null;
-			if ((flag & 1) != 0) { token = new byte[16]; System.arraycopy(data, tokenAt, token, 0, 16); }
+			if (tokenSize > 0) { token = new byte[tokenSize]; System.arraycopy(data, tokenAt, token, 0, tokenSize); }
 			if ((flag & 0x20) != 0) { ref = new byte[8]; System.arraycopy(data, refAt, ref, 0, 8); }
 			page.prependFrom(one, 1);
 			newTokens.insertElementAt(token, 0); newRefs.insertElementAt(ref, 0);
@@ -541,6 +546,16 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 		return recordCount(data, start, data.length) > 0;
 	}
 
+	// Album records carry a count before the ordinary 16-byte photo tokens.
+	private static int tokenBytes(byte[] data, int marker, int end, int flag)
+	{
+		if ((flag & 0x80) != 0 || ((flag & 6) != 0 && (flag & 1) == 0)) return -1;
+		if ((flag & 0x40) == 0) return (flag & 1) == 0 ? 0 : 16;
+		if ((flag & 7) != 1 || marker >= end) return -1;
+		int count = Util.getByte(data, marker);
+		return count >= 2 && count <= 10 ? count * 16 : -1;
+	}
+
 	// Validate the entire record range before any displayed history is changed.
 	private static int recordCount(byte[] data, int start, int end)
 	{
@@ -552,8 +567,9 @@ public class HistoryViewer implements CommandListener, VirtualListCommands, Jimm
 			if (len == 0 || len > 4000 || marker + len + 1 > end) return -1;
 			marker += len;
 			int flag = Util.getByte(data, marker++);
-			if ((flag & 0xC0) != 0) return -1;
-			if ((flag & 1) != 0) marker += 16;
+			int size = tokenBytes(data, marker, end, flag);
+			if (size < 0) return -1;
+			marker += size + ((flag & 0x40) != 0 ? 1 : 0);
 			if ((flag & 0x10) != 0) marker += 4;
 			if ((flag & 0x20) != 0) marker += 8;
 			if (marker > end) return -1;

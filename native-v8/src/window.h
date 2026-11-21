@@ -231,7 +231,7 @@ class Window : public QWidget {
     void requestExit();
     void files(const std::string &, const std::string &);
     void loadFiles();
-    void requestMedia(unsigned);
+    void requestMedia(unsigned kind, unsigned photoIndex = 0);
     bool openCachedMedia(const Command &, const std::string &purpose);
     void showMedia(const Event &);
     void nextVideo();

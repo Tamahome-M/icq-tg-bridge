@@ -464,6 +464,31 @@ class UiProbe {
                                              : "file") >= 0,
                     "history token exposes just quote-paste and matching media actions");
         }
+        m = message(id, 1);
+        m.token = std::string(16, 'a') + std::string(16, 'b') + std::string(16, 'c');
+        w.connectionState_ = Event::Online;
+        for (unsigned page = 0; page < 2; ++page) {
+            if (page)
+                history(w, m, false);
+            else
+                chat(w, m);
+            w.messageMenu();
+            submitted.clear();
+            choose(w, "photo");
+            require(w.view().context == "photo-album" && w.view().rows.size() == 3 &&
+                        w.view().rows[2].text == uiText("Фото 3/3") && submitted.empty(),
+                    "chat and history open three album choices without downloading");
+            if (!page)
+                w.chats_[id].messages[0].token.clear();
+            w.activate(w.view().rows[2]);
+            require(submitted.size() == 1 && submitted[0].type == Command::Photo &&
+                        submitted[0].token == std::string(16, 'c'),
+                    "only the chosen photo of the original post is requested");
+            w.pending_.clear();
+            w.pendingUin_.clear();
+            w.mediaRequests_.clear();
+            reset(w);
+        }
         w.quoteId_.clear();
         chat(w, message(id));
         w.chatMenu();

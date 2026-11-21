@@ -128,7 +128,7 @@ Window::Window(const std::string &dir)
     selectScope();
     home();
     applySettings();
-    note("TeleMotoMax Native " TMM_NATIVE_VERSION "; OSCAR/TMM 1.31");
+    note("TeleMotoMax Native " TMM_NATIVE_VERSION "; OSCAR/TMM 1.32");
     if (settingFlag(settings_, "auto_connect"))
         connectClient();
     else if (settingFlag(settings_, "startup_dns") && validateNetworkSettings(settings_, error)) {

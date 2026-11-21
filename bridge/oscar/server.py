@@ -19,7 +19,7 @@ from typing import Awaitable, Callable
 
 from ..access import AccessControl
 from ..db import Contact, Storage
-from ..history import HistoryLoadError
+from ..history import HistoryLoadError, MAX_ALBUM_PHOTOS, album_members
 from .. import profiles
 from ..videos import link_text
 from . import blocks
@@ -42,7 +42,7 @@ UPLOAD_TIMEOUT = 300             # столько ждём остальные ч
 SENT_MEMORY = 200                # столько отправленных помним ради галочек
 AWAITING_LIMIT = 500             # потолок неподтверждённых сообщений в памяти
 ATTACH_TTL = 24 * 3600           # сколько живёт токен вложения для TeleMotoMax
-ATTACH_LIMIT = 500               # и сколько их держим
+ATTACH_LIMIT = C.HISTORY_MAX_BYTES // 16 + MAX_ALBUM_PHOTOS  # enough for a full album history page
 ACK_GRACE = 600                  # столько ждём подтверждения, потом шлём заново
 STALE_SECONDS = 60               # с какого возраста сообщению ставится метка времени
 # Сколько ждать после «клиент готов» запроса офлайн-сообщений, прежде чем
@@ -732,6 +732,11 @@ class Session:
         return bool(owner is not None and not owner.service_only and not owner.closed
                     and (owner.tmm_version or (0, 0)) >= (1, 28)
                     and owner._quiet_delivery)
+
+    @property
+    def photo_albums(self) -> bool:
+        owner = self.server.session if self.service_only else self
+        return owner is not None and (owner.tmm_version or (0, 0)) >= (1, 32)
 
     def silent_for(self, uin: int, row_id: int | None) -> bool:
         """Re-evaluate the current client selection; forced replies/mentions stay audible."""
@@ -1446,6 +1451,19 @@ class Session:
         а запись из очереди удалит уже пришедшее позже SNAC 04/0B. Ждать его
         здесь нельзя: очередь встала бы на всё время ожидания.
         """
+        members = album_members(attach)
+        if members and self.extended and not self.photo_albums:
+            # Older TeleMotoMax can open one photo per message. Only the last
+            # frame acknowledges the original queue row, as for multipart text.
+            for index, member in enumerate(members):
+                last = index == len(members) - 1
+                if not await self.deliver(uin, text if index == 0 else "[фото]", wait_ack,
+                                          row_id if last else None, url if index == 0 else "",
+                                          member, int(member[6:]), silent):
+                    return False
+            return True
+        if members:
+            message_id = int(members[0][6:])  # quote anchor; queue/read marker is the last ID
         text = self.video_link_text(uin, text, attach)
         parts = _split_text(text, self.server.max_message_chars)
         # Это отправка, не доставка: доставку по каналу 2 подтверждает сам
@@ -1466,7 +1484,8 @@ class Session:
         silent_tlv = tlv(C.TLV_TMM_SILENT, b"\x01") if silent and self.quiet_delivery else b""
         extra = b""
         if attach and self.extended:
-            token = self.server.register_attachment(uin, attach)
+            token = blocks.attachment_tokens(attach, lambda item: self.server.register_attachment(uin, item),
+                                             self.photo_albums)
             if token:
                 kind = C.ATTACH_PHOTO
                 if attach.startswith("video:"):
@@ -1855,14 +1874,8 @@ class Session:
                                           # 0.72 и 0.73 бит объявили, но проверку
                                           # записи под него не поправили — им нельзя.
                                           threads=(self.tmm_version or (0, 0)) >= (0, 74),
-                                          quotes=self.quote_enabled(int(target)))
-            if paged:
-                # Клиенту нужно знать, стоит ли предлагать «Ещё». Заголовок
-                # начинается с 0xFF: длина текста первой записи с такого
-                # байта начаться не может, и клиент по нему видит, ответил
-                # ему мост со страницами или без — со старым мостом он
-                # разобрал бы заголовок как часть записи и не показал ничего.
-                data = bytes([0xFF, 1 if more else 0]) + data
+                                          quotes=self.quote_enabled(int(target)), albums=self.photo_albums,
+                                          page_more=more if paged else None)
             log.info("история для %s отдана: %d байт%s", self.server.name_of(target), len(data),
                      f", сдвиг {offset}" if offset else "")
             await self.send_snac(C.SSBI, C.SSBI_ICQ_REPLY,

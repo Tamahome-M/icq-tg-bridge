@@ -414,7 +414,7 @@ class Client::Impl : public Cancellation, public ReadWatch {
     }
     void profile() {
         std::string body = p8("Motorola V8 native Linux") + be16(240) + be16(320) + be32(32768) +
-                           be16(19) + be16(131);
+                           be16(19) + be16(tmmProtocolVersion);
         for (std::map<unsigned, unsigned>::const_iterator i = cfg.media.begin();
              i != cfg.media.end(); ++i)
             if (i->first != 19)
@@ -515,8 +515,8 @@ class Client::Impl : public Cancellation, public ReadWatch {
         std::string caps("\x09\x46\x13\x49\x4c\x7f\x11\xd1\x82\x22\x44\x45\x53\x54\0\0", 16);
         caps += std::string("\x56\x3f\xc8\x09\x0b\x6f\x41\xbd\x9f\x79\x42\x26\x09\xdf\xa2\xf3", 16);
         caps += "TMM:";
-        caps += char(1);
-        caps += char(31);
+        caps += char(tmmProtocolVersion / 100);
+        caps += char(tmmProtocolVersion % 100);
         caps += char(1);
         caps += std::string(9, 0);
         send(2, 4, tlv(5, caps));

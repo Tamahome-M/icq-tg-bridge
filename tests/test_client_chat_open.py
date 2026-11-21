@@ -45,6 +45,9 @@ def run(work, classes, baseline):
             body = blocks.history_records([(text, kind+':20', True, 1000010, 2**63+23)],
                                           6000, lambda _: token, threads=True, quotes=True)
             (directory/(kind+'.bin')).write_bytes(body)
+        album = blocks.history_records([("[11.10 10:02] Я: [фото: 3] подпись", "album:11,15,22", True, 0, 11)],
+                                       6000, lambda member: bytes([int(member[6:])])*16, quotes=True, albums=True)
+        (directory/'album.bin').write_bytes(album)
         sources = []
         for name, source in stubs.items():
             path = directory/name; path.parent.mkdir(parents=True, exist_ok=True)
