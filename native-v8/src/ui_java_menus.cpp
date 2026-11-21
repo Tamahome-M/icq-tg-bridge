@@ -40,6 +40,7 @@ void Window::mainMenu() {
         row(v, "Подключиться", "connect");
     row(v, "Статус", "status", 0, settings_.getInt("status", 0));
     row(v, "Контакты", "contact-list");
+    row(v, "Телефонная книга", "phonebook");
     bool haveContacts = false;
     for (size_t i = 0; i < contacts_.size(); ++i)
         haveContacts = haveContacts || (contacts_[i].type == 0 && contacts_[i].uin);

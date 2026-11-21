@@ -24,6 +24,7 @@ import zlib
 from types import SimpleNamespace
 from typing import Awaitable, Callable
 
+from ..phonebook import international_number
 from ..history import HistoryItem, MissedMessage, SentMessage
 from ..mentions import mentions_all
 from ..quotes import QuoteContent, QuoteMedia, QuoteError, filename, check_size, save_bytes
@@ -213,6 +214,7 @@ class MaxSide:
         self._started = asyncio.Event()
         self._chats: dict[int, object] = {}
         self._users: dict[int, object] = {}
+        self._dialog_phones = {}
         self._own_ids: dict[tuple[int, int], float] = {}
         self._presence: dict[int, object] = {}     # user_id -> присутствие
         self._raw_chats: dict[int, dict] = {}      # chat_id -> чат как прислал сервер
@@ -427,6 +429,7 @@ class MaxSide:
         if self.cfg.max_contacts:
             chats += self._contact_chats()
         out: list[Dialog] = []
+        phones = {}
         for position, chat in enumerate(chats):
             try:
                 peer = to_peer(chat.id)
@@ -440,7 +443,10 @@ class MaxSide:
             if kind == "user":
                 user = await self._peer_user(chat)
                 photo = str(_attr(user, "photo_id", 0) or _attr(user, "base_url", "") or "")
-                status = self._status_of(int(_attr(user, "id", 0) or 0))
+                uid = int(_attr(user, "id", 0) or 0)
+                if uid and uid != self.me_id and _attr(user, "phone", None):
+                    phones[uid] = (title, _attr(user, "phone", None))
+                status = self._status_of(uid)
             out.append(Dialog(
                 peer, kind, title[:self.cfg.alias_max_chars],
                 self.cfg.max_group, position,
@@ -448,8 +454,17 @@ class MaxSide:
                 pinned=False, muted=self.is_muted(chat.id),
                 photo_id=zlib.crc32(photo.encode()) if photo else 0,
                 read_inbox=int((_attr(chat, "participants", {}) or {}).get(self.me_id, 0) or 0)))
+        self._dialog_phones = phones
         log.debug("MAX: получено %d чатов", len(out))
         return out
+
+    def phonebook(self):
+        people = self._dialog_phones.copy()
+        for contact in _attr(self.client, "contacts", None) or []:
+            uid = int(_attr(contact, "id", 0) or 0)
+            if uid and uid != self.me_id:
+                people[uid] = (self._user_name(contact), _attr(contact, "phone", None))
+        return [(name, international_number(phone)) for name, phone in people.values()]
 
     def _status_of(self, user_id: int) -> str:
         """Статус человека по последнему известному присутствию; без данных —
@@ -869,7 +884,7 @@ class MaxSide:
         if kind == "user":
             user = await self._peer_user(chat)
             phone = _attr(user, "phone", None)
-            info["phone"] = f"+{phone}" if phone else ""
+            info["phone"] = international_number(phone)
             info["about"] = (_attr(user, "description", "") or "").strip()
         else:
             count = int(_attr(chat, "participants_count", 0) or 0)

@@ -29,6 +29,38 @@ extern "C" void UTIL_SetPowerOnHandleStatus(int);
 extern "C" void UTIL_SetFlipStatus(int);
 extern "C" void UTIL_SetKeypadLockStatus(bool);
 static std::vector<tmm::Command> submitted;
+// Exercise the actual platform adapter. Intercept only the final two firmware
+// calls so this test cannot dial a number or write a handset contact.
+static std::string calledNumber;
+static QString savedNumber, savedName;
+static QWidget *savedParent;
+static void observeDial(const char *number) {
+    calledNumber = number;
+}
+static int observeContact(int field, const QString &number, void *uid, QWidget *parent,
+                          QString name) {
+    if (field == 0 && !uid) {
+        savedNumber = number;
+        savedName = name;
+        savedParent = parent;
+    }
+    return 0; // user cancelled the Motorola editor
+}
+template <class T> static void *testSymbol(T function) {
+    void *symbol;
+    memcpy(&symbol, &function, sizeof(symbol));
+    return symbol;
+}
+extern "C" void *__real_dlsym(void *, const char *);
+extern "C" void *__wrap_dlsym(void *library, const char *name) {
+    void *symbol = __real_dlsym(library, name);
+    if (symbol && !strcmp(name, "_Z27PHONE_MakeVoiceCallDirectlyPKc"))
+        return testSymbol(&observeDial);
+    if (symbol && !strcmp(name, "_ZN9ADDRBK_UI10newContactENS_13FormFieldTypeERK7QStringP20ADDRBK_"
+                                "CONTACT_UID_SP7QWidgetS1_"))
+        return testSymbol(&observeContact);
+    return symbol;
+}
 static QString drawnLeft, drawnRight;
 static QString drawnHeader;
 static QString drawnListText;
@@ -98,6 +130,7 @@ struct Expected {
 const Expected offlineMain[] = {{"Подключиться", "connect"},
                                 {"Статус", "status"},
                                 {"Контакты", "contact-list"},
+                                {"Телефонная книга", "phonebook"},
                                 {"Чаты", "home"},
                                 {"Настройки", "settings"},
                                 {"Откл. звук", "silent"},
@@ -108,6 +141,7 @@ const Expected onlineMain[] = {{"Блокировка клавиатуры", "lo
                                {"Отключиться", "disconnect"},
                                {"Статус", "status"},
                                {"Контакты", "contact-list"},
+                               {"Телефонная книга", "phonebook"},
                                {"Чаты", "home"},
                                {"Настройки", "settings"},
                                {"Откл. звук", "silent"},
@@ -306,6 +340,35 @@ class UiProbe {
         footer(w, "Меню", "Выбрать", "roster softkeys are Menu / Select");
         w.key(KEYCODE_LSK);
         require(w.view().context == "main-menu", "roster Menu opens main menu");
+        choose(w, "phonebook");
+        require(w.view().context == "main-menu" && w.notice_ == uiText("Подключитесь к мосту"),
+                "offline directory explains why it cannot be loaded");
+        w.connectionState_ = Event::Online;
+        choose(w, "phonebook");
+        require(w.view().context == "phonebook" && submitted.back().type == Command::Phonebook &&
+                    submitted.back().flag && submitted.back().offset == 0,
+                "open directory");
+        Event page(Event::Phonebook);
+        page.requestId = w.view().request;
+        page.more = true;
+        PhonebookEntry person;
+        person.name = "Имя: из списка";
+        person.number = "+70001234";
+        page.phones.push_back(person);
+        w.consume(page);
+        choose(w, "phone:+70001234");
+        require(w.view().details == uiText("Имя: из списка") && index(w, "phone-save") >= 0,
+                "directory number passes the complete name to handset actions");
+        choose(w, "phone-save");
+        require(savedParent == &w && savedNumber == "+70001234" &&
+                    savedName == uiText("Имя: из списка") && w.view().context == "phonebook",
+                "Motorola editor gets name and number");
+        choose(w, "phone-page");
+        require(submitted.back().offset == 1 && !submitted.back().flag, "next directory page");
+        w.back();
+        w.consume(page);
+        require(w.view().context == "main-menu", "late directory page does not reopen closed menu");
+        w.connectionState_ = Event::Disconnected;
         choose(w, "contact-list");
         menu(w, contactList, COUNT(contactList),
              "contact management items/order exactly match Java");
@@ -380,13 +443,31 @@ class UiProbe {
         Event information(Event::ContactInfo);
         information.uin = id;
         information.requestId = w.view().request;
-        information.fields["Описание"] = "Fixture description";
+        information.fields["name"] = "Мария";
+        information.fields["phone"] = "+7 (000) 12-34";
+        information.fields["mobile"] = "+70005678";
         w.consume(information);
         require(
             w.view().context == "contact-info" && !w.view().request &&
                 w.stack_.size() == informationDepth && w.view().rows.size() >= 4,
             "contact information replaces waiting view without stale requests or duplicate Back");
         footer(w, "Назад", "Меню", "loaded contact information exposes its Menu softkey");
+        w.view().selected = index(w, "phone:+70001234");
+        require(w.view().selected >= 0, "home phone is actionable");
+        w.key(KEYCODE_CENTER_SELECT);
+        require(w.view().context == "phone-actions" && w.view().details == uiText("Мария") &&
+                    w.view().directory == "+70001234" && index(w, "phone-call") >= 0,
+                "phone commands retain the name and normalized number");
+        choose(w, "phone-copy");
+        require(w.copied() == "+70001234" && w.view().context == "contact-info",
+                "only the number goes to the handset clipboard");
+        w.view().selected = index(w, "phone:+70005678");
+        w.key(KEYCODE_RSK);
+        require(w.view().context == "phone-actions" && w.view().directory == "+70005678",
+                "Menu on the mobile field offers actions for that specific number");
+        choose(w, "phone-call");
+        require(calledNumber == "+70005678" && w.view().context == "contact-info",
+                "voice call uses the selected number");
         w.back();
         w.key(KEYCODE_UP);
         require(w.view().selected == int(w.view().rows.size()) - 1,

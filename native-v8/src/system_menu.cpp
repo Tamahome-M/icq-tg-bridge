@@ -102,6 +102,8 @@ void SystemMenu::sync(View &v, bool visible, int top, int bottom) {
     for (int i = 0; i < count; ++i) {
         const Row &row = v.rows[first + i];
         QString signature = row.text;
+        if (v.context == "phonebook" && row.action.compare(0, 6, "phone:") == 0)
+            signature += "  " + QString::fromLatin1(row.action.c_str() + 6);
         if (privacy)
             signature += ":" + QString::number(row.value) + ":" + QString::number(v.offset);
         iconKeys[i] = -1;
@@ -145,8 +147,9 @@ void SystemMenu::sync(View &v, bool visible, int top, int bottom) {
             if (v.context == "smileys")
                 smileys.load("smiles.png");
             for (int i = 0; i < count; ++i) {
-                const QString text =
-                    roster ? rosterText(v.rows[first + i]) : v.rows[first + i].text;
+                const QString text = roster                     ? rosterText(v.rows[first + i])
+                                     : v.context == "phonebook" ? signatures[i]
+                                                                : v.rows[first + i].text;
                 labels_.push_back(signatures[i]);
                 if (settings) {
                     ZSettingItem *item = new ZSettingItem(list_, QString("%M"));

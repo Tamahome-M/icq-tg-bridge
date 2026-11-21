@@ -159,6 +159,7 @@ class Session:
         self.browser_video: bool | None = None  # режим клиента; 0.77 выбираем по профилю
         self.media: dict = {}           # «Медиа» из настроек телефона поверх профиля
         self.express_on: bool | None = None   # выключатель eXpress с телефона; None — не присылал
+        self._phonebook = None
         self.network_on: dict[str, bool] = {}  # выключатели сетей с телефона (telegram, max, express)
         self.profile: dict = {}
         # Снимок или голосовое, которые телефон шлёт по частям.
@@ -1135,6 +1136,8 @@ class Session:
             if media.get(limit) == self.ROSTER_ALL:
                 media[limit] = 0                                 # без ограничения
         self.media = media
+        if self.network_on != network_on:
+            self._phonebook = None
         self.network_on = network_on
         self.express_on = network_on.get("express")
         if network_on:
@@ -1882,6 +1885,19 @@ class Session:
                                  blocks.icon_reply(int(target), token, data, C.BART_HISTORY),
                                  request_id=s.request_id)
             return
+        if bart_type == C.BART_PHONEBOOK and self.extended:
+            if (not self.ready or self.service_only or not self.server.phonebook
+                    or len(token) != 16 or token[:2] != b"P1"):
+                await self.send_error(C.SSBI, 0x0001, s.request_id, "Телефонная книга недоступна")
+                return
+            offset = int.from_bytes(token[2:6], "big")
+            count = max(1, min(token[6], 30))
+            if (offset == 0 and token[7]) or self._phonebook is None:
+                self._phonebook = await self.server.phonebook()
+            rows, partial = self._phonebook
+            data = blocks.phonebook_page(rows, partial, offset, count)
+            await self._send_bart_parts(int(target), token, data, bart_type, s.request_id)
+            return
         if bart_type == C.BART_CHATS and self.extended:
             # Весь список чатов: и те, что в контакт-листе, и те, что в него
             # не влезли, — иначе написать давнему собеседнику не с чего.
@@ -2067,7 +2083,8 @@ class OscarServer:
                  on_quote: Callable[[int, int, int], Awaitable[str]] | None = None,
                  quote_supported: Callable[[int], bool] | None = None,
                  quote_reference: Callable[[int, int | str], int] | None = None,
-                 on_quiet_chats: Callable[[], Awaitable[None]] | None = None):
+                 on_quiet_chats: Callable[[], Awaitable[None]] | None = None,
+                 phonebook: Callable[[], Awaitable[tuple[list, bool]]] | None = None):
         self.cfg = cfg
         self.storage = storage
         self.on_outgoing = on_outgoing
@@ -2114,6 +2131,7 @@ class OscarServer:
         self.fetch_file = fetch_file
         self.on_file = on_file
         self.chat_list = chat_list or self._no_chats
+        self.phonebook = phonebook
         self.open_chat = open_chat or self._no_open
         self.group_paths = group_paths       # пути групп для дерева контактов (TeleMotoMax 0.73+)
         self.uin = str(cfg.oscar_uin)

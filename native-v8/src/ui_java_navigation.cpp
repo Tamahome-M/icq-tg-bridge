@@ -132,6 +132,11 @@ bool Window::javaKey(int code) {
             back();
     } else if (view().kind == View::Text || view().context == "contact-info") {
         if (right && view().context == "contact-info" && !view().request) {
+            if (view().selected >= 0 && view().selected < int(view().rows.size()) &&
+                view().rows[view().selected].action.compare(0, 6, "phone:") == 0) {
+                activateSelected();
+                return true;
+            }
             View menu(View::Popup, uiText("Меню"));
             menu.context = "info-menu";
             menu.rows.push_back(Row(uiText("Коп-ть всё"), "info-copy-all"));

@@ -139,7 +139,7 @@ class Window : public QWidget {
         pinWrong_;
     unsigned long closedAt_, startedAt_, lastAlert_, lastActivity_, typingSentAt_;
     QString pin_, notice_, ticker_, editTitle_, connectionStage_;
-    unsigned long noticeUntil_, tickerUntil_;
+    unsigned long noticeUntil_, tickerUntil_, indicatorsAt_;
     time_t splashMinute_;
     int pictureZoom_, pictureRotation_;
     QPixmap picture_, frame_, statusIcons_, messageIcons_, popupBackdrop_, infoAvatar_, splashLogo_;
@@ -203,6 +203,9 @@ class Window : public QWidget {
     void search(bool all = false, bool more = false);
     void showResults(const Event &);
     void showInfo(const Event &);
+    void phonebookPage(uint32_t offset);
+    void showPhonebook(const Event &);
+    void phoneActions(const QString &name, const std::string &number);
     ContactRecord *contact(uint32_t);
     const MessageRecord *selectedMessage() const;
     void edit(const QString &, const std::string &, const std::string &, uint32_t uin = 0,

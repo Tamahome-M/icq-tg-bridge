@@ -14,6 +14,9 @@ struct ContactRecord {
         : uin(0), status(0xffffffffU), groupId(0), itemId(0), type(0), network(0), days(65535),
           privacy(0), inRoster(false), noAuth(false), deleted(false) {}
 };
+struct PhonebookEntry {
+    std::string name, number;
+};
 struct MessageRecord {
     uint32_t uin, sourceUin, discussionUin, time;
     uint64_t cookie;
@@ -74,7 +77,8 @@ struct Command {
         Privacy,
         RequestAuthorization,
         GrantAuthorization,
-        DenyAuthorization
+        DenyAuthorization,
+        Phonebook
     };
     Type type;
     uint32_t requestId, uin, sourceUin, status, offset, limit, duration;
@@ -103,7 +107,8 @@ struct Event {
         Progress,
         QuoteResult,
         Error,
-        CommandResult
+        CommandResult,
+        Phonebook
     };
     enum ConnectionState { Disconnected, Connecting, Online, Reconnecting };
     Type type;
@@ -115,6 +120,7 @@ struct Event {
     std::string nativeId, token, text, path, filename, mime;
     std::vector<ContactRecord> contacts;
     std::vector<MessageRecord> messages;
+    std::vector<PhonebookEntry> phones;
     std::map<std::string, std::string> fields;
     explicit Event(Type value = Error)
         : type(value), requestId(0), uin(0), status(0), generation(0), offset(0), cookie(0),

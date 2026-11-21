@@ -1,6 +1,7 @@
 #ifndef TMM_NATIVE_PLATFORM_H
 #define TMM_NATIVE_PLATFORM_H
 #include <qobject.h>
+#include <string>
 #include <qstring.h>
 #include <qtimer.h>
 class QWidget;
@@ -19,6 +20,8 @@ class Platform : public QObject {
     void requestForeground(bool fullscreen = true);
     void setBacklight(bool on);
     bool openUrl(const QString &url);
+    bool dialNumber(const std::string &number);
+    bool newPhoneContact(const QString &name, const std::string &number);
     bool openFile(const QString &path);
     void vibrate(int milliseconds);
     void notifyMessage(const QString &audioFile, int volume, int vibrationMs);

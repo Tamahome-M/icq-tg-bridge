@@ -1,5 +1,6 @@
 #include "system_chrome.h"
 #include <ZSoftKey.h>
+#include <RES_ICON_Reader.h>
 #include <qapplication.h>
 #include <stddef.h>
 #include <algorithm>
@@ -10,6 +11,10 @@ typedef char TmmSkinBaseSize[(sizeof(ZSkinBase) == 64) ? 1 : -1];
 typedef char TmmSkinFontSize[(sizeof(FONT_INFO_T) == 28) ? 1 : -1];
 typedef char TmmHeaderFontOffset[(offsetof(ZWidgetSkinProps, fntHeaderAStd) == 14364) ? 1 : -1];
 typedef char TmmSoftkeyFontOffset[(offsetof(ZWidgetSkinProps, fntSoftkeyStd) == 14448) ? 1 : -1];
+
+// Both V8 functions read the firmware's shared device-state segment.
+extern "C" int UTIL_GetSignalQuality();
+extern "C" int UTIL_GetBatteryLevel();
 
 namespace tmm {
 static QFont themeFont(QWidget &window, const FONT_INFO_T &info) {
@@ -25,11 +30,14 @@ static QFont themeFont(QWidget &window, const FONT_INFO_T &info) {
     return font;
 }
 SystemChrome::SystemChrome(QWidget &window)
-    : window_(window), header_(window, ZSkinService::clsZHeader1, false) {
+    : window_(window), header_(window, ZSkinService::clsZHeader1, false), signal_(-2),
+      battery_(-2) {
     refresh();
 }
 void SystemChrome::refresh() {
     header_.updateSkin();
+    signal_ = battery_ = -2;
+    refreshIndicators();
     footerBackground_ = QPixmap();
     const ZWidgetSkinProps *props = ZSkinService::getAllSkinnableProps();
     if (props) {
@@ -42,15 +50,84 @@ void SystemChrome::refresh() {
         headerInk_ = softkeyInk_ = window_.palette().active().foreground();
     }
 }
+static QPixmap headerIcon(RES_ICON_Reader &reader, const QString &name, int width) {
+    QPixmap icon = reader.getIcon(name.latin1(), false);
+    if (!icon.isNull() && (icon.width() > width || icon.height() > 16)) {
+        double scale = std::min(double(width) / icon.width(), 16.0 / icon.height());
+        QWMatrix m;
+        m.scale(scale, scale);
+        return icon.xForm(m);
+    }
+    return icon;
+}
+
+bool SystemChrome::refreshIndicators() {
+    int signal = UTIL_GetSignalQuality(), battery = UTIL_GetBatteryLevel();
+    if (signal < 0 || signal > 5)
+        signal = -1;
+    // The V8 Phone app maps its six battery readings to four header images:
+    // readings 0, 1 and 2 use the empty image; 3, 4 and 5 use levels 1..3.
+    battery = battery >= 0 && battery <= 5 ? std::max(0, battery - 2) : -1;
+    if (signal == signal_ && battery == battery_)
+        return false;
+    RES_ICON_Reader reader;
+    if (signal != signal_) {
+        signal_ = signal;
+        signalIcon_ =
+            signal < 0 ? QPixmap()
+                       : headerIcon(reader, "signal_" + QString::number(signal) + "_idle1.g", 22);
+    }
+    if (battery != battery_) {
+        battery_ = battery;
+        batteryIcon_ =
+            battery < 0
+                ? QPixmap()
+                : headerIcon(reader, "batt_level_" + QString::number(battery) + "_hed2.gif", 21);
+    }
+    return true;
+}
+
+static bool drawIndicator(QPainter &p, const QRect &box, const QPixmap &icon) {
+    if (icon.isNull())
+        return false;
+    p.drawPixmap(box.x() + (box.width() - icon.width()) / 2,
+                 box.y() + (box.height() - icon.height()) / 2, icon);
+    return true;
+}
+
 void SystemChrome::drawHeader(QPainter &p, const QRect &rect, const QString &title, int offset) {
+    if (rect.isEmpty())
+        return;
     p.save();
+    p.fillRect(rect, window_.palette().active().background());
     header_.drawBackground(p, &rect, false);
     header_.drawBorder(p, &rect);
     p.setFont(headerFont_);
     p.setPen(headerInk_);
-    const int indent = std::max(0, std::min(rect.width() - 1, 5 + offset));
-    p.drawText(rect.x() + indent, rect.y(), std::max(1, rect.width() - indent - 5), rect.height(),
-               Qt::AlignLeft | Qt::AlignVCenter | Qt::SingleLine, title);
+    const int middle = rect.y() + rect.height() / 2;
+    const QRect cell(rect.right() - 47, middle - 8, 22, 16);
+    const QRect power(rect.right() - 23, middle - 8, 21, 16);
+    if (!drawIndicator(p, cell, signalIcon_)) {
+        for (int i = 0; i < 5; ++i) {
+            int h = 3 + i * 2;
+            int x = cell.x() + 2 + i * 4;
+            if (i < signal_)
+                p.fillRect(x, middle + 5 - h, 3, h, headerInk_);
+            else
+                p.drawPoint(x + 1, middle + 4);
+        }
+    }
+    if (!drawIndicator(p, power, batteryIcon_)) {
+        p.drawRect(power.x(), middle - 5, 18, 10);
+        p.fillRect(power.x() + 18, middle - 2, 2, 4, headerInk_);
+        if (battery_ > 0)
+            p.fillRect(power.x() + 2, middle - 3, battery_ * 5, 6, headerInk_);
+    }
+    const int indent = std::max(0, 5 + offset);
+    const int space = cell.x() - 2 - rect.x() - indent;
+    if (space > 0)
+        p.drawText(rect.x() + indent, rect.y(), space, rect.height(),
+                   Qt::AlignLeft | Qt::AlignVCenter | Qt::SingleLine, title);
     p.restore();
 }
 void SystemChrome::drawFooter(QPainter &p, const QRect &rect, const QString &left,

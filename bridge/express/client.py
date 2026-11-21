@@ -31,6 +31,7 @@ import uuid
 import zlib
 from typing import Awaitable, Callable
 
+from ..phonebook import phone_number
 from ..history import HistoryItem, MissedMessage, SentMessage
 from ..quotes import QuoteContent, QuoteMedia, filename, check_size, save_bytes
 from ..tg.client import Dialog, RECENTLY_SECONDS
@@ -325,6 +326,16 @@ class ExpressSide:
                     break
         return found
 
+    def dialog_phones(self):
+        if self.client is None:
+            return []
+        return [(self._title(chat), phone) for chat in self._chats.values()
+                if self._kind(chat) == "user" and chat.opponent != self.client.huid
+                for phone in chat.phones]
+
+    async def phonebook(self):
+        return await self.client.phonebook()
+
     async def chat_info(self, peer_id: int, topic_id: int = 0) -> dict | None:
         chat = await self._chat(peer_id)
         if chat is None:
@@ -344,9 +355,11 @@ class ExpressSide:
             }
         kind = self._kind(chat)
         count = chat.members_count
+        numbers = (phone_number(raw) for raw in chat.phones) if kind == "user" else ()
+        number = next(filter(None, numbers), "")
         return {
             "title": self._title(chat), "kind": KIND_NAMES.get(kind, "Чат"),
-            "username": "", "phone": "", "about": "",
+            "username": "", "phone": number, "about": "",
             "members": f"участников: {count}" if kind != "user" and count else "",
         }
 

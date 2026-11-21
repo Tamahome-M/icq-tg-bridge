@@ -70,7 +70,8 @@ Window::Window(const std::string &dir)
       closed_(false), editorWasVisible_(false), silent_(false), paused_(false),
       manualDisconnect_(false), lightOn_(true), pinWrong_(false), closedAt_(0), startedAt_(now()),
       lastAlert_(0), lastActivity_(now()), typingSentAt_(0), noticeUntil_(0), tickerUntil_(0),
-      splashMinute_(0), pictureZoom_(100), pictureRotation_(0), infoAvatarUin_(0) {
+      indicatorsAt_(0), splashMinute_(0), pictureZoom_(100), pictureRotation_(0),
+      infoAvatarUin_(0) {
     setCaption("TeleMotoMax Native");
     setFocusPolicy(StrongFocus);
     setBackgroundMode(NoBackground);
@@ -520,6 +521,12 @@ void Window::tick() {
     if (takeActivationRequest())
         resume();
     unsigned long ms = now();
+    if (isVisible() && !closed_ && !locked_ && !connectionProgressVisible() &&
+        ms - indicatorsAt_ >= 5000) {
+        indicatorsAt_ = ms;
+        if (systemChrome_->refreshIndicators())
+            QWidget::update(0, 0, width(), 28);
+    }
     if ((locked_ || connectionProgressVisible()) && isVisible() && !closed_ &&
         splashMinute_ != time(0) / 60) {
         splashMinute_ = time(0) / 60;

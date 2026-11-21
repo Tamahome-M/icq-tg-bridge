@@ -135,6 +135,16 @@ def history_records(rows: list[tuple], max_bytes: int, token_for,
     return header + b"".join(reversed(encoded))
 
 
+def phonebook_page(rows, partial: bool, offset: int, count: int) -> bytes:
+    flags = int(offset + count < len(rows)) | (2 if partial else 0)
+    data = bytearray(b"PB1" + bytes([flags]))
+    for name, number in rows[offset:offset + count]:
+        title = name.encode("utf-8")
+        digits = number.encode("ascii")
+        data += struct.pack(">H", len(title)) + title + bytes([len(digits)]) + digits
+    return bytes(data)
+
+
 def chat_records(rows: list[tuple[int, str, int, int, bool]], max_bytes: int) -> bytes:
     """Список всех чатов для TeleMotoMax: UIN (4 байта), флаги, сколько дней
     молчит (2 байта, 0xFFFF — не писали никогда), длина названия и оно само

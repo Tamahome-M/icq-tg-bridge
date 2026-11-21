@@ -41,6 +41,12 @@ void Window::activateSelected() {
     if (view().kind == View::Text) {
         if (view().context == "contact-info" && view().selected >= 0 &&
             view().selected < (int)view().rows.size() &&
+            view().rows[view().selected].action.compare(0, 6, "phone:") == 0) {
+            activate(view().rows[view().selected]);
+            return;
+        }
+        if (view().context == "contact-info" && view().selected >= 0 &&
+            view().selected < (int)view().rows.size() &&
             view().rows[view().selected].action == "info-avatar-view" && !infoAvatar_.isNull()) {
             picture_ = infoAvatar_;
             pictureRotation_ = 0;
@@ -83,6 +89,29 @@ void Window::activate(const Row &chosen) {
     r.uin = id;
     if (action == "back") {
         back();
+        return;
+    }
+    if (action == "phonebook" || action == "phone-page") {
+        phonebookPage(r.value);
+        return;
+    }
+    if (action.compare(0, 6, "phone:") == 0) {
+        phoneActions(view().context == "contact-info" ? view().details : r.text, action.substr(6));
+        return;
+    }
+    if (view().context == "phone-actions" &&
+        (action == "phone-call" || action == "phone-copy" || action == "phone-save")) {
+        // Both the Motorola editor and the clipboard may run a nested event loop.
+        const std::string number = view().directory;
+        const QString title = view().details;
+        back();
+        if (action == "phone-copy")
+            copy(QString::fromLatin1(number.c_str()));
+        else if (action == "phone-call") {
+            if (!platform_.dialNumber(number))
+                info(u("Не удалось открыть набор номера"));
+        } else if (!platform_.newPhoneContact(title, number))
+            info(u("Не удалось открыть контакты телефона"));
         return;
     }
     if (activateJavaMenu(r) || activateSettings(r))

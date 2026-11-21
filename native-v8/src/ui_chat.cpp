@@ -1,4 +1,5 @@
 #include "window.h"
+#include "phone_number.h"
 #include "storage.h"
 #include "chat_history.h"
 #include "roster_order.h"
@@ -205,8 +206,13 @@ void Window::consume(const Event &e) {
             pending_.clear();
             pendingUin_.clear();
             mediaRequests_.clear();
-            for (size_t i = 0; i < stack_.size(); ++i)
-                stack_[i].request = 0;
+            for (size_t i = 0; i < stack_.size(); ++i) {
+                View &v = stack_[i];
+                if (v.context == "phonebook" && v.request && v.rows.size() == 1 &&
+                    v.rows[0].action.empty())
+                    v.rows[0] = Row(u("Повторить"), "phone-page", 0, v.offset);
+                v.request = 0;
+            }
             for (size_t i = 0; i < contacts_.size(); ++i)
                 contacts_[i].status = 0xffffffffU;
             if (before == Event::Online && !manualDisconnect_ && !silent_ && !player_.active() &&
@@ -419,6 +425,11 @@ void Window::consume(const Event &e) {
         update();
         return;
     }
+    if (e.type == Event::Phonebook) {
+        showPhonebook(e);
+        pending_.erase(e.requestId);
+        return;
+    }
     if (e.type == Event::Chats) {
         showResults(e);
         pending_.erase(e.requestId);
@@ -542,6 +553,18 @@ void Window::consume(const Event &e) {
     if (e.type == Event::Error) {
         if (e.requestId && pending_.find(e.requestId) == pending_.end())
             return;
+        if (e.requestId && pending_[e.requestId] == "phonebook") {
+            for (size_t i = 0; i < stack_.size(); ++i) {
+                View &book = stack_[i];
+                if (book.context == "phonebook" && book.request == e.requestId &&
+                    book.rows.size() == 1 && book.rows[0].action.empty()) {
+                    book.rows.clear();
+                    book.rows.push_back(Row(u(e.text)));
+                    book.rows.push_back(Row(u("Повторить"), "phone-page", 0, book.offset));
+                    book.selected = 1;
+                }
+            }
+        }
         if (e.requestId && pending_[e.requestId] == "last") {
             std::map<uint32_t, ChatState>::iterator chat = chats_.find(pendingUin_[e.requestId]);
             if (chat != chats_.end())
@@ -1060,10 +1083,82 @@ void Window::showResults(const Event &e) {
     }
     update();
 }
+static const unsigned phonePageSize = 20;
+
+void Window::phonebookPage(uint32_t offset) {
+    const bool opening = view().context != "phonebook";
+    if (opening) {
+        if (connectionState_ != Event::Online) {
+            info(u("Подключитесь к мосту"));
+            return;
+        }
+        View book(View::Menu, u("Телефонная книга"));
+        book.context = "phonebook";
+        push(book);
+    }
+    if (view().request)
+        return;
+    Command c(Command::Phonebook);
+    c.requestId = client_.nextRequestId();
+    c.limit = phonePageSize;
+    c.flag = opening;
+    c.offset = offset;
+    if (send(c)) {
+        view().request = c.requestId;
+        view().offset = offset;
+        if (view().rows.empty())
+            view().rows.push_back(Row(u("Загрузка…")));
+        pending_[c.requestId] = "phonebook";
+    }
+    update();
+}
+
+void Window::showPhonebook(const Event &e) {
+    for (size_t i = 0; i < stack_.size(); ++i) {
+        View &v = stack_[i];
+        if (v.context != "phonebook" || v.request != e.requestId)
+            continue;
+        v.rows.clear();
+        v.request = 0;
+        v.top = v.selected = 0;
+        if (e.flag)
+            v.rows.push_back(Row(u("Часть контактов недоступна")));
+        if (e.offset)
+            v.rows.push_back(Row(u("Предыдущая страница"), "phone-page", 0,
+                                 e.offset > phonePageSize ? e.offset - phonePageSize : 0));
+        v.selected = v.rows.size();
+        for (size_t j = 0; j < e.phones.size(); ++j)
+            v.rows.push_back(Row(u(e.phones[j].name), "phone:" + e.phones[j].number));
+        if (e.phones.empty())
+            v.rows.push_back(Row(u("Нет контактов с номером")));
+        if (e.more)
+            v.rows.push_back(
+                Row(u("Следующая страница"), "phone-page", 0, e.offset + e.phones.size()));
+        update();
+        return;
+    }
+}
+
+void Window::phoneActions(const QString &name, const std::string &number) {
+    View menu(View::Popup, u("Телефон"));
+    menu.context = "phone-actions";
+    menu.details = name;
+    menu.directory = number;
+    menu.rows.push_back(Row(u(number)));
+    menu.rows.push_back(Row(u("Позвонить"), "phone-call"));
+    menu.rows.push_back(Row(u("Скопировать номер"), "phone-copy"));
+    menu.rows.push_back(Row(u("Добавить в контакты телефона"), "phone-save"));
+    menu.selected = 1;
+    push(menu);
+}
+
 void Window::showInfo(const Event &e) {
     View info(View::Text, QString::number(e.uin));
     info.context = "contact-info";
     info.uin = e.uin;
+    std::map<std::string, std::string>::const_iterator person = e.fields.find("name");
+    info.details =
+        person != e.fields.end() && !person->second.empty() ? u(person->second) : name(e.uin);
     info.rows.push_back(Row(name(e.uin), "info-field"));
     info.rows.push_back(Row("UIN: " + QString::number(e.uin), "info-field"));
     ContactRecord *entry = contact(e.uin);
@@ -1081,9 +1176,14 @@ void Window::showInfo(const Event &e) {
                             "Сеть",       "Примечания", "О себе"};
     for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
         std::map<std::string, std::string>::const_iterator field = e.fields.find(keys[i]);
-        if (field != e.fields.end() && !field->second.empty() &&
-            !(std::string(keys[i]) == "age" && field->second == "0"))
-            info.rows.push_back(Row(u(labels[i]) + ": " + u(field->second), "info-field"));
+        if (field == e.fields.end() || field->second.empty() ||
+            (field->first == "age" && field->second == "0"))
+            continue;
+        std::string number;
+        if (field->first == "phone" || field->first == "mobile")
+            number = phoneNumber(field->second);
+        info.rows.push_back(Row(u(labels[i]) + ": " + u(field->second),
+                                number.empty() ? "info-field" : "phone:" + number));
     }
     if (!e.text.empty() && e.text != std::string(name(e.uin).utf8()) &&
         (e.fields.find("name") == e.fields.end() || e.fields.find("name")->second != e.text))

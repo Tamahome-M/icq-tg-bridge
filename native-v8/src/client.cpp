@@ -1,4 +1,5 @@
 #include "client.h"
+#include "phone_number.h"
 #include "keepalive_timer.h"
 #include "oscar.h"
 #include "transport.h"
@@ -84,6 +85,8 @@ unsigned mediaType(Command::Type type) {
         return 0x85;
     case Command::File:
         return 0x86;
+    case Command::Phonebook:
+        return 0x87;
     default:
         return 0;
     }
@@ -195,6 +198,8 @@ class Client::Impl : public Cancellation, public ReadWatch {
         for (size_t i = 0; i < e.contacts.size(); ++i)
             n += sizeof(ContactRecord) + e.contacts[i].name.size() + e.contacts[i].group.size() +
                  e.contacts[i].avatarHash.size();
+        for (size_t i = 0; i < e.phones.size(); ++i)
+            n += sizeof(PhonebookEntry) + e.phones[i].name.size() + e.phones[i].number.size();
         for (size_t i = 0; i < e.messages.size(); ++i)
             n += sizeof(MessageRecord) + e.messages[i].text.size() +
                  e.messages[i].senderName.size() + e.messages[i].token.size() +
@@ -749,6 +754,8 @@ class Client::Impl : public Cancellation, public ReadWatch {
             return;
         Pending &p = it->second;
         Bart b = bart(s.data);
+        if (p.kind == 0x87 && b.kind != p.kind)
+            throw Error("Для телефонной книги обновите мост");
         if (b.uin != p.command.uin || b.kind != p.kind || b.token != p.command.token ||
             b.part != p.next || (p.total && p.total != b.total)) {
             error(s.request, p.command.uin, "Нарушен порядок частей вложения");
@@ -759,7 +766,7 @@ class Client::Impl : public Cancellation, public ReadWatch {
         ++p.next;
         p.deadline = monotonicMs() + 180000;
         std::string data = b.data;
-        if (p.kind == 0x81 || p.kind == 0x84 || p.kind == 0x85) {
+        if (p.kind == 0x81 || p.kind == 0x84 || p.kind == 0x85 || p.kind == 0x87) {
             if (p.data.size() + data.size() > 32768)
                 throw Error("Слишком большой ответ истории");
             p.data += data;
@@ -830,6 +837,27 @@ class Client::Impl : public Cancellation, public ReadWatch {
             e.type = Event::Chats;
             chats(p.data, e.contacts, e.more);
             e.offset = p.command.offset + e.contacts.size();
+        } else if (p.kind == 0x87) {
+            if (p.data.compare(0, 3, "PB1") != 0)
+                throw Error("Для телефонной книги обновите мост");
+            Reader page(p.data);
+            page.skip(3);
+            unsigned flags = page.u8();
+            e.type = Event::Phonebook;
+            e.more = (flags & 1) != 0;
+            e.flag = (flags & 2) != 0;
+            e.offset = p.command.offset;
+            while (page.left()) {
+                PhonebookEntry person;
+                person.name = page.p16();
+                person.number = page.p8();
+                if (person.name.empty() || person.number.empty() ||
+                    person.number != phoneNumber(person.number) || e.phones.size() >= 30)
+                    throw Error("Неверная запись телефонной книги");
+                e.phones.push_back(person);
+            }
+            if (e.more && e.phones.empty())
+                throw Error("Пустая страница телефонной книги");
         } else if (p.kind == 0x85) {
             e.type = Event::CommandResult;
             e.flag = p.data == std::string(1, 0);
@@ -880,7 +908,9 @@ class Client::Impl : public Cancellation, public ReadWatch {
         if (s.subtype == 1) {
             Reader r(s.data);
             unsigned code = r.u16();
-            std::string text = "Ошибка сервера " + decimal(code);
+            std::string text = pending.count(s.request) && pending[s.request].kind == 0x87
+                                   ? "Для телефонной книги обновите мост"
+                                   : "Ошибка сервера " + decimal(code);
             if (r.left()) {
                 Tlvs t = tlvs(r);
                 if (t.count(0x9003))
@@ -1156,6 +1186,12 @@ class Client::Impl : public Cancellation, public ReadWatch {
                 if (c.offset > 65535 || !c.limit || c.limit > 200)
                     throw Error("Неверная страница истории");
                 c.token = be16(c.limit) + be16(c.offset) + std::string(1, 1) + std::string(11, 0);
+            } else if (c.type == Command::Phonebook) {
+                c.token =
+                    "P1" + be32(c.offset) +
+                    std::string(1, char(std::min<uint32_t>(30, std::max<uint32_t>(1, c.limit)))) +
+                    std::string(1, char(c.flag)) + std::string(8, 0);
+                c.uin = uin(cfg.uin);
             } else if (c.type == Command::AllChats) {
                 c.token =
                     "P1" + be16(c.offset) +
