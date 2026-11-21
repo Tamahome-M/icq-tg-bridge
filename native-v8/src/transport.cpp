@@ -12,13 +12,18 @@
 #include <time.h>
 #include <algorithm>
 namespace tmm {
-uint64_t monotonicMs() {
+uint64_t uptimeMs() {
     struct timespec t;
-    if (clock_gettime(CLOCK_MONOTONIC, &t) == 0)
-        return uint64_t(t.tv_sec) * 1000 + t.tv_nsec / 1000000;
+    return clock_gettime(CLOCK_MONOTONIC, &t) == 0 ? uint64_t(t.tv_sec) * 1000 + t.tv_nsec / 1000000
+                                                   : 0;
+}
+uint64_t wallMs() {
     struct timeval v;
-    gettimeofday(&v, 0);
-    return uint64_t(v.tv_sec) * 1000 + v.tv_usec / 1000;
+    return gettimeofday(&v, 0) == 0 ? uint64_t(v.tv_sec) * 1000 + v.tv_usec / 1000 : 0;
+}
+uint64_t monotonicMs() {
+    const uint64_t uptime = uptimeMs();
+    return uptime ? uptime : wallMs();
 }
 Transport::Transport(Cancellation &c)
     : fd_(-1), cancel_(c), readWatch_(0), secure_(false), failed_(false), at_(0) {}
@@ -45,14 +50,17 @@ bool Transport::wait(bool write, uint64_t deadline) {
         uint64_t now = monotonicMs();
         if (now >= deadline)
             return false;
-        struct pollfd p[2];
+        struct pollfd p[3];
         p[0].fd = fd_;
         p[0].events = write ? POLLOUT : POLLIN;
         p[0].revents = 0;
         p[1].fd = cancel_.wakeFd();
         p[1].events = POLLIN;
         p[1].revents = 0;
-        int n = poll(p, 2, int(std::min<uint64_t>(deadline - now, 1000)));
+        p[2].fd = !write && readWatch_ ? readWatch_->keepaliveFd() : -1;
+        p[2].events = POLLIN;
+        p[2].revents = 0;
+        int n = poll(p, 3, int(std::min<uint64_t>(deadline - now, 1000)));
         if (n < 0) {
             if (errno == EINTR)
                 continue;
@@ -65,9 +73,11 @@ bool Transport::wait(bool write, uint64_t deadline) {
             if (cancel_.cancelled())
                 throw wire::Error("Подключение отменено");
         }
+        if (p[2].revents)
+            readWatch_->checkKeepalive(false, p[2].revents);
         if (p[0].revents & (POLLIN | POLLOUT | POLLHUP | POLLERR | POLLNVAL))
             return true;
-        if (!write && readWatch_)
+        if (!write && readWatch_ && !p[2].revents)
             readWatch_->checkKeepalive(false);
     }
 }

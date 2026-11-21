@@ -16,13 +16,15 @@ from bridge.db import Storage
 from bridge.oscar.server import OscarServer
 from bridge.oscar import const as C, blocks
 
-SOURCES = ['client.cpp', 'oscar.cpp', 'transport.cpp', 'dns.cpp', 'crypto.cpp', 'mobile_network.cpp', 'network_profile.cpp']
+SOURCES = ['client.cpp', 'keepalive_timer.cpp', 'oscar.cpp', 'transport.cpp', 'dns.cpp', 'crypto.cpp', 'mobile_network.cpp', 'network_profile.cpp']
 
 
-def compile_driver(path):
+def compile_driver(path, *, rtc_adapter=False):
+    rtc = ([str(ROOT/'native-v8/tests/rtc_sw_shim.cpp'), '-Wl,--wrap=open,--wrap=ioctl,--wrap=gettimeofday']
+           if rtc_adapter else [])
     subprocess.run(['g++', '-std=c++98', '-Wall', '-Wextra', '-fno-rtti', '-pthread', '-I', str(ROOT/'native-v8/src'),
-                    str(ROOT/'native-v8/tests/network_driver.cpp'), *[str(ROOT/'native-v8/src'/s) for s in SOURCES],
-                    '-Wl,--wrap=pthread_create,--wrap=connect,--wrap=send', '-ldl', '-lrt','-lresolv', '-o', str(path)], check=True)
+                    str(ROOT/'native-v8/tests/network_driver.cpp'), *rtc, *[str(ROOT/'native-v8/src'/s) for s in SOURCES],
+                    '-Wl,--wrap=pthread_create,--wrap=connect,--wrap=send,--wrap=clock_gettime', '-ldl', '-lrt','-lresolv', '-o', str(path)], check=True)
 
 
 class Phone:

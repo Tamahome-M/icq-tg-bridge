@@ -1,4 +1,5 @@
 #include "client.h"
+#include "keepalive_timer.h"
 #include "oscar.h"
 #include "transport.h"
 #include "dns.h"
@@ -123,7 +124,7 @@ class Client::Impl : public Cancellation, public ReadWatch {
     MobileNetwork mobile;
     Transport socket;
     unsigned sequence, metaSeq;
-    uint64_t nextPing;
+    KeepaliveTimer pingTimer;
     unsigned unansweredPings;
     std::vector<ContactRecord> roster;
     std::map<uint32_t, Pending> pending;
@@ -137,7 +138,7 @@ class Client::Impl : public Cancellation, public ReadWatch {
     Impl()
         : running(false), joinable(false), stopping(false), restart(false), online(false),
           permanentFailure(false), finishing(false), prefetchOnly(false), nextId(1), generation(0),
-          activeGeneration(0), eventBytes(0), socket(*this), sequence(1), metaSeq(1), nextPing(0),
+          activeGeneration(0), eventBytes(0), socket(*this), sequence(1), metaSeq(1),
           unansweredPings(0), dnsTried(false), dnsPolicySet(false), startupDnsEnabled(false),
           stamp(0) {
         wake[0] = wake[1] = notify[0] = notify[1] = -1;
@@ -227,13 +228,10 @@ class Client::Impl : public Cancellation, public ReadWatch {
                 }
                 // The UI can stop draining events while a system dialog is open.
                 // Keep the bounded queue and service the socket outside its lock.
-                timespec until;
-                clock_gettime(CLOCK_REALTIME, &until);
-                ++until.tv_sec;
-                if (pthread_cond_timedwait(&drained, &mutex, &until) != ETIMEDOUT)
-                    continue;
+                timespec until = {time(0) + 1, 0};
+                pthread_cond_timedwait(&drained, &mutex, &until);
             }
-            checkKeepalive(false);
+            checkKeepalive(false, pingTimer.pollNow());
         }
     }
     void state(unsigned n, const std::string &text) {
@@ -266,19 +264,26 @@ class Client::Impl : public Cancellation, public ReadWatch {
               uint32_t id = 0) {
         sendFlap(2, snac(family, subtype, data, id));
     }
-    void checkKeepalive(bool received) {
+    int keepaliveFd() const {
+        return pingTimer.fd();
+    }
+    void checkKeepalive(bool received, short timerEvents = 0) {
+        pingTimer.observed(timerEvents);
+        bool changed;
         {
             Guard g(mutex);
-            if (cfg.pingSeconds != configured.pingSeconds) {
+            changed = cfg.pingSeconds != configured.pingSeconds;
+            if (changed) {
                 cfg.pingSeconds = configured.pingSeconds;
-                nextPing = 0;
                 unansweredPings = 0;
             }
             cfg.missedPings = configured.missedPings;
         }
+        if (changed)
+            pingTimer.reset(cfg.pingSeconds);
         if (received)
             unansweredPings = 0;
-        if (!cfg.pingSeconds || monotonicMs() < nextPing)
+        if (!pingTimer.due())
             return;
         if (cfg.missedPings && unansweredPings >= cfg.missedPings && !socket.buffered()) {
             // The worker can wake late or be waiting for the UI queue. A reply
@@ -295,7 +300,7 @@ class Client::Impl : public Cancellation, public ReadWatch {
         send(1, 0xe); // Classic OSCAR servers may only answer the self-info request.
         if (unansweredPings < cfg.missedPings)
             ++unansweredPings;
-        nextPing = monotonicMs() + uint64_t(cfg.pingSeconds) * 1000;
+        pingTimer.sent();
     }
     std::string readFlap(unsigned &channel, uint64_t deadline) {
         std::string header = socket.read(6, deadline);
@@ -562,7 +567,7 @@ class Client::Impl : public Cancellation, public ReadWatch {
         meta(0x3c, 2);
         if (cfg.startupDns && pinned.empty())
             pinned = ip;
-        nextPing = 0;
+        pingTimer.reset(cfg.pingSeconds);
         unansweredPings = 0;
         socket.watchReads(*this);
         checkKeepalive(false);
@@ -594,6 +599,7 @@ class Client::Impl : public Cancellation, public ReadWatch {
         }
     }
     void cleanup() {
+        pingTimer.reset(0);
         socket.close();
         while (!pending.empty())
             cleanupPending(pending.begin()->first);
@@ -1353,6 +1359,7 @@ class Client::Impl : public Cancellation, public ReadWatch {
                         break;
                     } catch (const std::exception &e) {
                         reason = e.what();
+                        pingTimer.reset(0);
                         socket.close();
                         if (cancelled())
                             throw;
@@ -1409,16 +1416,21 @@ class Client::Impl : public Cancellation, public ReadWatch {
                             cleanupPending(id);
                         }
                     }
-                    struct pollfd p[2];
+                    struct pollfd p[3];
                     p[0].fd = socket.fd();
                     p[0].events = POLLIN;
                     p[0].revents = 0;
                     p[1].fd = wake[0];
                     p[1].events = POLLIN;
                     p[1].revents = 0;
-                    int n = poll(p, 2, socket.buffered() || have || upload.fd >= 0 ? 0 : 500);
+                    p[2].fd = keepaliveFd();
+                    p[2].events = POLLIN;
+                    p[2].revents = 0;
+                    int n = poll(p, 3, socket.buffered() || have || upload.fd >= 0 ? 0 : 500);
                     if (n < 0 && errno != EINTR)
                         throw Error(strerror(errno));
+                    if (p[2].revents)
+                        checkKeepalive(false, p[2].revents);
                     if (p[1].revents)
                         pipeDrain(wake[0]);
                     if (socket.buffered() || p[0].revents) {
@@ -1428,6 +1440,7 @@ class Client::Impl : public Cancellation, public ReadWatch {
                     checkKeepalive(false);
                 }
             } catch (const std::exception &e) {
+                pingTimer.reset(0);
                 {
                     Guard g(mutex);
                     online = false;

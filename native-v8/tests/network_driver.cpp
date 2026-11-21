@@ -31,6 +31,24 @@ extern "C" int __wrap_connect(int fd, const struct sockaddr *address, socklen_t 
     return __real_connect(fd, address, size);
 }
 
+// Simulate a stalled uptime clock while the network thread and wall clock keep running.
+extern "C" int __real_clock_gettime(clockid_t, timespec *);
+static pthread_mutex_t clockMutex = PTHREAD_MUTEX_INITIALIZER;
+static timespec frozenUptime;
+static bool uptimeStopped = false;
+extern "C" int __wrap_clock_gettime(clockid_t clock, timespec *out) {
+    if (clock == CLOCK_MONOTONIC) {
+        pthread_mutex_lock(&clockMutex);
+        bool stopped = uptimeStopped;
+        if (stopped)
+            *out = frozenUptime;
+        pthread_mutex_unlock(&clockMutex);
+        if (stopped)
+            return 0;
+    }
+    return __real_clock_gettime(clock, out);
+}
+
 static pthread_mutex_t sendFaultMutex = PTHREAD_MUTEX_INITIALIZER;
 static unsigned sendFaultState = 0, sendsAfterFailure = 0, faultPrefixBytes = 0,
                 injectedSendFailures = 0;
@@ -201,6 +219,14 @@ int main(int argc, char **argv) {
             std::string line;
             if (!std::getline(std::cin, line))
                 break;
+            if (line == "freeze-clock") {
+                pthread_mutex_lock(&clockMutex);
+                __real_clock_gettime(CLOCK_MONOTONIC, &frozenUptime);
+                uptimeStopped = true;
+                pthread_mutex_unlock(&clockMutex);
+                std::cout << "{\"clockStopped\":true}" << std::endl;
+                continue;
+            }
             if (line == "quit")
                 break;
             if (line == "hold-events" || line == "drain-events") {

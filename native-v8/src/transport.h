@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <string>
 namespace tmm {
+uint64_t uptimeMs();
+uint64_t wallMs();
 uint64_t monotonicMs();
 class Cancellation {
   public:
@@ -17,7 +19,8 @@ class Cancellation {
 class ReadWatch {
   public:
     virtual ~ReadWatch() {}
-    virtual void checkKeepalive(bool received) = 0;
+    virtual int keepaliveFd() const = 0;
+    virtual void checkKeepalive(bool received, short timerEvents = 0) = 0;
 };
 class Transport {
     int fd_;
