@@ -36,10 +36,18 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - name: Test release integrity and VPS update
         run: python3 tests/test_client_release.py
       - name: Require a new version when the client changes
         run: python3 tools/telemotomax-release.py check --repo "$GITHUB_REPOSITORY"
+      - name: Test a clean V3 build when the build script changes
+        if: github.event_name == 'pull_request'
+        run: |
+          if ! git diff --quiet HEAD^1 HEAD -- telemotomax/build.sh; then
+            env -u JAVA_HOME_8_X64 TMM_MODULES=v3 ./telemotomax/build.sh "$RUNNER_TEMP/telemotomax-clean"
+          fi
   release:
     needs: check
     if: github.ref == 'refs/heads/main'
